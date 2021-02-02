@@ -1,0 +1,13 @@
+[package]
+name = "birli"
+version = "0.1.0"
+authors = ["Derwent McElhinney <derwent.mcelhinney@curtin.edu.au>"]
+edition = "2018"
+description = "Common preprocessing tasks for the Murchison Widefield Array Epoch of Reionization pipeline"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+mwalib = { git = "https://github.com/MWATelescope/mwalib" }
+clap = "2.33.3"
+assert_cli = "0.6.1"
