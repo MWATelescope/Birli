@@ -39,6 +39,8 @@ jobs:
       - name: Upload coverage to coveralls
         if: matrix.os == 'ubuntu-latest'
         run: cargo make tarpaulin_ci
+        env:
+          COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN}}
 
       - name: Upload reports to codecov.io
         uses: codecov/codecov-action@v1
