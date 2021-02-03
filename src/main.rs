@@ -9,6 +9,7 @@ fn main_with_args(args: Vec<String>) {
         .get_matches_from(args);
 }
 
+#[cfg(not(tarpaulin_include))]
 fn main() {
     main_with_args(env::args().collect())
 }
