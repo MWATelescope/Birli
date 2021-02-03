@@ -10,4 +10,7 @@ description = "Common preprocessing tasks for the Murchison Widefield Array Epoc
 [dependencies]
 mwalib = { git = "https://github.com/MWATelescope/mwalib" }
 clap = "2.33.3"
+
+[dev-dependencies]
 assert_cli = "0.6.1"
+rustfmt = "0.10.0"
