@@ -52,9 +52,9 @@ command = "cargo"
 args = ["tarpaulin", "--verbose", "--ignore-tests", "--timeout=360", "--out=Lcov", "--output-dir=./coverage/"]
 install_crate = "cargo-tarpaulin"
 
-[tasks.tarpaulin_ci_coveralls]
+[tasks.tarpaulin_ci]
 command = "cargo"
-args = ["tarpaulin", "--verbose", "--ignore-tests", "--timeout=360", "--ciserver", "github-ci", "--coveralls=${COVERALLS_TOKEN}"]
+args = ["tarpaulin", "--verbose", "--ignore-tests", "--timeout=360", "--ciserver=github-ci", "--coveralls=${COVERALLS_TOKEN}", "--out=Lcov", "--output-dir=./coverage/"]
 install_crate = "cargo-tarpaulin"
 
 [tasks.ci]
