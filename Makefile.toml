@@ -1,0 +1,71 @@
+[tasks.linux_apt_get_update]
+command = "sudo"
+args = ["apt-get", "update"]
+
+[tasks.linux_install_deps]
+command = "sudo"
+args = ["apt-get", "install", "-y", "libcfitsio-dev"]
+dependencies = ["linux_apt_get_update"]
+
+[tasks.mac_install_deps]
+command = "brew"
+args = ["install", "cfitsio"]
+
+[tasks.install_deps]
+linux_alias = "linux_install_deps"
+mac_alias = "mac_install_deps"
+
+[tasks.check]
+command = "cargo"
+args = ["check"]
+
+[tasks.format_fix]
+command = "cargo"
+args = ["fmt", "--", "--emit=files"]
+install_crate = "rustfmt"
+
+[tasks.format_check]
+command = "cargo"
+args = ["fmt", "--all", "--", "--check"]
+install_crate = "rustfmt"
+
+[tasks.clippy]
+command = "cargo"
+args = ["clippy", "--", "-D", "warnings"]
+install_crate = "clippy"
+
+[tasks.clean]
+command = "cargo"
+args = ["clean"]
+
+[tasks.build_clean]
+command = "cargo"
+args = ["build"]
+dependencies = ["clean"]
+
+[tasks.test]
+command = "cargo"
+args = ["test"]
+
+[tasks.tarpaulin_codecov]
+command = "cargo"
+args = ["tarpaulin", "--verbose", "--ignore-tests", "--timeout=360", "--out=Lcov", "--output-dir=./coverage/"]
+install_crate = "cargo-tarpaulin"
+
+[tasks.tarpaulin_ci_coveralls]
+command = "cargo"
+args = ["tarpaulin", "--verbose", "--ignore-tests", "--timeout=360", "--ciserver", "github-ci", "--coveralls=${COVERALLS_TOKEN}"]
+install_crate = "cargo-tarpaulin"
+
+[tasks.ci]
+dependencies = [
+  "check",
+  "format_check",
+  "clippy",
+]
+
+[tasks.pre_commit]
+dependencies = [
+  "format_fix",
+  "test",
+]
