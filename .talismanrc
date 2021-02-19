@@ -1,3 +1,5 @@
 fileignoreconfig:
 - filename: Cargo.toml
   checksum: b845857c67a59b0a86864130f2ca72c88c33f226f08dc8c33befd4575a35557b
+- filename: tests/data/1297526432_mwax/1297526432_dump.csv
+  checksum: 8155c8e7dafe04c895b6bbc8dbc8efea4709a228022627cd58cd0a311231f872

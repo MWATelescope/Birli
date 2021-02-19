@@ -253,7 +253,7 @@ def main():
                 # img_hdu.data = img_hdu.data[:naxis2, :naxis1]
                 float_start = global_scan_index << 8 * math.ceil(math.log2(floats_per_img) / 8)
                 img_hdu.data = np.arange(float_start, float_start +
-                                         floats_per_img).reshape((naxis2, naxis1))
+                                         floats_per_img).reshape((naxis2, naxis1)).astype('int32')
                 flag_hdu.data = flag_hdu.data[:naxis2, :]
 
                 scan_hdus.append(img_hdu)
