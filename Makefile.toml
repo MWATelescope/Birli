@@ -4,12 +4,12 @@ args = ["apt-get", "update"]
 
 [tasks.linux_install_deps]
 command = "sudo"
-args = ["apt-get", "install", "-y", "libcfitsio-dev"]
+args = ["apt-get", "install", "-y", "libcfitsio-dev", "libaoflagger0"]
 dependencies = ["linux_apt_get_update"]
 
 [tasks.mac_install_deps]
 command = "brew"
-args = ["install", "cfitsio"]
+args = ["install", "cfitsio", "derwentx/tap/aoflagger"]
 
 [tasks.install_deps]
 linux_alias = "linux_install_deps"
