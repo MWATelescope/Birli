@@ -4,7 +4,7 @@ args = ["apt-get", "update"]
 
 [tasks.linux_install_deps]
 command = "sudo"
-args = ["apt-get", "install", "-y", "libcfitsio-dev", "libaoflagger0"]
+args = ["apt-get", "install", "-y", "libcfitsio-dev", "aoflagger-dev"]
 dependencies = ["linux_apt_get_update"]
 
 [tasks.mac_install_deps]
@@ -62,6 +62,7 @@ dependencies = [
   "check",
   "format_check",
   "clippy",
+  "test",
 ]
 
 [tasks.pre_commit]

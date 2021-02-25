@@ -6,14 +6,15 @@ name: Cross-Platform Tests
 
 jobs:
   test:
-    name: Test ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: Test on ${{ matrix.os || matrix.container_img }}
     strategy:
       matrix:
-        os:
-          - ubuntu-latest
-          - macOS-latest
+        include:
+          - container_img: mwatelescope/aoflagger:3.0_portable
+          - os: macOS-latest
 
+    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
+    container: ${{ matrix.container_img || null }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -26,25 +27,37 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+          components: rustfmt, clippy
 
-      - name: Install Cargo Make
+      - name: Install Cargo Make (Container)
+        if: matrix.container_img
+        run: |
+          export DEBIAN_FRONTEND=noninteractive \
+          && apt-get update \
+          && apt-get install -y unzip libssl-dev \
+          && cargo install --force cargo-make
+
+      - name: Install Cargo Make (Normal)
+        if: ${{ ! matrix.container_img }}
         uses: davidB/rust-cargo-make@v1
 
       - name: Install Dependencies
+        if: ${{ ! matrix.container_img }}
         run: cargo make install_deps
 
       - name: Run cargo check, fmt, clippy
         run: cargo make ci
 
-      - name: Upload coverage to coveralls
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo make tarpaulin_ci
-        env:
-          COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN}}
+      # these no longer work because linking with CC
+      # - name: Upload coverage to coveralls
+      #   if: matrix.os == 'ubuntu-latest'
+      #   run: cargo make tarpaulin_ci
+      #   env:
+      #     COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN}}
 
-      - name: Upload reports to codecov.io
-        uses: codecov/codecov-action@v1
-        if: matrix.os == 'ubuntu-latest'
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: true
+      # - name: Upload reports to codecov.io
+      #   uses: codecov/codecov-action@v1
+      #   if: matrix.os == 'ubuntu-latest'
+      #   with:
+      #     token: ${{ secrets.CODECOV_TOKEN }}
+      #     fail_ci_if_error: true
