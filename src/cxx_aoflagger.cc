@@ -1,6 +1,5 @@
 #include "birli/include/cxx_aoflagger.h"
 #include "birli/src/lib.rs.h"
-// #include <aoflagger.h>
 
 using namespace std;
 using namespace aoflagger;
@@ -28,7 +27,7 @@ size_t CxxImageSet::HorizontalStride() const {
 	return this->pImpl->HorizontalStride();
 }
 rust::Slice<float> CxxImageSet::ImageBuffer(size_t imageIndex) const {
-	rust::Slice<float> slice{this->pImpl->ImageBuffer(imageIndex), Width() * Height()};
+	rust::Slice<float> slice{this->pImpl->ImageBuffer(imageIndex), Height() * HorizontalStride()};
 	return slice;
 }
 
@@ -45,9 +44,21 @@ size_t CxxFlagMask::Height() const {
 size_t CxxFlagMask::HorizontalStride() const {
 	return this->pImpl->HorizontalStride();
 }
-rust::Slice<uint8_t> CxxFlagMask::Buffer() const {
-    rust::Slice<uint8_t> slice{(uint8_t *)(this->pImpl->Buffer()), Width() * Height() / 8};
+rust::Slice<bool> CxxFlagMask::Buffer() const {
+	rust::Slice<bool> slice{(bool *)(this->pImpl->Buffer()), Height() * HorizontalStride()};
 	return slice;
+}
+
+CxxStrategy::CxxStrategy(Strategy* impl) {
+    this->impl = std::move(*impl);
+}
+unique_ptr<CxxFlagMask> CxxStrategy::Run(const CxxImageSet& input) const {
+	FlagMask flagmask = this->impl.Run(*(input.pImpl));
+	return unique_ptr<CxxFlagMask>(new CxxFlagMask(flagmask));
+}
+unique_ptr<CxxFlagMask> CxxStrategy::RunExisting(const CxxImageSet& input, const CxxFlagMask& existingFlags) const {
+	FlagMask flagmask = this->impl.Run(*(input.pImpl), *(existingFlags.pImpl));
+	return unique_ptr<CxxFlagMask>(new CxxFlagMask(flagmask));
 }
 
 CxxAOFlagger::CxxAOFlagger() : pImpl(new AOFlagger()) {
@@ -63,8 +74,15 @@ unique_ptr<CxxFlagMask> CxxAOFlagger::MakeFlagMask(size_t width, size_t height, 
 	FlagMask flagmask = this->pImpl->MakeFlagMask(width, height, initialValue);
 	return unique_ptr<CxxFlagMask>(new CxxFlagMask(flagmask));
 }
-rust::String CxxAOFlagger::FindStrategyFile() const {
+rust::String CxxAOFlagger::FindStrategyFileGeneric(const rust::String& scenario) const {
+	return this->pImpl->FindStrategyFile(TelescopeId::GENERIC_TELESCOPE, std::string(scenario));
+}
+rust::String CxxAOFlagger::FindStrategyFileMWA() const {
 	return this->pImpl->FindStrategyFile(TelescopeId::MWA_TELESCOPE);
+}
+unique_ptr<CxxStrategy> CxxAOFlagger::LoadStrategyFile(const rust::String& filename) const {
+	Strategy strategy = this->pImpl->LoadStrategyFile(std::string(filename));
+	return unique_ptr<CxxStrategy>(new CxxStrategy(&strategy));
 }
 
 unique_ptr<CxxAOFlagger> cxx_aoflagger_new() {
