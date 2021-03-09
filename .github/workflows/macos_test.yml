@@ -1,0 +1,39 @@
+# Based on https://github.com/actions-rs/meta/blob/master/recipes/quickstart.md
+
+on: [push, pull_request]
+
+name: MacOS Tests
+
+jobs:
+  test:
+    name: MacOS Tests
+    runs-on: macOS-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+
+      - name: Install Cargo Make
+        uses: davidB/rust-cargo-make@v1
+
+      - name: Install Dependencies
+        run: |
+          brew tap derwentx/tap
+          wget https://github.com/derwentx/homebrew-tap/releases/download/v2021.03.08/casacore-data--2021.02.26.catalina.bottle.tar.gz
+          brew install -f casacore-data--2021.02.26.catalina.bottle.tar.gz
+          wget https://github.com/derwentx/homebrew-tap/releases/download/v2021.03.08/casacore--3.4.0.catalina.bottle.tar.gz
+          brew install -f casacore--3.4.0.catalina.bottle.tar.gz
+          wget https://github.com/derwentx/homebrew-tap/releases/download/v2021.03.08/aoflagger--3.0.0.catalina.bottle.tar.gz
+          brew install -f aoflagger--3.0.0.catalina.bottle.tar.gz
+          cargo make install_deps
+
+      - run: cargo make ci

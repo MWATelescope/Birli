@@ -1,0 +1,59 @@
+# Based on https://github.com/actions-rs/meta/blob/master/recipes/quickstart.md
+
+on: [push, pull_request]
+
+name: Generate Coverage report
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    container: mwatelescope/aoflagger:3.0_portable
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Install nightly toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+          components: llvm-tools-preview
+
+      - name: Install Cargo Packages
+        run: |
+          export DEBIAN_FRONTEND=noninteractive \
+          && apt-get update \
+          && apt-get install -y unzip libssl-dev jq \
+          && cargo install --force cargo-make cargo-binutils
+
+      - name: Generate test lcov coverage into coverage/ dir
+        env:
+          RUSTFLAGS: -Zinstrument-coverage
+          LLVM_PROFILE_FILE: json5format-%m.profraw
+        run: |
+          mkdir -p coverage
+          cargo test --tests
+          cargo profdata -- \
+            merge -sparse json5format-*.profraw -o json5format.profdata
+          cargo cov -- export --format=lcov \
+            --ignore-filename-regex='(/.cargo/registry|/rustc|test.rs$)' \
+            --instr-profile=json5format.profdata \
+            $(cargo test --tests --no-run --message-format=json | jq -r '
+              select(.profile.test == true)
+              | .filenames[]
+              | select(endswith(".dSYM")|not)
+              | " -object \(.)"
+            ') \
+            > coverage/coverage.lcov
+
+      - name: Upload reports to codecov.io (Bash)
+        run: bash <(curl -s https://codecov.io/bash)
+        continue-on-error: true
+
+      - name: Upload reports to codecov.io
+        uses: codecov/codecov-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

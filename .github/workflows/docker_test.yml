@@ -1,0 +1,33 @@
+# Based on https://github.com/actions-rs/meta/blob/master/recipes/quickstart.md
+
+on: [push, pull_request]
+
+name: Docker Tests
+
+jobs:
+  test:
+    name: Docker Tests
+    runs-on: ubuntu-latest
+    container: mwatelescope/aoflagger:3.0_portable
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+
+      - name: Install Cargo Make
+        run: |
+          export DEBIAN_FRONTEND=noninteractive \
+          && apt-get update \
+          && apt-get install -y unzip libssl-dev \
+          && cargo install --force cargo-make
+
+      - run: cargo make ci

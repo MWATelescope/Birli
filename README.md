@@ -19,3 +19,7 @@ descriptor for the speed which this library intends to deliver.
 
 This scientific work uses data obtained from the Murchison Radio-astronomy Observatory. We
 acknowledge the Wajarri Yamatji people as the traditional owners of the Observatory site.
+
+## Coverage
+
+![codecoverage-svg-sunburst](https://codecov.io/gh/MWATelescope/Birli/commit/6a5f10f20593a78572afc2622cccb6a4c4a48cb4/graphs/sunburst.svg)
