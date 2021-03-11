@@ -247,6 +247,7 @@ mod tests {
     }
 
     #[test]
+    /* TODO: is this an issue? https://github.com/MWATelescope/Birli/blob/dev/doc/aoflagger_strategy_binding_issue.md */
     #[ignore]
     fn test_strategy_run_existing() {
         let width = 5 as usize;
