@@ -40,16 +40,16 @@ void flaggingDemo(AOFlagger* aoflagger, FlagMask* existingFlagMask = nullptr)
         size_t count = 4;
         float initialValue = 5;
 
-        ImageSet imageSet = aoflagger->MakeImageSet(WIDTH, HEIGHT, count, initialValue);
-        /* pollute one value in the imageSet */
-        size_t imageStride = imageSet.HorizontalStride();
-        float* imageBuffer = imageSet.ImageBuffer(2);
-        imageBuffer[4 * imageStride + 3] = 999.0;
+        ImageSet imgSet = aoflagger->MakeImageSet(WIDTH, HEIGHT, count, initialValue);
+        /* pollute one value in the imgSet */
+        size_t imgStride = imgSet.HorizontalStride();
+        float* imgBuf = imgSet.ImageBuffer(2);
+        imgBuf[4 * imgStride + 3] = 999.0;
 
         string strategyFilePath = aoflagger->FindStrategyFile(TelescopeId::GENERIC_TELESCOPE, "minimal");
 
         Strategy strategy = aoflagger->LoadStrategyFile(strategyFilePath);
-        FlagMask freshFlagMask = strategy.Run(imageSet, *existingFlagMask);
+        FlagMask freshFlagMask = strategy.Run(imgSet, *existingFlagMask);
         printFlagMask(freshFlagMask);
 }
 

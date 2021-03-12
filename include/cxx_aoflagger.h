@@ -14,7 +14,7 @@ size_t Width() const;
 size_t Height() const;
 size_t ImageCount() const;
 size_t HorizontalStride() const;
-rust::Slice<float> ImageBuffer(size_t imageIndex) const;
+rust::Slice<float> ImageBuffer(size_t imgIndex) const;
 private:
 CxxImageSet();
 CxxImageSet(ImageSet impl);

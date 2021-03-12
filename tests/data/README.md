@@ -32,7 +32,7 @@ The observation values are filled with unique 32-bit float values, increasing mo
 example:
 
 ```txt
-0000 0000 0100 0001 0000 0111 0010 1010 -> 0x41032a = 4260650◊
+0000 0000 0100 0001 0000 0111 0010 1010 -> 0x41032a = 4260650
           |       |       |||   || ||||
           |       |       |||   || |||| ImageHDU offset(0x2a):
           |       |       |||   || |||. -> complex_component = 1 (Re)
