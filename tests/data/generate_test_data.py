@@ -295,13 +295,14 @@ def generate(args):
             # print(f" -> gpu_fits[2].header\n{repr(gpu_fits[2].header)}")
 
             primary_hdu = gpu_fits[0]
-            primary_hdu.header['CORR_VER'] = 2
             primary_hdu.header['NFINECHS'] = num_fine_chans
             primary_hdu.header['FINECHAN'] = fine_chan_bandwidth_hz / 1_000
             primary_hdu.header['NINPUTS'] = num_inputs
             scan_hdus = []
 
             if args['corr_type'] == "MWAX":
+
+                primary_hdu.header['CORR_VER'] = 2
 
                 scan_hdu_chunks = chunk(gpu_fits[1:][:args['max_scans']*2], 2)
                 for (scan_index, (img_hdu, flag_hdu)) in enumerate(scan_hdu_chunks):
@@ -358,18 +359,18 @@ def generate(args):
 
 
 def main():
-    generate({
-        'corr_type': "MWA_ORD",
-        'src_dir': '/Users/derwent/Documents/CIRA/code/mwalib/test_files/1101503312_1_timestep/',
-        'dst_dir': "tests/data/1101503312_mwa_ord",
-        'metafits_name': '1101503312.metafits',
-        'gpufits_names': ['1101503312_20141201210818_gpubox01_00.fits'],
-        'max_coarse_chans': MAX_COARSE_CHANS,
-        'max_batches': MAX_BATCHES,
-        'max_scans': MAX_SCANS,
-        # 'max_antennas': MAX_ANTENNAS,
-        'max_fine_chans': MAX_FINE_CHANS,
-    })
+    # generate({
+    #     'corr_type': "MWA_ORD",
+    #     'src_dir': '/Users/derwent/Documents/CIRA/code/mwalib/test_files/1101503312_1_timestep/',
+    #     'dst_dir': "tests/data/1101503312_mwa_ord",
+    #     'metafits_name': '1101503312.metafits',
+    #     'gpufits_names': ['1101503312_20141201210818_gpubox01_00.fits'],
+    #     'max_coarse_chans': MAX_COARSE_CHANS,
+    #     'max_batches': MAX_BATCHES,
+    #     'max_scans': MAX_SCANS,
+    #     # 'max_antennas': MAX_ANTENNAS,
+    #     'max_fine_chans': MAX_FINE_CHANS,
+    # })
     # # cargo run dump-all-data \
     # #     --dump-filename=../Birli/tests/data/1101503312_mwa_ord/1101503312_dump.csv \
     # #     --metafits=../Birli/tests/data/1101503312_mwa_ord/1101503312.metafits \
