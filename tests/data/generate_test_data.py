@@ -22,7 +22,6 @@ TEST_GPUFITS_NAMES_MWAX = [
     "1297526432_20210216160014_ch118_000.fits",
     "1297526432_20210216160014_ch118_001.fits"
 ]
-DST_TEST_DIR_MWA_ORD = "tests/data/1196175296_mwa_ord"
 SRC_TEST_DIR_MWA_ORD = "/Volumes/T7/CIRA/1196175296_vis"
 TEST_METAFITS_NAME_MWA_ORD = "1196175296.metafits"
 TEST_GPUFITS_NAMES_MWA_ORD = [
@@ -83,8 +82,6 @@ def get_global_scan_index(channel_index, batch_index, max_batches, scan_index, m
     result = result << math.ceil( math.log2(max_batches)) | batch_index
     result = result << math.ceil( math.log2(max_scans)) | scan_index
     return result
-
-
 
 
 def generate(args):
@@ -197,11 +194,11 @@ def generate(args):
         # Handle Fine Channel Selection
         ####
 
-        fine_channel_selection = list(filter(None, primary_hdu.header['CHANSEL'].split(',')))
-        print(f" -> fine_channel_selection (derived): {fine_channel_selection}")
-        fine_channel_selection = fine_channel_selection[:args['max_fine_chans']]
-        print(f" -> fine_channel_selection (limited): {fine_channel_selection}")
-        primary_hdu.header['CHANSEL'] = ','.join(fine_channel_selection)
+        coarse_channel_selection = list(filter(None, primary_hdu.header['CHANSEL'].split(',')))
+        print(f" -> coarse_channel_selection (derived): {coarse_channel_selection}")
+        coarse_channel_selection = coarse_channel_selection[:args['max_coarse_chans']]
+        print(f" -> coarse_channel_selection (limited): {coarse_channel_selection}")
+        primary_hdu.header['CHANSEL'] = ','.join(coarse_channel_selection)
 
         ####
         # handle NAXIS*
@@ -255,8 +252,10 @@ def generate(args):
         gpufits_batches = sorted(list(np.unique(gpufits_df.batch)[:args['max_batches']]))
         print(f" -> gpufits_batches({len(gpufits_batches)}):\n{gpufits_batches}")
 
-        filtered_gpufits = gpufits_df[np.isin(gpufits_df.rec_chan, valid_coarse_chans)][np.isin(
-            gpufits_df.batch, gpufits_batches)]
+        filtered_gpufits = gpufits_df\
+            [np.isin(gpufits_df.rec_chan, valid_coarse_chans)]\
+            [np.isin(gpufits_df.batch, gpufits_batches)]\
+            # .sort_values(['corr_chan', 'batch'])
         print(f" -> filtered_gpufits:\n{filtered_gpufits}")
 
         ####
@@ -278,8 +277,12 @@ def generate(args):
     # Handle GPUFits
     ####
 
+    float_count = 0
+
     for row in filtered_gpufits.to_dict('records'):
         gpufits_name = row['name']
+        print(f" -> gpufits_name: {gpufits_name}")
+        # channel_index = row['corr_chan']
         channel_index = valid_coarse_chans.index(row['rec_chan'])
         print(f" -> channel_index: {channel_index:08b}")
         batch_index = gpufits_batches.index(row['batch'])
@@ -300,9 +303,9 @@ def generate(args):
 
             if args['corr_type'] == "MWAX":
 
-                scan_hdu_chunks = chunk(gpu_fits[1:1+(args['max_scans']*2)], 2)
+                scan_hdu_chunks = chunk(gpu_fits[1:][:args['max_scans']*2], 2)
                 for (scan_index, (img_hdu, flag_hdu)) in enumerate(scan_hdu_chunks):
-                    global_scan_index = get_global_scan_index(channel_index, batch_index, args['max_batches'], scan_index, args['max_batches'])
+                    global_scan_index = get_global_scan_index(channel_index, batch_index, args['max_batches'], scan_index, args['max_scans'])
                     # prefix scan indices to start with the char 'A'
                     global_scan_index = (0x41 << 8) | global_scan_index
                     print(f" -> global_scan_index: {global_scan_index:08b}")
@@ -323,8 +326,9 @@ def generate(args):
                     scan_hdus.append(flag_hdu)
 
             elif args['corr_type'] == "MWA_ORD":
-                for (scan_index, img_hdu) in enumerate(gpu_fits[1:1+args['max_scans']]):
-                    global_scan_index = get_global_scan_index(channel_index, batch_index, args['max_batches'], scan_index, args['max_batches'])
+                for (scan_index, img_hdu) in enumerate(gpu_fits[1:][:args['max_scans']]):
+                    global_scan_index = get_global_scan_index(channel_index, batch_index, args['max_batches'], scan_index, args['max_scans'])
+                    # global_scan_index = (0x1001 << 8) | global_scan_index
                     print(f" -> global_scan_index: {global_scan_index:08b}")
 
                     print(f" -> img_hdu[{scan_index}].data ({img_hdu.data.shape}, {img_hdu.data.dtype}): \n{img_hdu.data}")
@@ -332,12 +336,16 @@ def generate(args):
                     img_hdu.header['NAXIS1'] = naxis1
                     img_hdu.header['NAXIS2'] = naxis2
 
-                    float_start = global_scan_index << math.ceil(math.log2(floats_per_img))
+                    if args.get('sequential'):
+                        float_start = float_count
+                    else:
+                        float_start = global_scan_index << math.ceil(math.log2(floats_per_img))
                     print(f" -> float_start: {float_start} ({float_start:064b}, ")
                     float_end = float_start + floats_per_img
                     print(f" -> float_end: {float_end} ({float_end:064b}, ~2^{math.log2(float_end)})")
                     img_hdu.data = np.arange(float_start, float_end).reshape((naxis2, naxis1)).astype(np.float64)
 
+                    float_count += floats_per_img
                     scan_hdus.append(img_hdu)
 
             new_gpu_fits = fits.HDUList([primary_hdu] + scan_hdus)
@@ -362,14 +370,14 @@ def main():
         # 'max_antennas': MAX_ANTENNAS,
         'max_fine_chans': MAX_FINE_CHANS,
     })
-    # cargo run dump-all-data \
-    #     --dump-filename=../Birli/tests/data/1101503312_mwa_ord/1101503312_dump.csv \
-    #     --metafits=../Birli/tests/data/1101503312_mwa_ord/1101503312.metafits \
-    #     ../Birli/tests/data/1101503312_mwa_ord/1101503312_*.fits
+    # # cargo run dump-all-data \
+    # #     --dump-filename=../Birli/tests/data/1101503312_mwa_ord/1101503312_dump.csv \
+    # #     --metafits=../Birli/tests/data/1101503312_mwa_ord/1101503312.metafits \
+    # #     ../Birli/tests/data/1101503312_mwa_ord/1101503312_*.fits
     generate({
         'corr_type': "MWAX",
         'src_dir': SRC_TEST_DIR_MWAX,
-        'dst_dir': DST_TEST_DIR_MWAX,
+        'dst_dir': "tests/data/1297526432_mwax",
         'metafits_name': TEST_METAFITS_NAME_MWAX,
         'gpufits_names': TEST_GPUFITS_NAMES_MWAX,
         'max_coarse_chans': MAX_COARSE_CHANS,
@@ -385,7 +393,7 @@ def main():
     generate({
         'corr_type': "MWA_ORD",
         'src_dir': SRC_TEST_DIR_MWA_ORD,
-        'dst_dir': DST_TEST_DIR_MWA_ORD,
+        'dst_dir': "tests/data/1196175296_mwa_ord",
         'metafits_name': TEST_METAFITS_NAME_MWA_ORD,
         'gpufits_names': TEST_GPUFITS_NAMES_MWA_ORD,
         'max_coarse_chans': MAX_COARSE_CHANS,
@@ -394,10 +402,31 @@ def main():
         # 'max_antennas': MAX_ANTENNAS,
         'max_fine_chans': MAX_FINE_CHANS,
     })
+    # cargo run dump-all-data --vis-radix=16 --absolute \
+    #     --dump-filename=../Birli/tests/data/1196175296_mwa_ord/1196175296_dump_hex.csv \
+    #     --metafits=../Birli/tests/data/1196175296_mwa_ord/1196175296.metafits \
+    #     ../Birli/tests/data/1196175296_mwa_ord/1196175296_*.fits | tee dump_out.txt
     # cargo run dump-all-data \
     #   --dump-filename=../Birli/tests/data/1196175296_mwa_ord/1196175296_dump.csv \
     #   --metafits=../Birli/tests/data/1196175296_mwa_ord/1196175296.metafits \
     #   ../Birli/tests/data/1196175296_mwa_ord/1196175296_*.fits
+    generate({
+        'corr_type': "MWA_ORD",
+        'src_dir': SRC_TEST_DIR_MWA_ORD,
+        'dst_dir': "tests/data/1196175296_mwa_ord_seq",
+        'metafits_name': TEST_METAFITS_NAME_MWA_ORD,
+        'gpufits_names': TEST_GPUFITS_NAMES_MWA_ORD,
+        'max_coarse_chans': MAX_COARSE_CHANS,
+        'max_batches': MAX_BATCHES,
+        'max_scans': MAX_SCANS,
+        # 'max_antennas': MAX_ANTENNAS,
+        'max_fine_chans': MAX_FINE_CHANS,
+        'sequential': True,
+    })
+    # # cargo run dump-all-data \
+    # #   --dump-filename=../Birli/tests/data/1196175296_mwa_ord_seq/1196175296_dump.csv \
+    # #   --metafits=../Birli/tests/data/1196175296_mwa_ord_seq/1196175296.metafits \
+    # #   ../Birli/tests/data/1196175296_mwa_ord_seq/1196175296_*.fits
 
 
 if __name__ == '__main__':
