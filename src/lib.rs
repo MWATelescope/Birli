@@ -3,6 +3,11 @@ use cxx::UniquePtr;
 use cxx_aoflagger::ffi::{CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy};
 use mwalib::CorrelatorContext;
 use std::collections::BTreeMap;
+// use rayon::prelude::*;
+
+mod flag_io;
+use flag_io::FlagFileSet;
+mod error;
 
 pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
@@ -56,33 +61,39 @@ pub fn context_to_baseline_imgsets(
 
 pub fn flag_imgsets(
     strategy: UniquePtr<CxxStrategy>,
-    baseline_imgsets: BTreeMap<u64, UniquePtr<CxxImageSet>>,
-) -> BTreeMap<u64, UniquePtr<CxxFlagMask>> {
-    // TODO: parallelize
+    baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>>,
+) -> BTreeMap<usize, UniquePtr<CxxFlagMask>> {
+    // TODO: figure out how to parallelize with Rayon, into_iter(). You'll probably need to convert between UniquePtr and Box
 
-    let mut baseline_flagmasks: BTreeMap<u64, UniquePtr<CxxFlagMask>> = BTreeMap::new();
-    for (baseline, imgset) in baseline_imgsets {
-        baseline_flagmasks.insert(baseline, strategy.Run(&imgset));
-    }
-    return baseline_flagmasks;
+    return (baseline_imgsets)
+        .iter()
+        .map(|(&baseline, imgset)| (baseline, strategy.Run(&imgset)))
+        .collect();
 }
 
-// pub fn write_flags(
-//     context: &mut CorrelatorContext,
-//     baseline_flagmasks: BTreeMap<u64, UniquePtr<CxxFlagMask>>,
-//     filename_template: String,
-//     channel_ids: Vec<usize>,
-// ) {
-//     unimplemented!();
-// }
+pub fn write_flags(
+    context: &mut CorrelatorContext,
+    baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>>,
+    filename_template: &str,
+    gpubox_ids: Vec<usize>,
+) {
+    let mut _flag_files = FlagFileSet::new(context, filename_template, gpubox_ids);
+    for (baseline, flagmask) in baseline_flagmasks {
+        dbg!(&baseline);
+        dbg!(flagmask.Buffer());
+        unimplemented!();
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use super::{context_to_baseline_imgsets, flag_imgsets};
-    use crate::cxx_aoflagger::ffi::{cxx_aoflagger_new, CxxImageSet};
+    use super::{context_to_baseline_imgsets, flag_imgsets, write_flags};
+    use crate::cxx_aoflagger::ffi::{cxx_aoflagger_new, CxxFlagMask, CxxImageSet};
     use cxx::UniquePtr;
+    use glob::glob;
     use mwalib::CorrelatorContext;
     use std::collections::BTreeMap;
+    use tempdir::TempDir;
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -292,9 +303,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_flag_imgsets_minimal() {
-        let mut baseline_imgsets: BTreeMap<u64, UniquePtr<CxxImageSet>> = BTreeMap::new();
+        let mut baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>> = BTreeMap::new();
         let width = 64;
         let height = 64;
         let img_stride = (((width - 1) / 8) + 1) * 8;
@@ -325,25 +335,50 @@ mod tests {
         }
     }
 
-    // #[test]
-    // fn test_write_flags_mwax_minimal() {
-    //     let mut context = get_mwa_ord_context();
-    //     let mut baseline_flagmasks: BTreeMap<u64, UniquePtr<CxxFlagMask>> = BTreeMap::new();
+    #[test]
+    #[ignore]
+    fn test_write_flags_mwax_minimal() {
+        let mut context = get_mwa_ord_context();
+        let mut baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>> = BTreeMap::new();
 
-    //     let width = 7;
-    //     let height = 9;
+        let height =
+            context.num_coarse_chans * context.metafits_context.num_corr_fine_chans_per_coarse;
+        let width = context.num_timesteps;
 
-    //     let flag_x = 5;
-    //     let flag_y = 6;
+        let flag_x = 1;
+        let flag_y = 1;
+        let flag_baseline = 1;
 
-    //     unsafe {
-    //         let aoflagger = cxx_aoflagger_new();
-    //         baseline_flagmasks.insert(0, aoflagger.MakeFlagMask(width, height, false));
-    //         baseline_flagmasks.insert(1, aoflagger.MakeFlagMask(width, height, false));
-    //         let mut flagbuf1 = baseline_flagmasks.get(&1).unwrap().Buffer();
-    //         let flag_stride = flagbuf1.HorizontalStride();
-    //         flagbuf1[flag_y * flag_stride + flag_x] = true;
-    //         baseline_flagmasks.insert(2, aoflagger.MakeFlagMask(width, height, false));
-    //     }
-    // }
+        unsafe {
+            let aoflagger = cxx_aoflagger_new();
+            for (baseline_idx, _) in context.metafits_context.baselines.iter().enumerate() {
+                baseline_flagmasks
+                    .insert(baseline_idx, aoflagger.MakeFlagMask(width, height, false));
+            }
+            let flagmask = baseline_flagmasks.get(&flag_baseline).unwrap();
+            let flag_stride = flagmask.HorizontalStride();
+            flagmask.Buffer()[flag_y * flag_stride + flag_x] = true;
+        }
+
+        let tmp_dir = TempDir::new("birli_lib_test_write_flags_mwax_minimal").unwrap();
+
+        let gpubox_ids = context
+            .coarse_chans
+            .iter()
+            .map(|chan| chan.gpubox_number)
+            .collect();
+
+        let filename_template = tmp_dir.path().join("Flags_%%%.mwaf");
+
+        write_flags(
+            &mut context,
+            baseline_flagmasks,
+            filename_template.to_str().unwrap(),
+            gpubox_ids,
+        );
+
+        let mut flag_files = glob(&tmp_dir.path().join("Flags_*.mwaf").to_str().unwrap()).unwrap();
+
+        assert_eq!(flag_files.next().unwrap().unwrap().to_str().unwrap(), "hi");
+    }
 }

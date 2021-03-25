@@ -12,10 +12,16 @@ clap = "2.33.3"
 mwalib = "0.6.2"
 cxx = "1.0.32"
 libc = "0.2.86"
+thiserror = "1.0.*"
+fitsio = "0.17.*"
+regex = "1.4.*"
+rayon = ">=1.3,<1.6"
 
 [dev-dependencies]
 assert_cli = "0.6.1"
 rustfmt = "0.10.0"
+tempdir = "0.3.7"
+glob = "0.3.0"
 
 [build-dependencies]
 bindgen = "0.57.0"
