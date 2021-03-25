@@ -1,12 +1,10 @@
 mod cxx_aoflagger;
 use cxx::UniquePtr;
-// use cxx_aoflagger::ffi::{CxxAOFlagger, CxxFlagMask, CxxImageSet};
-use cxx_aoflagger::ffi::{CxxAOFlagger, CxxImageSet};
-// use mwalib::{Baseline, CorrelatorContext};
+use cxx_aoflagger::ffi::{CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy};
 use mwalib::CorrelatorContext;
 use std::collections::BTreeMap;
 
-pub fn context_to_baseline_imgset_map(
+pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
     context: &mut CorrelatorContext,
 ) -> BTreeMap<usize, UniquePtr<CxxImageSet>> {
@@ -20,11 +18,10 @@ pub fn context_to_baseline_imgset_map(
     let width = context.num_timesteps;
     let img_stride = (((width - 1) / 8) + 1) * 8;
 
-    // let imgset = aoflagger.MakeImageSet(width, height, 8, 0 as f32, width);
-    let mut baseline_imgset_map: BTreeMap<usize, UniquePtr<CxxImageSet>> = BTreeMap::new();
+    let mut baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>> = BTreeMap::new();
     for (baseline_idx, _) in context.metafits_context.baselines.iter().enumerate() {
         unsafe {
-            baseline_imgset_map.insert(
+            baseline_imgsets.insert(
                 baseline_idx,
                 aoflagger.MakeImageSet(width, height, 8, 0 as f32, width),
             );
@@ -45,7 +42,7 @@ pub fn context_to_baseline_imgset_map(
                         * coarse_chan_idx
                         + fine_chan_idx;
 
-                    let imgset = baseline_imgset_map.get(&baseline_idx).unwrap();
+                    let imgset = baseline_imgsets.get(&baseline_idx).unwrap();
                     for (float_idx, float_val) in fine_chan_chunk.iter().enumerate() {
                         imgset.ImageBuffer(float_idx)[y * img_stride + x] = *float_val
                     }
@@ -54,19 +51,25 @@ pub fn context_to_baseline_imgset_map(
         }
     }
 
-    return baseline_imgset_map;
+    return baseline_imgsets;
 }
 
-// pub fn flag_imgsets(
-//     aoflagger: &CxxAOFlagger,
-//     baseline_imgset_map: BTreeMap<u64, UniquePtr<CxxImageSet>>,
-// ) {
-//     unimplemented!();
-// }
+pub fn flag_imgsets(
+    strategy: UniquePtr<CxxStrategy>,
+    baseline_imgsets: BTreeMap<u64, UniquePtr<CxxImageSet>>,
+) -> BTreeMap<u64, UniquePtr<CxxFlagMask>> {
+    // TODO: parallelize
+
+    let mut baseline_flagmasks: BTreeMap<u64, UniquePtr<CxxFlagMask>> = BTreeMap::new();
+    for (baseline, imgset) in baseline_imgsets {
+        baseline_flagmasks.insert(baseline, strategy.Run(&imgset));
+    }
+    return baseline_flagmasks;
+}
 
 // pub fn write_flags(
 //     context: &mut CorrelatorContext,
-//     baseline_flagmask_map: BTreeMap<u64, UniquePtr<CxxFlagMask>>,
+//     baseline_flagmasks: BTreeMap<u64, UniquePtr<CxxFlagMask>>,
 //     filename_template: String,
 //     channel_ids: Vec<usize>,
 // ) {
@@ -75,9 +78,11 @@ pub fn context_to_baseline_imgset_map(
 
 #[cfg(test)]
 mod tests {
-    use super::context_to_baseline_imgset_map;
-    use crate::cxx_aoflagger::ffi::cxx_aoflagger_new;
+    use super::{context_to_baseline_imgsets, flag_imgsets};
+    use crate::cxx_aoflagger::ffi::{cxx_aoflagger_new, CxxImageSet};
+    use cxx::UniquePtr;
     use mwalib::CorrelatorContext;
+    use std::collections::BTreeMap;
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -102,16 +107,16 @@ mod tests {
     }
 
     #[test]
-    fn test_context_to_baseline_imgset_map_mwax() {
+    fn test_context_to_baseline_imgsets_mwax() {
         let mut context = get_mwax_context();
         let width = context.num_timesteps;
         let img_stride = (((width - 1) / 8) + 1) * 8;
 
         unsafe {
             let aoflagger = cxx_aoflagger_new();
-            let baseline_imgset_map = context_to_baseline_imgset_map(&aoflagger, &mut context);
+            let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &mut context);
 
-            let imgset0 = baseline_imgset_map.get(&0).unwrap();
+            let imgset0 = baseline_imgsets.get(&0).unwrap();
 
             assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 0], 0x410000 as f32);
             assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 1], 0x410100 as f32);
@@ -168,8 +173,7 @@ mod tests {
             assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 6], 0.0);
             assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 7], 0.0);
 
-
-            let imgset2 = baseline_imgset_map.get(&2).unwrap();
+            let imgset2 = baseline_imgsets.get(&2).unwrap();
 
             assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 0], 0x410020 as f32);
             assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 1], 0x410120 as f32);
@@ -192,16 +196,16 @@ mod tests {
     }
 
     #[test]
-    fn test_context_to_baseline_imgset_map_mwa_ord() {
+    fn test_context_to_baseline_imgsets_mwa_ord() {
         let mut context = get_mwa_ord_context();
         let width = context.num_timesteps;
         let img_stride = (((width - 1) / 8) + 1) * 8;
 
         unsafe {
             let aoflagger = cxx_aoflagger_new();
-            let baseline_imgset_map = context_to_baseline_imgset_map(&aoflagger, &mut context);
+            let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &mut context);
 
-            let imgset0 = baseline_imgset_map.get(&0).unwrap();
+            let imgset0 = baseline_imgsets.get(&0).unwrap();
 
             assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 0], 0x10c5be as f32);
             assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 1], 0x14c5be as f32);
@@ -213,7 +217,7 @@ mod tests {
             assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 2], 0x18c5bf as f32);
             assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 3], 0x1cc5bf as f32);
 
-            let imgset2 = baseline_imgset_map.get(&2).unwrap();
+            let imgset2 = baseline_imgsets.get(&2).unwrap();
 
             assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 0], 0x10c57e as f32);
             assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 1], 0x14c57e as f32);
@@ -227,14 +231,50 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore]
+    fn test_flag_imgsets_minimal() {
+        let mut baseline_imgsets: BTreeMap<u64, UniquePtr<CxxImageSet>> = BTreeMap::new();
+        let width = 64;
+        let height = 64;
+        let img_stride = (((width - 1) / 8) + 1) * 8;
+
+        let noise_x = 32;
+        let noise_y = 32;
+        let noise_z = 1;
+        let noise_val = 0xffffff as f32;
+        unsafe {
+            let aoflagger = cxx_aoflagger_new();
+            let imgset0 = aoflagger.MakeImageSet(width, height, 8, 0 as f32, width);
+            baseline_imgsets.insert(0, imgset0);
+            let imgset1 = aoflagger.MakeImageSet(width, height, 8, 0 as f32, width);
+            imgset1.ImageBuffer(noise_z)[noise_y * img_stride + noise_x] = noise_val;
+            baseline_imgsets.insert(1, imgset1);
+
+            let strategy_file_minimal = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
+            let strategy_minimal = aoflagger.LoadStrategyFile(&strategy_file_minimal);
+
+            let baseline_flagmasks = flag_imgsets(strategy_minimal, baseline_imgsets);
+            let flagmask0 = baseline_flagmasks.get(&0).unwrap();
+            let flagmask1 = baseline_flagmasks.get(&1).unwrap();
+            let flag_stride = flagmask0.HorizontalStride();
+            assert!(!flagmask0.Buffer()[0]);
+            assert!(!flagmask0.Buffer()[noise_y * flag_stride + noise_x]);
+            assert!(!flagmask1.Buffer()[0]);
+            assert!(flagmask1.Buffer()[noise_y * flag_stride + noise_x]);
+        }
+    }
+
     // #[test]
-    // fn test_write_flags_mwax() {
+    // fn test_write_flags_mwax_minimal() {
     //     let mut context = get_mwa_ord_context();
-    //     let baseline_flagmask_map = BTreeMap<u64, UniquePtr<CxxFlagMask>>::new();
+    //     let baseline_flagmasks: BTreeMap<u64, UniquePtr<CxxFlagMask>> = BTreeMap::new();
     //     unsafe {
     //         let aoflagger = cxx_aoflagger_new();
-    //         const flagm
-    //         baseline_flagmask_map.insert(
+    //         let flagmask = aoflagger.MakeFlagMask(
+
+    //         )
+    //         baseline_flagmasks.insert(
     //             0, aoflagger
     //         )
     //     }
