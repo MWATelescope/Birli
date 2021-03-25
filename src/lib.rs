@@ -217,17 +217,77 @@ mod tests {
             assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 2], 0x18c5bf as f32);
             assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 3], 0x1cc5bf as f32);
 
-            let imgset2 = baseline_imgsets.get(&2).unwrap();
+            assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 0], 0x10c5ae as f32);
+            assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 1], 0x14c5ae as f32);
+            assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 2], 0x18c5ae as f32);
+            assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 3], 0x1cc5ae as f32);
 
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 0], 0x10c57e as f32);
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 1], 0x14c57e as f32);
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 2], 0x18c57e as f32);
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 3], 0x1cc57e as f32);
+            assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 0], -0x10c5af as f32);
+            assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 1], -0x14c5af as f32);
+            assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 2], -0x18c5af as f32);
+            assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 3], -0x1cc5af as f32);
 
-            assert_eq!(imgset2.ImageBuffer(1)[0 * img_stride + 0], -0x10c57f as f32);
-            assert_eq!(imgset2.ImageBuffer(1)[0 * img_stride + 1], -0x14c57f as f32);
-            assert_eq!(imgset2.ImageBuffer(1)[0 * img_stride + 2], -0x18c57f as f32);
-            assert_eq!(imgset2.ImageBuffer(1)[0 * img_stride + 3], -0x1cc57f as f32);
+            assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 0], 0x10c5ae as f32);
+            assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 1], 0x14c5ae as f32);
+            assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 2], 0x18c5ae as f32);
+            assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 3], 0x1cc5ae as f32);
+
+            assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 0], 0x10c5af as f32);
+            assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 1], 0x14c5af as f32);
+            assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 2], 0x18c5af as f32);
+            assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 3], 0x1cc5af as f32);
+
+            assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 0], 0x10bec6 as f32);
+            assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 1], 0x14bec6 as f32);
+            assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 2], 0x18bec6 as f32);
+            assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 3], 0x1cbec6 as f32);
+
+            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 0], 0x10bec7 as f32);
+            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 1], 0x14bec7 as f32);
+            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 2], 0x18bec7 as f32);
+            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 3], 0x1cbec7 as f32);
+
+            let imgset5 = baseline_imgsets.get(&5).unwrap();
+
+            assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 0], 0x10f1ce as f32);
+            assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 1], 0x14f1ce as f32);
+            assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 2], 0x18f1ce as f32);
+            assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 3], 0x1cf1ce as f32);
+
+            assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 0], -0x10f1cf as f32);
+            assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 1], -0x14f1cf as f32);
+            assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 2], -0x18f1cf as f32);
+            assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 3], -0x1cf1cf as f32);
+
+            assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 0], 0x10ea26 as f32);
+            assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 1], 0x14ea26 as f32);
+            assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 2], 0x18ea26 as f32);
+            assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 3], 0x1cea26 as f32);
+
+            assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 0], -0x10ea27 as f32);
+            assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 1], -0x14ea27 as f32);
+            assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 2], -0x18ea27 as f32);
+            assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 3], -0x1cea27 as f32);
+
+            assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 0], 0x10f1be as f32);
+            assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 1], 0x14f1be as f32);
+            assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 2], 0x18f1be as f32);
+            assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 3], 0x1cf1be as f32);
+
+            assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 0], -0x10f1bf as f32);
+            assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 1], -0x14f1bf as f32);
+            assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 2], -0x18f1bf as f32);
+            assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 3], -0x1cf1bf as f32);
+
+            assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 0], 0x10ea16 as f32);
+            assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 1], 0x14ea16 as f32);
+            assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 2], 0x18ea16 as f32);
+            assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 3], 0x1cea16 as f32);
+
+            assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 0], -0x10ea17 as f32);
+            assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 1], -0x14ea17 as f32);
+            assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 2], -0x18ea17 as f32);
+            assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 3], -0x1cea17 as f32);
         }
     }
 
@@ -268,15 +328,22 @@ mod tests {
     // #[test]
     // fn test_write_flags_mwax_minimal() {
     //     let mut context = get_mwa_ord_context();
-    //     let baseline_flagmasks: BTreeMap<u64, UniquePtr<CxxFlagMask>> = BTreeMap::new();
+    //     let mut baseline_flagmasks: BTreeMap<u64, UniquePtr<CxxFlagMask>> = BTreeMap::new();
+
+    //     let width = 7;
+    //     let height = 9;
+
+    //     let flag_x = 5;
+    //     let flag_y = 6;
+
     //     unsafe {
     //         let aoflagger = cxx_aoflagger_new();
-    //         let flagmask = aoflagger.MakeFlagMask(
-
-    //         )
-    //         baseline_flagmasks.insert(
-    //             0, aoflagger
-    //         )
+    //         baseline_flagmasks.insert(0, aoflagger.MakeFlagMask(width, height, false));
+    //         baseline_flagmasks.insert(1, aoflagger.MakeFlagMask(width, height, false));
+    //         let mut flagbuf1 = baseline_flagmasks.get(&1).unwrap().Buffer();
+    //         let flag_stride = flagbuf1.HorizontalStride();
+    //         flagbuf1[flag_y * flag_stride + flag_x] = true;
+    //         baseline_flagmasks.insert(2, aoflagger.MakeFlagMask(width, height, false));
     //     }
     // }
 }
