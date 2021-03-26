@@ -23,15 +23,18 @@ pub fn context_to_baseline_imgsets(
     let width = context.num_timesteps;
     let img_stride = (((width - 1) / 8) + 1) * 8;
 
-    let mut baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>> = BTreeMap::new();
-    for (baseline_idx, _) in context.metafits_context.baselines.iter().enumerate() {
-        unsafe {
-            baseline_imgsets.insert(
+    let baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>> = context
+        .metafits_context
+        .baselines
+        .iter()
+        .enumerate()
+        .map(|(baseline_idx, _)| unsafe {
+            (
                 baseline_idx,
                 aoflagger.MakeImageSet(width, height, 8, 0 as f32, width),
-            );
-        }
-    }
+            )
+        })
+        .collect();
 
     for (coarse_chan_idx, _) in coarse_chan_arr.iter().enumerate() {
         for (timestep_idx, _) in timestep_arr.iter().enumerate() {
@@ -65,7 +68,7 @@ pub fn flag_imgsets(
 ) -> BTreeMap<usize, UniquePtr<CxxFlagMask>> {
     // TODO: figure out how to parallelize with Rayon, into_iter(). You'll probably need to convert between UniquePtr and Box
 
-    return (baseline_imgsets)
+    return baseline_imgsets
         .iter()
         .map(|(&baseline, imgset)| (baseline, strategy.Run(&imgset)))
         .collect();
@@ -75,9 +78,10 @@ pub fn write_flags(
     context: &mut CorrelatorContext,
     baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>>,
     filename_template: &str,
-    gpubox_ids: Vec<usize>,
+    gpubox_ids: &Vec<usize>,
 ) {
-    let mut _flag_files = FlagFileSet::new(context, filename_template, gpubox_ids);
+    #[allow(unused)]
+    let mut flag_files = FlagFileSet::new(context, filename_template, &gpubox_ids);
     for (baseline, flagmask) in baseline_flagmasks {
         dbg!(&baseline);
         dbg!(flagmask.Buffer());
@@ -93,7 +97,7 @@ mod tests {
     use glob::glob;
     use mwalib::CorrelatorContext;
     use std::collections::BTreeMap;
-    use tempdir::TempDir;
+    use tempfile::tempdir;
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -360,25 +364,27 @@ mod tests {
             flagmask.Buffer()[flag_y * flag_stride + flag_x] = true;
         }
 
-        let tmp_dir = TempDir::new("birli_lib_test_write_flags_mwax_minimal").unwrap();
+        let tmp_dir = tempdir().unwrap();
 
-        let gpubox_ids = context
+        let gpubox_ids: Vec<usize> = context
             .coarse_chans
             .iter()
             .map(|chan| chan.gpubox_number)
             .collect();
 
-        let filename_template = tmp_dir.path().join("Flags_%%%.mwaf");
+        let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
+        let selected_gpuboxes = gpubox_ids[..1].to_vec();
 
         write_flags(
             &mut context,
             baseline_flagmasks,
             filename_template.to_str().unwrap(),
-            gpubox_ids,
+            &selected_gpuboxes,
         );
 
-        let mut flag_files = glob(&tmp_dir.path().join("Flags_*.mwaf").to_str().unwrap()).unwrap();
+        let flag_files = glob(&tmp_dir.path().join("Flagfile*.mwaf").to_str().unwrap()).unwrap();
 
-        assert_eq!(flag_files.next().unwrap().unwrap().to_str().unwrap(), "hi");
+        assert_eq!(flag_files.count(), selected_gpuboxes.len());
+        // assert_eq!(flag_files.next().unwrap().unwrap().to_str(), Some("hi"));
     }
 }
