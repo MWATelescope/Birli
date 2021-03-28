@@ -14,7 +14,8 @@ size_t Width() const;
 size_t Height() const;
 size_t ImageCount() const;
 size_t HorizontalStride() const;
-rust::Slice<float> ImageBuffer(size_t imgIndex) const;
+rust::Slice<const float> ImageBuffer(size_t imgIndex) const;
+rust::Slice<float> ImageBufferMut(size_t imgIndex);
 private:
 CxxImageSet();
 CxxImageSet(ImageSet impl);
@@ -28,7 +29,8 @@ public:
 size_t Width() const;
 size_t Height() const;
 size_t HorizontalStride() const;
-rust::Slice<bool> Buffer() const;
+rust::Slice<const bool> Buffer() const;
+rust::Slice<bool> BufferMut();
 private:
 CxxFlagMask();
 CxxFlagMask(FlagMask impl);

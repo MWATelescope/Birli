@@ -18,17 +18,15 @@ pub mod ffi {
         fn Height(self: &CxxImageSet) -> usize;
         fn ImageCount(self: &CxxImageSet) -> usize;
         fn HorizontalStride(self: &CxxImageSet) -> usize;
-        // TODO: fix this
-        #[allow(clippy::mut_from_ref)]
-        fn ImageBuffer(self: &CxxImageSet, imgIndex: usize) -> &mut [f32];
+        fn ImageBuffer(self: &CxxImageSet, imgIndex: usize) -> &[f32];
+        fn ImageBufferMut(self: Pin<&mut CxxImageSet>, imgIndex: usize) -> &mut [f32];
 
         // CxxFlagMask methods
         fn Width(self: &CxxFlagMask) -> usize;
         fn Height(self: &CxxFlagMask) -> usize;
         fn HorizontalStride(self: &CxxFlagMask) -> usize;
-        // TODO: fix this
-        #[allow(clippy::mut_from_ref)]
-        fn Buffer(self: &CxxFlagMask) -> &mut [bool];
+        fn Buffer(self: &CxxFlagMask) -> &[bool];
+        fn BufferMut(self: Pin<&mut CxxFlagMask>) -> &mut [bool];
 
         // CxxAOFlagger methods
         fn GetVersion(self: &CxxAOFlagger, major: &mut i16, minor: &mut i16, subMinor: &mut i16);
@@ -133,8 +131,8 @@ mod tests {
         let width_cap = 6 as usize;
         unsafe {
             let aoflagger = cxx_aoflagger_new();
-            let img_set = aoflagger.MakeImageSet(width, height, count, initial_val, width_cap);
-            let first_buffer_write = img_set.ImageBuffer(0);
+            let mut img_set = aoflagger.MakeImageSet(width, height, count, initial_val, width_cap);
+            let first_buffer_write = img_set.pin_mut().ImageBufferMut(0);
             first_buffer_write[0] = 7 as f32;
             let first_buffer_read = img_set.ImageBuffer(0);
             assert_eq!(first_buffer_read[0], 7 as f32);
@@ -166,8 +164,8 @@ mod tests {
         let initial_val = false;
         unsafe {
             let aoflagger = cxx_aoflagger_new();
-            let flag_mask = aoflagger.MakeFlagMask(width, height, initial_val);
-            let buffer_write = flag_mask.Buffer();
+            let mut flag_mask = aoflagger.MakeFlagMask(width, height, initial_val);
+            let buffer_write = flag_mask.pin_mut().BufferMut();
             buffer_write[0] = !initial_val;
             let buffer_read = flag_mask.Buffer();
             assert_eq!(buffer_read[0], !initial_val);
@@ -229,8 +227,8 @@ mod tests {
             let aoflagger = cxx_aoflagger_new();
             let strategy_file_name = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
             let strategy = aoflagger.LoadStrategyFile(&strategy_file_name);
-            let img_set = aoflagger.MakeImageSet(width, height, count, initial_val, width_cap);
-            let img_buffer = img_set.ImageBuffer(noise_z);
+            let mut img_set = aoflagger.MakeImageSet(width, height, count, initial_val, width_cap);
+            let img_buffer = img_set.pin_mut().ImageBufferMut(noise_z);
             img_buffer[noise_y * exp_stride + noise_x] = 999 as f32;
             let flag_mask = strategy.Run(&img_set);
             let flag_stride = flag_mask.HorizontalStride();
@@ -266,11 +264,11 @@ mod tests {
             let aoflagger = cxx_aoflagger_new();
             let strategy_file_name = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
             let strategy = aoflagger.LoadStrategyFile(&strategy_file_name);
-            let img_set = aoflagger.MakeImageSet(width, height, count, initial_val, width_cap);
-            let img_buffer = img_set.ImageBuffer(noise_z);
+            let mut img_set = aoflagger.MakeImageSet(width, height, count, initial_val, width_cap);
+            let img_buffer = img_set.pin_mut().ImageBufferMut(noise_z);
             img_buffer[noise_y * exp_stride + noise_x] = 999 as f32;
-            let existing_flag_mask = aoflagger.MakeFlagMask(width, height, false);
-            let existing_flag_buf = existing_flag_mask.Buffer();
+            let mut existing_flag_mask = aoflagger.MakeFlagMask(width, height, false);
+            let existing_flag_buf = existing_flag_mask.pin_mut().BufferMut();
             existing_flag_buf[existing_y * exp_stride + existing_x] = true;
             let flag_stride = existing_flag_mask.HorizontalStride();
             let flag_mask = strategy.RunExisting(&img_set, &existing_flag_mask);
