@@ -84,10 +84,30 @@ impl FlagFileSet {
         gpubox_fptrs: &mut BTreeMap<usize, FitsFile>,
         context: &CorrelatorContext,
     ) {
-        for (_, mut fptr) in gpubox_fptrs.into_iter() {
+        for (&gpubox_id, mut fptr) in gpubox_fptrs.into_iter() {
             let primary_hdu = fptr.primary_hdu().unwrap();
             primary_hdu
                 .write_key(&mut fptr, "GPSTIME", context.metafits_context.obs_id as i32)
+                .unwrap();
+            primary_hdu
+                .write_key(
+                    &mut fptr,
+                    "NCHANS",
+                    context.metafits_context.num_corr_fine_chans_per_coarse as i32,
+                )
+                .unwrap();
+            primary_hdu
+                .write_key(
+                    &mut fptr,
+                    "NANTENNA",
+                    context.metafits_context.num_ants as i32,
+                )
+                .unwrap();
+            primary_hdu
+                .write_key(&mut fptr, "NSCANS", context.num_timesteps as i32)
+                .unwrap();
+            primary_hdu
+                .write_key(&mut fptr, "GPUBOXNO", gpubox_id as i32)
                 .unwrap();
         }
     }
@@ -102,7 +122,7 @@ mod tests {
     use super::FlagFileSet;
     use crate::error::BirliError;
     use fitsio::FitsFile;
-    use mwalib::{CorrelatorContext, _get_optional_fits_key};
+    use mwalib::{CorrelatorContext, _get_optional_fits_key, get_optional_fits_key};
     use regex::Regex;
     use std::collections::BTreeMap;
     use std::fs::File;
@@ -266,7 +286,7 @@ mod tests {
             FlagFileSet::write_headers(&mut gpubox_fptrs, &context);
         }
 
-        for gpubox_id in gpubox_ids.iter() {
+        for &gpubox_id in gpubox_ids.iter() {
             let mut flag_fptr = FitsFile::open(
                 tmp_dir
                     .path()
@@ -274,11 +294,29 @@ mod tests {
             )
             .unwrap();
             let hdu = flag_fptr.primary_hdu().unwrap();
-            let gps_time: i32 =
-                _get_optional_fits_key(&mut flag_fptr, &hdu, "GPSTIME", file!(), line!())
-                    .unwrap()
-                    .unwrap();
-            assert_eq!(gps_time, context.metafits_context.obs_id as i32);
+
+            let gps_time: Option<i32> =
+                get_optional_fits_key!(&mut flag_fptr, &hdu, "GPSTIME").unwrap();
+            assert_eq!(gps_time.unwrap(), context.metafits_context.obs_id as i32);
+
+            let num_chans: Option<i32> =
+                get_optional_fits_key!(&mut flag_fptr, &hdu, "NCHANS").unwrap();
+            assert_eq!(
+                num_chans.unwrap(),
+                context.metafits_context.num_corr_fine_chans_per_coarse as i32
+            );
+
+            let num_ants: Option<i32> =
+                get_optional_fits_key!(&mut flag_fptr, &hdu, "NANTENNA").unwrap();
+            assert_eq!(num_ants.unwrap(), context.metafits_context.num_ants as i32);
+
+            let num_scans: Option<i32> =
+                get_optional_fits_key!(&mut flag_fptr, &hdu, "NSCANS").unwrap();
+            assert_eq!(num_scans.unwrap(), context.num_timesteps as i32);
+
+            let gpubox_no: Option<i32> =
+                get_optional_fits_key!(&mut flag_fptr, &hdu, "GPUBOXNO").unwrap();
+            assert_eq!(gpubox_no.unwrap(), gpubox_id as i32);
         }
     }
 }
