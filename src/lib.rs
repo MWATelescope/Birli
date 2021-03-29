@@ -23,7 +23,7 @@ pub fn context_to_baseline_imgsets(
     let width = context.num_timesteps;
     let img_stride = (((width - 1) / 8) + 1) * 8;
 
-    let baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>> = context
+    let mut baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>> = context
         .metafits_context
         .baselines
         .iter()
@@ -50,9 +50,9 @@ pub fn context_to_baseline_imgsets(
                         * coarse_chan_idx
                         + fine_chan_idx;
 
-                    let imgset = baseline_imgsets.get(&baseline_idx).unwrap();
+                    let imgset = baseline_imgsets.get_mut(&baseline_idx).unwrap();
                     for (float_idx, float_val) in fine_chan_chunk.iter().enumerate() {
-                        imgset.ImageBuffer(float_idx)[y * img_stride + x] = *float_val
+                        imgset.pin_mut().ImageBufferMut(float_idx)[y * img_stride + x] = *float_val
                     }
                 }
             }
@@ -321,8 +321,8 @@ mod tests {
             let aoflagger = cxx_aoflagger_new();
             let imgset0 = aoflagger.MakeImageSet(width, height, 8, 0 as f32, width);
             baseline_imgsets.insert(0, imgset0);
-            let imgset1 = aoflagger.MakeImageSet(width, height, 8, 0 as f32, width);
-            imgset1.ImageBuffer(noise_z)[noise_y * img_stride + noise_x] = noise_val;
+            let mut imgset1 = aoflagger.MakeImageSet(width, height, 8, 0 as f32, width);
+            imgset1.pin_mut().ImageBufferMut(noise_z)[noise_y * img_stride + noise_x] = noise_val;
             baseline_imgsets.insert(1, imgset1);
 
             let strategy_file_minimal = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
@@ -359,9 +359,9 @@ mod tests {
                 baseline_flagmasks
                     .insert(baseline_idx, aoflagger.MakeFlagMask(width, height, false));
             }
-            let flagmask = baseline_flagmasks.get(&flag_baseline).unwrap();
+            let flagmask = baseline_flagmasks.get_mut(&flag_baseline).unwrap();
             let flag_stride = flagmask.HorizontalStride();
-            flagmask.Buffer()[flag_y * flag_stride + flag_x] = true;
+            flagmask.pin_mut().BufferMut()[flag_y * flag_stride + flag_x] = true;
         }
 
         let tmp_dir = tempdir().unwrap();
