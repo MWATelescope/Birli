@@ -371,10 +371,10 @@ def main():
     #     # 'max_antennas': MAX_ANTENNAS,
     #     'max_fine_chans': MAX_FINE_CHANS,
     # })
-    # # cargo run dump-all-data \
-    # #     --dump-filename=../Birli/tests/data/1101503312_mwa_ord/1101503312_dump.csv \
-    # #     --metafits=../Birli/tests/data/1101503312_mwa_ord/1101503312.metafits \
-    # #     ../Birli/tests/data/1101503312_mwa_ord/1101503312_*.fits
+    # cargo run dump-all-data \
+    #     --dump-filename=../Birli/tests/data/1101503312_mwa_ord/1101503312_dump.csv \
+    #     --metafits=../Birli/tests/data/1101503312_mwa_ord/1101503312.metafits \
+    #     ../Birli/tests/data/1101503312_mwa_ord/1101503312_*.fits
     generate({
         'corr_type': "MWAX",
         'src_dir': SRC_TEST_DIR_MWAX,
@@ -424,10 +424,10 @@ def main():
         'max_fine_chans': MAX_FINE_CHANS,
         'sequential': True,
     })
-    # # cargo run dump-all-data \
-    # #   --dump-filename=../Birli/tests/data/1196175296_mwa_ord_seq/1196175296_dump.csv \
-    # #   --metafits=../Birli/tests/data/1196175296_mwa_ord_seq/1196175296.metafits \
-    # #   ../Birli/tests/data/1196175296_mwa_ord_seq/1196175296_*.fits
+    # cargo run dump-all-data \
+    #   --dump-filename=../Birli/tests/data/1196175296_mwa_ord_seq/1196175296_dump.csv \
+    #   --metafits=../Birli/tests/data/1196175296_mwa_ord_seq/1196175296.metafits \
+    #   ../Birli/tests/data/1196175296_mwa_ord_seq/1196175296_*.fits | tee dump_out.txt
 
 
 if __name__ == '__main__':
