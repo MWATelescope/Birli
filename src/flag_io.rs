@@ -8,7 +8,6 @@ use regex::Regex;
 
 // A group of MWAF Files for the same observation
 // #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct FlagFileSet {
     // // GPSTIME
     // obs_id: u32,
@@ -20,7 +19,8 @@ pub struct FlagFileSet {
     // num_timesteps: usize,
     // // each GPUBOXNO
     // gpubox_ids: Vec<usize>,
-    fptrs: BTreeMap<usize, FitsFile>,
+    #[allow(dead_code)]
+    gpubox_fptrs: BTreeMap<usize, FitsFile>,
 }
 
 impl FlagFileSet {
@@ -43,15 +43,15 @@ impl FlagFileSet {
             });
         }
 
-        let mut fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
-        for (gpubox_index, gpubox_id) in gpubox_ids.iter().enumerate() {
+        let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
+        for &gpubox_id in gpubox_ids.iter() {
             let filename = re_percents.replace(
                 filename_template,
                 format!("{:0width$}", gpubox_id, width = num_percents),
             );
             match FitsFile::create(Path::new(&filename.to_string())).open() {
                 Ok(fptr) => {
-                    fptrs.insert(gpubox_index, fptr);
+                    gpubox_fptrs.insert(gpubox_id, fptr);
                 }
                 Err(fits_error) => {
                     return Err(BirliError::FitsIO {
@@ -64,7 +64,11 @@ impl FlagFileSet {
             }
         }
 
-        Ok(FlagFileSet { fptrs: fptrs })
+        FlagFileSet::write_headers(&mut gpubox_fptrs, &context);
+
+        Ok(FlagFileSet {
+            gpubox_fptrs: gpubox_fptrs,
+        })
 
         // for gpubox_id in gpubox_ids {
         //     let gpubox_id_str = gpubox_id.to_str();
@@ -76,9 +80,17 @@ impl FlagFileSet {
     //     unimplemented!();
     // }
 
-    // pub fn write_headers(){
-    //     unimplemented!();
-    // }
+    pub fn write_headers(
+        gpubox_fptrs: &mut BTreeMap<usize, FitsFile>,
+        context: &CorrelatorContext,
+    ) {
+        for (_, mut fptr) in gpubox_fptrs.into_iter() {
+            let primary_hdu = fptr.primary_hdu().unwrap();
+            primary_hdu
+                .write_key(&mut fptr, "GPSTIME", context.metafits_context.obs_id as i32)
+                .unwrap();
+        }
+    }
 
     // pub fn write_row(ant1_index: usize, ant2_index: usize, flags: const bool*) {
     //     unimplemented!();
@@ -89,8 +101,12 @@ impl FlagFileSet {
 mod tests {
     use super::FlagFileSet;
     use crate::error::BirliError;
-    use mwalib::CorrelatorContext;
+    use fitsio::FitsFile;
+    use mwalib::{CorrelatorContext, _get_optional_fits_key};
+    use regex::Regex;
+    use std::collections::BTreeMap;
     use std::fs::File;
+    use std::path::Path;
     use tempfile::tempdir;
 
     // TODO: deduplicate this from lib.rs
@@ -217,5 +233,52 @@ mod tests {
             .err(),
             Some(BirliError::FitsIO { .. })
         ));
+    }
+
+    #[test]
+    fn test_write_headers() {
+        let context = get_mwax_context();
+        let gpubox_ids: Vec<usize> = context
+            .coarse_chans
+            .iter()
+            .map(|chan| chan.gpubox_number)
+            .collect();
+
+        let tmp_dir = tempdir().unwrap();
+        let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
+
+        {
+            let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
+            let re_percents = Regex::new("%{3,}+").unwrap();
+            for &gpubox_id in gpubox_ids.iter() {
+                let filename = re_percents.replace(
+                    filename_template.to_str().unwrap(),
+                    format!("{:03}", gpubox_id),
+                );
+                gpubox_fptrs.insert(
+                    gpubox_id,
+                    FitsFile::create(Path::new(&filename.to_string()))
+                        .open()
+                        .unwrap(),
+                );
+            }
+
+            FlagFileSet::write_headers(&mut gpubox_fptrs, &context);
+        }
+
+        for gpubox_id in gpubox_ids.iter() {
+            let mut flag_fptr = FitsFile::open(
+                tmp_dir
+                    .path()
+                    .join(format!("Flagfile{:03}.mwaf", gpubox_id)),
+            )
+            .unwrap();
+            let hdu = flag_fptr.primary_hdu().unwrap();
+            let gps_time: i32 =
+                _get_optional_fits_key(&mut flag_fptr, &hdu, "GPSTIME", file!(), line!())
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(gps_time, context.metafits_context.obs_id as i32);
+        }
     }
 }
