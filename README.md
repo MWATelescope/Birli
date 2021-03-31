@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD033 -->
 <div class="bg-gray-dark" align="center" style="background-color:#24292e">
-<img src="birli.png" height="200px" alt="Birli logo">
+<img src="img/birli.png" height="200px" alt="Birli logo">
 <br/>
 <img src="https://github.com/MWATelescope/Birli/workflows/Cross-Platform%20Tests/badge.svg" alt="Cross-Platform Tests">
 <a href="https://codecov.io/gh/MWATelescope/Birli"><img src="https://codecov.io/gh/MWATelescope/Birli/branch/main/graph/badge.svg?token=PK2KYEZOW9" alt="codecov"></a>
@@ -22,4 +22,8 @@ acknowledge the Wajarri Yamatji people as the traditional owners of the Observat
 
 ## Coverage
 
-![codecoverage-svg-sunburst](https://codecov.io/gh/MWATelescope/Birli/branch/main/graphs/sunburst.svg)
+[![codecoverage-svg-sunburst](https://codecov.io/gh/MWATelescope/Birli/branch/main/graphs/sunburst.svg)](https://codecov.io/gh/MWATelescope/Birli)
+
+This repo is approved by...
+
+![CIRA Rust Evangelism Strike Force](img/CIRA_Rust_Evangelism_Strike_Force.png)
