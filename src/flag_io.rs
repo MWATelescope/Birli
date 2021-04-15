@@ -36,6 +36,7 @@ pub struct FlagFileHeaders {
     pub bytes_per_row: usize,
     // hdu1.NAXIS2
     pub num_rows: usize,
+    // TODO: is it useful to output aoflagger version and strategy?
 }
 
 impl FlagFileHeaders {
@@ -223,45 +224,43 @@ impl FlagFileSet {
         Ok(header)
     }
 
-    // TODO: this is really just for tests.
-    #[allow(dead_code)]
-    pub fn read_validated_header(
-        context: &CorrelatorContext,
-        fptr: &mut FitsFile,
-    ) -> Result<FlagFileHeaders, BirliError> {
-        let headers = FlagFileSet::read_header(fptr)?;
-        let header_baselines = headers.num_ants * (headers.num_ants + 1) / 2;
-        if header_baselines != context.metafits_context.num_baselines {
-            return Err(BirliError::MwafInconsistent {
-                file: String::from(&fptr.filename),
-                expected: "NANTENNA * (NANTENNA+1) / 2 = context.metafits_context.num_baselines"
-                    .to_string(),
-                found: format!(
-                    "{} != {}",
-                    header_baselines, context.metafits_context.num_baselines
-                ),
-            });
-        };
+    // pub fn read_validated_header(
+    //     context: &CorrelatorContext,
+    //     fptr: &mut FitsFile,
+    // ) -> Result<FlagFileHeaders, BirliError> {
+    //     let headers = FlagFileSet::read_header(fptr)?;
+    //     let header_baselines = headers.num_ants * (headers.num_ants + 1) / 2;
+    //     if header_baselines != context.metafits_context.num_baselines {
+    //         return Err(BirliError::MwafInconsistent {
+    //             file: String::from(&fptr.filename),
+    //             expected: "NANTENNA * (NANTENNA+1) / 2 = context.metafits_context.num_baselines"
+    //                 .to_string(),
+    //             found: format!(
+    //                 "{} != {}",
+    //                 header_baselines, context.metafits_context.num_baselines
+    //             ),
+    //         });
+    //     };
 
-        // TODO: check NSCANS?
-        // if headers.num_timesteps > context.num_timesteps {
-        //     return Err(BirliError::MwafInconsistent {
-        //         file: String::from(&fptr.filename),
-        //         expected: "NSCANS <= context.num_timesteps".to_string(),
-        //         found: format!("{} > {}", headers.num_timesteps, context.num_timesteps),
-        //     });
-        // };
+    //     // TODO: check NSCANS?
+    //     // if headers.num_timesteps > context.num_timesteps {
+    //     //     return Err(BirliError::MwafInconsistent {
+    //     //         file: String::from(&fptr.filename),
+    //     //         expected: "NSCANS <= context.num_timesteps".to_string(),
+    //     //         found: format!("{} > {}", headers.num_timesteps, context.num_timesteps),
+    //     //     });
+    //     // };
 
-        if headers.bytes_per_row * 8 < context.metafits_context.num_corr_fine_chans_per_coarse {
-            return Err(BirliError::MwafInconsistent {
-                file: String::from(&fptr.filename),
-                expected: "headers.bytes_per_row * 8 >= context.metafits_context.num_corr_fine_chans_per_coarse".to_string(),
-                found: format!("{} < {}", headers.bytes_per_row, context.metafits_context.num_corr_fine_chans_per_coarse),
-            });
-        }
+    //     if headers.bytes_per_row * 8 < context.metafits_context.num_corr_fine_chans_per_coarse {
+    //         return Err(BirliError::MwafInconsistent {
+    //             file: String::from(&fptr.filename),
+    //             expected: "headers.bytes_per_row * 8 >= context.metafits_context.num_corr_fine_chans_per_coarse".to_string(),
+    //             found: format!("{} < {}", headers.bytes_per_row, context.metafits_context.num_corr_fine_chans_per_coarse),
+    //         });
+    //     }
 
-        Ok(headers)
-    }
+    //     Ok(headers)
+    // }
 
     pub fn write_baseline_flagmasks(
         &mut self,

@@ -1,13 +1,29 @@
 mod cxx_aoflagger;
 use cxx::UniquePtr;
 use cxx_aoflagger::ffi::{CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy};
+
+pub use cxx_aoflagger::ffi::cxx_aoflagger_new;
 use mwalib::CorrelatorContext;
 use std::collections::BTreeMap;
+use std::os::raw::c_short;
 // use rayon::prelude::*;
 
 mod flag_io;
-use flag_io::FlagFileSet;
+pub use flag_io::FlagFileSet;
 mod error;
+
+pub fn get_aoflagger_version_string() -> String {
+    let mut major: c_short = -1;
+    let mut minor: c_short = -1;
+    let mut sub_minor: c_short = -1;
+
+    unsafe {
+        let aoflagger = cxx_aoflagger_new();
+        aoflagger.GetVersion(&mut major, &mut minor, &mut sub_minor);
+    }
+
+    return format!("{}.{}.{}", major, minor, sub_minor);
+}
 
 pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
@@ -75,7 +91,7 @@ pub fn flag_imgsets(
 }
 
 pub fn write_flags(
-    context: &mut CorrelatorContext,
+    context: &CorrelatorContext,
     baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>>,
     filename_template: &str,
     gpubox_ids: &Vec<usize>,

@@ -11,7 +11,6 @@ pub mod ffi {
         pub type CxxFlagMask;
         pub type CxxAOFlagger;
         pub type CxxStrategy;
-        #[allow(dead_code)]
         unsafe fn cxx_aoflagger_new() -> UniquePtr<CxxAOFlagger>;
 
         // CxxImageSet methods
