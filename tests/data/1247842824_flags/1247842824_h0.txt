@@ -1,0 +1,64 @@
+SIMPLE  =                    T / conforms to FITS standard
+BITPIX  =                    8 / array data type
+NAXIS   =                    0 / number of array dimensions
+EXTEND  =                    T
+GPSTIME =           1247842824 / [s] GPS time of observation start
+EXPOSURE=                  120 / [s] duration of observation
+FILENAME= 'engtest_HerA_116'   / Name of observation
+MJD     =    58686.62506944445 / [days] MJD of observation
+DATE-OBS= '2019-07-22T15:00:06' / [UT] Date and time of observation
+LST     =     281.768553633975 / [deg] LST
+HA      = '-01:53:44.57'       / [hours] hour angle of pointing center
+AZIMUTH =                315.0 / [deg] Azimuth of pointing center
+ALTITUDE=              47.8822 / [deg] Altitude of pointing center
+RA      =    253.0956168859657 / [deg] RA of pointing center
+DEC     =    5.212160057540756 / [deg] Dec of pointing center
+RAPHASE =              252.788 / [deg] RA of desired phase center
+DECPHASE=              4.99278 / [deg] DEC of desired phase center
+ATTEN_DB=                  1.0 / [dB] global analogue attenuation, in dB
+SUN-DIST=     126.347640440362 / [deg] Distance from pointing center to Sun
+MOONDIST=     111.595536417691 / [deg] Distance from pointing center to Moon
+JUP-DIST=     27.3247011213505 / [deg] Distance from pointing center to Jupiter
+GRIDNAME= 'sweet   '           / Pointing grid name
+GRIDNUM =                  100 / Pointing grid number
+CREATOR = 'andrew  '           / Observation creator
+PROJECT = 'C001    '           / Project ID
+MODE    = 'HW_LFILES'          / Observation mode
+RECVRS  = '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16' / Active receivers
+DELAYS  = '24,20,16,12,20,16,12,8,16,12,8,4,12,8,4,0' / Beamformer delays
+CALIBRAT=                    T / Intended for calibration
+CALIBSRC= 'HerA    '           / Calibrator source
+CENTCHAN=                  116 / Center coarse channel
+CHANNELS= '104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120&'
+CONTINUE  ',121,122,123,124,125,126,127&'
+CONTINUE  '' / Coarse channels
+CHANSEL = '0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23' / Indi
+SUN-ALT =   -70.62030153383721 / [deg] Altitude of Sun
+FINECHAN=                   10 / [kHz] Fine channel width - correlator freq_res
+INTTIME =                  1.0 / [s] Individual integration time
+NAV_FREQ=                    1 / Assumed frequency averaging
+NSCANS  =                  120 / Number of time instants in correlation products
+NINPUTS =                  256 / Number of inputs into the correlation products
+NCHANS  =                 3072 / Number of (averaged) fine channels in spectrum
+BANDWDTH=                30.72 / [MHz] Total bandwidth
+FREQCENT=               147.84 / [MHz] Center frequency of observation
+TIMEOFF =                    0 / [s] Deprecated, use QUACKTIM or GOODTIME
+DATESTRT= '2019-07-22T15:00:06' / [UT] Date and time of correlations start
+VERSION =                  2.0 / METAFITS version number
+TELESCOP= 'MWA     '
+INSTRUME= '128T    '
+QUACKTIM=                  1.0 / Seconds of bad data after observation starts
+GOODTIME=         1563807607.0 / OBSID+QUACKTIME as Unix timestamp
+DATE    = '2021-04-12T02:53:01' / UT Date of file creation
+COMMENT After an observation starts, the receiver hardware changes take a
+COMMENT few seconds to stabilise. The 24 GPU boxes start saving data to
+COMMENT their output files anywhere from a second _before_ the start of
+COMMENT the observation to a few seconds after, and not necessarily at the
+COMMENT same time on each gpubox.
+COMMENT QUACKTIM and GOODTIME represent the start of the first uncontaminated
+COMMENT data, rounded up to the next time-averaged data packet. Note that this
+COMMENT time may be before the first actual data in some or all gpubox files.
+HISTORY Created by user apache
+HISTORY Created on host mwa-django01p.curtin.edu.au
+HISTORY Command: "mod_wsgi"
+END

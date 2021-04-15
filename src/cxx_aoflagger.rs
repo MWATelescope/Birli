@@ -1,16 +1,17 @@
 #[cxx::bridge]
-#[allow(dead_code)]
 pub mod ffi {
 
     unsafe extern "C++" {
         include!("birli/include/cxx_aoflagger.h");
 
+        #[allow(dead_code)]
         fn aoflagger_GetVersion(major: &mut i16, minor: &mut i16, subMinor: &mut i16);
 
         pub type CxxImageSet;
         pub type CxxFlagMask;
         pub type CxxAOFlagger;
         pub type CxxStrategy;
+        #[allow(dead_code)]
         unsafe fn cxx_aoflagger_new() -> UniquePtr<CxxAOFlagger>;
 
         // CxxImageSet methods
@@ -27,6 +28,12 @@ pub mod ffi {
         fn HorizontalStride(self: &CxxFlagMask) -> usize;
         fn Buffer(self: &CxxFlagMask) -> &[bool];
         fn BufferMut(self: Pin<&mut CxxFlagMask>) -> &mut [bool];
+
+        // impl CxxFlagMask {
+        //     pub fn SetXY(&self, x: usize, y: usize, value: bool) {
+        // TODO: error handling?
+        //     }
+        // }
 
         // CxxAOFlagger methods
         fn GetVersion(self: &CxxAOFlagger, major: &mut i16, minor: &mut i16, subMinor: &mut i16);
@@ -47,7 +54,6 @@ pub mod ffi {
         ) -> UniquePtr<CxxFlagMask>;
         fn FindStrategyFileGeneric(self: &CxxAOFlagger, scenario: &String) -> String;
         fn FindStrategyFileMWA(self: &CxxAOFlagger) -> String;
-        #[allow(clippy::ptr_arg)]
         fn LoadStrategyFile(self: &CxxAOFlagger, filename: &String) -> UniquePtr<CxxStrategy>;
 
         // CxxStrategy methods

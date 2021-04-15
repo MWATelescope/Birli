@@ -80,18 +80,15 @@ pub fn write_flags(
     filename_template: &str,
     gpubox_ids: &Vec<usize>,
 ) {
-    #[allow(unused)]
-    let mut flag_files = FlagFileSet::new(context, filename_template, &gpubox_ids);
-    for (baseline, flagmask) in baseline_flagmasks {
-        dbg!(&baseline);
-        dbg!(flagmask.Buffer());
-        unimplemented!();
-    }
+    let mut flag_file_set = FlagFileSet::new(context, filename_template, &gpubox_ids).unwrap();
+    flag_file_set
+        .write_baseline_flagmasks(&context, baseline_flagmasks)
+        .unwrap();
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{context_to_baseline_imgsets, flag_imgsets, write_flags};
+    use super::{context_to_baseline_imgsets, flag_imgsets, write_flags, FlagFileSet};
     use crate::cxx_aoflagger::ffi::{cxx_aoflagger_new, CxxFlagMask, CxxImageSet};
     use cxx::UniquePtr;
     use glob::glob;
@@ -127,87 +124,87 @@ mod tests {
         let width = context.num_timesteps;
         let img_stride = (((width - 1) / 8) + 1) * 8;
 
-        unsafe {
+        let baseline_imgsets = unsafe {
             let aoflagger = cxx_aoflagger_new();
-            let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &mut context);
+            context_to_baseline_imgsets(&aoflagger, &mut context)
+        };
 
-            let imgset0 = baseline_imgsets.get(&0).unwrap();
+        let imgset0 = baseline_imgsets.get(&0).unwrap();
 
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 0], 0x410000 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 1], 0x410100 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 2], 0x410200 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 3], 0x410300 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 4], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 5], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 6], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 7], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 0], 0x410000 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 1], 0x410100 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 2], 0x410200 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 3], 0x410300 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 4], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 5], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 6], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 7], 0.0);
 
-            assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 0], 0x410008 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 1], 0x410108 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 2], 0x410208 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 3], 0x410308 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 4], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 5], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 6], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 7], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 0], 0x410008 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 1], 0x410108 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 2], 0x410208 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 3], 0x410308 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 4], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 5], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 6], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 7], 0.0);
 
-            assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 0], 0x410400 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 1], 0x410500 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 2], 0x410600 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 3], 0x410700 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 4], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 5], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 6], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 7], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 0], 0x410400 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 1], 0x410500 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 2], 0x410600 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 3], 0x410700 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 4], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 5], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 6], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 7], 0.0);
 
-            assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 0], 0x410408 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 1], 0x410508 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 2], 0x410608 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 3], 0x410708 as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 4], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 5], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 6], 0.0);
-            assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 7], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 0], 0x410408 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 1], 0x410508 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 2], 0x410608 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 3], 0x410708 as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 4], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 5], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 6], 0.0);
+        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 7], 0.0);
 
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 0], 0x410001 as f32);
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 1], 0x410101 as f32);
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 2], 0x410201 as f32);
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 3], 0x410301 as f32);
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 4], 0.0);
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 5], 0.0);
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 6], 0.0);
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 7], 0.0);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 0], 0x410001 as f32);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 1], 0x410101 as f32);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 2], 0x410201 as f32);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 3], 0x410301 as f32);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 4], 0.0);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 5], 0.0);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 6], 0.0);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 7], 0.0);
 
-            /* ... */
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 0], 0x410007 as f32);
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 1], 0x410107 as f32);
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 2], 0x410207 as f32);
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 3], 0x410307 as f32);
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 4], 0.0);
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 5], 0.0);
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 6], 0.0);
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 7], 0.0);
+        /* ... */
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 0], 0x410007 as f32);
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 1], 0x410107 as f32);
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 2], 0x410207 as f32);
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 3], 0x410307 as f32);
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 4], 0.0);
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 5], 0.0);
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 6], 0.0);
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 7], 0.0);
 
-            let imgset2 = baseline_imgsets.get(&2).unwrap();
+        let imgset2 = baseline_imgsets.get(&2).unwrap();
 
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 0], 0x410020 as f32);
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 1], 0x410120 as f32);
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 2], 0x410220 as f32);
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 3], 0x410320 as f32);
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 4], 0.0);
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 5], 0.0);
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 6], 0.0);
-            assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 7], 0.0);
+        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 0], 0x410020 as f32);
+        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 1], 0x410120 as f32);
+        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 2], 0x410220 as f32);
+        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 3], 0x410320 as f32);
+        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 4], 0.0);
+        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 5], 0.0);
+        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 6], 0.0);
+        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 7], 0.0);
 
-            assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 0], 0x410028 as f32);
-            assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 1], 0x410128 as f32);
-            assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 2], 0x410228 as f32);
-            assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 3], 0x410328 as f32);
-            assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 4], 0.0);
-            assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 5], 0.0);
-            assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 6], 0.0);
-            assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 7], 0.0);
-        }
+        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 0], 0x410028 as f32);
+        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 1], 0x410128 as f32);
+        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 2], 0x410228 as f32);
+        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 3], 0x410328 as f32);
+        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 4], 0.0);
+        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 5], 0.0);
+        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 6], 0.0);
+        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 7], 0.0);
     }
 
     #[test]
@@ -216,94 +213,94 @@ mod tests {
         let width = context.num_timesteps;
         let img_stride = (((width - 1) / 8) + 1) * 8;
 
-        unsafe {
+        let baseline_imgsets = unsafe {
             let aoflagger = cxx_aoflagger_new();
-            let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &mut context);
+            context_to_baseline_imgsets(&aoflagger, &mut context)
+        };
 
-            let imgset0 = baseline_imgsets.get(&0).unwrap();
+        let imgset0 = baseline_imgsets.get(&0).unwrap();
 
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 0], 0x10c5be as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 1], 0x14c5be as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 2], 0x18c5be as f32);
-            assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 3], 0x1cc5be as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 0], 0x10c5be as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 1], 0x14c5be as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 2], 0x18c5be as f32);
+        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 3], 0x1cc5be as f32);
 
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 0], 0x10c5bf as f32);
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 1], 0x14c5bf as f32);
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 2], 0x18c5bf as f32);
-            assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 3], 0x1cc5bf as f32);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 0], 0x10c5bf as f32);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 1], 0x14c5bf as f32);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 2], 0x18c5bf as f32);
+        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 3], 0x1cc5bf as f32);
 
-            assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 0], 0x10c5ae as f32);
-            assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 1], 0x14c5ae as f32);
-            assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 2], 0x18c5ae as f32);
-            assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 3], 0x1cc5ae as f32);
+        assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 0], 0x10c5ae as f32);
+        assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 1], 0x14c5ae as f32);
+        assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 2], 0x18c5ae as f32);
+        assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 3], 0x1cc5ae as f32);
 
-            assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 0], -0x10c5af as f32);
-            assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 1], -0x14c5af as f32);
-            assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 2], -0x18c5af as f32);
-            assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 3], -0x1cc5af as f32);
+        assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 0], -0x10c5af as f32);
+        assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 1], -0x14c5af as f32);
+        assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 2], -0x18c5af as f32);
+        assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 3], -0x1cc5af as f32);
 
-            assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 0], 0x10c5ae as f32);
-            assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 1], 0x14c5ae as f32);
-            assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 2], 0x18c5ae as f32);
-            assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 3], 0x1cc5ae as f32);
+        assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 0], 0x10c5ae as f32);
+        assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 1], 0x14c5ae as f32);
+        assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 2], 0x18c5ae as f32);
+        assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 3], 0x1cc5ae as f32);
 
-            assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 0], 0x10c5af as f32);
-            assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 1], 0x14c5af as f32);
-            assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 2], 0x18c5af as f32);
-            assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 3], 0x1cc5af as f32);
+        assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 0], 0x10c5af as f32);
+        assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 1], 0x14c5af as f32);
+        assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 2], 0x18c5af as f32);
+        assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 3], 0x1cc5af as f32);
 
-            assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 0], 0x10bec6 as f32);
-            assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 1], 0x14bec6 as f32);
-            assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 2], 0x18bec6 as f32);
-            assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 3], 0x1cbec6 as f32);
+        assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 0], 0x10bec6 as f32);
+        assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 1], 0x14bec6 as f32);
+        assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 2], 0x18bec6 as f32);
+        assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 3], 0x1cbec6 as f32);
 
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 0], 0x10bec7 as f32);
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 1], 0x14bec7 as f32);
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 2], 0x18bec7 as f32);
-            assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 3], 0x1cbec7 as f32);
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 0], 0x10bec7 as f32);
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 1], 0x14bec7 as f32);
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 2], 0x18bec7 as f32);
+        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 3], 0x1cbec7 as f32);
 
-            let imgset5 = baseline_imgsets.get(&5).unwrap();
+        let imgset5 = baseline_imgsets.get(&5).unwrap();
 
-            assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 0], 0x10f1ce as f32);
-            assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 1], 0x14f1ce as f32);
-            assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 2], 0x18f1ce as f32);
-            assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 3], 0x1cf1ce as f32);
+        assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 0], 0x10f1ce as f32);
+        assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 1], 0x14f1ce as f32);
+        assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 2], 0x18f1ce as f32);
+        assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 3], 0x1cf1ce as f32);
 
-            assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 0], -0x10f1cf as f32);
-            assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 1], -0x14f1cf as f32);
-            assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 2], -0x18f1cf as f32);
-            assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 3], -0x1cf1cf as f32);
+        assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 0], -0x10f1cf as f32);
+        assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 1], -0x14f1cf as f32);
+        assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 2], -0x18f1cf as f32);
+        assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 3], -0x1cf1cf as f32);
 
-            assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 0], 0x10ea26 as f32);
-            assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 1], 0x14ea26 as f32);
-            assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 2], 0x18ea26 as f32);
-            assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 3], 0x1cea26 as f32);
+        assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 0], 0x10ea26 as f32);
+        assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 1], 0x14ea26 as f32);
+        assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 2], 0x18ea26 as f32);
+        assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 3], 0x1cea26 as f32);
 
-            assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 0], -0x10ea27 as f32);
-            assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 1], -0x14ea27 as f32);
-            assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 2], -0x18ea27 as f32);
-            assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 3], -0x1cea27 as f32);
+        assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 0], -0x10ea27 as f32);
+        assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 1], -0x14ea27 as f32);
+        assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 2], -0x18ea27 as f32);
+        assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 3], -0x1cea27 as f32);
 
-            assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 0], 0x10f1be as f32);
-            assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 1], 0x14f1be as f32);
-            assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 2], 0x18f1be as f32);
-            assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 3], 0x1cf1be as f32);
+        assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 0], 0x10f1be as f32);
+        assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 1], 0x14f1be as f32);
+        assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 2], 0x18f1be as f32);
+        assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 3], 0x1cf1be as f32);
 
-            assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 0], -0x10f1bf as f32);
-            assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 1], -0x14f1bf as f32);
-            assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 2], -0x18f1bf as f32);
-            assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 3], -0x1cf1bf as f32);
+        assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 0], -0x10f1bf as f32);
+        assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 1], -0x14f1bf as f32);
+        assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 2], -0x18f1bf as f32);
+        assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 3], -0x1cf1bf as f32);
 
-            assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 0], 0x10ea16 as f32);
-            assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 1], 0x14ea16 as f32);
-            assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 2], 0x18ea16 as f32);
-            assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 3], 0x1cea16 as f32);
+        assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 0], 0x10ea16 as f32);
+        assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 1], 0x14ea16 as f32);
+        assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 2], 0x18ea16 as f32);
+        assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 3], 0x1cea16 as f32);
 
-            assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 0], -0x10ea17 as f32);
-            assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 1], -0x14ea17 as f32);
-            assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 2], -0x18ea17 as f32);
-            assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 3], -0x1cea17 as f32);
-        }
+        assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 0], -0x10ea17 as f32);
+        assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 1], -0x14ea17 as f32);
+        assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 2], -0x18ea17 as f32);
+        assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 3], -0x1cea17 as f32);
     }
 
     #[test]
@@ -317,7 +314,7 @@ mod tests {
         let noise_y = 32;
         let noise_z = 1;
         let noise_val = 0xffffff as f32;
-        unsafe {
+        let baseline_flagmasks = unsafe {
             let aoflagger = cxx_aoflagger_new();
             let imgset0 = aoflagger.MakeImageSet(width, height, 8, 0 as f32, width);
             baseline_imgsets.insert(0, imgset0);
@@ -327,30 +324,29 @@ mod tests {
 
             let strategy_file_minimal = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
             let strategy_minimal = aoflagger.LoadStrategyFile(&strategy_file_minimal);
+            flag_imgsets(strategy_minimal, baseline_imgsets)
+        };
 
-            let baseline_flagmasks = flag_imgsets(strategy_minimal, baseline_imgsets);
-            let flagmask0 = baseline_flagmasks.get(&0).unwrap();
-            let flagmask1 = baseline_flagmasks.get(&1).unwrap();
-            let flag_stride = flagmask0.HorizontalStride();
-            assert!(!flagmask0.Buffer()[0]);
-            assert!(!flagmask0.Buffer()[noise_y * flag_stride + noise_x]);
-            assert!(!flagmask1.Buffer()[0]);
-            assert!(flagmask1.Buffer()[noise_y * flag_stride + noise_x]);
-        }
+        let flagmask0 = baseline_flagmasks.get(&0).unwrap();
+        let flagmask1 = baseline_flagmasks.get(&1).unwrap();
+        let flag_stride = flagmask0.HorizontalStride();
+        assert!(!flagmask0.Buffer()[0]);
+        assert!(!flagmask0.Buffer()[noise_y * flag_stride + noise_x]);
+        assert!(!flagmask1.Buffer()[0]);
+        assert!(flagmask1.Buffer()[noise_y * flag_stride + noise_x]);
     }
 
     #[test]
-    #[ignore]
     fn test_write_flags_mwax_minimal() {
-        let mut context = get_mwa_ord_context();
+        let mut context = get_mwax_context();
         let mut baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>> = BTreeMap::new();
 
         let height =
             context.num_coarse_chans * context.metafits_context.num_corr_fine_chans_per_coarse;
         let width = context.num_timesteps;
 
-        let flag_x = 1;
-        let flag_y = 1;
+        let flag_timestep = 1;
+        let flag_channel = 1;
         let flag_baseline = 1;
 
         unsafe {
@@ -359,10 +355,10 @@ mod tests {
                 baseline_flagmasks
                     .insert(baseline_idx, aoflagger.MakeFlagMask(width, height, false));
             }
-            let flagmask = baseline_flagmasks.get_mut(&flag_baseline).unwrap();
-            let flag_stride = flagmask.HorizontalStride();
-            flagmask.pin_mut().BufferMut()[flag_y * flag_stride + flag_x] = true;
         }
+        let flagmask = baseline_flagmasks.get_mut(&flag_baseline).unwrap();
+        let flag_stride = flagmask.HorizontalStride();
+        flagmask.pin_mut().BufferMut()[flag_channel * flag_stride + flag_timestep] = true;
 
         let tmp_dir = tempdir().unwrap();
 
@@ -385,6 +381,51 @@ mod tests {
         let flag_files = glob(&tmp_dir.path().join("Flagfile*.mwaf").to_str().unwrap()).unwrap();
 
         assert_eq!(flag_files.count(), selected_gpuboxes.len());
-        // assert_eq!(flag_files.next().unwrap().unwrap().to_str(), Some("hi"));
+
+        let mut flag_file_set = FlagFileSet::open(
+            &context,
+            filename_template.to_str().unwrap(),
+            &selected_gpuboxes,
+        )
+        .unwrap();
+        let chan_header_flags_raw = flag_file_set.read_chan_header_flags_raw().unwrap();
+        let (chan1_header, chan1_flags_raw) =
+            chan_header_flags_raw.get(&selected_gpuboxes[0]).unwrap();
+        assert_eq!(chan1_header.gpubox_id, gpubox_ids[0]);
+        let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+
+        let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
+        assert_eq!(chan1_header.num_timesteps, context.num_timesteps);
+        assert_eq!(num_baselines, context.metafits_context.num_baselines);
+        assert_eq!(chan1_header.num_channels, num_fine_chans_per_coarse);
+        assert_eq!(
+            chan1_flags_raw.len(),
+            chan1_header.num_timesteps * num_baselines * chan1_header.num_channels
+        );
+        dbg!(&chan1_flags_raw);
+
+        let tests = [
+            (0, 0, 0, i8::from(false)),
+            (0, 0, 1, i8::from(false)),
+            (0, 1, 0, i8::from(false)),
+            (0, 1, 1, i8::from(false)),
+            (0, 2, 0, i8::from(false)),
+            (0, 2, 1, i8::from(false)),
+            (1, 0, 0, i8::from(false)),
+            (1, 0, 1, i8::from(false)),
+            (1, 1, 0, i8::from(false)),
+            (1, 1, 1, i8::from(true)),
+            (1, 2, 0, i8::from(false)),
+            (1, 2, 1, i8::from(false)),
+        ];
+        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests.iter() {
+            let row_idx = timestep_idx * num_baselines + baseline_idx;
+            let offset = row_idx * num_fine_chans_per_coarse + fine_chan_idx;
+            assert_eq!(
+                &chan1_flags_raw[offset], expected_flag,
+                "with timestep {}, baseline {}, fine_chan {}, expected {} at row_idx {}, offset {}",
+                timestep_idx, baseline_idx, fine_chan_idx, expected_flag, row_idx, offset
+            );
+        }
     }
 }
