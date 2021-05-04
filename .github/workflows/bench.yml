@@ -27,6 +27,11 @@ jobs:
           LD_LIBRARY_PATH: /usr/local/lib/
           BIRLI_TEST_DIR: /data
 
+      - name: install zip
+        run: |
+          apt-get update \
+          && apt-get install -y zip
+
       - name: Zip benchmark results
         run: zip -r criterion.zip target/criterion/*
 

@@ -44,7 +44,6 @@ jobs:
             libboost-filesystem-dev \
             libboost-system-dev \
             libboost-test-dev \
-            libcfitsio-dev \
             libfftw3-dev \
             libgsl-dev \
             libgtkmm-3.0-dev \
@@ -60,12 +59,12 @@ jobs:
 
       - name: install cfitsio
         run: |
-          cd / \
-          && sudo wget http://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz \
-          && sudo tar -zxvf cfitsio-3.49.tar.gz \
+          cd /tmp \
+          && wget http://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz \
+          && tar -zxvf cfitsio-3.49.tar.gz \
           && cd cfitsio-3.49/ \
-          && CFLAGS="-O3" sudo ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2 \
-          && sudo make -j \
+          && CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2 \
+          && make -j \
           && sudo make install
 
       # && sudo wget https://gitlab.com/aroffringa/aoflagger/-/archive/v3.0.0/aoflagger-v3.0.0.tar.gz \
@@ -73,14 +72,14 @@ jobs:
       # && cd aoflagger-v3.0.0 \
       - name: Install AOFlagger
         run: |
-          cd / \
-          && sudo git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git \
+          cd /tmp \
+          && git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git \
           && cd aoflagger \
-          && sudo chmod a+rwx . \
-          && sudo mkdir build \
+          && chmod a+rwx . \
+          && mkdir build \
           && cd build \
-          && sudo cmake .. \
-          && sudo make \
+          && cmake .. \
+          && make \
           && sudo make install \
 
       - name: Install Birli Dependencies
