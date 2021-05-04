@@ -53,9 +53,9 @@ where
         let metafits_path = aoflagger_matches.value_of("metafits").unwrap();
         let flag_template = aoflagger_matches.value_of("flag-template").unwrap();
         let fits_files: Vec<&str> = aoflagger_matches.values_of("fits-files").unwrap().collect();
-        let mut context = CorrelatorContext::new(&metafits_path, &fits_files).unwrap();
+        let context = CorrelatorContext::new(&metafits_path, &fits_files).unwrap();
         println!("flagging context:\n{}", &context);
-        let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &mut context);
+        let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
         let strategy = aoflagger.LoadStrategyFile(&aoflagger.FindStrategyFileMWA());
         let baseline_flagmasks = flag_imgsets(strategy, baseline_imgsets);
         let gpubox_ids: Vec<usize> = context

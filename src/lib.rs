@@ -27,7 +27,7 @@ pub fn get_aoflagger_version_string() -> String {
 
 pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
-    context: &mut CorrelatorContext,
+    context: &CorrelatorContext,
 ) -> BTreeMap<usize, UniquePtr<CxxImageSet>> {
     let coarse_chan_arr = context.coarse_chans.clone();
     let timestep_arr = context.timesteps.clone();
@@ -136,13 +136,13 @@ mod tests {
 
     #[test]
     fn test_context_to_baseline_imgsets_mwax() {
-        let mut context = get_mwax_context();
+        let context = get_mwax_context();
         let width = context.num_timesteps;
         let img_stride = (((width - 1) / 8) + 1) * 8;
 
         let baseline_imgsets = unsafe {
             let aoflagger = cxx_aoflagger_new();
-            context_to_baseline_imgsets(&aoflagger, &mut context)
+            context_to_baseline_imgsets(&aoflagger, &context)
         };
 
         let imgset0 = baseline_imgsets.get(&0).unwrap();
@@ -225,13 +225,13 @@ mod tests {
 
     #[test]
     fn test_context_to_baseline_imgsets_mwa_ord() {
-        let mut context = get_mwa_ord_context();
+        let context = get_mwa_ord_context();
         let width = context.num_timesteps;
         let img_stride = (((width - 1) / 8) + 1) * 8;
 
         let baseline_imgsets = unsafe {
             let aoflagger = cxx_aoflagger_new();
-            context_to_baseline_imgsets(&aoflagger, &mut context)
+            context_to_baseline_imgsets(&aoflagger, &context)
         };
 
         let imgset0 = baseline_imgsets.get(&0).unwrap();
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_write_flags_mwax_minimal() {
-        let mut context = get_mwax_context();
+        let context = get_mwax_context();
         let mut baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>> = BTreeMap::new();
 
         let height =
@@ -388,7 +388,7 @@ mod tests {
         let selected_gpuboxes = gpubox_ids[..1].to_vec();
 
         write_flags(
-            &mut context,
+            &context,
             baseline_flagmasks,
             filename_template.to_str().unwrap(),
             &selected_gpuboxes,
