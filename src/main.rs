@@ -56,8 +56,8 @@ where
         let context = CorrelatorContext::new(&metafits_path, &fits_files).unwrap();
         println!("flagging context:\n{}", &context);
         let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
-        let strategy = aoflagger.LoadStrategyFile(&aoflagger.FindStrategyFileMWA());
-        let baseline_flagmasks = flag_imgsets(strategy, baseline_imgsets);
+        let strategy_filename = &aoflagger.FindStrategyFileMWA();
+        let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
         let gpubox_ids: Vec<usize> = context
             .coarse_chans
             .iter()

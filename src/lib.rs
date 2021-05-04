@@ -1,6 +1,60 @@
+#![warn(missing_docs)]
+#![warn(missing_doc_code_examples)]
+
+/*!
+Birli is a library of common preprocessing tasks performed in the data pipeline of the Murchison
+Widefield Array (MWA) Telescope. Here's an example of how to flag some files
+
+```
+use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, FlagFileSet, cxx_aoflagger_new};
+use mwalib::CorrelatorContext;
+use tempfile::tempdir;
+
+// define out input files
+let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+let gpufits_paths = vec![
+    "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+    "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+    "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+    "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+];
+
+// define a temporary directory for output
+let tmp_dir = tempdir().unwrap();
+
+// define out output flag file template
+let flag_template = tmp_dir.path().join("Flagfile%%%.mwaf");
+
+// Use [MWALib](https://github.com/MWATelescope/mwalib) to access visibilities.
+let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+
+// create an aoflagger object
+let aoflagger = unsafe { cxx_aoflagger_new() };
+
+// generate aoflagger imagesets for each baseline
+let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+
+// use the default strategy file location for MWA
+let strategy_filename = &aoflagger.FindStrategyFileMWA();
+
+// run the strategy on the imagesets, and get the resulting flags.
+let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
+
+// Get a list of all gpubox IDs
+let gpubox_ids: Vec<usize> = context
+            .coarse_chans
+            .iter()
+            .map(|chan| chan.gpubox_number)
+            .collect();
+
+// write the flags to disk as .mwaf
+write_flags(&context, baseline_flagmasks, flag_template.to_str().unwrap(), &gpubox_ids);
+```
+*/
+
 mod cxx_aoflagger;
 use cxx::UniquePtr;
-use cxx_aoflagger::ffi::{CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy};
+use cxx_aoflagger::ffi::{CxxAOFlagger, CxxFlagMask, CxxImageSet};
 
 pub use cxx_aoflagger::ffi::cxx_aoflagger_new;
 use mwalib::CorrelatorContext;
@@ -79,14 +133,17 @@ pub fn context_to_baseline_imgsets(
 }
 
 pub fn flag_imgsets(
-    strategy: UniquePtr<CxxStrategy>,
+    aoflagger: &CxxAOFlagger,
+    strategy_filename: &String,
     baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>>,
 ) -> BTreeMap<usize, UniquePtr<CxxFlagMask>> {
     // TODO: figure out how to parallelize with Rayon, into_iter(). You'll probably need to convert between UniquePtr and Box
 
     return baseline_imgsets
         .iter()
-        .map(|(&baseline, imgset)| (baseline, strategy.Run(&imgset)))
+        .map(|(&baseline, imgset)| {
+            (baseline, aoflagger.LoadStrategyFile(strategy_filename).Run(&imgset))
+        })
         .collect();
 }
 
@@ -339,8 +396,7 @@ mod tests {
             baseline_imgsets.insert(1, imgset1);
 
             let strategy_file_minimal = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
-            let strategy_minimal = aoflagger.LoadStrategyFile(&strategy_file_minimal);
-            flag_imgsets(strategy_minimal, baseline_imgsets)
+            flag_imgsets(&aoflagger, &strategy_file_minimal, baseline_imgsets)
         };
 
         let flagmask0 = baseline_flagmasks.get(&0).unwrap();
