@@ -16,6 +16,8 @@ exclude = ["tests/*", ".vscode/*",".github/*", ".talismanrc"]
 
 [dependencies]
 clap = "2.33.3"
+crossbeam-channel = "0.5.*"
+crossbeam-utils = "0.8.*"
 cxx = "1.0.32"
 fitsio = "0.17.*"
 fitsio-sys = "^0" # fitsio also uses fitsio-sys so ensure we both use the same
@@ -27,9 +29,9 @@ thiserror = "1.0.*"
 
 [dev-dependencies]
 assert_cli = "0.6.1"
-rustfmt = "0.10.0"
 criterion = "0.3"
 glob = "0.3.0"
+rustfmt = "0.10.0"
 tempfile = "3.2.0"
 
 [build-dependencies]

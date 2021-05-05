@@ -80,6 +80,9 @@ pub mod flag_io;
 use flag_io::FlagFileSet;
 mod error;
 
+use crossbeam_channel::{bounded, unbounded};
+use crossbeam_utils::thread;
+
 /// Get the version of the AOFlagger library from the library itself.
 ///
 /// # Examples
@@ -140,8 +143,18 @@ pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
     context: &CorrelatorContext,
 ) -> BTreeMap<usize, UniquePtr<CxxImageSet>> {
-    let coarse_chan_arr = context.coarse_chans.clone();
-    let timestep_arr = context.timesteps.clone();
+    let coarse_chan_idxs: Vec<usize> = context
+        .coarse_chans
+        .iter()
+        .enumerate()
+        .map(|(idx, _)| idx)
+        .collect();
+    let timestep_idxs: Vec<usize> = context
+        .timesteps
+        .iter()
+        .enumerate()
+        .map(|(idx, _)| idx)
+        .collect();
 
     let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
     let floats_per_finechan = context.metafits_context.num_visibility_pols * 2;
@@ -163,11 +176,43 @@ pub fn context_to_baseline_imgsets(
         })
         .collect();
 
-    for (coarse_chan_idx, _) in coarse_chan_arr.iter().enumerate() {
-        for (timestep_idx, _) in timestep_arr.iter().enumerate() {
-            let img_buf = context
-                .read_by_baseline(timestep_idx, coarse_chan_idx)
-                .unwrap();
+    let num_workers = coarse_chan_idxs.len();
+
+    // A queue of coarse channel indices for the producers to work through
+    let (tx_coarse_chan_idx, rx_coarse_chan_idx) = unbounded();
+    // A queue of image buffers to process
+    let (tx_img, rx_img) = bounded(num_workers);
+
+    thread::scope(|scope| {
+        // Queue up coarse channels to do
+        for coarse_chan_idx in coarse_chan_idxs {
+            tx_coarse_chan_idx.send(coarse_chan_idx).unwrap();
+        }
+
+        // Create a producer thread for worker
+        for _ in 0..num_workers {
+            let (_, rx_coarse_chan_idx_worker) =
+                (tx_coarse_chan_idx.clone(), rx_coarse_chan_idx.clone());
+            let (tx_img_worker, _) = (tx_img.clone(), rx_img.clone());
+            let timestep_idxs_worker = timestep_idxs.to_owned();
+            scope.spawn(move |_| {
+                for coarse_chan_idx in rx_coarse_chan_idx_worker.iter() {
+                    for &timestep_idx in timestep_idxs_worker.iter() {
+                        let img_buf = context
+                            .read_by_baseline(timestep_idx, coarse_chan_idx)
+                            .unwrap();
+                        let msg = (coarse_chan_idx, timestep_idx, img_buf);
+                        tx_img_worker.send(msg).unwrap();
+                    }
+                }
+            });
+        }
+
+        drop(tx_coarse_chan_idx);
+        drop(tx_img);
+
+        // consume the rx_img queue
+        for (coarse_chan_idx, timestep_idx, img_buf) in rx_img.iter() {
             for (baseline_idx, baseline_chunk) in img_buf.chunks(floats_per_baseline).enumerate() {
                 let imgset = baseline_imgsets.get_mut(&baseline_idx).unwrap();
 
@@ -183,7 +228,8 @@ pub fn context_to_baseline_imgsets(
                 }
             }
         }
-    }
+    })
+    .unwrap();
 
     baseline_imgsets
 }
