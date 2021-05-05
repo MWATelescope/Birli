@@ -4,14 +4,14 @@ pub mod ffi {
     unsafe extern "C++" {
         include!("birli/include/cxx_aoflagger.h");
 
-        /// CXX Wrapper for [`aoflagger::ImageSet`], A set of time-frequency 'images' which
+        /// CXX Wrapper for [`aoflagger::ImageSet`], a set of time-frequency 'images' which
         /// together contain data for one correlated baseline.
         ///
         /// Please see the aoflagger documentation for more details.
         ///
         /// [`aoflagger::ImageSet`]: http://www.andreoffringa.org/aoflagger/doxygen/classaoflagger_1_1ImageSet.html
         pub type CxxImageSet;
-        /// CXX Wrapper for [`aoflagger::FlagMask`], A two-dimensional mask of bool flags.
+        /// CXX Wrapper for [`aoflagger::FlagMask`], a two-dimensional mask of bool flags.
         ///
         /// Please see the aoflagger documentation for more details.
         ///
@@ -23,7 +23,7 @@ pub mod ffi {
         ///
         /// [`aoflagger::AOFlagger`]: http://www.andreoffringa.org/aoflagger/doxygen/classaoflagger_1_1AOFlagger.html
         pub type CxxAOFlagger;
-        /// CXX Wrapper for [`aoflagger::Strategy`].
+        /// CXX Wrapper for [`aoflagger::Strategy`], a flagging strategy definition.
         ///
         /// Please see the aoflagger documentation for more details.
         ///

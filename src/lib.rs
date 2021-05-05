@@ -141,10 +141,10 @@ pub fn context_to_baseline_imgsets(
     let coarse_chan_arr = context.coarse_chans.clone();
     let timestep_arr = context.timesteps.clone();
 
+    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
     let floats_per_finechan = context.metafits_context.num_visibility_pols * 2;
-    let floats_per_baseline =
-        context.metafits_context.num_corr_fine_chans_per_coarse * floats_per_finechan;
-    let height = context.num_coarse_chans * context.metafits_context.num_corr_fine_chans_per_coarse;
+    let floats_per_baseline = fine_chans_per_coarse * floats_per_finechan;
+    let height = context.num_coarse_chans * fine_chans_per_coarse;
     let width = context.num_timesteps;
     let img_stride = (((width - 1) / 8) + 1) * 8;
 
@@ -167,17 +167,16 @@ pub fn context_to_baseline_imgsets(
                 .read_by_baseline(timestep_idx, coarse_chan_idx)
                 .unwrap();
             for (baseline_idx, baseline_chunk) in img_buf.chunks(floats_per_baseline).enumerate() {
-                for (fine_chan_idx, fine_chan_chunk) in
-                    baseline_chunk.chunks(floats_per_finechan).enumerate()
-                {
-                    let x = timestep_idx;
-                    let y = context.metafits_context.num_corr_fine_chans_per_coarse
-                        * coarse_chan_idx
-                        + fine_chan_idx;
+                let imgset = baseline_imgsets.get_mut(&baseline_idx).unwrap();
 
-                    let imgset = baseline_imgsets.get_mut(&baseline_idx).unwrap();
-                    for (float_idx, float_val) in fine_chan_chunk.iter().enumerate() {
-                        imgset.pin_mut().ImageBufferMut(float_idx)[y * img_stride + x] = *float_val
+                for float_idx in 0..8 {
+                    let imgset_buf = imgset.pin_mut().ImageBufferMut(float_idx);
+                    for (fine_chan_idx, fine_chan_chunk) in
+                        baseline_chunk.chunks(floats_per_finechan).enumerate()
+                    {
+                        let x = timestep_idx;
+                        let y = fine_chans_per_coarse * coarse_chan_idx + fine_chan_idx;
+                        imgset_buf[y * img_stride + x] = fine_chan_chunk[float_idx];
                     }
                 }
             }
