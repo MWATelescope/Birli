@@ -75,7 +75,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::main_with_args;
-    use assert_cli;
     use birli::{flag_io::FlagFileSet, get_aoflagger_version_string};
     use mwalib::CorrelatorContext;
     use std::env;
