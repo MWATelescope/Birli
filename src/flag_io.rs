@@ -63,7 +63,7 @@ impl FlagFileHeaders {
             num_ants: context.metafits_context.num_ants,
             num_timesteps: context.num_timesteps,
             num_pols: 1,
-            gpubox_id: gpubox_id,
+            gpubox_id,
             cotter_version: format!("Birli-{}", crate_version!()),
             // TODO: use something like https://github.com/rustyhorde/vergen
             cotter_version_date: "2021-04-14".to_string(),
@@ -152,7 +152,7 @@ impl FlagFileSet {
                 }
                 Err(fits_error) => {
                     return Err(BirliError::FitsOpen {
-                        fits_error: fits_error,
+                        fits_error,
                         fits_filename: filename.into(),
                         source_file: file!(),
                         source_line: line!(),
@@ -161,13 +161,9 @@ impl FlagFileSet {
             }
         }
 
-        Ok(FlagFileSet {
-            gpubox_fptrs: gpubox_fptrs,
-        })
+        Ok(FlagFileSet { gpubox_fptrs })
     }
 
-    // TODO: this is really just for tests.
-    #[allow(dead_code)]
     /// Open an existing set of flag files, given an observation's context, the flag filename
     /// template, and a list of gpubox ids.
     pub fn open(
@@ -185,7 +181,7 @@ impl FlagFileSet {
                 }
                 Err(fits_error) => {
                     return Err(BirliError::FitsOpen {
-                        fits_error: fits_error,
+                        fits_error,
                         fits_filename: filename.into(),
                         source_file: file!(),
                         source_line: line!(),
@@ -194,9 +190,7 @@ impl FlagFileSet {
             }
         }
 
-        Ok(FlagFileSet {
-            gpubox_fptrs: gpubox_fptrs,
-        })
+        Ok(FlagFileSet { gpubox_fptrs })
     }
 
     fn write_primary_hdu(
@@ -226,8 +220,6 @@ impl FlagFileSet {
         Ok(())
     }
 
-    // TODO: this is really just for tests.
-    #[allow(dead_code)]
     fn read_header(fptr: &mut FitsFile) -> Result<FlagFileHeaders, BirliError> {
         let hdu0 = fits_open_hdu!(fptr, 0)?;
         let hdu1 = fits_open_hdu!(fptr, 1)?;
@@ -384,8 +376,6 @@ impl FlagFileSet {
         Ok(())
     }
 
-    // TODO: this is really just for tests.
-    #[allow(dead_code)]
     fn read_flags_raw(
         fptr: &mut FitsFile,
         flags_raw: &mut [i8],
@@ -415,11 +405,8 @@ impl FlagFileSet {
         Ok(())
     }
 
-    // TODO: this is really just for tests.
-
     /// Read raw flags and headers from disk, as a [`std::collections::BTreeMap`] mapping from each
     /// gpubox id to a tuple containing a [`FlagFileHeaders`] and the raw flags as a vector of bytes.
-    #[allow(dead_code)]
     pub fn read_chan_header_flags_raw(
         &mut self,
     ) -> Result<BTreeMap<usize, (FlagFileHeaders, Vec<i8>)>, BirliError> {
@@ -514,7 +501,7 @@ mod tests {
                     $expected
                 ))
             };
-        };
+        }
         test_percent_enforcement!(
             &mwax_context,
             "mwax_no_percents.mwaf",

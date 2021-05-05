@@ -67,9 +67,6 @@ jobs:
           && make -j \
           && sudo make install
 
-      # && sudo wget https://gitlab.com/aroffringa/aoflagger/-/archive/v3.0.0/aoflagger-v3.0.0.tar.gz \
-      # && sudo tar -zxvf aoflagger-v3.0.0.tar.gz \
-      # && cd aoflagger-v3.0.0 \
       - name: Install AOFlagger
         run: |
           cd /tmp \

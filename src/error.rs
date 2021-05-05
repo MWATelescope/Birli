@@ -1,5 +1,3 @@
-use fitsio;
-use mwalib;
 use thiserror::Error;
 
 #[derive(Error, Debug)]

@@ -23,8 +23,8 @@ descriptor for the speed which this library intends to deliver.
 
 ### Prerequisites
 
-- A Rust compiler with a version >= 1.47.0 - <https://www.rust-lang.org/tools/install>
-- [AOFlagger](https://gitlab.com/aroffringa/aoflagger)
+- A Rust compiler with a version >= 1.51.0 - <https://www.rust-lang.org/tools/install>
+- [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0.0
 
 for OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) and [macOS](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/macos_test.yml) CI Scripts, as these are tested regularly.
 
