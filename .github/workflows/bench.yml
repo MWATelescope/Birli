@@ -29,8 +29,8 @@ jobs:
 
       - name: install zip
         run: |
-          apt-get update \
-          && apt-get install -y zip
+          sudo apt-get update \
+          && sudo apt-get install -y zip
 
       - name: Zip benchmark results
         run: zip -r criterion.zip target/criterion/*
