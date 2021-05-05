@@ -1,3 +1,13 @@
+//! Iterms related to the reading and writing of the FITS-based MWA Flag file format.
+//!
+//! # MWAF Format
+//!
+//! Similar to the GPUFits format, mwaf files come in a set for each observation, and there is one
+//! .mwaf file per gpubox (coarse channel). This file contains a binary table of all the flags for
+//! that coarse channel. There is one row for each timestep-baseline combination, and there is only
+//! one column. Each cell in the table containsa binary vector of flags for each fine channel in
+//! the coarse channel.
+
 use crate::cxx_aoflagger::ffi::CxxFlagMask;
 use crate::error::BirliError;
 use clap::crate_version;
@@ -13,33 +23,37 @@ use regex::Regex;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// flag metadata which for a particular flag file in the set.
 pub struct FlagFileHeaders {
-    // hdu0.VERSION
+    /// The `VERSION` key from the primary hdu
+    // TODO: what is this actually used for?
     pub version: String,
-    // hdu0.GPSTIME
+    /// The `GPSTIME` key from the primary hdu
     pub obs_id: u32,
-    // hdu0.NCHANS - number of correlator fine channels per flag file
+    /// The number of correlator fine channels per flag file, and the `NCHANS` key from the primary hdu.
     pub num_channels: usize,
-    // hdu0.NANTENNA
+    /// Total number of antennas (tiles) in the array, and the `NANTENNA` key from the primary hdu
     pub num_ants: usize,
-    // hdu0.NSCANS
+    /// Number of timesteps in the observation, and the `NSCANS` key from the primary hdu
     pub num_timesteps: usize,
-    // hdu0.NPOLS
+    /// The `NPOLS` key from the primary hdu
     pub num_pols: usize,
-    // hdu0.GPUBOXNO
+    /// The `GPUBOXNO` key from the primary hdu
     pub gpubox_id: usize,
-    // hdu0.COTVER
+    /// The `COTVER` key from the primary hdu
     pub cotter_version: String,
-    // hdu0.COTVDATE
+    /// The `COTVDATE` key from the primary hdu
     pub cotter_version_date: String,
-    // hdu1.NAXIS1
+    /// The width of each fine channel mask vector in bytes, or the `NAXIS1` key from the table hdu
     pub bytes_per_row: usize,
-    // hdu1.NAXIS2
+    /// The number of rows (timesteps × baselines), and the `NAXIS2` key from the table hdu.
     pub num_rows: usize,
     // TODO: is it useful to output aoflagger version and strategy?
 }
 
 impl FlagFileHeaders {
+    /// Construct the [`FlagFileHeaders`] struct corresponding to the provided mwalib context and
+    /// gpubox id.
     pub fn from_gpubox_context(gpubox_id: usize, context: &CorrelatorContext) -> Self {
         let num_fine_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
         FlagFileHeaders {
@@ -59,8 +73,7 @@ impl FlagFileHeaders {
     }
 }
 
-// A group of MWAF Files for the same observation
-// #[derive(Clone, Debug)]
+/// A group of .mwaf Files for the same observation
 pub struct FlagFileSet {
     gpubox_fptrs: BTreeMap<usize, FitsFile>,
 }
@@ -104,6 +117,25 @@ impl FlagFileSet {
         Ok(gpubox_filenames)
     }
 
+    /// Create a new set of flag files
+    ///
+    /// `filename_template` is a template string which is expanded to the list of flag files in the
+    /// set, by replacing the percent (`%`) characters with each coarse channel's zero-prefixed
+    /// GPUBox ID. This is to maintain backwards compatibility with Cotter.
+    ///
+    /// For MWA Ord (legacy, pre-2021) correlator observations, the GPUBox ID is the two digit
+    /// correlator channel host number corresponding to [`mwalib::CoarseChannel.corr_chan_number`]
+    ///
+    /// For MWAX correlator observations, the GPUBox ID is the three-digit received channel number
+    /// corresponding to [`mwalib::CoarseChannel.rec_chan_number`].
+    ///
+    /// Be sure to specify the correct number of percent characters.
+    ///
+    /// # Errors
+    ///
+    /// Will fail if there are files already present at the paths specified in filename template.
+    ///
+    /// Will also fail if an invalid flag filename template is provided (wrong number of percents).
     pub fn new(
         context: &CorrelatorContext,
         filename_template: &str,
@@ -136,6 +168,8 @@ impl FlagFileSet {
 
     // TODO: this is really just for tests.
     #[allow(dead_code)]
+    /// Open an existing set of flag files, given an observation's context, the flag filename
+    /// template, and a list of gpubox ids.
     pub fn open(
         context: &CorrelatorContext,
         filename_template: &str,
@@ -262,6 +296,13 @@ impl FlagFileSet {
     //     Ok(headers)
     // }
 
+    /// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], and a
+    /// [`std::collections::BTreeMap`] mapping from each baseline in the observation to a
+    /// [`CxxFlagMask`]
+    ///
+    /// The filename template should contain two or 3 percentage (`%`) characters which will be replaced
+    /// by the gpubox id or channel number (depending on correlator type). See [`FlagFileSet::new`]
+    ///
     pub fn write_baseline_flagmasks(
         &mut self,
         context: &CorrelatorContext,
@@ -375,6 +416,9 @@ impl FlagFileSet {
     }
 
     // TODO: this is really just for tests.
+
+    /// Read raw flags and headers from disk, as a [`std::collections::BTreeMap`] mapping from each
+    /// gpubox id to a tuple containing a [`FlagFileHeaders`] and the raw flags as a vector of bytes.
     #[allow(dead_code)]
     pub fn read_chan_header_flags_raw(
         &mut self,

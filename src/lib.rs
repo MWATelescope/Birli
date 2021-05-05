@@ -1,71 +1,96 @@
 #![warn(missing_docs)]
 #![warn(missing_doc_code_examples)]
 
-/*!
-Birli is a library of common preprocessing tasks performed in the data pipeline of the Murchison
-Widefield Array (MWA) Telescope. Here's an example of how to flag some files
-
-```
-use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, FlagFileSet, cxx_aoflagger_new};
-use mwalib::CorrelatorContext;
-use tempfile::tempdir;
-
-// define out input files
-let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
-let gpufits_paths = vec![
-    "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
-    "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
-    "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
-    "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
-];
-
-// define a temporary directory for output
-let tmp_dir = tempdir().unwrap();
-
-// define out output flag file template
-let flag_template = tmp_dir.path().join("Flagfile%%%.mwaf");
-
-// Use [MWALib](https://github.com/MWATelescope/mwalib) to access visibilities.
-let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
-
-// create an aoflagger object
-let aoflagger = unsafe { cxx_aoflagger_new() };
-
-// generate aoflagger imagesets for each baseline
-let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
-
-// use the default strategy file location for MWA
-let strategy_filename = &aoflagger.FindStrategyFileMWA();
-
-// run the strategy on the imagesets, and get the resulting flags.
-let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
-
-// Get a list of all gpubox IDs
-let gpubox_ids: Vec<usize> = context
-            .coarse_chans
-            .iter()
-            .map(|chan| chan.gpubox_number)
-            .collect();
-
-// write the flags to disk as .mwaf
-write_flags(&context, baseline_flagmasks, flag_template.to_str().unwrap(), &gpubox_ids);
-```
-*/
+//! Birli is a library of common preprocessing tasks performed in the data pipeline of the Murchison
+//! Widefield Array (MWA) Telescope.
+//!
+//! # Examples
+//!
+//! Here's an example of how to flag some visibility files
+//!
+//! ```rust
+//! use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new};
+//! use mwalib::CorrelatorContext;
+//! use tempfile::tempdir;
+//!
+//! // define our input files
+//! let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+//! let gpufits_paths = vec![
+//!     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+//!     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+//!     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+//!     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+//! ];
+//!
+//! // define a temporary directory for output files
+//! let tmp_dir = tempdir().unwrap();
+//!
+//! // define our output flag file template
+//! let flag_template = tmp_dir.path().join("Flagfile%%%.mwaf");
+//!
+//! // Create an mwalib::CorrelatorContext for accessing visibilities.
+//! let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+//!
+//! // create a CxxAOFlagger object to perform AOFlagger operations
+//! let aoflagger = unsafe { cxx_aoflagger_new() };
+//!
+//! // generate imagesets for each baseline in the format required by aoflagger
+//! let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+//!
+//! // use the default strategy file location for MWA
+//! let strategy_filename = &aoflagger.FindStrategyFileMWA();
+//!
+//! // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
+//! let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
+//!
+//! // Get a list of all gpubox IDs
+//! let gpubox_ids: Vec<usize> = context
+//!             .coarse_chans
+//!             .iter()
+//!             .map(|chan| chan.gpubox_number)
+//!             .collect();
+//!
+//! // write the flags to disk as .mwaf
+//! write_flags(&context, baseline_flagmasks, flag_template.to_str().unwrap(), &gpubox_ids);
+//! ```
+//!
+//! # Details
+//!
+//! Birli reads visibilities with [`MWALib`] and uses CXX to bind to the [`AOFlagger`] C++ library.
+//! For more details about AOFlagger's interface, check out the [`aoflagger::AOFlagger`]
+//! documentation
+//!
+//! [`MWALib`]: https://github.com/MWATelescope/mwalib
+//! [`AOFlagger`]: https://gitlab.com/aroffringa/aoflagger
+//! [`aoflagger::AOFlagger`]: http://www.andreoffringa.org/aoflagger/doxygen/classaoflagger_1_1AOFlagger.html
 
 mod cxx_aoflagger;
 use cxx::UniquePtr;
-use cxx_aoflagger::ffi::{CxxAOFlagger, CxxFlagMask, CxxImageSet};
+pub use cxx_aoflagger::ffi::{
+    cxx_aoflagger_new, CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy,
+};
 
-pub use cxx_aoflagger::ffi::cxx_aoflagger_new;
 use mwalib::CorrelatorContext;
 use std::collections::BTreeMap;
 use std::os::raw::c_short;
-// use rayon::prelude::*;
 
-mod flag_io;
-pub use flag_io::FlagFileSet;
+pub mod flag_io;
+use flag_io::FlagFileSet;
 mod error;
 
+/// Get the version of the AOFlagger library from the library itself.
+///
+/// # Examples
+///
+/// ```rust
+/// use birli::get_aoflagger_version_string;
+/// use regex::Regex;
+///
+/// let aoflagger_version = get_aoflagger_version_string();
+/// // This ensures we're using aoflagger 3.*
+/// let version_regex = Regex::new(r"3\.\d+\.\d+").unwrap();
+/// assert!(version_regex.is_match(&aoflagger_version));
+/// ```
 pub fn get_aoflagger_version_string() -> String {
     let mut major: c_short = -1;
     let mut minor: c_short = -1;
@@ -79,6 +104,36 @@ pub fn get_aoflagger_version_string() -> String {
     return format!("{}.{}.{}", major, minor, sub_minor);
 }
 
+/// Read aan observation's visibilities into a [`std::collections::BTreeMap`] mapping each baseline
+/// in the observation to a [`CxxImageSet`], given a [`CxxAOFlagger`] instance and that
+/// observation's [`mwalib::CorrelatorContext`].
+///
+/// [`mwalib::CorrelatorContext`]: https://docs.rs/mwalib/0.7.0/mwalib/struct.CorrelatorContext.html
+///
+/// # Examples
+///
+/// ```
+/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new};
+/// use mwalib::CorrelatorContext;
+/// use tempfile::tempdir;
+///
+/// // define our input files
+/// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+/// let gpufits_paths = vec![
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+/// ];
+///
+/// // Create an mwalib::CorrelatorContext for accessing visibilities.
+/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+///
+/// let baseline_imgsets = unsafe {
+///     let aoflagger = cxx_aoflagger_new();
+///     context_to_baseline_imgsets(&aoflagger, &context)
+/// };
+/// ```
 pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
     context: &CorrelatorContext,
@@ -132,6 +187,35 @@ pub fn context_to_baseline_imgsets(
     return baseline_imgsets;
 }
 
+/// Flag an observation's visibilities, given a [`CxxAOFlagger`] instance, a [`CxxStrategy`]
+/// filename, and a [`std::collections::BTreeMap`] mapping each baseline in an observation to a
+/// [`CxxImageSet`], returning a [`std::collections::BTreeMap`] mapping from each baseline in the
+/// observation to a [`CxxFlagMask`].
+///
+/// # Examples
+///
+/// ```
+/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new};
+/// use mwalib::CorrelatorContext;
+/// use tempfile::tempdir;
+///
+/// // define our input files
+/// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+/// let gpufits_paths = vec![
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+/// ];
+///
+/// // Create an mwalib::CorrelatorContext for accessing visibilities.
+/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+///
+/// let baseline_imgsets = unsafe {
+///     let aoflagger = cxx_aoflagger_new();
+///     context_to_baseline_imgsets(&aoflagger, &context)
+/// };
+/// ```
 pub fn flag_imgsets(
     aoflagger: &CxxAOFlagger,
     strategy_filename: &String,
@@ -142,11 +226,70 @@ pub fn flag_imgsets(
     return baseline_imgsets
         .iter()
         .map(|(&baseline, imgset)| {
-            (baseline, aoflagger.LoadStrategyFile(strategy_filename).Run(&imgset))
+            (
+                baseline,
+                aoflagger.LoadStrategyFile(strategy_filename).Run(&imgset),
+            )
         })
         .collect();
 }
 
+/// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], a
+/// [`std::collections::BTreeMap`] mapping from each baseline in the observation to a
+/// [`CxxFlagMask`], a filename template and a vector of gpubox IDs, .
+///
+/// The filename template should contain two or 3 percentage (`%`) characters which will be replaced
+/// by the gpubox id or channel number (depending on correlator type). See [`flag_io::FlagFileSet::new`]
+///
+/// # Examples
+///
+/// Here's an example of how to flag some visibility files
+///
+/// ```rust
+/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new};
+/// use mwalib::CorrelatorContext;
+/// use tempfile::tempdir;
+///
+/// // define our input files
+/// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+/// let gpufits_paths = vec![
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+/// ];
+///
+/// // define a temporary directory for output files
+/// let tmp_dir = tempdir().unwrap();
+///
+/// // define our output flag file template
+/// let flag_template = tmp_dir.path().join("Flagfile%%%.mwaf");
+///
+/// // Create an mwalib::CorrelatorContext for accessing visibilities.
+/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+///
+/// // create a CxxAOFlagger object to perform AOFlagger operations
+/// let aoflagger = unsafe { cxx_aoflagger_new() };
+///
+/// // generate imagesets for each baseline in the format required by aoflagger
+/// let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+///
+/// // use the default strategy file location for MWA
+/// let strategy_filename = &aoflagger.FindStrategyFileMWA();
+///
+/// // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
+/// let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
+///
+/// // Get a list of all gpubox IDs
+/// let gpubox_ids: Vec<usize> = context
+///             .coarse_chans
+///             .iter()
+///             .map(|chan| chan.gpubox_number)
+///             .collect();
+///
+/// // write the flags to disk as .mwaf
+/// write_flags(&context, baseline_flagmasks, flag_template.to_str().unwrap(), &gpubox_ids);
+/// ```
 pub fn write_flags(
     context: &CorrelatorContext,
     baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>>,
