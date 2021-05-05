@@ -1,6 +1,8 @@
 #[cxx::bridge]
+// These are necessary for binding to aoflagger
+#[allow(clippy::ptr_arg)]
+#[allow(clippy::clippy::too_many_arguments)]
 pub mod ffi {
-
     unsafe extern "C++" {
         include!("birli/include/cxx_aoflagger.h");
 
@@ -132,7 +134,10 @@ pub mod ffi {
 }
 
 #[cfg(test)]
+// TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
+#[allow(clippy::float_cmp)]
 mod tests {
+
     use super::ffi::cxx_aoflagger_new;
     use std::mem::size_of_val;
 
@@ -144,11 +149,11 @@ mod tests {
 
     #[test]
     fn test_valid_img_set_init() {
-        let width = 2 as usize;
-        let height = 3 as usize;
-        let count = 4 as usize;
-        let initial_val = 5 as f32;
-        let width_cap = 6 as usize;
+        let width = 2_usize;
+        let height = 3_usize;
+        let count = 4_usize;
+        let initial_val = 5_f32;
+        let width_cap = 6_usize;
         let exp_stride = (((width_cap - 1) / 8) + 1) * 8;
         let aoflagger = unsafe { cxx_aoflagger_new() };
         let img_set =
@@ -164,24 +169,24 @@ mod tests {
 
     #[test]
     fn test_valid_img_set_rw() {
-        let width = 2 as usize;
-        let height = 3 as usize;
-        let count = 4 as usize;
-        let initial_val = 5 as f32;
-        let width_cap = 6 as usize;
+        let width = 2_usize;
+        let height = 3_usize;
+        let count = 4_usize;
+        let initial_val = 5_f32;
+        let width_cap = 6_usize;
         let aoflagger = unsafe { cxx_aoflagger_new() };
         let mut img_set =
             unsafe { aoflagger.MakeImageSet(width, height, count, initial_val, width_cap) };
         let first_buffer_write = img_set.pin_mut().ImageBufferMut(0);
-        first_buffer_write[0] = 7 as f32;
+        first_buffer_write[0] = 7_f32;
         let first_buffer_read = img_set.ImageBuffer(0);
-        assert_eq!(first_buffer_read[0], 7 as f32);
+        assert_eq!(first_buffer_read[0], 7_f32);
     }
 
     #[test]
     fn test_valid_flag_mask_init() {
-        let width = 21 as usize;
-        let height = 22 as usize;
+        let width = 21_usize;
+        let height = 22_usize;
         let initial_val = false;
         let exp_stride = 8 * (width / 8 + 1);
         let aoflagger = unsafe { cxx_aoflagger_new() };
@@ -195,8 +200,8 @@ mod tests {
 
     #[test]
     fn test_valid_flag_mask_rw() {
-        let width = 21 as usize;
-        let height = 22 as usize;
+        let width = 21_usize;
+        let height = 22_usize;
         let initial_val = false;
         let aoflagger = unsafe { cxx_aoflagger_new() };
         let mut flag_mask = unsafe { aoflagger.MakeFlagMask(width, height, initial_val) };
@@ -239,10 +244,10 @@ mod tests {
 
     #[test]
     fn test_strategy_run() {
-        let width = 5 as usize;
-        let height = 6 as usize;
-        let count = 4 as usize;
-        let initial_val = 5 as f32;
+        let width = 5_usize;
+        let height = 6_usize;
+        let count = 4_usize;
+        let initial_val = 5_f32;
         let width_cap = width as usize;
         let exp_stride = (((width - 1) / 4) + 1) * 4;
         let mut exp_flag_chunks = vec![vec![false; exp_stride]; height];
@@ -257,7 +262,7 @@ mod tests {
         let strategy_file_name = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
         let strategy = aoflagger.LoadStrategyFile(&strategy_file_name);
         let img_buffer = img_set.pin_mut().ImageBufferMut(noise_z);
-        img_buffer[noise_y * exp_stride + noise_x] = 999 as f32;
+        img_buffer[noise_y * exp_stride + noise_x] = 999_f32;
         let flag_mask = strategy.Run(&img_set);
         let flag_stride = flag_mask.HorizontalStride();
         assert_eq!(flag_stride, exp_stride);
@@ -272,10 +277,10 @@ mod tests {
     /* TODO: is this an issue? https://github.com/MWATelescope/Birli/blob/dev/doc/aoflagger_strategy_binding_issue.md */
     #[ignore]
     fn test_strategy_run_existing() {
-        let width = 5 as usize;
-        let height = 6 as usize;
-        let count = 4 as usize;
-        let initial_val = 5 as f32;
+        let width = 5_usize;
+        let height = 6_usize;
+        let count = 4_usize;
+        let initial_val = 5_f32;
         let width_cap = width as usize;
         let exp_stride = (((width - 1) / 4) + 1) * 4;
         let mut exp_flag_chunks = vec![vec![false; exp_stride]; height];
@@ -293,7 +298,7 @@ mod tests {
         let mut img_set =
             unsafe { aoflagger.MakeImageSet(width, height, count, initial_val, width_cap) };
         let img_buffer = img_set.pin_mut().ImageBufferMut(noise_z);
-        img_buffer[noise_y * exp_stride + noise_x] = 999 as f32;
+        img_buffer[noise_y * exp_stride + noise_x] = 999_f32;
         let mut existing_flag_mask = unsafe { aoflagger.MakeFlagMask(width, height, false) };
         let existing_flag_buf = existing_flag_mask.pin_mut().BufferMut();
         existing_flag_buf[existing_y * exp_stride + existing_x] = true;

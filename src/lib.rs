@@ -1,5 +1,7 @@
 #![warn(missing_docs)]
 #![warn(missing_doc_code_examples)]
+#![warn(clippy::missing_safety_doc)]
+#![warn(clippy::missing_errors_doc)]
 
 //! Birli is a library of common preprocessing tasks performed in the data pipeline of the Murchison
 //! Widefield Array (MWA) Telescope.
@@ -174,16 +176,16 @@ pub fn context_to_baseline_imgsets(
                     for (fine_chan_idx, fine_chan_chunk) in
                         baseline_chunk.chunks(floats_per_finechan).enumerate()
                     {
-                        let x = timestep_idx;
-                        let y = fine_chans_per_coarse * coarse_chan_idx + fine_chan_idx;
-                        imgset_buf[y * img_stride + x] = fine_chan_chunk[float_idx];
+                        let img_x = timestep_idx;
+                        let img_y = fine_chans_per_coarse * coarse_chan_idx + fine_chan_idx;
+                        imgset_buf[img_y * img_stride + img_x] = fine_chan_chunk[float_idx];
                     }
                 }
             }
         }
     }
 
-    return baseline_imgsets;
+    baseline_imgsets
 }
 
 /// Flag an observation's visibilities, given a [`CxxAOFlagger`] instance, a [`CxxStrategy`]
@@ -217,7 +219,7 @@ pub fn context_to_baseline_imgsets(
 /// ```
 pub fn flag_imgsets(
     aoflagger: &CxxAOFlagger,
-    strategy_filename: &String,
+    strategy_filename: &str,
     baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>>,
 ) -> BTreeMap<usize, UniquePtr<CxxFlagMask>> {
     // TODO: figure out how to parallelize with Rayon, into_iter(). You'll probably need to convert between UniquePtr and Box
@@ -227,7 +229,9 @@ pub fn flag_imgsets(
         .map(|(&baseline, imgset)| {
             (
                 baseline,
-                aoflagger.LoadStrategyFile(strategy_filename).Run(&imgset),
+                aoflagger
+                    .LoadStrategyFile(&strategy_filename.to_string())
+                    .Run(&imgset),
             )
         })
         .collect();
@@ -293,7 +297,7 @@ pub fn write_flags(
     context: &CorrelatorContext,
     baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>>,
     filename_template: &str,
-    gpubox_ids: &Vec<usize>,
+    gpubox_ids: &[usize],
 ) {
     let mut flag_file_set = FlagFileSet::new(context, filename_template, &gpubox_ids).unwrap();
     flag_file_set
@@ -303,6 +307,9 @@ pub fn write_flags(
 
 #[cfg(test)]
 mod tests {
+    // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
+    #![allow(clippy::float_cmp)]
+
     use super::{context_to_baseline_imgsets, flag_imgsets, write_flags, FlagFileSet};
     use crate::cxx_aoflagger::ffi::{cxx_aoflagger_new, CxxFlagMask, CxxImageSet};
     use cxx::UniquePtr;
@@ -333,6 +340,15 @@ mod tests {
         CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
     }
 
+    macro_rules! test_imgset_val {
+        ($imgset:expr, $imgset_idx:expr, $img_stride:expr, $x:expr, $y:expr, $val:expr) => {
+            assert_eq!(
+                $imgset.ImageBuffer($imgset_idx)[$x * $img_stride + $y],
+                $val
+            )
+        };
+    }
+
     #[test]
     fn test_context_to_baseline_imgsets_mwax() {
         let context = get_mwax_context();
@@ -346,80 +362,80 @@ mod tests {
 
         let imgset0 = baseline_imgsets.get(&0).unwrap();
 
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 0], 0x410000 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 1], 0x410100 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 2], 0x410200 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 3], 0x410300 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 4], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 5], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 6], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 7], 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 0, 0x410000 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 1, 0x410100 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 2, 0x410200 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 3, 0x410300 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 4, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 5, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 6, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 7, 0.0);
 
-        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 0], 0x410008 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 1], 0x410108 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 2], 0x410208 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 3], 0x410308 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 4], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 5], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 6], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[1 * img_stride + 7], 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 1, 0, 0x410008 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 1, 1, 0x410108 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 1, 2, 0x410208 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 1, 3, 0x410308 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 1, 4, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 1, 5, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 1, 6, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 1, 7, 0.0);
 
-        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 0], 0x410400 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 1], 0x410500 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 2], 0x410600 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 3], 0x410700 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 4], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 5], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 6], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[2 * img_stride + 7], 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 2, 0, 0x410400 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 2, 1, 0x410500 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 2, 2, 0x410600 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 2, 3, 0x410700 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 2, 4, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 2, 5, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 2, 6, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 2, 7, 0.0);
 
-        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 0], 0x410408 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 1], 0x410508 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 2], 0x410608 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 3], 0x410708 as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 4], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 5], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 6], 0.0);
-        assert_eq!(imgset0.ImageBuffer(0)[3 * img_stride + 7], 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 3, 0, 0x410408 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 3, 1, 0x410508 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 3, 2, 0x410608 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 3, 3, 0x410708 as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 3, 4, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 3, 5, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 3, 6, 0.0);
+        test_imgset_val!(imgset0, 0, img_stride, 3, 7, 0.0);
 
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 0], 0x410001 as f32);
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 1], 0x410101 as f32);
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 2], 0x410201 as f32);
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 3], 0x410301 as f32);
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 4], 0.0);
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 5], 0.0);
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 6], 0.0);
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 7], 0.0);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 0, 0x410001 as f32);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 1, 0x410101 as f32);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 2, 0x410201 as f32);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 3, 0x410301 as f32);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 4, 0.0);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 5, 0.0);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 6, 0.0);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 7, 0.0);
 
         /* ... */
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 0], 0x410007 as f32);
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 1], 0x410107 as f32);
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 2], 0x410207 as f32);
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 3], 0x410307 as f32);
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 4], 0.0);
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 5], 0.0);
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 6], 0.0);
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 7], 0.0);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 0, 0x410007 as f32);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 1, 0x410107 as f32);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 2, 0x410207 as f32);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 3, 0x410307 as f32);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 4, 0.0);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 5, 0.0);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 6, 0.0);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 7, 0.0);
 
         let imgset2 = baseline_imgsets.get(&2).unwrap();
 
-        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 0], 0x410020 as f32);
-        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 1], 0x410120 as f32);
-        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 2], 0x410220 as f32);
-        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 3], 0x410320 as f32);
-        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 4], 0.0);
-        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 5], 0.0);
-        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 6], 0.0);
-        assert_eq!(imgset2.ImageBuffer(0)[0 * img_stride + 7], 0.0);
+        test_imgset_val!(imgset2, 0, img_stride, 0, 0, 0x410020 as f32);
+        test_imgset_val!(imgset2, 0, img_stride, 0, 1, 0x410120 as f32);
+        test_imgset_val!(imgset2, 0, img_stride, 0, 2, 0x410220 as f32);
+        test_imgset_val!(imgset2, 0, img_stride, 0, 3, 0x410320 as f32);
+        test_imgset_val!(imgset2, 0, img_stride, 0, 4, 0.0);
+        test_imgset_val!(imgset2, 0, img_stride, 0, 5, 0.0);
+        test_imgset_val!(imgset2, 0, img_stride, 0, 6, 0.0);
+        test_imgset_val!(imgset2, 0, img_stride, 0, 7, 0.0);
 
-        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 0], 0x410028 as f32);
-        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 1], 0x410128 as f32);
-        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 2], 0x410228 as f32);
-        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 3], 0x410328 as f32);
-        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 4], 0.0);
-        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 5], 0.0);
-        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 6], 0.0);
-        assert_eq!(imgset2.ImageBuffer(0)[1 * img_stride + 7], 0.0);
+        test_imgset_val!(imgset2, 0, img_stride, 1, 0, 0x410028 as f32);
+        test_imgset_val!(imgset2, 0, img_stride, 1, 1, 0x410128 as f32);
+        test_imgset_val!(imgset2, 0, img_stride, 1, 2, 0x410228 as f32);
+        test_imgset_val!(imgset2, 0, img_stride, 1, 3, 0x410328 as f32);
+        test_imgset_val!(imgset2, 0, img_stride, 1, 4, 0.0);
+        test_imgset_val!(imgset2, 0, img_stride, 1, 5, 0.0);
+        test_imgset_val!(imgset2, 0, img_stride, 1, 6, 0.0);
+        test_imgset_val!(imgset2, 0, img_stride, 1, 7, 0.0);
     }
 
     #[test]
@@ -435,87 +451,87 @@ mod tests {
 
         let imgset0 = baseline_imgsets.get(&0).unwrap();
 
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 0], 0x10c5be as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 1], 0x14c5be as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 2], 0x18c5be as f32);
-        assert_eq!(imgset0.ImageBuffer(0)[0 * img_stride + 3], 0x1cc5be as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 0, 0x10c5be as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 1, 0x14c5be as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 2, 0x18c5be as f32);
+        test_imgset_val!(imgset0, 0, img_stride, 0, 3, 0x1cc5be as f32);
 
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 0], 0x10c5bf as f32);
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 1], 0x14c5bf as f32);
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 2], 0x18c5bf as f32);
-        assert_eq!(imgset0.ImageBuffer(1)[0 * img_stride + 3], 0x1cc5bf as f32);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 0, 0x10c5bf as f32);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 1, 0x14c5bf as f32);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 2, 0x18c5bf as f32);
+        test_imgset_val!(imgset0, 1, img_stride, 0, 3, 0x1cc5bf as f32);
 
-        assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 0], 0x10c5ae as f32);
-        assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 1], 0x14c5ae as f32);
-        assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 2], 0x18c5ae as f32);
-        assert_eq!(imgset0.ImageBuffer(2)[0 * img_stride + 3], 0x1cc5ae as f32);
+        test_imgset_val!(imgset0, 2, img_stride, 0, 0, 0x10c5ae as f32);
+        test_imgset_val!(imgset0, 2, img_stride, 0, 1, 0x14c5ae as f32);
+        test_imgset_val!(imgset0, 2, img_stride, 0, 2, 0x18c5ae as f32);
+        test_imgset_val!(imgset0, 2, img_stride, 0, 3, 0x1cc5ae as f32);
 
-        assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 0], -0x10c5af as f32);
-        assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 1], -0x14c5af as f32);
-        assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 2], -0x18c5af as f32);
-        assert_eq!(imgset0.ImageBuffer(3)[0 * img_stride + 3], -0x1cc5af as f32);
+        test_imgset_val!(imgset0, 3, img_stride, 0, 0, -0x10c5af as f32);
+        test_imgset_val!(imgset0, 3, img_stride, 0, 1, -0x14c5af as f32);
+        test_imgset_val!(imgset0, 3, img_stride, 0, 2, -0x18c5af as f32);
+        test_imgset_val!(imgset0, 3, img_stride, 0, 3, -0x1cc5af as f32);
 
-        assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 0], 0x10c5ae as f32);
-        assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 1], 0x14c5ae as f32);
-        assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 2], 0x18c5ae as f32);
-        assert_eq!(imgset0.ImageBuffer(4)[0 * img_stride + 3], 0x1cc5ae as f32);
+        test_imgset_val!(imgset0, 4, img_stride, 0, 0, 0x10c5ae as f32);
+        test_imgset_val!(imgset0, 4, img_stride, 0, 1, 0x14c5ae as f32);
+        test_imgset_val!(imgset0, 4, img_stride, 0, 2, 0x18c5ae as f32);
+        test_imgset_val!(imgset0, 4, img_stride, 0, 3, 0x1cc5ae as f32);
 
-        assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 0], 0x10c5af as f32);
-        assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 1], 0x14c5af as f32);
-        assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 2], 0x18c5af as f32);
-        assert_eq!(imgset0.ImageBuffer(5)[0 * img_stride + 3], 0x1cc5af as f32);
+        test_imgset_val!(imgset0, 5, img_stride, 0, 0, 0x10c5af as f32);
+        test_imgset_val!(imgset0, 5, img_stride, 0, 1, 0x14c5af as f32);
+        test_imgset_val!(imgset0, 5, img_stride, 0, 2, 0x18c5af as f32);
+        test_imgset_val!(imgset0, 5, img_stride, 0, 3, 0x1cc5af as f32);
 
-        assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 0], 0x10bec6 as f32);
-        assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 1], 0x14bec6 as f32);
-        assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 2], 0x18bec6 as f32);
-        assert_eq!(imgset0.ImageBuffer(6)[0 * img_stride + 3], 0x1cbec6 as f32);
+        test_imgset_val!(imgset0, 6, img_stride, 0, 0, 0x10bec6 as f32);
+        test_imgset_val!(imgset0, 6, img_stride, 0, 1, 0x14bec6 as f32);
+        test_imgset_val!(imgset0, 6, img_stride, 0, 2, 0x18bec6 as f32);
+        test_imgset_val!(imgset0, 6, img_stride, 0, 3, 0x1cbec6 as f32);
 
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 0], 0x10bec7 as f32);
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 1], 0x14bec7 as f32);
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 2], 0x18bec7 as f32);
-        assert_eq!(imgset0.ImageBuffer(7)[0 * img_stride + 3], 0x1cbec7 as f32);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 0, 0x10bec7 as f32);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 1, 0x14bec7 as f32);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 2, 0x18bec7 as f32);
+        test_imgset_val!(imgset0, 7, img_stride, 0, 3, 0x1cbec7 as f32);
 
         let imgset5 = baseline_imgsets.get(&5).unwrap();
 
-        assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 0], 0x10f1ce as f32);
-        assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 1], 0x14f1ce as f32);
-        assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 2], 0x18f1ce as f32);
-        assert_eq!(imgset5.ImageBuffer(0)[0 * img_stride + 3], 0x1cf1ce as f32);
+        test_imgset_val!(imgset5, 0, img_stride, 0, 0, 0x10f1ce as f32);
+        test_imgset_val!(imgset5, 0, img_stride, 0, 1, 0x14f1ce as f32);
+        test_imgset_val!(imgset5, 0, img_stride, 0, 2, 0x18f1ce as f32);
+        test_imgset_val!(imgset5, 0, img_stride, 0, 3, 0x1cf1ce as f32);
 
-        assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 0], -0x10f1cf as f32);
-        assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 1], -0x14f1cf as f32);
-        assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 2], -0x18f1cf as f32);
-        assert_eq!(imgset5.ImageBuffer(1)[0 * img_stride + 3], -0x1cf1cf as f32);
+        test_imgset_val!(imgset5, 1, img_stride, 0, 0, -0x10f1cf as f32);
+        test_imgset_val!(imgset5, 1, img_stride, 0, 1, -0x14f1cf as f32);
+        test_imgset_val!(imgset5, 1, img_stride, 0, 2, -0x18f1cf as f32);
+        test_imgset_val!(imgset5, 1, img_stride, 0, 3, -0x1cf1cf as f32);
 
-        assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 0], 0x10ea26 as f32);
-        assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 1], 0x14ea26 as f32);
-        assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 2], 0x18ea26 as f32);
-        assert_eq!(imgset5.ImageBuffer(2)[0 * img_stride + 3], 0x1cea26 as f32);
+        test_imgset_val!(imgset5, 2, img_stride, 0, 0, 0x10ea26 as f32);
+        test_imgset_val!(imgset5, 2, img_stride, 0, 1, 0x14ea26 as f32);
+        test_imgset_val!(imgset5, 2, img_stride, 0, 2, 0x18ea26 as f32);
+        test_imgset_val!(imgset5, 2, img_stride, 0, 3, 0x1cea26 as f32);
 
-        assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 0], -0x10ea27 as f32);
-        assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 1], -0x14ea27 as f32);
-        assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 2], -0x18ea27 as f32);
-        assert_eq!(imgset5.ImageBuffer(3)[0 * img_stride + 3], -0x1cea27 as f32);
+        test_imgset_val!(imgset5, 3, img_stride, 0, 0, -0x10ea27 as f32);
+        test_imgset_val!(imgset5, 3, img_stride, 0, 1, -0x14ea27 as f32);
+        test_imgset_val!(imgset5, 3, img_stride, 0, 2, -0x18ea27 as f32);
+        test_imgset_val!(imgset5, 3, img_stride, 0, 3, -0x1cea27 as f32);
 
-        assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 0], 0x10f1be as f32);
-        assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 1], 0x14f1be as f32);
-        assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 2], 0x18f1be as f32);
-        assert_eq!(imgset5.ImageBuffer(4)[0 * img_stride + 3], 0x1cf1be as f32);
+        test_imgset_val!(imgset5, 4, img_stride, 0, 0, 0x10f1be as f32);
+        test_imgset_val!(imgset5, 4, img_stride, 0, 1, 0x14f1be as f32);
+        test_imgset_val!(imgset5, 4, img_stride, 0, 2, 0x18f1be as f32);
+        test_imgset_val!(imgset5, 4, img_stride, 0, 3, 0x1cf1be as f32);
 
-        assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 0], -0x10f1bf as f32);
-        assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 1], -0x14f1bf as f32);
-        assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 2], -0x18f1bf as f32);
-        assert_eq!(imgset5.ImageBuffer(5)[0 * img_stride + 3], -0x1cf1bf as f32);
+        test_imgset_val!(imgset5, 5, img_stride, 0, 0, -0x10f1bf as f32);
+        test_imgset_val!(imgset5, 5, img_stride, 0, 1, -0x14f1bf as f32);
+        test_imgset_val!(imgset5, 5, img_stride, 0, 2, -0x18f1bf as f32);
+        test_imgset_val!(imgset5, 5, img_stride, 0, 3, -0x1cf1bf as f32);
 
-        assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 0], 0x10ea16 as f32);
-        assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 1], 0x14ea16 as f32);
-        assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 2], 0x18ea16 as f32);
-        assert_eq!(imgset5.ImageBuffer(6)[0 * img_stride + 3], 0x1cea16 as f32);
+        test_imgset_val!(imgset5, 6, img_stride, 0, 0, 0x10ea16 as f32);
+        test_imgset_val!(imgset5, 6, img_stride, 0, 1, 0x14ea16 as f32);
+        test_imgset_val!(imgset5, 6, img_stride, 0, 2, 0x18ea16 as f32);
+        test_imgset_val!(imgset5, 6, img_stride, 0, 3, 0x1cea16 as f32);
 
-        assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 0], -0x10ea17 as f32);
-        assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 1], -0x14ea17 as f32);
-        assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 2], -0x18ea17 as f32);
-        assert_eq!(imgset5.ImageBuffer(7)[0 * img_stride + 3], -0x1cea17 as f32);
+        test_imgset_val!(imgset5, 7, img_stride, 0, 0, -0x10ea17 as f32);
+        test_imgset_val!(imgset5, 7, img_stride, 0, 1, -0x14ea17 as f32);
+        test_imgset_val!(imgset5, 7, img_stride, 0, 2, -0x18ea17 as f32);
+        test_imgset_val!(imgset5, 7, img_stride, 0, 3, -0x1cea17 as f32);
     }
 
     #[test]

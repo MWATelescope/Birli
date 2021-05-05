@@ -83,7 +83,7 @@ impl FlagFileSet {
     fn get_gpubox_filenames(
         corr_version: CorrelatorVersion,
         filename_template: &str,
-        gpubox_ids: &Vec<usize>,
+        gpubox_ids: &[usize],
     ) -> Result<BTreeMap<usize, String>, BirliError> {
         let num_percents = match corr_version {
             CorrelatorVersion::Legacy | CorrelatorVersion::OldLegacy => 2,
@@ -133,27 +133,29 @@ impl FlagFileSet {
     ///
     /// # Errors
     ///
-    /// Will fail if there are files already present at the paths specified in filename template.
+    /// Will error with [`BirliError::FitsOpen`] if there are files already present at the paths
+    /// specified in filename template.
     ///
-    /// Will also fail if an invalid flag filename template is provided (wrong number of percents).
+    /// Will error with [`BirliError::InvalidFlagFilenameTemplate`] if an invalid flag filename
+    /// template is provided (wrong number of percents).
     pub fn new(
         context: &CorrelatorContext,
         filename_template: &str,
         // TODO: make this optional
-        gpubox_ids: &Vec<usize>,
+        gpubox_ids: &[usize],
     ) -> Result<Self, BirliError> {
         let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
         let gpubox_filenames =
             FlagFileSet::get_gpubox_filenames(context.corr_version, filename_template, gpubox_ids)?;
-        for (gpubox_id, filename) in gpubox_filenames.into_iter() {
-            match FitsFile::create(Path::new(&filename.to_string())).open() {
+        for (gpubox_id, fits_filename) in gpubox_filenames.into_iter() {
+            match FitsFile::create(Path::new(&fits_filename.to_string())).open() {
                 Ok(fptr) => {
                     gpubox_fptrs.insert(gpubox_id, fptr);
                 }
                 Err(fits_error) => {
                     return Err(BirliError::FitsOpen {
                         fits_error,
-                        fits_filename: filename.into(),
+                        fits_filename,
                         source_file: file!(),
                         source_line: line!(),
                     })
@@ -166,23 +168,28 @@ impl FlagFileSet {
 
     /// Open an existing set of flag files, given an observation's context, the flag filename
     /// template, and a list of gpubox ids.
+    ///
+    /// # Errors
+    ///
+    /// will error with [`BirliError::FitsOpen`] if files don't exist
+    ///
     pub fn open(
         context: &CorrelatorContext,
         filename_template: &str,
-        gpubox_ids: &Vec<usize>,
+        gpubox_ids: &[usize],
     ) -> Result<Self, BirliError> {
         let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
         let gpubox_filenames =
             FlagFileSet::get_gpubox_filenames(context.corr_version, filename_template, gpubox_ids)?;
-        for (gpubox_id, filename) in gpubox_filenames.into_iter() {
-            match FitsFile::open(Path::new(&filename.to_string())) {
+        for (gpubox_id, fits_filename) in gpubox_filenames.into_iter() {
+            match FitsFile::open(Path::new(&fits_filename.to_string())) {
                 Ok(fptr) => {
                     gpubox_fptrs.insert(gpubox_id, fptr);
                 }
                 Err(fits_error) => {
                     return Err(BirliError::FitsOpen {
                         fits_error,
-                        fits_filename: filename.into(),
+                        fits_filename,
                         source_file: file!(),
                         source_line: line!(),
                     })
@@ -294,6 +301,11 @@ impl FlagFileSet {
     ///
     /// The filename template should contain two or 3 percentage (`%`) characters which will be replaced
     /// by the gpubox id or channel number (depending on correlator type). See [`FlagFileSet::new`]
+    ///
+    /// # Errors
+    ///
+    /// Will error if the gpubox ids this flagset was initialized with is not contained in the
+    /// provided [`mwalib::CorrelatorContext`].
     ///
     pub fn write_baseline_flagmasks(
         &mut self,
@@ -407,6 +419,11 @@ impl FlagFileSet {
 
     /// Read raw flags and headers from disk, as a [`std::collections::BTreeMap`] mapping from each
     /// gpubox id to a tuple containing a [`FlagFileHeaders`] and the raw flags as a vector of bytes.
+    ///
+    /// # Errors
+    ///
+    /// Will error with [`BirliError::MwafInconsistent`] if the mwaf files have inconsistent headers
+    ///
     pub fn read_chan_header_flags_raw(
         &mut self,
     ) -> Result<BTreeMap<usize, (FlagFileHeaders, Vec<i8>)>, BirliError> {
@@ -477,13 +494,13 @@ mod tests {
     #[test]
     fn test_flagfileset_enforces_percents_in_filename_template() {
         let mwax_context = get_mwax_context();
-        let mwax_gpubox_ids = mwax_context
+        let mwax_gpubox_ids: Vec<_> = mwax_context
             .coarse_chans
             .iter()
             .map(|chan| chan.gpubox_number)
             .collect();
         let mwa_ord_context = get_mwa_ord_context();
-        let mwa_ord_gpubox_ids = mwa_ord_context
+        let mwa_ord_gpubox_ids: Vec<_> = mwa_ord_context
             .coarse_chans
             .iter()
             .map(|chan| chan.gpubox_number)
@@ -699,7 +716,7 @@ mod tests {
 
         assert_eq!(chan_flags_raw.keys().len(), 1);
         let (chan1_header, chan1_flags_raw) = chan_flags_raw.get(&1).unwrap();
-        assert!(chan1_flags_raw.len() > 0);
+        assert!(!chan1_flags_raw.is_empty());
 
         let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
 
@@ -736,7 +753,7 @@ mod tests {
         let tmp_dir = tempdir().unwrap();
         let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
 
-        let mut i = 0;
+        let mut idx = 0;
         let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
         let height = context.num_coarse_chans * num_fine_chans_per_coarse;
@@ -748,10 +765,9 @@ mod tests {
             for (coarse_chan_idx, _) in context.coarse_chans.iter().enumerate() {
                 for (timestep_idx, _) in context.timesteps.iter().enumerate() {
                     for baseline_idx in 0..context.metafits_context.num_baselines {
-                        if !baseline_flagmasks.contains_key(&baseline_idx) {
-                            baseline_flagmasks
-                                .insert(baseline_idx, aoflagger.MakeFlagMask(width, height, false));
-                        };
+                        baseline_flagmasks
+                            .entry(baseline_idx)
+                            .or_insert_with(|| aoflagger.MakeFlagMask(width, height, false));
                         let flag_mask_ptr = baseline_flagmasks.get_mut(&baseline_idx).unwrap();
                         let flag_stride = flag_mask_ptr.HorizontalStride();
                         let flag_buf = flag_mask_ptr.pin_mut().BufferMut();
@@ -760,10 +776,10 @@ mod tests {
                                 coarse_chan_idx * num_fine_chans_per_coarse + fine_chan_idx;
                             let flag_idx = flag_offset_y * flag_stride + timestep_idx;
                             assert!(flag_idx < flag_stride * height);
-                            dbg!(flag_idx, fine_chan_idx, i, 1 << fine_chan_idx & i);
-                            flag_buf[flag_idx] = 1 << fine_chan_idx & i != 0;
+                            dbg!(flag_idx, fine_chan_idx, idx, 1 << fine_chan_idx & idx);
+                            flag_buf[flag_idx] = 1 << fine_chan_idx & idx != 0;
                         }
-                        i = (i + 1) % (1 << num_fine_chans_per_coarse);
+                        idx = (idx + 1) % (1 << num_fine_chans_per_coarse);
                     }
                 }
             }
