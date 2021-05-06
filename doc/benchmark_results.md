@@ -1,5 +1,9 @@
 # Benchmark Results
 
+## Cotter
+
+Cotter, when run
+
 <!-- tip: use https://tabletomarkdown.com/convert-website-table-to-markdown/ -->
 
 ## [commit a762a27 (v0.1.1)](https://github.com/MWATelescope/Birli/actions/runs/812007480)
@@ -8,7 +12,7 @@ total duration:  5h 47m 35s
 
 ### a762a27 context_to_baseline_imgsets - ord_half_1196175296
 
-![a762a27 context_to_baseline_imgsets - ord_half_1196175296 pdf](img/a762a27%20context_to_baseline_imgsets%20-%20ord_half_1196175296%20pdf_small.svg)
+![a762a27 context_to_baseline_imgsets - ord_half_1196175296 pdf](img/a762a27%20context_to_baseline_imgsets%20-%20ord_half_1196175296%20pdf.svg)
 
 |           | Lower bound | Estimate  | Upper bound |
 | --------- | ----------- | --------- | ----------- |
@@ -20,8 +24,6 @@ total duration:  5h 47m 35s
 
 ## [commit ea16381](https://github.com/MWATelescope/Birli/actions/runs/813672907)
 
-![ea16381 context_to_baseline_imgsets - ord_half_1196175296 pdf](img/ea16381%20context_to_baseline_imgsets%20-%20ord_half_1196175296%20pdf_small.svg)
-
 performance changes:
 
 - initial optimization of visibility loading by reducing `pin()`s.
@@ -31,7 +33,7 @@ total duration:  3h 31m 2s
 
 ### ea16381 context_to_baseline_imgsets - ord_half_1196175296
 
-![ea16381 context_to_baseline_imgsets - ord_half_1196175296 pdf](img/ea16381%20context_to_baseline_imgsets%20-%20ord_half_1196175296%20pdf_small.svg)
+![ea16381 context_to_baseline_imgsets - ord_half_1196175296 pdf](img/ea16381%20context_to_baseline_imgsets%20-%20ord_half_1196175296%20pdf.svg)
 
 |           | Lower bound | Estimate  | Upper bound |
 | --------- | ----------- | --------- | ----------- |
@@ -43,7 +45,7 @@ total duration:  3h 31m 2s
 
 ### ea16381 context_to_baseline_imgsets - mwax_half_1247842824
 
-![ea16381 context_to_baseline_imgsets - mwax_half_1247842824 pdf](ea16381%20context_to_baseline_imgsets%20-%20mwax_half_1247842824%20pdf_small.svg)
+![ea16381 context_to_baseline_imgsets - mwax_half_1247842824 pdf](img/dbdc0ee%20context_to_baseline_imgsets%20-%20mwax_half_1247842824%20pdf.svg)
 
 |           | Lower bound | Estimate  | Upper bound |
 | --------- | ----------- | --------- | ----------- |
@@ -52,3 +54,38 @@ total duration:  3h 31m 2s
 | Std. Dev. | 892.73 ms   | 1.4113 s  | 1.7007 s    |
 | Median    | 371.33 s    | 372.40 s  | 373.89 s    |
 | MAD       | 219.26 ms   | 1.9937 s  | 2.2897 s    |
+
+## [commit dbdc0ee](https://github.com/MWATelescope/Birli/actions/runs/815126545)
+
+![dbdc0ee context_to_baseline_imgsets - ord_half_1196175296 pdf](img/dbdc0ee%20context_to_baseline_imgsets%20-%20ord_half_1196175296%20pdf.svg)
+
+performance changes:
+
+- parallelize visibility loading with crossbeam
+- added mwax benchmark
+
+total duration:  2h 8m 33s
+
+### dbdc0ee context_to_baseline_imgsets - ord_half_1196175296
+
+![dbdc0ee context_to_baseline_imgsets - ord_half_1196175296 pdf](img/dbdc0ee%20context_to_baseline_imgsets%20-%20ord_half_1196175296%20pdf.svg)
+
+|           | Lower bound | Estimate  | Upper bound |
+| --------- | ----------- | --------- | ----------- |
+| R²        | 0.0275373   | 0.0383631 | 0.0283015   |
+| Mean      | 454.55 s    | 458.65 s  | 462.56 s    |
+| Std. Dev. | 4.2645 s    | 6.7653 s  | 8.1761 s    |
+| Median    | 453.08 s    | 459.36 s  | 464.87 s    |
+| MAD       | 1.3541 s    | 8.6210 s  | 11.241 s    |
+
+### dbdc0ee context_to_baseline_imgsets - mwax_half_1247842824
+
+![dbdc0ee context_to_baseline_imgsets - mwax_half_1247842824 pdf](img/dbdc0ee%20context_to_baseline_imgsets%20-%20mwax_half_1247842824%20pdf.svg)
+
+|           | Lower bound | Estimate  | Upper bound |
+| --------- | ----------- | --------- | ----------- |
+| R²        | 0.0126678   | 0.0172310 | 0.0124256   |
+| Mean      | 223.02 s    | 226.30 s  | 229.69 s    |
+| Std. Dev. | 3.7627 s    | 5.7011 s  | 6.6885 s    |
+| Median    | 220.65 s    | 226.49 s  | 231.33 s    |
+| MAD       | 942.88 ms   | 7.1007 s  | 9.4088 s    |
