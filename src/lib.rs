@@ -78,7 +78,8 @@ use std::os::raw::c_short;
 
 pub mod flag_io;
 use flag_io::FlagFileSet;
-mod error;
+
+pub mod error;
 
 use crossbeam_channel::{bounded, unbounded};
 use crossbeam_utils::thread;
