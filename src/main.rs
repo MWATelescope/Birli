@@ -67,7 +67,6 @@ where
     }
 }
 
-#[cfg(not(tarpaulin_include))]
 fn main() {
     main_with_args(env::args())
 }

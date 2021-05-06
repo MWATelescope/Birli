@@ -1,4 +1,4 @@
-//! Iterms related to the reading and writing of the FITS-based MWA Flag file format.
+//! Items related to the reading and writing of the FITS-based MWA Flag file format.
 //!
 //! # MWAF Format
 //!
