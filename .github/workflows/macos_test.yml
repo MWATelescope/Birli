@@ -26,14 +26,6 @@ jobs:
         uses: davidB/rust-cargo-make@v1
 
       - name: Install Dependencies
-        run: |
-          brew tap derwentx/tap
-          wget https://github.com/derwentx/homebrew-tap/releases/download/v2021.03.08/casacore-data--2021.02.26.catalina.bottle.tar.gz
-          brew install -f casacore-data--2021.02.26.catalina.bottle.tar.gz
-          wget https://github.com/derwentx/homebrew-tap/releases/download/v2021.03.08/casacore--3.4.0.catalina.bottle.tar.gz
-          brew install -f casacore--3.4.0.catalina.bottle.tar.gz
-          wget https://github.com/derwentx/homebrew-tap/releases/download/v2021.03.08/aoflagger--3.0.0.catalina.bottle.tar.gz
-          brew install -f aoflagger--3.0.0.catalina.bottle.tar.gz
-          cargo make install_deps
+        run: cargo make install_deps
 
       - run: cargo make ci

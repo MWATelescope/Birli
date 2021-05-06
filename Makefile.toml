@@ -2,14 +2,76 @@
 command = "sudo"
 args = ["apt-get", "update"]
 
-[tasks.linux_install_deps]
-command = "sudo"
-args = ["apt-get", "install", "-y", "libcfitsio-dev", "aoflagger-dev"]
+[tasks.linux_install_cfitsio]
+script = """sudo apt-get install -y \
+    build-essential \
+    cmake \
+    git  \
+    pkg-config \
+    unzip \
+&& cd /tmp \
+&& wget http://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz \
+&& tar -zxvf cfitsio-3.49.tar.gz \
+&& cd cfitsio-3.49/ \
+&& CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2 \
+&& make -j \
+&& sudo make install
+"""
 dependencies = ["linux_apt_get_update"]
 
+[tasks.linux_install_aoflagger]
+script = """
+sudo apt-get install -y \
+    build-essential \
+    casacore-data \
+    casacore-dev \
+    cmake \
+    git  \
+    libblas-dev \
+    libboost-date-time-dev \
+    libboost-filesystem-dev \
+    libboost-system-dev \
+    libboost-test-dev \
+    libfftw3-dev \
+    libgsl-dev \
+    libgtkmm-3.0-dev \
+    liblapack-dev \
+    liblua5.3-dev \
+    libpng-dev \
+    libpython3-dev \
+    libssl-dev \
+    libxml2-dev \
+    pkg-config \
+    python3 \
+    unzip \
+&& cd /tmp \
+&& git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git \
+&& cd aoflagger \
+&& chmod a+rwx . \
+&& mkdir build \
+&& cd build \
+&& cmake .. \
+&& make \
+&& sudo make install \
+"""
+dependencies = ["linux_install_cfitsio"]
+
+[tasks.linux_install_deps]
+command = "sudo"
+args = ["apt-get", "install", "-y", "zip"]
+dependencies = ["linux_install_aoflagger"]
+
 [tasks.mac_install_deps]
-command = "brew"
-args = ["install", "cfitsio", "derwentx/tap/aoflagger"]
+script = """
+brew tap mwaTelescope/tap
+wget https://github.com/mwaTelescope/homebrew-tap/releases/download/v2021.03.08/casacore-data--2021.02.26.catalina.bottle.tar.gz
+brew install -f casacore-data--2021.02.26.catalina.bottle.tar.gz
+wget https://github.com/mwaTelescope/homebrew-tap/releases/download/v2021.03.08/casacore--3.4.0.catalina.bottle.tar.gz
+brew install -f casacore--3.4.0.catalina.bottle.tar.gz
+wget https://github.com/mwaTelescope/homebrew-tap/releases/download/v2021.03.08/aoflagger--3.0.0.catalina.bottle.tar.gz
+brew install -f aoflagger--3.0.0.catalina.bottle.tar.gz
+cargo make install_deps
+"""
 
 [tasks.install_deps]
 linux_alias = "linux_install_deps"

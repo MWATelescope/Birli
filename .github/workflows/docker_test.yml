@@ -23,23 +23,16 @@ jobs:
           override: true
           components: rustfmt, clippy
 
-      - name: install cfitsio
+      - name: install unzip
         run: |
           apt-get update \
-          && apt-get install -y wget \
-          && cd /tmp \
-          && wget http://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz \
-          && tar -zxvf cfitsio-3.49.tar.gz \
-          && cd cfitsio-3.49/ \
-          && CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2 \
-          && make -j \
-          && make install
+          && apt-get install -y wget unzip \
 
       - name: Install Cargo Make
+        uses: davidB/rust-cargo-make@v1
+
+      - name: Install Dependencies
         run: |
-          export DEBIAN_FRONTEND=noninteractive \
-          && apt-get update \
-          && apt-get install -y unzip libssl-dev \
-          && cargo install --force cargo-make
+          cargo make install_deps
 
       - run: cargo make ci
