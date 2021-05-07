@@ -296,8 +296,7 @@ impl FlagFileSet {
     // }
 
     /// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], and a
-    /// [`std::collections::BTreeMap`] mapping from each baseline in the observation to a
-    /// [`CxxFlagMask`]
+    /// vector of [`CxxFlagMask`]s for each baseline in the observation.
     ///
     /// The filename template should contain two or 3 percentage (`%`) characters which will be replaced
     /// by the gpubox id or channel number (depending on correlator type). See [`FlagFileSet::new`]
@@ -310,7 +309,7 @@ impl FlagFileSet {
     pub fn write_baseline_flagmasks(
         &mut self,
         context: &CorrelatorContext,
-        baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>>,
+        baseline_flagmasks: Vec<UniquePtr<CxxFlagMask>>,
     ) -> Result<(), BirliError> {
         let gpubox_chan_numbers: BTreeMap<usize, usize> = context
             .coarse_chans
@@ -348,7 +347,7 @@ impl FlagFileSet {
             FlagFileSet::write_table_hdu(fptr, &table_hdu, &header)?;
 
             let mut status = 0;
-            for (baseline_idx, flagmask) in baseline_flagmasks.iter() {
+            for (baseline_idx, flagmask) in baseline_flagmasks.iter().enumerate() {
                 // TODO: Assert baseline_idx < num_baselines?
                 let flag_buffer = flagmask.Buffer();
                 let flag_stride = flagmask.HorizontalStride();
@@ -758,29 +757,28 @@ mod tests {
 
         let height = context.num_coarse_chans * num_fine_chans_per_coarse;
         let width = context.num_timesteps;
-        let mut baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>> = BTreeMap::new();
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+        let mut baseline_flagmasks: Vec<UniquePtr<CxxFlagMask>> = context
+            .metafits_context
+            .baselines
+            .iter()
+            .map(|_| unsafe { aoflagger.MakeFlagMask(width, height, false) })
+            .collect();
 
-        unsafe {
-            let aoflagger = cxx_aoflagger_new();
-            for (coarse_chan_idx, _) in context.coarse_chans.iter().enumerate() {
-                for (timestep_idx, _) in context.timesteps.iter().enumerate() {
-                    for baseline_idx in 0..context.metafits_context.num_baselines {
-                        baseline_flagmasks
-                            .entry(baseline_idx)
-                            .or_insert_with(|| aoflagger.MakeFlagMask(width, height, false));
-                        let flag_mask_ptr = baseline_flagmasks.get_mut(&baseline_idx).unwrap();
-                        let flag_stride = flag_mask_ptr.HorizontalStride();
-                        let flag_buf = flag_mask_ptr.pin_mut().BufferMut();
-                        for fine_chan_idx in 0..num_fine_chans_per_coarse {
-                            let flag_offset_y =
-                                coarse_chan_idx * num_fine_chans_per_coarse + fine_chan_idx;
-                            let flag_idx = flag_offset_y * flag_stride + timestep_idx;
-                            assert!(flag_idx < flag_stride * height);
-                            dbg!(flag_idx, fine_chan_idx, idx, 1 << fine_chan_idx & idx);
-                            flag_buf[flag_idx] = 1 << fine_chan_idx & idx != 0;
-                        }
-                        idx = (idx + 1) % (1 << num_fine_chans_per_coarse);
+        for (coarse_chan_idx, _) in context.coarse_chans.iter().enumerate() {
+            for (timestep_idx, _) in context.timesteps.iter().enumerate() {
+                for flag_mask_ptr in baseline_flagmasks.iter_mut() {
+                    let flag_stride = flag_mask_ptr.HorizontalStride();
+                    let flag_buf = flag_mask_ptr.pin_mut().BufferMut();
+                    for fine_chan_idx in 0..num_fine_chans_per_coarse {
+                        let flag_offset_y =
+                            coarse_chan_idx * num_fine_chans_per_coarse + fine_chan_idx;
+                        let flag_idx = flag_offset_y * flag_stride + timestep_idx;
+                        assert!(flag_idx < flag_stride * height);
+                        dbg!(flag_idx, fine_chan_idx, idx, 1 << fine_chan_idx & idx);
+                        flag_buf[flag_idx] = 1 << fine_chan_idx & idx != 0;
                     }
+                    idx = (idx + 1) % (1 << num_fine_chans_per_coarse);
                 }
             }
         }

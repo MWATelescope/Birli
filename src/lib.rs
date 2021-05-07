@@ -73,7 +73,6 @@ pub use cxx_aoflagger::ffi::{
 };
 
 use mwalib::CorrelatorContext;
-use std::collections::BTreeMap;
 use std::os::raw::c_short;
 
 pub mod flag_io;
@@ -110,9 +109,9 @@ pub fn get_aoflagger_version_string() -> String {
     return format!("{}.{}.{}", major, minor, sub_minor);
 }
 
-/// Read aan observation's visibilities into a [`std::collections::BTreeMap`] mapping each baseline
-/// in the observation to a [`CxxImageSet`], given a [`CxxAOFlagger`] instance and that
-/// observation's [`mwalib::CorrelatorContext`].
+/// Read aan observation's visibilities into a vector containing a [`CxxImageSet`]s for each
+/// baseline in the observation, given a [`CxxAOFlagger`] instance and that observation's
+/// [`mwalib::CorrelatorContext`].
 ///
 /// [`mwalib::CorrelatorContext`]: https://docs.rs/mwalib/0.7.0/mwalib/struct.CorrelatorContext.html
 ///
@@ -143,7 +142,7 @@ pub fn get_aoflagger_version_string() -> String {
 pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
     context: &CorrelatorContext,
-) -> BTreeMap<usize, UniquePtr<CxxImageSet>> {
+) -> Vec<UniquePtr<CxxImageSet>> {
     let coarse_chan_idxs: Vec<usize> = context
         .coarse_chans
         .iter()
@@ -164,17 +163,11 @@ pub fn context_to_baseline_imgsets(
     let width = context.num_timesteps;
     let img_stride = (((width - 1) / 8) + 1) * 8;
 
-    let mut baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>> = context
+    let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = context
         .metafits_context
         .baselines
         .iter()
-        .enumerate()
-        .map(|(baseline_idx, _)| unsafe {
-            (
-                baseline_idx,
-                aoflagger.MakeImageSet(width, height, 8, 0 as f32, width),
-            )
-        })
+        .map(|_| unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) })
         .collect();
 
     let num_workers = coarse_chan_idxs.len();
@@ -215,7 +208,7 @@ pub fn context_to_baseline_imgsets(
         // consume the rx_img queue
         for (coarse_chan_idx, timestep_idx, img_buf) in rx_img.iter() {
             for (baseline_idx, baseline_chunk) in img_buf.chunks(floats_per_baseline).enumerate() {
-                let imgset = baseline_imgsets.get_mut(&baseline_idx).unwrap();
+                let imgset = &mut baseline_imgsets[baseline_idx];
 
                 for float_idx in 0..8 {
                     let imgset_buf = imgset.pin_mut().ImageBufferMut(float_idx);
@@ -236,9 +229,8 @@ pub fn context_to_baseline_imgsets(
 }
 
 /// Flag an observation's visibilities, given a [`CxxAOFlagger`] instance, a [`CxxStrategy`]
-/// filename, and a [`std::collections::BTreeMap`] mapping each baseline in an observation to a
-/// [`CxxImageSet`], returning a [`std::collections::BTreeMap`] mapping from each baseline in the
-/// observation to a [`CxxFlagMask`].
+/// filename, and a vector of [`CxxImageSet`]s for each baseline in the observation returning a
+/// vector of [`CxxFlagMask`]s.
 ///
 /// # Examples
 ///
@@ -267,29 +259,27 @@ pub fn context_to_baseline_imgsets(
 pub fn flag_imgsets(
     aoflagger: &CxxAOFlagger,
     strategy_filename: &str,
-    baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>>,
-) -> BTreeMap<usize, UniquePtr<CxxFlagMask>> {
+    baseline_imgsets: Vec<UniquePtr<CxxImageSet>>,
+) -> Vec<UniquePtr<CxxFlagMask>> {
     // TODO: figure out how to parallelize with Rayon, into_iter(). You'll probably need to convert between UniquePtr and Box
 
-    return baseline_imgsets
+    baseline_imgsets
         .iter()
-        .map(|(&baseline, imgset)| {
-            (
-                baseline,
-                aoflagger
-                    .LoadStrategyFile(&strategy_filename.to_string())
-                    .Run(&imgset),
-            )
+        .map(|imgset| {
+            aoflagger
+                .LoadStrategyFile(&strategy_filename.to_string())
+                .Run(&imgset)
         })
-        .collect();
+        .collect()
 }
 
-/// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], a
-/// [`std::collections::BTreeMap`] mapping from each baseline in the observation to a
-/// [`CxxFlagMask`], a filename template and a vector of gpubox IDs, .
+/// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], a vector of
+/// [`CxxFlagMask`]s for each baseline in the observation, a filename template and a vector of
+/// gpubox IDs.
 ///
 /// The filename template should contain two or 3 percentage (`%`) characters which will be replaced
-/// by the gpubox id or channel number (depending on correlator type). See [`flag_io::FlagFileSet::new`]
+/// by the gpubox id or channel number (depending on correlator type) provided in `gpubox_ids`. See
+/// [`flag_io::FlagFileSet::new`] for more details.
 ///
 /// # Examples
 ///
@@ -342,7 +332,7 @@ pub fn flag_imgsets(
 /// ```
 pub fn write_flags(
     context: &CorrelatorContext,
-    baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>>,
+    baseline_flagmasks: Vec<UniquePtr<CxxFlagMask>>,
     filename_template: &str,
     gpubox_ids: &[usize],
 ) {
@@ -362,7 +352,6 @@ mod tests {
     use cxx::UniquePtr;
     use glob::glob;
     use mwalib::CorrelatorContext;
-    use std::collections::BTreeMap;
     use tempfile::tempdir;
 
     fn get_mwax_context() -> CorrelatorContext {
@@ -402,87 +391,83 @@ mod tests {
         let width = context.num_timesteps;
         let img_stride = (((width - 1) / 8) + 1) * 8;
 
-        let baseline_imgsets = unsafe {
-            let aoflagger = cxx_aoflagger_new();
-            context_to_baseline_imgsets(&aoflagger, &context)
-        };
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+        let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
 
-        let imgset0 = baseline_imgsets.get(&0).unwrap();
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 0, 0x410000 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 1, 0x410100 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 2, 0x410200 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 3, 0x410300 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 4, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 5, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 6, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 7, 0.0);
 
-        test_imgset_val!(imgset0, 0, img_stride, 0, 0, 0x410000 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 0, 1, 0x410100 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 0, 2, 0x410200 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 0, 3, 0x410300 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 0, 4, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 0, 5, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 0, 6, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 0, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 0, 0x410008 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 1, 0x410108 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 2, 0x410208 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 3, 0x410308 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 4, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 5, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 6, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 7, 0.0);
 
-        test_imgset_val!(imgset0, 0, img_stride, 1, 0, 0x410008 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 1, 1, 0x410108 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 1, 2, 0x410208 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 1, 3, 0x410308 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 1, 4, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 1, 5, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 1, 6, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 1, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 0, 0x410400 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 1, 0x410500 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 2, 0x410600 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 3, 0x410700 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 4, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 5, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 6, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 7, 0.0);
 
-        test_imgset_val!(imgset0, 0, img_stride, 2, 0, 0x410400 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 2, 1, 0x410500 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 2, 2, 0x410600 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 2, 3, 0x410700 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 2, 4, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 2, 5, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 2, 6, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 2, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 0, 0x410408 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 1, 0x410508 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 2, 0x410608 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 3, 0x410708 as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 4, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 5, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 6, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 7, 0.0);
 
-        test_imgset_val!(imgset0, 0, img_stride, 3, 0, 0x410408 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 3, 1, 0x410508 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 3, 2, 0x410608 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 3, 3, 0x410708 as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 3, 4, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 3, 5, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 3, 6, 0.0);
-        test_imgset_val!(imgset0, 0, img_stride, 3, 7, 0.0);
-
-        test_imgset_val!(imgset0, 1, img_stride, 0, 0, 0x410001 as f32);
-        test_imgset_val!(imgset0, 1, img_stride, 0, 1, 0x410101 as f32);
-        test_imgset_val!(imgset0, 1, img_stride, 0, 2, 0x410201 as f32);
-        test_imgset_val!(imgset0, 1, img_stride, 0, 3, 0x410301 as f32);
-        test_imgset_val!(imgset0, 1, img_stride, 0, 4, 0.0);
-        test_imgset_val!(imgset0, 1, img_stride, 0, 5, 0.0);
-        test_imgset_val!(imgset0, 1, img_stride, 0, 6, 0.0);
-        test_imgset_val!(imgset0, 1, img_stride, 0, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 0, 0x410001 as f32);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 1, 0x410101 as f32);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 2, 0x410201 as f32);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 3, 0x410301 as f32);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 4, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 5, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 6, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 7, 0.0);
 
         /* ... */
-        test_imgset_val!(imgset0, 7, img_stride, 0, 0, 0x410007 as f32);
-        test_imgset_val!(imgset0, 7, img_stride, 0, 1, 0x410107 as f32);
-        test_imgset_val!(imgset0, 7, img_stride, 0, 2, 0x410207 as f32);
-        test_imgset_val!(imgset0, 7, img_stride, 0, 3, 0x410307 as f32);
-        test_imgset_val!(imgset0, 7, img_stride, 0, 4, 0.0);
-        test_imgset_val!(imgset0, 7, img_stride, 0, 5, 0.0);
-        test_imgset_val!(imgset0, 7, img_stride, 0, 6, 0.0);
-        test_imgset_val!(imgset0, 7, img_stride, 0, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 0, 0x410007 as f32);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 1, 0x410107 as f32);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 2, 0x410207 as f32);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 3, 0x410307 as f32);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 4, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 5, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 6, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 7, 0.0);
 
-        let imgset2 = baseline_imgsets.get(&2).unwrap();
+        /* ... */
 
-        test_imgset_val!(imgset2, 0, img_stride, 0, 0, 0x410020 as f32);
-        test_imgset_val!(imgset2, 0, img_stride, 0, 1, 0x410120 as f32);
-        test_imgset_val!(imgset2, 0, img_stride, 0, 2, 0x410220 as f32);
-        test_imgset_val!(imgset2, 0, img_stride, 0, 3, 0x410320 as f32);
-        test_imgset_val!(imgset2, 0, img_stride, 0, 4, 0.0);
-        test_imgset_val!(imgset2, 0, img_stride, 0, 5, 0.0);
-        test_imgset_val!(imgset2, 0, img_stride, 0, 6, 0.0);
-        test_imgset_val!(imgset2, 0, img_stride, 0, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 0, 0x410020 as f32);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 1, 0x410120 as f32);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 2, 0x410220 as f32);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 3, 0x410320 as f32);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 4, 0.0);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 5, 0.0);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 6, 0.0);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 7, 0.0);
 
-        test_imgset_val!(imgset2, 0, img_stride, 1, 0, 0x410028 as f32);
-        test_imgset_val!(imgset2, 0, img_stride, 1, 1, 0x410128 as f32);
-        test_imgset_val!(imgset2, 0, img_stride, 1, 2, 0x410228 as f32);
-        test_imgset_val!(imgset2, 0, img_stride, 1, 3, 0x410328 as f32);
-        test_imgset_val!(imgset2, 0, img_stride, 1, 4, 0.0);
-        test_imgset_val!(imgset2, 0, img_stride, 1, 5, 0.0);
-        test_imgset_val!(imgset2, 0, img_stride, 1, 6, 0.0);
-        test_imgset_val!(imgset2, 0, img_stride, 1, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 0, 0x410028 as f32);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 1, 0x410128 as f32);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 2, 0x410228 as f32);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 3, 0x410328 as f32);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 4, 0.0);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 5, 0.0);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 6, 0.0);
+        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 7, 0.0);
     }
 
     #[test]
@@ -496,94 +481,91 @@ mod tests {
             context_to_baseline_imgsets(&aoflagger, &context)
         };
 
-        let imgset0 = baseline_imgsets.get(&0).unwrap();
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 0, 0x10c5be as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 1, 0x14c5be as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 2, 0x18c5be as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 3, 0x1cc5be as f32);
 
-        test_imgset_val!(imgset0, 0, img_stride, 0, 0, 0x10c5be as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 0, 1, 0x14c5be as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 0, 2, 0x18c5be as f32);
-        test_imgset_val!(imgset0, 0, img_stride, 0, 3, 0x1cc5be as f32);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 0, 0x10c5bf as f32);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 1, 0x14c5bf as f32);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 2, 0x18c5bf as f32);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 3, 0x1cc5bf as f32);
 
-        test_imgset_val!(imgset0, 1, img_stride, 0, 0, 0x10c5bf as f32);
-        test_imgset_val!(imgset0, 1, img_stride, 0, 1, 0x14c5bf as f32);
-        test_imgset_val!(imgset0, 1, img_stride, 0, 2, 0x18c5bf as f32);
-        test_imgset_val!(imgset0, 1, img_stride, 0, 3, 0x1cc5bf as f32);
+        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 0, 0x10c5ae as f32);
+        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 1, 0x14c5ae as f32);
+        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 2, 0x18c5ae as f32);
+        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 3, 0x1cc5ae as f32);
 
-        test_imgset_val!(imgset0, 2, img_stride, 0, 0, 0x10c5ae as f32);
-        test_imgset_val!(imgset0, 2, img_stride, 0, 1, 0x14c5ae as f32);
-        test_imgset_val!(imgset0, 2, img_stride, 0, 2, 0x18c5ae as f32);
-        test_imgset_val!(imgset0, 2, img_stride, 0, 3, 0x1cc5ae as f32);
+        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 0, -0x10c5af as f32);
+        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 1, -0x14c5af as f32);
+        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 2, -0x18c5af as f32);
+        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 3, -0x1cc5af as f32);
 
-        test_imgset_val!(imgset0, 3, img_stride, 0, 0, -0x10c5af as f32);
-        test_imgset_val!(imgset0, 3, img_stride, 0, 1, -0x14c5af as f32);
-        test_imgset_val!(imgset0, 3, img_stride, 0, 2, -0x18c5af as f32);
-        test_imgset_val!(imgset0, 3, img_stride, 0, 3, -0x1cc5af as f32);
+        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 0, 0x10c5ae as f32);
+        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 1, 0x14c5ae as f32);
+        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 2, 0x18c5ae as f32);
+        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 3, 0x1cc5ae as f32);
 
-        test_imgset_val!(imgset0, 4, img_stride, 0, 0, 0x10c5ae as f32);
-        test_imgset_val!(imgset0, 4, img_stride, 0, 1, 0x14c5ae as f32);
-        test_imgset_val!(imgset0, 4, img_stride, 0, 2, 0x18c5ae as f32);
-        test_imgset_val!(imgset0, 4, img_stride, 0, 3, 0x1cc5ae as f32);
+        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 0, 0x10c5af as f32);
+        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 1, 0x14c5af as f32);
+        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 2, 0x18c5af as f32);
+        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 3, 0x1cc5af as f32);
 
-        test_imgset_val!(imgset0, 5, img_stride, 0, 0, 0x10c5af as f32);
-        test_imgset_val!(imgset0, 5, img_stride, 0, 1, 0x14c5af as f32);
-        test_imgset_val!(imgset0, 5, img_stride, 0, 2, 0x18c5af as f32);
-        test_imgset_val!(imgset0, 5, img_stride, 0, 3, 0x1cc5af as f32);
+        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 0, 0x10bec6 as f32);
+        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 1, 0x14bec6 as f32);
+        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 2, 0x18bec6 as f32);
+        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 3, 0x1cbec6 as f32);
 
-        test_imgset_val!(imgset0, 6, img_stride, 0, 0, 0x10bec6 as f32);
-        test_imgset_val!(imgset0, 6, img_stride, 0, 1, 0x14bec6 as f32);
-        test_imgset_val!(imgset0, 6, img_stride, 0, 2, 0x18bec6 as f32);
-        test_imgset_val!(imgset0, 6, img_stride, 0, 3, 0x1cbec6 as f32);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 0, 0x10bec7 as f32);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 1, 0x14bec7 as f32);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 2, 0x18bec7 as f32);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 3, 0x1cbec7 as f32);
 
-        test_imgset_val!(imgset0, 7, img_stride, 0, 0, 0x10bec7 as f32);
-        test_imgset_val!(imgset0, 7, img_stride, 0, 1, 0x14bec7 as f32);
-        test_imgset_val!(imgset0, 7, img_stride, 0, 2, 0x18bec7 as f32);
-        test_imgset_val!(imgset0, 7, img_stride, 0, 3, 0x1cbec7 as f32);
+        /* ... */
 
-        let imgset5 = baseline_imgsets.get(&5).unwrap();
+        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 0, 0x10f1ce as f32);
+        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 1, 0x14f1ce as f32);
+        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 2, 0x18f1ce as f32);
+        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 3, 0x1cf1ce as f32);
 
-        test_imgset_val!(imgset5, 0, img_stride, 0, 0, 0x10f1ce as f32);
-        test_imgset_val!(imgset5, 0, img_stride, 0, 1, 0x14f1ce as f32);
-        test_imgset_val!(imgset5, 0, img_stride, 0, 2, 0x18f1ce as f32);
-        test_imgset_val!(imgset5, 0, img_stride, 0, 3, 0x1cf1ce as f32);
+        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 0, -0x10f1cf as f32);
+        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 1, -0x14f1cf as f32);
+        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 2, -0x18f1cf as f32);
+        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 3, -0x1cf1cf as f32);
 
-        test_imgset_val!(imgset5, 1, img_stride, 0, 0, -0x10f1cf as f32);
-        test_imgset_val!(imgset5, 1, img_stride, 0, 1, -0x14f1cf as f32);
-        test_imgset_val!(imgset5, 1, img_stride, 0, 2, -0x18f1cf as f32);
-        test_imgset_val!(imgset5, 1, img_stride, 0, 3, -0x1cf1cf as f32);
+        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 0, 0x10ea26 as f32);
+        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 1, 0x14ea26 as f32);
+        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 2, 0x18ea26 as f32);
+        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 3, 0x1cea26 as f32);
 
-        test_imgset_val!(imgset5, 2, img_stride, 0, 0, 0x10ea26 as f32);
-        test_imgset_val!(imgset5, 2, img_stride, 0, 1, 0x14ea26 as f32);
-        test_imgset_val!(imgset5, 2, img_stride, 0, 2, 0x18ea26 as f32);
-        test_imgset_val!(imgset5, 2, img_stride, 0, 3, 0x1cea26 as f32);
+        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 0, -0x10ea27 as f32);
+        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 1, -0x14ea27 as f32);
+        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 2, -0x18ea27 as f32);
+        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 3, -0x1cea27 as f32);
 
-        test_imgset_val!(imgset5, 3, img_stride, 0, 0, -0x10ea27 as f32);
-        test_imgset_val!(imgset5, 3, img_stride, 0, 1, -0x14ea27 as f32);
-        test_imgset_val!(imgset5, 3, img_stride, 0, 2, -0x18ea27 as f32);
-        test_imgset_val!(imgset5, 3, img_stride, 0, 3, -0x1cea27 as f32);
+        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 0, 0x10f1be as f32);
+        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 1, 0x14f1be as f32);
+        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 2, 0x18f1be as f32);
+        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 3, 0x1cf1be as f32);
 
-        test_imgset_val!(imgset5, 4, img_stride, 0, 0, 0x10f1be as f32);
-        test_imgset_val!(imgset5, 4, img_stride, 0, 1, 0x14f1be as f32);
-        test_imgset_val!(imgset5, 4, img_stride, 0, 2, 0x18f1be as f32);
-        test_imgset_val!(imgset5, 4, img_stride, 0, 3, 0x1cf1be as f32);
+        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 0, -0x10f1bf as f32);
+        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 1, -0x14f1bf as f32);
+        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 2, -0x18f1bf as f32);
+        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 3, -0x1cf1bf as f32);
 
-        test_imgset_val!(imgset5, 5, img_stride, 0, 0, -0x10f1bf as f32);
-        test_imgset_val!(imgset5, 5, img_stride, 0, 1, -0x14f1bf as f32);
-        test_imgset_val!(imgset5, 5, img_stride, 0, 2, -0x18f1bf as f32);
-        test_imgset_val!(imgset5, 5, img_stride, 0, 3, -0x1cf1bf as f32);
+        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 0, 0x10ea16 as f32);
+        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 1, 0x14ea16 as f32);
+        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 2, 0x18ea16 as f32);
+        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 3, 0x1cea16 as f32);
 
-        test_imgset_val!(imgset5, 6, img_stride, 0, 0, 0x10ea16 as f32);
-        test_imgset_val!(imgset5, 6, img_stride, 0, 1, 0x14ea16 as f32);
-        test_imgset_val!(imgset5, 6, img_stride, 0, 2, 0x18ea16 as f32);
-        test_imgset_val!(imgset5, 6, img_stride, 0, 3, 0x1cea16 as f32);
-
-        test_imgset_val!(imgset5, 7, img_stride, 0, 0, -0x10ea17 as f32);
-        test_imgset_val!(imgset5, 7, img_stride, 0, 1, -0x14ea17 as f32);
-        test_imgset_val!(imgset5, 7, img_stride, 0, 2, -0x18ea17 as f32);
-        test_imgset_val!(imgset5, 7, img_stride, 0, 3, -0x1cea17 as f32);
+        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 0, -0x10ea17 as f32);
+        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 1, -0x14ea17 as f32);
+        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 2, -0x18ea17 as f32);
+        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 3, -0x1cea17 as f32);
     }
 
     #[test]
     fn test_flag_imgsets_minimal() {
-        let mut baseline_imgsets: BTreeMap<usize, UniquePtr<CxxImageSet>> = BTreeMap::new();
         let width = 64;
         let height = 64;
         let img_stride = (((width - 1) / 8) + 1) * 8;
@@ -592,31 +574,32 @@ mod tests {
         let noise_y = 32;
         let noise_z = 1;
         let noise_val = 0xffffff as f32;
-        let baseline_flagmasks = unsafe {
-            let aoflagger = cxx_aoflagger_new();
-            let imgset0 = aoflagger.MakeImageSet(width, height, 8, 0 as f32, width);
-            baseline_imgsets.insert(0, imgset0);
-            let mut imgset1 = aoflagger.MakeImageSet(width, height, 8, 0 as f32, width);
-            imgset1.pin_mut().ImageBufferMut(noise_z)[noise_y * img_stride + noise_x] = noise_val;
-            baseline_imgsets.insert(1, imgset1);
 
-            let strategy_file_minimal = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
-            flag_imgsets(&aoflagger, &strategy_file_minimal, baseline_imgsets)
-        };
+        let aoflagger = unsafe { cxx_aoflagger_new() };
 
-        let flagmask0 = baseline_flagmasks.get(&0).unwrap();
-        let flagmask1 = baseline_flagmasks.get(&1).unwrap();
-        let flag_stride = flagmask0.HorizontalStride();
-        assert!(!flagmask0.Buffer()[0]);
-        assert!(!flagmask0.Buffer()[noise_y * flag_stride + noise_x]);
-        assert!(!flagmask1.Buffer()[0]);
-        assert!(flagmask1.Buffer()[noise_y * flag_stride + noise_x]);
+        let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = (0..2)
+            .into_iter()
+            .map(|_| unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) })
+            .collect();
+
+        // modify the imageset to add some synthetic noise
+        baseline_imgsets[1].pin_mut().ImageBufferMut(noise_z)[noise_y * img_stride + noise_x] =
+            noise_val;
+
+        let strategy_file_minimal = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
+
+        let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_file_minimal, baseline_imgsets);
+
+        let flag_stride = baseline_flagmasks[0].HorizontalStride();
+        assert!(!baseline_flagmasks[0].Buffer()[0]);
+        assert!(!baseline_flagmasks[0].Buffer()[noise_y * flag_stride + noise_x]);
+        assert!(!baseline_flagmasks[1].Buffer()[0]);
+        assert!(baseline_flagmasks[1].Buffer()[noise_y * flag_stride + noise_x]);
     }
 
     #[test]
     fn test_write_flags_mwax_minimal() {
         let context = get_mwax_context();
-        let mut baseline_flagmasks: BTreeMap<usize, UniquePtr<CxxFlagMask>> = BTreeMap::new();
 
         let height =
             context.num_coarse_chans * context.metafits_context.num_corr_fine_chans_per_coarse;
@@ -626,14 +609,14 @@ mod tests {
         let flag_channel = 1;
         let flag_baseline = 1;
 
-        unsafe {
-            let aoflagger = cxx_aoflagger_new();
-            for (baseline_idx, _) in context.metafits_context.baselines.iter().enumerate() {
-                baseline_flagmasks
-                    .insert(baseline_idx, aoflagger.MakeFlagMask(width, height, false));
-            }
-        }
-        let flagmask = baseline_flagmasks.get_mut(&flag_baseline).unwrap();
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+        let mut baseline_flagmasks: Vec<UniquePtr<CxxFlagMask>> = context
+            .metafits_context
+            .baselines
+            .iter()
+            .map(|_| unsafe { aoflagger.MakeFlagMask(width, height, false) })
+            .collect();
+        let flagmask = baseline_flagmasks.get_mut(flag_baseline).unwrap();
         let flag_stride = flagmask.HorizontalStride();
         flagmask.pin_mut().BufferMut()[flag_channel * flag_stride + flag_timestep] = true;
 
