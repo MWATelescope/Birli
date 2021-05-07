@@ -207,13 +207,13 @@ pub fn context_to_baseline_imgsets(
 
         // consume the rx_img queue
         for (coarse_chan_idx, timestep_idx, img_buf) in rx_img.iter() {
-            for (baseline_idx, baseline_chunk) in img_buf.chunks(floats_per_baseline).enumerate() {
+            for (baseline_idx, baseline_chunk) in img_buf.chunks_exact(floats_per_baseline).enumerate() {
                 let imgset = &mut baseline_imgsets[baseline_idx];
 
                 for float_idx in 0..8 {
                     let imgset_buf = imgset.pin_mut().ImageBufferMut(float_idx);
                     for (fine_chan_idx, fine_chan_chunk) in
-                        baseline_chunk.chunks(floats_per_finechan).enumerate()
+                        baseline_chunk.chunks_exact(floats_per_finechan).enumerate()
                     {
                         let img_x = timestep_idx;
                         let img_y = fine_chans_per_coarse * coarse_chan_idx + fine_chan_idx;
