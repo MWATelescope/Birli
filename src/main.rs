@@ -1,5 +1,6 @@
 use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg, SubCommand};
-use std::{env, ffi::OsString};
+use log::{debug, info};
+use std::{env, ffi::OsString, fmt::Debug};
 
 use birli::{
     context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets, get_aoflagger_version_string,
@@ -11,7 +12,11 @@ fn main_with_args<I, T>(args: I)
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
+    I: Debug,
 {
+    env_logger::try_init().unwrap_or(());
+    debug!("args:\n{:?}", &args);
+
     let aoflagger_version = get_aoflagger_version_string();
     let aoflagger_subcommand = SubCommand::with_name("aoflagger")
         .about("flag visibilities with aoFlagger")
@@ -48,13 +53,15 @@ where
         .subcommand(aoflagger_subcommand)
         .get_matches_from(args);
 
+    debug!("arg matches:\n{:?}", &matches);
+
     if let Some(aoflagger_matches) = matches.subcommand_matches("aoflagger") {
         let aoflagger = unsafe { cxx_aoflagger_new() };
         let metafits_path = aoflagger_matches.value_of("metafits").unwrap();
         let flag_template = aoflagger_matches.value_of("flag-template").unwrap();
         let fits_files: Vec<&str> = aoflagger_matches.values_of("fits-files").unwrap().collect();
         let context = CorrelatorContext::new(&metafits_path, &fits_files).unwrap();
-        println!("flagging context:\n{}", &context);
+        debug!("mwalib correlator context:\n{}", &context);
         let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
         let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
@@ -68,7 +75,9 @@ where
 }
 
 fn main() {
-    main_with_args(env::args())
+    info!("start main");
+    main_with_args(env::args());
+    info!("end main");
 }
 
 #[cfg(test)]

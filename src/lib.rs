@@ -80,6 +80,8 @@ use flag_io::FlagFileSet;
 
 pub mod error;
 
+use log::info;
+
 use crossbeam_channel::{bounded, unbounded};
 use crossbeam_utils::thread;
 
@@ -143,6 +145,8 @@ pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
     context: &CorrelatorContext,
 ) -> Vec<UniquePtr<CxxImageSet>> {
+    info!("start context_to_baseline_imgsets");
+
     let coarse_chan_idxs: Vec<usize> = context
         .coarse_chans
         .iter()
@@ -207,7 +211,9 @@ pub fn context_to_baseline_imgsets(
 
         // consume the rx_img queue
         for (coarse_chan_idx, timestep_idx, img_buf) in rx_img.iter() {
-            for (baseline_idx, baseline_chunk) in img_buf.chunks_exact(floats_per_baseline).enumerate() {
+            for (baseline_idx, baseline_chunk) in
+                img_buf.chunks_exact(floats_per_baseline).enumerate()
+            {
                 let imgset = &mut baseline_imgsets[baseline_idx];
 
                 for float_idx in 0..8 {
@@ -224,6 +230,8 @@ pub fn context_to_baseline_imgsets(
         }
     })
     .unwrap();
+
+    info!("end context_to_baseline_imgsets");
 
     baseline_imgsets
 }
@@ -263,14 +271,19 @@ pub fn flag_imgsets(
 ) -> Vec<UniquePtr<CxxFlagMask>> {
     // TODO: figure out how to parallelize with Rayon, into_iter(). You'll probably need to convert between UniquePtr and Box
 
-    baseline_imgsets
+    info!("start flag_imgsets");
+
+    let baseline_flagmasks = baseline_imgsets
         .iter()
         .map(|imgset| {
             aoflagger
                 .LoadStrategyFile(&strategy_filename.to_string())
                 .Run(&imgset)
         })
-        .collect()
+        .collect();
+
+    info!("end flag_imgsets");
+    baseline_flagmasks
 }
 
 /// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], a vector of
@@ -336,10 +349,14 @@ pub fn write_flags(
     filename_template: &str,
     gpubox_ids: &[usize],
 ) {
+    info!("start write_flags");
+
     let mut flag_file_set = FlagFileSet::new(context, filename_template, &gpubox_ids).unwrap();
     flag_file_set
         .write_baseline_flagmasks(&context, baseline_flagmasks)
         .unwrap();
+
+    info!("end write_flags");
 }
 
 #[cfg(test)]
