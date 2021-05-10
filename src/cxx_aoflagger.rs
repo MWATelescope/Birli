@@ -52,6 +52,11 @@ pub mod ffi {
         fn ImageBuffer(self: &CxxImageSet, imgIndex: usize) -> &[f32];
         /// (Mutably) access the raw float buffer at `imgIndex` in the [`CxxImageSet`]
         fn ImageBufferMut(self: Pin<&mut CxxImageSet>, imgIndex: usize) -> &mut [f32];
+        /// (Mutably) access the raw float buffer at `imgIndex` in the [`CxxImageSet`] without pins
+        /// TODO: document safety
+        #[allow(clippy::mut_from_ref)]
+        unsafe fn ImageBufferMutUnsafe(self: &CxxImageSet, imgIndex: usize) -> &mut [f32];
+        // unsafe fn AllImageBufferMuts(self: Pin<&mut CxxImageSet>) -> &[&mut [f32]];
 
         // CxxFlagMask methods
         /// Get the width (number of timesteps) of the [`CxxFlagMask`]
@@ -132,6 +137,16 @@ pub mod ffi {
         ) -> UniquePtr<CxxFlagMask>;
     }
 }
+
+// TODO:
+// The C++ implementation of CxxAOFlagger, CxxImageSet and CxxFlagMask are thread safe.
+// https://cxx.rs/extern-c++.html
+unsafe impl Send for ffi::CxxImageSet {}
+unsafe impl Sync for ffi::CxxImageSet {}
+unsafe impl Send for ffi::CxxFlagMask {}
+unsafe impl Sync for ffi::CxxFlagMask {}
+unsafe impl Send for ffi::CxxAOFlagger {}
+unsafe impl Sync for ffi::CxxAOFlagger {}
 
 #[cfg(test)]
 // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?

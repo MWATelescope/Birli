@@ -16,6 +16,8 @@ size_t ImageCount() const;
 size_t HorizontalStride() const;
 rust::Slice<const float> ImageBuffer(size_t imgIndex) const;
 rust::Slice<float> ImageBufferMut(size_t imgIndex);
+rust::Slice<float> ImageBufferMutUnsafe(size_t imgIndex) const;
+// rust::Slice<const rust::Slice<float>> AllImageBufferMuts();
 private:
 CxxImageSet();
 CxxImageSet(ImageSet impl);

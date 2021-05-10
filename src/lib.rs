@@ -84,6 +84,7 @@ use log::info;
 
 use crossbeam_channel::{bounded, unbounded};
 use crossbeam_utils::thread;
+use rayon::prelude::*;
 
 /// Get the version of the AOFlagger library from the library itself.
 ///
@@ -174,6 +175,11 @@ pub fn context_to_baseline_imgsets(
         .map(|_| unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) })
         .collect();
 
+    // let mut baseline_imgsets_pin_mut: Vec<Pin<&mut CxxImageSet>> = baseline_imgsets
+    //     .iter_mut()
+    //     .map(|imgset| imgset.pin_mut())
+    //     .collect();
+
     let num_workers = coarse_chan_idxs.len();
 
     // A queue of coarse channel indices for the producers to work through
@@ -211,22 +217,22 @@ pub fn context_to_baseline_imgsets(
 
         // consume the rx_img queue
         for (coarse_chan_idx, timestep_idx, img_buf) in rx_img.iter() {
-            for (baseline_idx, baseline_chunk) in
-                img_buf.chunks_exact(floats_per_baseline).enumerate()
-            {
-                let imgset = &mut baseline_imgsets[baseline_idx];
-
-                for float_idx in 0..8 {
-                    let imgset_buf = imgset.pin_mut().ImageBufferMut(float_idx);
-                    for (fine_chan_idx, fine_chan_chunk) in
-                        baseline_chunk.chunks_exact(floats_per_finechan).enumerate()
-                    {
-                        let img_x = timestep_idx;
-                        let img_y = fine_chans_per_coarse * coarse_chan_idx + fine_chan_idx;
-                        imgset_buf[img_y * img_stride + img_x] = fine_chan_chunk[float_idx];
-                    }
-                }
-            }
+            img_buf
+                .chunks_exact(floats_per_baseline)
+                .zip(baseline_imgsets.iter_mut())
+                .for_each(|(baseline_chunk, imgset)| {
+                    (0..8_usize).into_par_iter().for_each(|float_idx| {
+                        let imgset_buf = unsafe { imgset.ImageBufferMutUnsafe(float_idx) };
+                        baseline_chunk
+                            .chunks_exact(floats_per_finechan)
+                            .enumerate()
+                            .for_each(|(fine_chan_idx, fine_chan_chunk)| {
+                                let img_x = timestep_idx;
+                                let img_y = fine_chans_per_coarse * coarse_chan_idx + fine_chan_idx;
+                                imgset_buf[img_y * img_stride + img_x] = fine_chan_chunk[float_idx];
+                            });
+                    });
+                });
         }
     })
     .unwrap();

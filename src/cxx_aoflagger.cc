@@ -34,6 +34,19 @@ rust::Slice<float> CxxImageSet::ImageBufferMut(size_t imgIndex) {
 	rust::Slice<float> slice{this->pImpl->ImageBuffer(imgIndex), Height() * HorizontalStride()};
 	return slice;
 }
+rust::Slice<float> CxxImageSet::ImageBufferMutUnsafe(size_t imgIndex) const {
+	rust::Slice<float> slice{this->pImpl->ImageBuffer(imgIndex), Height() * HorizontalStride()};
+	return slice;
+}
+
+// rust::Slice<const rust::Slice<float>> CxxImageSet::AllImageBufferMuts() {
+//     const rust::Slice<float> images_0{this->pImpl->ImageBuffer(0), Height() * HorizontalStride()};
+//     rust::Slice<float> images = {
+//         images_0
+//     };
+//     rust::Slice<const rust::Slice<float>> result{&images, 1};
+//     return result;
+// }
 
 CxxFlagMask::CxxFlagMask() : pImpl(new FlagMask()) {
 }
