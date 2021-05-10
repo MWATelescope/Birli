@@ -1,9 +1,19 @@
 [tasks.linux_apt_get_update]
-command = "sudo"
-args = ["apt-get", "update"]
+script = """
+SUDO=''
+if (( $EUID != 0 )); then
+    SUDO='sudo'
+fi
+$SUDO apt-get update
+"""
 
 [tasks.linux_install_cfitsio]
-script = """sudo apt-get install -y \
+script = """
+SUDO=''
+if (( $EUID != 0 )); then
+    SUDO='sudo'
+fi
+$SUDO apt-get install -y \
     build-essential \
     cmake \
     git  \
@@ -15,13 +25,17 @@ script = """sudo apt-get install -y \
 && cd cfitsio-3.49/ \
 && CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2 \
 && make -j \
-&& sudo make install
+&& $SUDO make install
 """
 dependencies = ["linux_apt_get_update"]
 
 [tasks.linux_install_aoflagger]
 script = """
-sudo apt-get install -y \
+SUDO=''
+if (( $EUID != 0 )); then
+    SUDO='sudo'
+fi
+$SUDO apt-get install -y \
     build-essential \
     casacore-data \
     casacore-dev \
@@ -52,13 +66,18 @@ sudo apt-get install -y \
 && cd build \
 && cmake .. \
 && make \
-&& sudo make install \
+&& $SUDO make install \
 """
 dependencies = ["linux_install_cfitsio"]
 
 [tasks.linux_install_deps]
-command = "sudo"
-args = ["apt-get", "install", "-y", "zip"]
+script = """
+SUDO=''
+if (( $EUID != 0 )); then
+    SUDO='sudo'
+fi
+$SUDO apt-get install -y zip
+"""
 dependencies = ["linux_install_aoflagger"]
 
 [tasks.mac_install_deps]
