@@ -59,7 +59,7 @@ $SUDO apt-get install -y \
     python3 \
     unzip \
 && cd /tmp \
-&& git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git \
+&& git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git --branch v3.0.0 \
 && cd aoflagger \
 && chmod a+rwx . \
 && mkdir build \
@@ -89,7 +89,6 @@ wget https://github.com/MWATelescope/homebrew-tap/releases/download/v2021.05.10.
 brew install -f casacore--3.4.0.catalina.bottle.tar.gz
 wget https://github.com/MWATelescope/homebrew-tap/releases/download/v2021.05.10.06.46/aoflagger--3.0.0.catalina.bottle.1.tar.gz -O aoflagger--3.0.0.catalina.bottle.tar.gz
 brew install -f aoflagger--3.0.0.catalina.bottle.tar.gz
-cargo make install_deps
 """
 
 [tasks.install_deps]
