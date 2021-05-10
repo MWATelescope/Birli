@@ -7,7 +7,7 @@ fn main() {
         .flag_if_supported("-std=c++11")
         .flag_if_supported("-Wno-nonportable-include-path")
         .flag_if_supported("-Wno-unused-parameter")
-        .include("include")
+        // .include("include/cxx_aoflagger.h")
         .file("src/cxx_aoflagger.cc")
         .compile("cxx_aoflagger");
 

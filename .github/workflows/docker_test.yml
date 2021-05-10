@@ -23,16 +23,14 @@ jobs:
           override: true
           components: rustfmt, clippy
 
-      - name: install unzip
-        run: |
-          apt-get update \
-          && apt-get install -y wget unzip \
-
-      - name: Install Cargo Make
-        uses: davidB/rust-cargo-make@v1
-
       - name: Install Dependencies
         run: |
-          cargo make install_deps
+          apt-get update \
+          && apt-get install -y wget unzip libssl-dev \
+          && cargo install --force cargo-make \
+          && cargo make install_deps
 
-      - run: cargo make ci
+      - name: Cargo Make CI
+        run: cargo make ci
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib/

@@ -83,11 +83,11 @@ dependencies = ["linux_install_aoflagger"]
 [tasks.mac_install_deps]
 script = """
 brew tap mwaTelescope/tap
-wget https://github.com/mwaTelescope/homebrew-tap/releases/download/v2021.03.08/casacore-data--2021.02.26.catalina.bottle.tar.gz
+wget https://github.com/MWATelescope/homebrew-tap/releases/download/v2021.05.10.06.46/casacore-data--2021.02.26.catalina.bottle.1.tar.gz -O casacore-data--2021.02.26.catalina.bottle.tar.gz
 brew install -f casacore-data--2021.02.26.catalina.bottle.tar.gz
-wget https://github.com/mwaTelescope/homebrew-tap/releases/download/v2021.03.08/casacore--3.4.0.catalina.bottle.tar.gz
+wget https://github.com/MWATelescope/homebrew-tap/releases/download/v2021.05.10.06.46/casacore--3.4.0.catalina.bottle.1.tar.gz -O casacore--3.4.0.catalina.bottle.tar.gz
 brew install -f casacore--3.4.0.catalina.bottle.tar.gz
-wget https://github.com/mwaTelescope/homebrew-tap/releases/download/v2021.03.08/aoflagger--3.0.0.catalina.bottle.tar.gz
+wget https://github.com/MWATelescope/homebrew-tap/releases/download/v2021.05.10.06.46/aoflagger--3.0.0.catalina.bottle.1.tar.gz -O aoflagger--3.0.0.catalina.bottle.tar.gz
 brew install -f aoflagger--3.0.0.catalina.bottle.tar.gz
 cargo make install_deps
 """
