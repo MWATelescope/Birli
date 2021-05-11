@@ -74,8 +74,9 @@ pub use cxx_aoflagger::ffi::{
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use mwalib::CorrelatorContext;
-use std::collections::BTreeMap;
+// use std::collections::BTreeMap;
 use std::os::raw::c_short;
+use std::sync::Arc;
 
 pub mod flag_io;
 use flag_io::FlagFileSet;
@@ -84,9 +85,9 @@ pub mod error;
 
 use log::info;
 
-use crossbeam_channel::{bounded, unbounded};
+use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use crossbeam_utils::thread;
-use rayon::prelude::*;
+// use rayon::prelude::*;
 
 /// Get the version of the AOFlagger library from the library itself.
 ///
@@ -177,43 +178,55 @@ pub fn context_to_baseline_imgsets(
         .map(|_| unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) })
         .collect();
 
+    let baseline_imgsets_arc = Arc::new(&mut baseline_imgsets);
+
     // let mut baseline_imgsets_pin_mut: Vec<Pin<&mut CxxImageSet>> = baseline_imgsets
     //     .iter_mut()
     //     .map(|imgset| imgset.pin_mut())
     //     .collect();
 
-    let num_workers = coarse_chan_idxs.len();
+    let num_producers = coarse_chan_idxs.len();
+
+    let num_pols = context.metafits_context.num_visibility_pols * 2;
 
     // A queue of coarse channel indices for the producers to work through
     let (tx_coarse_chan_idx, rx_coarse_chan_idx) = unbounded();
-    // A queue of image buffers to process
-    let (tx_img, rx_img) = bounded(num_workers);
+    // a queue of raw gpufits visibility image buffers for each polarization worker.
+    let pol_img_queues: Vec<(Sender<_>, Receiver<_>)> =
+        (0..num_pols).map(|_| bounded(num_producers)).collect();
 
     let multi_progress = MultiProgress::new();
-    let chan_progress: BTreeMap<usize, ProgressBar> = coarse_chan_idxs
+    let read_progress: Vec<ProgressBar> = coarse_chan_idxs
         .iter()
         .map(|&coarse_chan_idx| {
-            let pb = multi_progress.add(ProgressBar::new(timestep_idxs.len() as u64));
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("{msg:16}: [{wide_bar}] {pos:3}/{len:3}")
-                    .progress_chars("=> "),
-            );
-            pb.set_position(0);
-            pb.set_message(format!("coarse chan {:3}", coarse_chan_idx));
-            (coarse_chan_idx, pb)
+            multi_progress.add(
+                ProgressBar::new(timestep_idxs.len() as _)
+                    .with_style(
+                        ProgressStyle::default_bar()
+                            .template("{msg:16}: [{wide_bar}] {pos:4}/{len:4}")
+                            .progress_chars("=> "),
+                    )
+                    .with_position(0)
+                    .with_message(format!("coarse chan {:3}", coarse_chan_idx)),
+            )
         })
         .collect();
-    let total_progress = multi_progress.add(ProgressBar::new(
-        (timestep_idxs.len() * coarse_chan_idxs.len()) as u64,
-    ));
-    total_progress.set_style(
-        ProgressStyle::default_bar()
-            .template("{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})")
-            .progress_chars("=> "),
-    );
-    total_progress.set_position(0);
-    total_progress.set_message("loading hdus");
+    let read_progress_arc = Arc::new(read_progress);
+    let write_progress: Vec<ProgressBar> = (0..num_pols)
+        .map(|pol_idx| {
+            multi_progress.add(
+                ProgressBar::new((timestep_idxs.len() * coarse_chan_idxs.len()) as u64)
+                    .with_style(
+                        ProgressStyle::default_bar()
+                            .template("{msg:16}: [{wide_bar}] {pos:4}/{len:4}")
+                            .progress_chars("=> "),
+                    )
+                    .with_position(0)
+                    .with_message(format!("pol {:3}", pol_idx)),
+            )
+        })
+        .collect();
+    let write_progress_arc = Arc::new(write_progress);
 
     thread::scope(|scope| {
         // Spawn a thread to deal with the progress bar
@@ -226,56 +239,71 @@ pub fn context_to_baseline_imgsets(
             tx_coarse_chan_idx.send(coarse_chan_idx).unwrap();
         }
 
-        // Create a producer thread for worker
-        for _ in 0..num_workers {
-            let (_, rx_coarse_chan_idx_worker) =
-                (tx_coarse_chan_idx.clone(), rx_coarse_chan_idx.clone());
-            let (tx_img_worker, _) = (tx_img.clone(), rx_img.clone());
+        drop(tx_coarse_chan_idx);
+
+        // Create multiple producer threads
+        for _ in 0..num_producers {
+            let rx_coarse_chan_idx_worker = rx_coarse_chan_idx.clone();
             let timestep_idxs_worker = timestep_idxs.to_owned();
+            let pol_img_queues_worker = pol_img_queues.to_owned();
+            let read_progress_worker = read_progress_arc.to_owned();
             scope.spawn(move |_| {
                 for coarse_chan_idx in rx_coarse_chan_idx_worker.iter() {
                     for &timestep_idx in timestep_idxs_worker.iter() {
-                        let img_buf = context
-                            .read_by_baseline(timestep_idx, coarse_chan_idx)
-                            .unwrap();
-                        let msg = (coarse_chan_idx, timestep_idx, img_buf);
-                        tx_img_worker.send(msg).unwrap();
+                        let img_buf = Arc::new(
+                            context
+                                .read_by_baseline(timestep_idx, coarse_chan_idx)
+                                .unwrap(),
+                        );
+                        pol_img_queues_worker.iter().for_each(|(tx_img, _)| {
+                            tx_img
+                                .send((coarse_chan_idx, timestep_idx, img_buf.clone()))
+                                .unwrap();
+                        });
+                        read_progress_worker[coarse_chan_idx].inc(1);
                     }
+                    read_progress_worker[coarse_chan_idx].finish_and_clear();
                 }
+                pol_img_queues_worker.into_iter().for_each(|(tx_img, _)| {
+                    drop(tx_img);
+                });
             });
         }
 
-        drop(tx_coarse_chan_idx);
-        drop(tx_img);
-
-        // consume the rx_img queue
-        for (coarse_chan_idx, timestep_idx, img_buf) in rx_img.iter() {
-            img_buf
-                .chunks_exact(floats_per_baseline)
-                .zip(baseline_imgsets.iter_mut())
-                .for_each(|(baseline_chunk, imgset)| {
-                    (0..8_usize).into_par_iter().for_each(|float_idx| {
-                        let imgset_buf = unsafe { imgset.ImageBufferMutUnsafe(float_idx) };
-                        baseline_chunk
-                            .chunks_exact(floats_per_finechan)
-                            .enumerate()
-                            .for_each(|(fine_chan_idx, fine_chan_chunk)| {
-                                let img_x = timestep_idx;
-                                let img_y = fine_chans_per_coarse * coarse_chan_idx + fine_chan_idx;
-                                imgset_buf[img_y * img_stride + img_x] = fine_chan_chunk[float_idx];
-                            });
-                    });
-                });
-            let chan_pb = &chan_progress[&coarse_chan_idx];
-            chan_pb.inc(1);
-            if chan_pb.position() >= chan_pb.length() {
-                chan_pb.finish_and_clear();
-            }
-            total_progress.inc(1);
+        // create a consumer thread for each polarization
+        for (pol_idx, (tx_img, rx_img)) in pol_img_queues.into_iter().enumerate() {
+            drop(tx_img);
+            let rx_img_worker = rx_img.to_owned();
+            let pol_idx_worker = pol_idx.to_owned();
+            let baseline_imgsets_worker = baseline_imgsets_arc.to_owned();
+            let write_progress_worker = write_progress_arc.to_owned();
+            scope.spawn(move |_| {
+                for (coarse_chan_idx, timestep_idx, img_buf) in rx_img_worker.iter() {
+                    img_buf
+                        .chunks_exact(floats_per_baseline)
+                        .zip(Arc::as_ref(&baseline_imgsets_worker).iter())
+                        .for_each(|(baseline_chunk, imgset)| {
+                            let imgset_buf =
+                                unsafe { imgset.ImageBufferMutUnsafe(pol_idx_worker.to_owned()) };
+                            baseline_chunk
+                                .chunks_exact(floats_per_finechan)
+                                .enumerate()
+                                .for_each(|(fine_chan_idx, fine_chan_chunk)| {
+                                    let img_x = timestep_idx;
+                                    let img_y =
+                                        fine_chans_per_coarse * coarse_chan_idx + fine_chan_idx;
+                                    imgset_buf[img_y * img_stride + img_x] =
+                                        fine_chan_chunk[pol_idx_worker];
+                                });
+                        });
+                    write_progress_worker[pol_idx].inc(1);
+                }
+                write_progress_worker[pol_idx].finish_and_clear();
+            });
         }
 
-        chan_progress.iter().for_each(|(_, pb)| pb.finish());
-        total_progress.finish();
+        // consume the rx_img queue
+        // total_progress.finish();
     })
     .unwrap();
 
