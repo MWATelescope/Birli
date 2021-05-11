@@ -71,8 +71,10 @@ use cxx::UniquePtr;
 pub use cxx_aoflagger::ffi::{
     cxx_aoflagger_new, CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy,
 };
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use mwalib::CorrelatorContext;
+use std::collections::BTreeMap;
 use std::os::raw::c_short;
 
 pub mod flag_io;
@@ -187,7 +189,38 @@ pub fn context_to_baseline_imgsets(
     // A queue of image buffers to process
     let (tx_img, rx_img) = bounded(num_workers);
 
+    let multi_progress = MultiProgress::new();
+    let chan_progress: BTreeMap<usize, ProgressBar> = coarse_chan_idxs
+        .iter()
+        .map(|&coarse_chan_idx| {
+            let pb = multi_progress.add(ProgressBar::new(timestep_idxs.len() as u64));
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{msg:16}: [{wide_bar}] {pos:3}/{len:3}")
+                    .progress_chars("=> "),
+            );
+            pb.set_position(0);
+            pb.set_message(format!("coarse chan {:3}", coarse_chan_idx));
+            (coarse_chan_idx, pb)
+        })
+        .collect();
+    let total_progress = multi_progress.add(ProgressBar::new(
+        (timestep_idxs.len() * coarse_chan_idxs.len()) as u64,
+    ));
+    total_progress.set_style(
+        ProgressStyle::default_bar()
+            .template("{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})")
+            .progress_chars("=> "),
+    );
+    total_progress.set_position(0);
+    total_progress.set_message("loading hdus");
+
     thread::scope(|scope| {
+        // Spawn a thread to deal with the progress bar
+        scope.spawn(|_| {
+            multi_progress.join().unwrap();
+        });
+
         // Queue up coarse channels to do
         for coarse_chan_idx in coarse_chan_idxs {
             tx_coarse_chan_idx.send(coarse_chan_idx).unwrap();
@@ -233,7 +266,16 @@ pub fn context_to_baseline_imgsets(
                             });
                     });
                 });
+            let chan_pb = &chan_progress[&coarse_chan_idx];
+            chan_pb.inc(1);
+            if chan_pb.position() >= chan_pb.length() {
+                chan_pb.finish_and_clear();
+            }
+            total_progress.inc(1);
         }
+
+        chan_progress.iter().for_each(|(_, pb)| pb.finish());
+        total_progress.finish();
     })
     .unwrap();
 
