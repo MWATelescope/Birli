@@ -102,3 +102,53 @@ total duration:  2h 8m 33s
 | Std. Dev. | 3.7627 s    | 5.7011 s  | 6.6885 s    |
 | Median    | 220.65 s    | 226.49 s  | 231.33 s    |
 | MAD       | 942.88 ms   | 7.1007 s  | 9.4088 s    |
+
+## [commit 09abc69](https://github.com/MWATelescope/Birli/actions/runs/831282207)
+
+![dbdc0ee context_to_baseline_imgsets - ord_half_1196175296 pdf](img/dbdc0ee%20context_to_baseline_imgsets%20-%20ord_half_1196175296%20pdf.svg)
+
+performance changes:
+
+- parallelize writing to img_bufs
+- parallelize over polarizations
+- use Vec instead of BTreeMap where possible.
+- use chunks_exact instead of chunks
+
+total duration:  52m 52s
+
+### 09abc69 context_to_baseline_imgsets - ord_half_1196175296
+
+![09abc69 context_to_baseline_imgsets - ord_half_1196175296 pdf](img/09abc69%20context_to_baseline_imgsets%20-%20ord_half_1196175296%20pdf.svg)
+
+|           | Lower bound | Estimate  | Upper bound |
+| --------- | ----------- | --------- | ----------- |
+| R²        | 0.0102914   | 0.0144746 | 0.0108148   |
+| Mean      | 169.76 s    | 172.69 s  | 175.37 s    |
+| Std. Dev. | 1.9382 s    | 4.8114 s  | 6.3284 s    |
+| Median    | 168.97 s    | 174.25 s  | 175.44 s    |
+| MAD       | 297.86 ms   | 3.1589 s  | 7.8800 s    |
+
+### 09abc69 context_to_baseline_imgsets - mwax_half_1247842824
+
+![09abc69 context_to_baseline_imgsets - mwax_half_1247842824 pdf](img/09abc69%20context_to_baseline_imgsets%20-%20mwax_half_1247842824%20pdf.svg)
+
+|           | Lower bound | Estimate  | Upper bound |
+| --------- | ----------- | --------- | ----------- |
+| R²        | 0.0613268   | 0.0798494 | 0.0575464   |
+| Mean      | 85.874 s    | 87.029 s  | 88.337 s    |
+| Std. Dev. | 1.0761 s    | 2.1247 s  | 2.7667 s    |
+| Median    | 85.245 s    | 86.548 s  | 88.561 s    |
+| MAD       | 142.20 ms   | 2.0188 s  | 3.7638 s    |
+
+## MWALib-only testing
+
+|                                                      | mean  | std dev |
+| ---------------------------------------------------- | ----- | ------- |
+| read_by_baseline - mwax_half_1247842824              | 4.172 | 0.364   |
+| read_by_baseline - ord_half_1196175296               | 3.889 | 0.374   |
+| read_by_baseline_into_buffer - mwax_half_1247842824  | 3.928 | 0.324   |
+| read_by_baseline_into_buffer - ord_half_1196175296   | 3.773 | 0.228   |
+| read_by_frequency - mwax_half_1247842824             | 3.124 | 0.198   |
+| read_by_frequency - ord_half_1196175296              | 2.950 | 0.180   |
+| read_by_frequency_into_buffer - mwax_half_1247842824 | 3.019 | 0.161   |
+| read_by_frequency_into_buffer - ord_half_1196175296  | 2.889 | 0.127   |
