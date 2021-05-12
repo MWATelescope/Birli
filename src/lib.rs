@@ -227,6 +227,19 @@ pub fn context_to_baseline_imgsets(
         })
         .collect();
     let write_progress_arc = Arc::new(write_progress);
+    let total_progress = multi_progress.add(
+        ProgressBar::new((timestep_idxs.len() * coarse_chan_idxs.len() * num_pols) as u64)
+            .with_style(
+                ProgressStyle::default_bar()
+                    .template(
+                        "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] %{percent:4} ({eta})",
+                    )
+                    .progress_chars("=> "),
+            )
+            .with_position(0)
+            .with_message("loading hdus"),
+    );
+    let total_progess_arc = Arc::new(total_progress);
 
     thread::scope(|scope| {
         // Spawn a thread to deal with the progress bar
@@ -277,6 +290,7 @@ pub fn context_to_baseline_imgsets(
             let pol_idx_worker = pol_idx.to_owned();
             let baseline_imgsets_worker = baseline_imgsets_arc.to_owned();
             let write_progress_worker = write_progress_arc.to_owned();
+            let total_progess_worker = total_progess_arc.to_owned();
             scope.spawn(move |_| {
                 for (coarse_chan_idx, timestep_idx, img_buf) in rx_img_worker.iter() {
                     img_buf
@@ -297,8 +311,12 @@ pub fn context_to_baseline_imgsets(
                                 });
                         });
                     write_progress_worker[pol_idx].inc(1);
+                    total_progess_worker.inc(1);
                 }
                 write_progress_worker[pol_idx].finish_and_clear();
+                if total_progess_worker.position() >= total_progess_worker.length() {
+                    total_progess_worker.finish();
+                }
             });
         }
 
