@@ -163,6 +163,13 @@ pub fn context_to_baseline_imgsets(
         .enumerate()
         .map(|(idx, _)| idx)
         .collect();
+    let baseline_idxs: Vec<usize> = context
+        .metafits_context
+        .baselines
+        .iter()
+        .enumerate()
+        .map(|(idx, _)| idx)
+        .collect();
 
     let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
     let floats_per_finechan = context.metafits_context.num_visibility_pols * 2;
@@ -171,14 +178,27 @@ pub fn context_to_baseline_imgsets(
     let width = context.num_timesteps;
     let img_stride = (((width - 1) / 8) + 1) * 8;
 
-    let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = context
-        .metafits_context
-        .baselines
+    let allocation_progress = ProgressBar::new(baseline_idxs.len() as u64);
+    allocation_progress.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+            )
+            .progress_chars("=> "),
+    );
+    allocation_progress.set_message("allocating imgs");
+
+    let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = baseline_idxs
         .iter()
-        .map(|_| unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) })
+        .map(|_| {
+            let imgset = unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) };
+            allocation_progress.inc(1);
+            imgset
+        })
         .collect();
 
     let baseline_imgsets_arc = Arc::new(&mut baseline_imgsets);
+    allocation_progress.finish();
 
     // let mut baseline_imgsets_pin_mut: Vec<Pin<&mut CxxImageSet>> = baseline_imgsets
     //     .iter_mut()
@@ -232,7 +252,7 @@ pub fn context_to_baseline_imgsets(
             .with_style(
                 ProgressStyle::default_bar()
                     .template(
-                        "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] %{percent:4} ({eta})",
+                        "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
                     )
                     .progress_chars("=> "),
             )
@@ -367,15 +387,27 @@ pub fn flag_imgsets(
 
     info!("start flag_imgsets");
 
+    let flag_progress = ProgressBar::new(baseline_imgsets.len() as u64);
+    flag_progress.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+            )
+            .progress_chars("=> "),
+    );
+    flag_progress.set_message("flagging b.lines");
+
     let baseline_flagmasks = baseline_imgsets
         .iter()
         .map(|imgset| {
-            aoflagger
+            let flagmask = aoflagger
                 .LoadStrategyFile(&strategy_filename.to_string())
-                .Run(&imgset)
+                .Run(&imgset);
+            flag_progress.inc(1);
+            flagmask
         })
         .collect();
-
+    flag_progress.finish();
     info!("end flag_imgsets");
     baseline_flagmasks
 }
