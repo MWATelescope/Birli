@@ -1,5 +1,9 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.1.3 (2021-05-05)
+
+* Release was created to test a fix for docs.rs.
+
 # Version 0.1.2 (2021-05-05)
 
 * Release was created to test release automation.
