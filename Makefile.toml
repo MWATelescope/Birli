@@ -1,18 +1,12 @@
 [tasks.linux_apt_get_update]
 script = """
-SUDO=''
-if (( $EUID != 0 )); then
-    SUDO='sudo'
-fi
+[ $(id -u) != 0 ] && SUDO="sudo" || SUDO=""
 $SUDO apt-get update
 """
 
 [tasks.linux_install_cfitsio]
 script = """
-SUDO=''
-if (( $EUID != 0 )); then
-    SUDO='sudo'
-fi
+[ $(id -u) != 0 ] && SUDO="sudo" || SUDO=""
 $SUDO apt-get install -y \
     build-essential \
     cmake \
@@ -31,10 +25,7 @@ dependencies = ["linux_apt_get_update"]
 
 [tasks.linux_install_aoflagger]
 script = """
-SUDO=''
-if (( $EUID != 0 )); then
-    SUDO='sudo'
-fi
+[ $(id -u) != 0 ] && SUDO="sudo" || SUDO=""
 $SUDO apt-get install -y \
     build-essential \
     casacore-data \
@@ -59,7 +50,7 @@ $SUDO apt-get install -y \
     python3 \
     unzip \
 && cd /tmp \
-&& git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git --branch v3.0.0 \
+&& git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git --branch v3.1.0 \
 && cd aoflagger \
 && chmod a+rwx . \
 && mkdir build \
@@ -72,10 +63,7 @@ dependencies = ["linux_install_cfitsio"]
 
 [tasks.linux_install_deps]
 script = """
-SUDO=''
-if (( $EUID != 0 )); then
-    SUDO='sudo'
-fi
+[ $(id -u) != 0 ] && SUDO="sudo" || SUDO=""
 $SUDO apt-get install -y zip
 """
 dependencies = ["linux_install_aoflagger"]
