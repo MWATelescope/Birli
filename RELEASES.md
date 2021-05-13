@@ -3,7 +3,15 @@
 # Version 0.1.2 (2021-05-05)
 
 * Release was created to test release automation.
-* [EOR-19] initial optimization of visibility loading by reducing `pin()`s.
+* [EOR-19] optimizations:
+  * reducing `pin()`s.
+  * parallelize allocating, loading and flagging
+  * use chunks_exact instead of chunks
+  * use Vec instead of BTreeMap where possible
+* [EOR-21] quality of life features:
+  * progress bars!
+  * basic timing info for each stage
+* [EOR-20] automation and [documentation](doc/benchmark_results.md) of benchmarks
 * Public API is fully documented.
 * Use Rust 1.51
 

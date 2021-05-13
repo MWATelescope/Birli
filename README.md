@@ -4,7 +4,10 @@
 <div class="bg-gray-dark" align="center" style="background-color:#24292e">
 <img src="img/birli.png" height="200px" alt="Birli logo">
 <br/>
-<img src="https://github.com/MWATelescope/Birli/workflows/Cross-Platform%20Tests/badge.svg" alt="Cross-Platform Tests">
+<a href="https://github.com/MWATelescope/Birli/actions/workflows/linux_test.yml"><img src="https://github.com/MWATelescope/Birli/actions/workflows/linux_test.yml/badge.svg" alt="Cross-Platform Tests"></a>
+<a href="https://github.com/MWATelescope/Birli/actions/workflows/macos_test.yml"><img src="https://github.com/MWATelescope/Birli/actions/workflows/macos_test.yml/badge.svg" alt="Cross-Platform Tests"></a>
+<a href="https://crates.io/birli"><img alt="Crates.io" src="https://img.shields.io/crates/d/birli?label=crates.io%20%E2%AC%87%EF%B8%8F"></a>
+<a href="https://docs.rs/crate/birli/"><img src="https://docs.rs/birli/badge.svg" alt="codecov"></a>
 <a href="https://codecov.io/gh/MWATelescope/Birli"><img src="https://codecov.io/gh/MWATelescope/Birli/branch/main/graph/badge.svg?token=PK2KYEZOW9" alt="codecov"></a>
 </div>
 
