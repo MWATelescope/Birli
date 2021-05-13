@@ -87,7 +87,7 @@ use log::info;
 
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use crossbeam_utils::thread;
-// use rayon::prelude::*;
+use rayon::prelude::*;
 
 /// Get the version of the AOFlagger library from the library itself.
 ///
@@ -189,7 +189,7 @@ pub fn context_to_baseline_imgsets(
     allocation_progress.set_message("allocating imgs");
 
     let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = baseline_idxs
-        .iter()
+        .par_iter()
         .map(|_| {
             let imgset = unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) };
             allocation_progress.inc(1);
@@ -398,7 +398,7 @@ pub fn flag_imgsets(
     flag_progress.set_message("flagging b.lines");
 
     let baseline_flagmasks = baseline_imgsets
-        .iter()
+        .par_iter()
         .map(|imgset| {
             let flagmask = aoflagger
                 .LoadStrategyFile(&strategy_filename.to_string())
