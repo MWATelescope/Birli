@@ -83,7 +83,7 @@ use flag_io::FlagFileSet;
 
 pub mod error;
 
-use log::info;
+use log::trace;
 
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use crossbeam_utils::thread;
@@ -149,28 +149,14 @@ pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
     context: &CorrelatorContext,
 ) -> Vec<UniquePtr<CxxImageSet>> {
-    info!("start context_to_baseline_imgsets");
+    trace!("start context_to_baseline_imgsets");
 
-    let coarse_chan_idxs: Vec<usize> = context
-        .coarse_chans
-        .iter()
-        .enumerate()
-        .map(|(idx, _)| idx)
-        .collect();
-    let timestep_idxs: Vec<usize> = context
-        .timesteps
-        .iter()
-        .enumerate()
-        .map(|(idx, _)| idx)
-        .collect();
-    let baseline_idxs: Vec<usize> = context
-        .metafits_context
-        .baselines
-        .iter()
-        .enumerate()
-        .map(|(idx, _)| idx)
-        .collect();
+    // TODO: although collect::Vec<_> is more readable, it uses the stack less
+    // efficiently than Vec
 
+    let num_coarse_chans = context.num_coarse_chans;
+    let num_timesteps = context.num_timesteps;
+    let num_baselines = context.metafits_context.num_baselines;
     let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
     let floats_per_finechan = context.metafits_context.num_visibility_pols * 2;
     let floats_per_baseline = fine_chans_per_coarse * floats_per_finechan;
@@ -178,7 +164,8 @@ pub fn context_to_baseline_imgsets(
     let width = context.num_timesteps;
     let img_stride = (((width - 1) / 8) + 1) * 8;
 
-    let allocation_progress = ProgressBar::new(baseline_idxs.len() as u64);
+    // Create a progress bar to show the status of allocating
+    let allocation_progress = ProgressBar::new(num_baselines as u64);
     allocation_progress.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -188,8 +175,8 @@ pub fn context_to_baseline_imgsets(
     );
     allocation_progress.set_message("allocating imgs");
 
-    let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = baseline_idxs
-        .par_iter()
+    let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = (0..num_baselines)
+        .into_par_iter()
         .map(|_| {
             let imgset = unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) };
             allocation_progress.inc(1);
@@ -200,27 +187,26 @@ pub fn context_to_baseline_imgsets(
     let baseline_imgsets_arc = Arc::new(&mut baseline_imgsets);
     allocation_progress.finish();
 
-    // let mut baseline_imgsets_pin_mut: Vec<Pin<&mut CxxImageSet>> = baseline_imgsets
-    //     .iter_mut()
-    //     .map(|imgset| imgset.pin_mut())
-    //     .collect();
+    let num_producers = num_coarse_chans;
 
-    let num_producers = coarse_chan_idxs.len();
-
-    let num_pols = context.metafits_context.num_visibility_pols * 2;
+    let num_pols_complex = context.metafits_context.num_visibility_pols * 2;
 
     // A queue of coarse channel indices for the producers to work through
     let (tx_coarse_chan_idx, rx_coarse_chan_idx) = unbounded();
-    // a queue of raw gpufits visibility image buffers for each polarization worker.
-    let pol_img_queues: Vec<(Sender<_>, Receiver<_>)> =
-        (0..num_pols).map(|_| bounded(num_producers)).collect();
+    // a queue of raw gpufits visibility image buffers for each complex polarization.
+    let pol_img_queues: Vec<(Sender<_>, Receiver<_>)> = (0..num_pols_complex)
+        .map(|_| bounded(num_producers))
+        .collect();
 
+    // a progress bar containing the progress bars associated with loading the
+    // observation's HDUs
     let multi_progress = MultiProgress::new();
-    let read_progress: Vec<ProgressBar> = coarse_chan_idxs
-        .iter()
-        .map(|&coarse_chan_idx| {
+    // a vector of progress bars for the visibility reading progress of each
+    // channel.
+    let read_progress: Vec<ProgressBar> = (0..num_coarse_chans)
+        .map(|coarse_chan_idx| {
             multi_progress.add(
-                ProgressBar::new(timestep_idxs.len() as _)
+                ProgressBar::new(num_timesteps as _)
                     .with_style(
                         ProgressStyle::default_bar()
                             .template("{msg:16}: [{wide_bar}] {pos:4}/{len:4}")
@@ -231,11 +217,12 @@ pub fn context_to_baseline_imgsets(
             )
         })
         .collect();
-    let read_progress_arc = Arc::new(read_progress);
-    let write_progress: Vec<ProgressBar> = (0..num_pols)
+    // a vector of progress bars for the visibility writing progress of each
+    // complex polarization,
+    let write_progress: Vec<ProgressBar> = (0..num_pols_complex)
         .map(|pol_idx| {
             multi_progress.add(
-                ProgressBar::new((timestep_idxs.len() * coarse_chan_idxs.len()) as u64)
+                ProgressBar::new((num_timesteps * num_coarse_chans) as _)
                     .with_style(
                         ProgressStyle::default_bar()
                             .template("{msg:16}: [{wide_bar}] {pos:4}/{len:4}")
@@ -246,9 +233,10 @@ pub fn context_to_baseline_imgsets(
             )
         })
         .collect();
-    let write_progress_arc = Arc::new(write_progress);
+    // A progress bar for the total progress of visibility loading, with time
+    // elapsed, percentage and ETA.
     let total_progress = multi_progress.add(
-        ProgressBar::new((timestep_idxs.len() * coarse_chan_idxs.len() * num_pols) as u64)
+        ProgressBar::new((num_timesteps * num_coarse_chans * num_pols_complex) as _)
             .with_style(
                 ProgressStyle::default_bar()
                     .template(
@@ -259,6 +247,9 @@ pub fn context_to_baseline_imgsets(
             .with_position(0)
             .with_message("loading hdus"),
     );
+    // These [`std::sync::Arc`]s provide concurrent access to the inner values.
+    let read_progress_arc = Arc::new(read_progress);
+    let write_progress_arc = Arc::new(write_progress);
     let total_progess_arc = Arc::new(total_progress);
 
     thread::scope(|scope| {
@@ -268,33 +259,37 @@ pub fn context_to_baseline_imgsets(
         });
 
         // Queue up coarse channels to do
-        for coarse_chan_idx in coarse_chan_idxs {
+        (0..num_coarse_chans).for_each(|coarse_chan_idx| {
             tx_coarse_chan_idx.send(coarse_chan_idx).unwrap();
-        }
-
+        });
+        // This indicates the the producer threads that there are no more coarse
+        // channels to process.
         drop(tx_coarse_chan_idx);
 
         // Create multiple producer threads
         for _ in 0..num_producers {
             let rx_coarse_chan_idx_worker = rx_coarse_chan_idx.clone();
-            let timestep_idxs_worker = timestep_idxs.to_owned();
             let pol_img_queues_worker = pol_img_queues.to_owned();
             let read_progress_worker = read_progress_arc.to_owned();
             scope.spawn(move |_| {
+                // Each producer thread consumes the HDUs from one coarse
+                // channel at a time.
                 for coarse_chan_idx in rx_coarse_chan_idx_worker.iter() {
-                    for &timestep_idx in timestep_idxs_worker.iter() {
+                    (0..num_timesteps).for_each(|timestep_idx| {
                         let img_buf = Arc::new(
                             context
                                 .read_by_baseline(timestep_idx, coarse_chan_idx)
                                 .unwrap(),
                         );
+                        // Producer sends the visibility buffer to a separate
+                        // queue for each complex polarization.
                         pol_img_queues_worker.iter().for_each(|(tx_img, _)| {
                             tx_img
                                 .send((coarse_chan_idx, timestep_idx, img_buf.clone()))
                                 .unwrap();
                         });
                         read_progress_worker[coarse_chan_idx].inc(1);
-                    }
+                    });
                     read_progress_worker[coarse_chan_idx].finish_and_clear();
                 }
                 pol_img_queues_worker.into_iter().for_each(|(tx_img, _)| {
@@ -303,8 +298,9 @@ pub fn context_to_baseline_imgsets(
             });
         }
 
-        // create a consumer thread for each polarization
+        // create a consumer thread for each complex polarization
         for (pol_idx, (tx_img, rx_img)) in pol_img_queues.into_iter().enumerate() {
+            // This ensures that
             drop(tx_img);
             let rx_img_worker = rx_img.to_owned();
             let pol_idx_worker = pol_idx.to_owned();
@@ -312,13 +308,19 @@ pub fn context_to_baseline_imgsets(
             let write_progress_worker = write_progress_arc.to_owned();
             let total_progess_worker = total_progess_arc.to_owned();
             scope.spawn(move |_| {
+                // The thread consumes an image from it's img queue
                 for (coarse_chan_idx, timestep_idx, img_buf) in rx_img_worker.iter() {
                     img_buf
                         .chunks_exact(floats_per_baseline)
                         .zip(Arc::as_ref(&baseline_imgsets_worker).iter())
                         .for_each(|(baseline_chunk, imgset)| {
-                            let imgset_buf =
-                                unsafe { imgset.ImageBufferMutUnsafe(pol_idx_worker.to_owned()) };
+                            // The thread writes visibilities from each baseline
+                            // into the image buffer from that baseline's
+                            // imageset corresponding to this thread's
+                            // complex polarization. This ensures that no two
+                            // threads access the same image buffer at the same
+                            // time.
+                            let imgset_buf = unsafe { imgset.ImageBufferMutUnsafe(pol_idx_worker) };
                             baseline_chunk
                                 .chunks_exact(floats_per_finechan)
                                 .enumerate()
@@ -345,7 +347,7 @@ pub fn context_to_baseline_imgsets(
     })
     .unwrap();
 
-    info!("end context_to_baseline_imgsets");
+    trace!("end context_to_baseline_imgsets");
 
     baseline_imgsets
 }
@@ -385,7 +387,7 @@ pub fn flag_imgsets(
 ) -> Vec<UniquePtr<CxxFlagMask>> {
     // TODO: figure out how to parallelize with Rayon, into_iter(). You'll probably need to convert between UniquePtr and Box
 
-    info!("start flag_imgsets");
+    trace!("start flag_imgsets");
 
     let flag_progress = ProgressBar::new(baseline_imgsets.len() as u64);
     flag_progress.set_style(
@@ -408,7 +410,7 @@ pub fn flag_imgsets(
         })
         .collect();
     flag_progress.finish();
-    info!("end flag_imgsets");
+    trace!("end flag_imgsets");
     baseline_flagmasks
 }
 
@@ -475,14 +477,14 @@ pub fn write_flags(
     filename_template: &str,
     gpubox_ids: &[usize],
 ) {
-    info!("start write_flags");
+    trace!("start write_flags");
 
     let mut flag_file_set = FlagFileSet::new(context, filename_template, &gpubox_ids).unwrap();
     flag_file_set
         .write_baseline_flagmasks(&context, baseline_flagmasks)
         .unwrap();
 
-    info!("end write_flags");
+    trace!("end write_flags");
 }
 
 #[cfg(test)]
