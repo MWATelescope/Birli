@@ -175,6 +175,7 @@ pub fn context_to_baseline_imgsets(
     );
     allocation_progress.set_message("allocating imgs");
 
+    // Allocate vector of [`CxxImageSet`]s for each baseline
     let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = (0..num_baselines)
         .into_par_iter()
         .map(|_| {
@@ -328,8 +329,10 @@ pub fn context_to_baseline_imgsets(
                                     let img_x = timestep_idx;
                                     let img_y =
                                         fine_chans_per_coarse * coarse_chan_idx + fine_chan_idx;
-                                    imgset_buf[img_y * img_stride + img_x] =
-                                        fine_chan_chunk[pol_idx_worker];
+                                    unsafe {
+                                        *imgset_buf.get_unchecked_mut(img_y * img_stride + img_x) =
+                                            *fine_chan_chunk.get_unchecked(pol_idx_worker)
+                                    };
                                 });
                         });
                     write_progress_worker[pol_idx].inc(1);
