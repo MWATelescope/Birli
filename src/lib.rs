@@ -71,12 +71,16 @@ use cxx::UniquePtr;
 pub use cxx_aoflagger::ffi::{
     cxx_aoflagger_new, CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy,
 };
+use error::BirliError;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use mwalib::CorrelatorContext;
 // use std::collections::BTreeMap;
+use std::f64::consts::PI;
 use std::os::raw::c_short;
 use std::sync::Arc;
+
+use itertools::izip;
 
 pub mod flag_io;
 use flag_io::FlagFileSet;
@@ -123,7 +127,7 @@ pub fn get_aoflagger_version_string() -> String {
 ///
 /// # Examples
 ///
-/// ```
+/// ```rust
 /// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new};
 /// use mwalib::CorrelatorContext;
 /// use tempfile::tempdir;
@@ -153,6 +157,7 @@ pub fn context_to_baseline_imgsets(
 
     // TODO: although collect::Vec<_> is more readable, it uses the stack less
     // efficiently than Vec
+    // TODO: error handling instead of unwrap.
 
     let num_coarse_chans = context.num_coarse_chans;
     let num_timesteps = context.num_timesteps;
@@ -189,7 +194,6 @@ pub fn context_to_baseline_imgsets(
     allocation_progress.finish();
 
     let num_producers = num_coarse_chans;
-
     let num_pols_complex = context.metafits_context.num_visibility_pols * 2;
 
     // A queue of coarse channel indices for the producers to work through
@@ -355,6 +359,171 @@ pub fn context_to_baseline_imgsets(
     baseline_imgsets
 }
 
+const SPEED_OF_LIGHT_IN_VACUUM: f64 = 299792458.0; // speed of light in m/s
+
+// void Cotter::correctCableLength(ImageSet& imageSet, size_t polarization, double cableDelay) const
+// {
+// 	float *reals = imageSet.ImageBuffer(polarization*2);
+// 	float *imags = imageSet.ImageBuffer(polarization*2+1);
+
+// 	for(size_t y=0; y!=imageSet.Height(); ++y)
+// 	{
+// 		double angle = -2.0 * M_PI * cableDelay * _channelFrequenciesHz[y] / SPEED_OF_LIGHT;
+// 		double rotSinl, rotCosl;
+// 		sincos(angle, &rotSinl, &rotCosl);
+// 		float rotSin = rotSinl, rotCos = rotCosl;
+
+// 		/// @todo This should use actual time step count in window
+// 		float *realPtr = reals + y * imageSet.HorizontalStride();
+// 		float *imagPtr = imags + y * imageSet.HorizontalStride();
+// 		for(size_t x=0; x!=imageSet.Width(); ++x)
+// 		{
+// 			float r = *realPtr;
+// 			*realPtr = rotCos * r - rotSin * (*imagPtr);
+// 			*imagPtr = rotSin * r + rotCos * (*imagPtr);
+// 			++realPtr;
+// 			++imagPtr;
+// 		}
+// 	}
+// }
+
+fn _correct_cable_length_buffers_cotter(
+    freq_hz: &u32,
+    electrical_length_m: &f64,
+    buf_re: &mut [f32],
+    buf_im: &mut [f32],
+) {
+    let angle: f64 = -2.0 * PI * electrical_length_m * (*freq_hz as f64) / SPEED_OF_LIGHT_IN_VACUUM;
+    let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
+    let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
+
+    izip!(buf_re.iter_mut(), buf_im.iter_mut()).for_each(|(re, im)| {
+        let vis_re = *re;
+        *re = cos_angle * vis_re - sin_angle * *im;
+        *im = sin_angle * vis_re + cos_angle * *im;
+    })
+}
+
+// fn _correct_cable_length_buffers_precise(
+//     freq_hz: &u32,
+//     electrical_length_m: &f64,
+//     buf_re: &mut [f32],
+//     buf_im: &mut [f32],
+// ) {
+//     let angle: f64 = -2.0 * PI * electrical_length_m * (*freq_hz as f64) / SPEED_OF_LIGHT_IN_VACUUM;
+//     let (sin_angle, cos_angle) = angle.sin_cos();
+
+//     izip!(buf_re.iter_mut(), buf_im.iter_mut()).for_each(|(re, im)| {
+//         let vis_re = *re as f64;
+//         let vis_im = *im as f64;
+//         *re = (cos_angle * vis_re - sin_angle * vis_im) as f32;
+//         *im = (sin_angle * vis_re + cos_angle * vis_im) as f32;
+//     })
+// }
+
+/// Perform cable length corrections, given an observation's
+/// [`mwalib::CorrelatorContext`] and a vector of [`CxxImageSet`]s for  each
+/// baseline.
+///
+/// Cable lengths are determined by the difference between a baseline's rfInput
+/// electrical lengths in the metafits. Complex visibilities are phase-shifted
+/// by an angle determined by the electrical length, and the channel's
+/// frequency.
+///
+/// # Examples
+///
+/// ```rust
+/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new};
+/// use mwalib::CorrelatorContext;
+/// use tempfile::tempdir;
+///
+/// // define our input files
+/// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+/// let gpufits_paths = vec![
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+/// ];
+///
+/// // Create an mwalib::CorrelatorContext for accessing visibilities.
+/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+///
+/// // create a CxxAOFlagger object to perform AOFlagger operations
+/// let aoflagger = unsafe { cxx_aoflagger_new() };
+///
+/// // generate imagesets for each baseline in the format required by aoflagger
+/// let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+///
+/// ccorrect_cable_lengths(&context, baseline_imgsets);
+/// ```
+pub fn correct_cable_lengths(
+    context: &CorrelatorContext,
+    mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>>,
+) -> Result<Vec<UniquePtr<CxxImageSet>>, BirliError> {
+    trace!("start correct_cable_lengths");
+
+    let baselines = &context.metafits_context.baselines;
+    let antennas = &context.metafits_context.antennas;
+    let coarse_chans = &context.coarse_chans;
+
+    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+    let fine_chan_width_hz = &context.metafits_context.corr_fine_chan_width_hz;
+
+    // A vector of all fine channel frequencies for all coarse channels in ascending order.
+    let all_freqs_hz: Vec<u32> = coarse_chans
+        .iter()
+        .flat_map(|coarse_chan| {
+            let chan_start_hz = coarse_chan.chan_start_hz.clone();
+            (0..fine_chans_per_coarse)
+                .map(move |fine_chan_idx| {
+                    chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
+                })
+                .clone()
+        })
+        .collect();
+
+    izip!(baseline_imgsets.iter_mut(), baselines).for_each(|(imgset, baseline)| {
+        let imgset_stride: usize = imgset.HorizontalStride();
+        let ant1 = &antennas[baseline.ant1_index];
+        let ant2 = &antennas[baseline.ant2_index];
+
+        // TODO: skip if baseline.ant1_index == baseline.ant2_index ?
+
+        let pol_lengths = vec![
+            ant2.rfinput_x.electrical_length_m - ant1.rfinput_x.electrical_length_m,
+            ant2.rfinput_y.electrical_length_m - ant1.rfinput_x.electrical_length_m,
+            ant2.rfinput_x.electrical_length_m - ant1.rfinput_y.electrical_length_m,
+            ant2.rfinput_y.electrical_length_m - ant1.rfinput_y.electrical_length_m,
+        ];
+        pol_lengths
+            .iter()
+            .enumerate()
+            .for_each(|(pol_idx, electrical_length_m)| {
+                let imgset_buf_re: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx) };
+                let imgset_buf_im: &mut [f32] =
+                    unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx + 1) };
+
+                izip!(
+                    all_freqs_hz.iter(),
+                    imgset_buf_re.chunks_mut(imgset_stride),
+                    imgset_buf_im.chunks_mut(imgset_stride)
+                )
+                .for_each(|(freq_hz, imgset_chunk_re, imgset_chunk_im)| {
+                    // _correct_cable_length_buffers_precise(
+                    _correct_cable_length_buffers_cotter(
+                        freq_hz,
+                        electrical_length_m,
+                        imgset_chunk_re,
+                        imgset_chunk_im,
+                    )
+                });
+            });
+    });
+    trace!("end correct_cable_lengths");
+    Ok(baseline_imgsets)
+}
+
 /// Flag an observation's visibilities, given a [`CxxAOFlagger`] instance, a [`CxxStrategy`]
 /// filename, and a vector of [`CxxImageSet`]s for each baseline in the observation returning a
 /// vector of [`CxxFlagMask`]s.
@@ -482,6 +651,8 @@ pub fn write_flags(
 ) {
     trace!("start write_flags");
 
+    // TODO: error handling instead of unwrap.
+
     let mut flag_file_set = FlagFileSet::new(context, filename_template, &gpubox_ids).unwrap();
     flag_file_set
         .write_baseline_flagmasks(&context, baseline_flagmasks)
@@ -496,7 +667,11 @@ mod tests {
     #![allow(clippy::float_cmp)]
 
     use super::{context_to_baseline_imgsets, flag_imgsets, write_flags, FlagFileSet};
-    use crate::cxx_aoflagger::ffi::{cxx_aoflagger_new, CxxFlagMask, CxxImageSet};
+    use crate::{
+        correct_cable_lengths,
+        cxx_aoflagger::ffi::{cxx_aoflagger_new, CxxFlagMask, CxxImageSet},
+        SPEED_OF_LIGHT_IN_VACUUM,
+    };
     use cxx::UniquePtr;
     use glob::glob;
     use mwalib::CorrelatorContext;
@@ -527,8 +702,8 @@ mod tests {
     macro_rules! test_imgset_val {
         ($imgset:expr, $imgset_idx:expr, $img_stride:expr, $x:expr, $y:expr, $val:expr) => {
             assert_eq!(
-                $imgset.ImageBuffer($imgset_idx)[$x * $img_stride + $y],
-                $val
+                $imgset.ImageBuffer($imgset_idx)[$x * $img_stride + $y].round(),
+                ($val as f32).round()
             )
         };
     }
@@ -537,85 +712,85 @@ mod tests {
     fn test_context_to_baseline_imgsets_mwax() {
         let context = get_mwax_context();
         let width = context.num_timesteps;
-        let img_stride = (((width - 1) / 8) + 1) * 8;
+        let stride = (((width - 1) / 8) + 1) * 8;
 
         let aoflagger = unsafe { cxx_aoflagger_new() };
         let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
 
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 0, 0x410000 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 1, 0x410100 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 2, 0x410200 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 3, 0x410300 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 4, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 5, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 6, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 0, 0x410000);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 1, 0x410100);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 2, 0x410200);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 3, 0x410300);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 4, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 5, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 6, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 7, 0);
 
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 0, 0x410008 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 1, 0x410108 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 2, 0x410208 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 3, 0x410308 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 4, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 5, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 6, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 1, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 0, 0x410008);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 1, 0x410108);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 2, 0x410208);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 3, 0x410308);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 4, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 5, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 6, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 7, 0);
 
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 0, 0x410400 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 1, 0x410500 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 2, 0x410600 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 3, 0x410700 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 4, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 5, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 6, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 2, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 0, 0x410400);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 1, 0x410500);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 2, 0x410600);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 3, 0x410700);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 4, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 5, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 6, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 7, 0);
 
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 0, 0x410408 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 1, 0x410508 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 2, 0x410608 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 3, 0x410708 as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 4, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 5, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 6, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 3, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 0, 0x410408);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 1, 0x410508);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 2, 0x410608);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 3, 0x410708);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 4, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 5, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 6, 0);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 7, 0);
 
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 0, 0x410001 as f32);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 1, 0x410101 as f32);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 2, 0x410201 as f32);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 3, 0x410301 as f32);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 4, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 5, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 6, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 7, 0.0);
-
-        /* ... */
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 0, 0x410007 as f32);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 1, 0x410107 as f32);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 2, 0x410207 as f32);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 3, 0x410307 as f32);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 4, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 5, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 6, 0.0);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 0, 0x410001);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 1, 0x410101);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 2, 0x410201);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 3, 0x410301);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 4, 0);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 5, 0);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 6, 0);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 7, 0);
 
         /* ... */
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 0, 0x410007);
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 1, 0x410107);
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 2, 0x410207);
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 3, 0x410307);
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 4, 0);
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 5, 0);
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 6, 0);
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 7, 0);
 
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 0, 0x410020 as f32);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 1, 0x410120 as f32);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 2, 0x410220 as f32);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 3, 0x410320 as f32);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 4, 0.0);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 5, 0.0);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 6, 0.0);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 0, 7, 0.0);
+        /* ... */
 
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 0, 0x410028 as f32);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 1, 0x410128 as f32);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 2, 0x410228 as f32);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 3, 0x410328 as f32);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 4, 0.0);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 5, 0.0);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 6, 0.0);
-        test_imgset_val!(baseline_imgsets[2], 0, img_stride, 1, 7, 0.0);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 0, 0x410020);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 1, 0x410120);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 2, 0x410220);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 3, 0x410320);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 4, 0);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 5, 0);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 6, 0);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 7, 0);
+
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 0, 0x410028);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 1, 0x410128);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 2, 0x410228);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 3, 0x410328);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 4, 0);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 5, 0);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 6, 0);
+        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 7, 0);
     }
 
     #[test]
@@ -629,87 +804,87 @@ mod tests {
             context_to_baseline_imgsets(&aoflagger, &context)
         };
 
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 0, 0x10c5be as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 1, 0x14c5be as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 2, 0x18c5be as f32);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 3, 0x1cc5be as f32);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 0, 0x10c5be);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 1, 0x14c5be);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 2, 0x18c5be);
+        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 3, 0x1cc5be);
 
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 0, 0x10c5bf as f32);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 1, 0x14c5bf as f32);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 2, 0x18c5bf as f32);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 3, 0x1cc5bf as f32);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 0, 0x10c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 1, 0x14c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 2, 0x18c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 3, 0x1cc5bf);
 
-        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 0, 0x10c5ae as f32);
-        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 1, 0x14c5ae as f32);
-        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 2, 0x18c5ae as f32);
-        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 3, 0x1cc5ae as f32);
+        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 0, 0x10c5ae);
+        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 1, 0x14c5ae);
+        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 2, 0x18c5ae);
+        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 3, 0x1cc5ae);
 
-        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 0, -0x10c5af as f32);
-        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 1, -0x14c5af as f32);
-        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 2, -0x18c5af as f32);
-        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 3, -0x1cc5af as f32);
+        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 0, -0x10c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 1, -0x14c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 2, -0x18c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 3, -0x1cc5af);
 
-        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 0, 0x10c5ae as f32);
-        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 1, 0x14c5ae as f32);
-        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 2, 0x18c5ae as f32);
-        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 3, 0x1cc5ae as f32);
+        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 0, 0x10c5ae);
+        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 1, 0x14c5ae);
+        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 2, 0x18c5ae);
+        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 3, 0x1cc5ae);
 
-        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 0, 0x10c5af as f32);
-        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 1, 0x14c5af as f32);
-        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 2, 0x18c5af as f32);
-        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 3, 0x1cc5af as f32);
+        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 0, 0x10c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 1, 0x14c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 2, 0x18c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 3, 0x1cc5af);
 
-        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 0, 0x10bec6 as f32);
-        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 1, 0x14bec6 as f32);
-        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 2, 0x18bec6 as f32);
-        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 3, 0x1cbec6 as f32);
+        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 0, 0x10bec6);
+        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 1, 0x14bec6);
+        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 2, 0x18bec6);
+        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 3, 0x1cbec6);
 
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 0, 0x10bec7 as f32);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 1, 0x14bec7 as f32);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 2, 0x18bec7 as f32);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 3, 0x1cbec7 as f32);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 0, 0x10bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 1, 0x14bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 2, 0x18bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 3, 0x1cbec7);
 
         /* ... */
 
-        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 0, 0x10f1ce as f32);
-        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 1, 0x14f1ce as f32);
-        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 2, 0x18f1ce as f32);
-        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 3, 0x1cf1ce as f32);
+        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 0, 0x10f1ce);
+        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 1, 0x14f1ce);
+        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 2, 0x18f1ce);
+        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 3, 0x1cf1ce);
 
-        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 0, -0x10f1cf as f32);
-        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 1, -0x14f1cf as f32);
-        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 2, -0x18f1cf as f32);
-        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 3, -0x1cf1cf as f32);
+        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 0, -0x10f1cf);
+        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 1, -0x14f1cf);
+        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 2, -0x18f1cf);
+        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 3, -0x1cf1cf);
 
-        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 0, 0x10ea26 as f32);
-        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 1, 0x14ea26 as f32);
-        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 2, 0x18ea26 as f32);
-        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 3, 0x1cea26 as f32);
+        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 0, 0x10ea26);
+        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 1, 0x14ea26);
+        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 2, 0x18ea26);
+        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 3, 0x1cea26);
 
-        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 0, -0x10ea27 as f32);
-        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 1, -0x14ea27 as f32);
-        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 2, -0x18ea27 as f32);
-        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 3, -0x1cea27 as f32);
+        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 0, -0x10ea27);
+        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 1, -0x14ea27);
+        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 2, -0x18ea27);
+        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 3, -0x1cea27);
 
-        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 0, 0x10f1be as f32);
-        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 1, 0x14f1be as f32);
-        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 2, 0x18f1be as f32);
-        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 3, 0x1cf1be as f32);
+        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 0, 0x10f1be);
+        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 1, 0x14f1be);
+        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 2, 0x18f1be);
+        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 3, 0x1cf1be);
 
-        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 0, -0x10f1bf as f32);
-        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 1, -0x14f1bf as f32);
-        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 2, -0x18f1bf as f32);
-        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 3, -0x1cf1bf as f32);
+        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 0, -0x10f1bf);
+        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 1, -0x14f1bf);
+        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 2, -0x18f1bf);
+        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 3, -0x1cf1bf);
 
-        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 0, 0x10ea16 as f32);
-        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 1, 0x14ea16 as f32);
-        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 2, 0x18ea16 as f32);
-        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 3, 0x1cea16 as f32);
+        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 0, 0x10ea16);
+        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 1, 0x14ea16);
+        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 2, 0x18ea16);
+        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 3, 0x1cea16);
 
-        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 0, -0x10ea17 as f32);
-        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 1, -0x14ea17 as f32);
-        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 2, -0x18ea17 as f32);
-        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 3, -0x1cea17 as f32);
+        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 0, -0x10ea17);
+        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 1, -0x14ea17);
+        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 2, -0x18ea17);
+        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 3, -0x1cea17);
     }
 
     #[test]
@@ -800,12 +975,12 @@ mod tests {
         let (chan1_header, chan1_flags_raw) =
             chan_header_flags_raw.get(&selected_gpuboxes[0]).unwrap();
         assert_eq!(chan1_header.gpubox_id, gpubox_ids[0]);
-        let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
         let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
         assert_eq!(chan1_header.num_timesteps, context.num_timesteps);
         assert_eq!(num_baselines, context.metafits_context.num_baselines);
-        assert_eq!(chan1_header.num_channels, num_fine_chans_per_coarse);
+        assert_eq!(chan1_header.num_channels, fine_chans_per_coarse);
         assert_eq!(
             chan1_flags_raw.len(),
             chan1_header.num_timesteps * num_baselines * chan1_header.num_channels
@@ -828,12 +1003,311 @@ mod tests {
         ];
         for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests.iter() {
             let row_idx = timestep_idx * num_baselines + baseline_idx;
-            let offset = row_idx * num_fine_chans_per_coarse + fine_chan_idx;
+            let offset = row_idx * fine_chans_per_coarse + fine_chan_idx;
             assert_eq!(
                 &chan1_flags_raw[offset], expected_flag,
                 "with timestep {}, baseline {}, fine_chan {}, expected {} at row_idx {}, offset {}",
                 timestep_idx, baseline_idx, fine_chan_idx, expected_flag, row_idx, offset
             );
         }
+    }
+
+    #[test]
+    fn test_cable_length_corrections_mwax() {
+        let context = get_mwax_context();
+        let width = context.num_timesteps;
+        let stride = (((width - 1) / 8) + 1) * 8;
+
+        let coarse_chans = context.coarse_chans.clone();
+        let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz.clone();
+        let fine_chans_per_coarse = context
+            .metafits_context
+            .num_corr_fine_chans_per_coarse
+            .clone();
+
+        // A vector of all fine channel frequencies for all coarse channels in ascending order.
+        let all_freqs_hz: Vec<u32> = coarse_chans
+            .iter()
+            .flat_map(|coarse_chan| {
+                let chan_start_hz = coarse_chan.chan_start_hz.clone();
+                (0..fine_chans_per_coarse)
+                    .map(move |fine_chan_idx| {
+                        chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
+                    })
+                    .clone()
+            })
+            .collect();
+
+        let baseline_imgsets = unsafe {
+            let aoflagger = cxx_aoflagger_new();
+            context_to_baseline_imgsets(&aoflagger, &context)
+        };
+
+        let viz_0_xx_0_0_re = baseline_imgsets[0].ImageBuffer(0)[0 * stride + 0];
+        let viz_0_xx_0_0_im = baseline_imgsets[0].ImageBuffer(1)[0 * stride + 0];
+        let viz_1_xx_0_0_re = baseline_imgsets[1].ImageBuffer(0)[0 * stride + 0];
+        let viz_1_xx_0_0_im = baseline_imgsets[1].ImageBuffer(1)[0 * stride + 0];
+        let viz_1_xy_0_0_re = baseline_imgsets[1].ImageBuffer(2)[0 * stride + 0];
+        let viz_1_xy_0_0_im = baseline_imgsets[1].ImageBuffer(3)[0 * stride + 0];
+        let viz_1_yx_0_0_re = baseline_imgsets[1].ImageBuffer(4)[0 * stride + 0];
+        let viz_1_yx_0_0_im = baseline_imgsets[1].ImageBuffer(5)[0 * stride + 0];
+        let viz_1_yy_0_0_re = baseline_imgsets[1].ImageBuffer(6)[0 * stride + 0];
+        let viz_1_yy_0_0_im = baseline_imgsets[1].ImageBuffer(7)[0 * stride + 0];
+        let viz_1_yy_3_3_re = baseline_imgsets[1].ImageBuffer(6)[3 * stride + 3];
+        let viz_1_yy_3_3_im = baseline_imgsets[1].ImageBuffer(7)[3 * stride + 3];
+
+        assert_eq!(viz_0_xx_0_0_re as f32, 0x410000 as f32);
+        assert_eq!(viz_0_xx_0_0_im as f32, 0x410001 as f32);
+        assert_eq!(viz_1_xx_0_0_re as f32, 0x410010 as f32);
+        assert_eq!(viz_1_xx_0_0_im as f32, 0x410011 as f32);
+        assert_eq!(viz_1_xy_0_0_re as f32, 0x410012 as f32);
+        assert_eq!(viz_1_xy_0_0_im as f32, 0x410013 as f32);
+        assert_eq!(viz_1_yx_0_0_re as f32, 0x410014 as f32);
+        assert_eq!(viz_1_yx_0_0_im as f32, 0x410015 as f32);
+        assert_eq!(viz_1_yy_0_0_re as f32, 0x410016 as f32);
+        assert_eq!(viz_1_yy_0_0_im as f32, 0x410017 as f32);
+        assert_eq!(viz_1_yy_3_3_re as f32, 0x41071e as f32);
+        assert_eq!(viz_1_yy_3_3_im as f32, 0x41071f as f32);
+
+        // baseline 1, input 1, pol x
+        let length_1_1_x = &context.metafits_context.antennas
+            [context.metafits_context.baselines[1].ant1_index]
+            .rfinput_x
+            .electrical_length_m;
+        // baseline 1, input 1, pol y
+        let length_1_1_y = &context.metafits_context.antennas
+            [context.metafits_context.baselines[1].ant1_index]
+            .rfinput_y
+            .electrical_length_m;
+        // baseline 1, input 2, pol x
+        let length_1_2_x = &context.metafits_context.antennas
+            [context.metafits_context.baselines[1].ant2_index]
+            .rfinput_x
+            .electrical_length_m;
+        // baseline 1, input 2, pol y
+        let length_1_2_y = &context.metafits_context.antennas
+            [context.metafits_context.baselines[1].ant2_index]
+            .rfinput_y
+            .electrical_length_m;
+
+        // baseline 1, pol XX, cc 0, fc 0
+        let length_m_1_xx = length_1_2_x - length_1_1_x;
+        let angle_1_xx_0: f64 =
+            -2.0 * std::f64::consts::PI * length_m_1_xx * (all_freqs_hz[0] as f64)
+                / SPEED_OF_LIGHT_IN_VACUUM;
+        let (sin_1_xx_0_f64, cos_1_xx_0_f64) = angle_1_xx_0.sin_cos();
+        let (sin_1_xx_0, cos_1_xx_0) = (sin_1_xx_0_f64 as f32, cos_1_xx_0_f64 as f32);
+        // baseline 1, pol XY, cc 0, fc 0
+        let length_m_1_xy = length_1_2_y - length_1_1_x;
+        let angle_1_xy_0: f64 =
+            -2.0 * std::f64::consts::PI * length_m_1_xy * (all_freqs_hz[0] as f64)
+                / SPEED_OF_LIGHT_IN_VACUUM;
+        let (sin_1_xy_0_f64, cos_1_xy_0_f64) = angle_1_xy_0.sin_cos();
+        let (sin_1_xy_0, cos_1_xy_0) = (sin_1_xy_0_f64 as f32, cos_1_xy_0_f64 as f32);
+        // baseline 1, pol YX, cc 0, fc 0
+        let length_m_1_yx = length_1_2_x - length_1_1_y;
+        let angle_1_yx_0: f64 =
+            -2.0 * std::f64::consts::PI * length_m_1_yx * (all_freqs_hz[0] as f64)
+                / SPEED_OF_LIGHT_IN_VACUUM;
+        let (sin_1_yx_0_f64, cos_1_yx_0_f64) = angle_1_yx_0.sin_cos();
+        let (sin_1_yx_0, cos_1_yx_0) = (sin_1_yx_0_f64 as f32, cos_1_yx_0_f64 as f32);
+        // baseline 1, pol YY, cc 0, fc 0
+        let length_m_1_yy = length_1_2_y - length_1_1_y;
+        let angle_1_yy_0: f64 =
+            -2.0 * std::f64::consts::PI * length_m_1_yy * (all_freqs_hz[0] as f64)
+                / SPEED_OF_LIGHT_IN_VACUUM;
+        let (sin_1_yy_0_f64, cos_1_yy_0_f64) = angle_1_yy_0.sin_cos();
+        let (sin_1_yy_0, cos_1_yy_0) = (sin_1_yy_0_f64 as f32, cos_1_yy_0_f64 as f32);
+        // baseline 1, pol YY, cc 1, fc 1
+        let angle_1_yy_3: f64 =
+            -2.0 * std::f64::consts::PI * length_m_1_yy * (all_freqs_hz[3] as f64)
+                / SPEED_OF_LIGHT_IN_VACUUM;
+        let (sin_1_yy_3_f64, cos_1_yy_3_f64) = angle_1_yy_3.sin_cos();
+        let (sin_1_yy_3, cos_1_yy_3) = (sin_1_yy_3_f64 as f32, cos_1_yy_3_f64 as f32);
+
+        let baseline_imgsets = correct_cable_lengths(&context, baseline_imgsets).unwrap();
+
+        // there should be no difference in baseline 0
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 0, viz_0_xx_0_0_re);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 0, viz_0_xx_0_0_im);
+
+        ////
+        // baseline 1 should be rotated
+        ////
+        // baseline 1, pol xx, cc 0, fc 0, ts 0
+        let rot_1_xx_0_0_re = (cos_1_xx_0 * viz_1_xx_0_0_re - sin_1_xx_0 * viz_1_xx_0_0_im) as f32;
+        let rot_1_xx_0_0_im = (sin_1_xx_0 * viz_1_xx_0_0_re + cos_1_xx_0 * viz_1_xx_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[1], 0, stride, 0, 0, rot_1_xx_0_0_re);
+        test_imgset_val!(baseline_imgsets[1], 1, stride, 0, 0, rot_1_xx_0_0_im);
+        // baseline 1, pol xy, cc 0, fc 0, ts 0
+        let rot_1_xy_0_0_re = (cos_1_xy_0 * viz_1_xy_0_0_re - sin_1_xy_0 * viz_1_xy_0_0_im) as f32;
+        let rot_1_xy_0_0_im = (sin_1_xy_0 * viz_1_xy_0_0_re + cos_1_xy_0 * viz_1_xy_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[1], 2, stride, 0, 0, rot_1_xy_0_0_re);
+        test_imgset_val!(baseline_imgsets[1], 3, stride, 0, 0, rot_1_xy_0_0_im);
+        // baseline 1, pol yx, cc 0, fc 0, ts 0
+        let rot_1_yx_0_0_re = (cos_1_yx_0 * viz_1_yx_0_0_re - sin_1_yx_0 * viz_1_yx_0_0_im) as f32;
+        let rot_1_yx_0_0_im = (sin_1_yx_0 * viz_1_yx_0_0_re + cos_1_yx_0 * viz_1_yx_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[1], 4, stride, 0, 0, rot_1_yx_0_0_re);
+        test_imgset_val!(baseline_imgsets[1], 5, stride, 0, 0, rot_1_yx_0_0_im);
+        // baseline 1, pol yy, cc 0, fc 0, ts 0
+        let rot_1_yy_0_0_re = (cos_1_yy_0 * viz_1_yy_0_0_re - sin_1_yy_0 * viz_1_yy_0_0_im) as f32;
+        let rot_1_yy_0_0_im = (sin_1_yy_0 * viz_1_yy_0_0_re + cos_1_yy_0 * viz_1_yy_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[1], 6, stride, 0, 0, rot_1_yy_0_0_re);
+        test_imgset_val!(baseline_imgsets[1], 7, stride, 0, 0, rot_1_yy_0_0_im);
+        // baseline 1, pol yy, cc 1, fc 1, ts 1
+        let rot_1_yy_3_3_re = (cos_1_yy_3 * viz_1_yy_3_3_re - sin_1_yy_3 * viz_1_yy_3_3_im) as f32;
+        let rot_1_yy_3_3_im = (sin_1_yy_3 * viz_1_yy_3_3_re + cos_1_yy_3 * viz_1_yy_3_3_im) as f32;
+        test_imgset_val!(baseline_imgsets[1], 6, stride, 3, 3, rot_1_yy_3_3_re);
+        test_imgset_val!(baseline_imgsets[1], 7, stride, 3, 3, rot_1_yy_3_3_im);
+    }
+
+    #[test]
+    fn test_cable_length_corrections_ord() {
+        let context = get_mwa_ord_context();
+
+        let width = context.num_timesteps;
+        let stride = (((width - 1) / 8) + 1) * 8;
+
+        let coarse_chans = context.coarse_chans.clone();
+        let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz.clone();
+        let fine_chans_per_coarse = context
+            .metafits_context
+            .num_corr_fine_chans_per_coarse
+            .clone();
+
+        // A vector of all fine channel frequencies for all coarse channels in ascending order.
+        let all_freqs_hz: Vec<u32> = coarse_chans
+            .iter()
+            .flat_map(|coarse_chan| {
+                let chan_start_hz = coarse_chan.chan_start_hz.clone();
+                (0..fine_chans_per_coarse)
+                    .map(move |fine_chan_idx| {
+                        chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
+                    })
+                    .clone()
+            })
+            .collect();
+
+        let baseline_imgsets = unsafe {
+            let aoflagger = cxx_aoflagger_new();
+            context_to_baseline_imgsets(&aoflagger, &context)
+        };
+
+        let viz_0_xx_0_0_re = baseline_imgsets[0].ImageBuffer(0)[0 * stride + 0];
+        let viz_0_xx_0_0_im = baseline_imgsets[0].ImageBuffer(1)[0 * stride + 0];
+        let viz_5_xx_0_0_re = baseline_imgsets[5].ImageBuffer(0)[0 * stride + 0];
+        let viz_5_xx_0_0_im = baseline_imgsets[5].ImageBuffer(1)[0 * stride + 0];
+        let viz_5_xy_0_0_re = baseline_imgsets[5].ImageBuffer(2)[0 * stride + 0];
+        let viz_5_xy_0_0_im = baseline_imgsets[5].ImageBuffer(3)[0 * stride + 0];
+        let viz_5_yx_0_0_re = baseline_imgsets[5].ImageBuffer(4)[0 * stride + 0];
+        let viz_5_yx_0_0_im = baseline_imgsets[5].ImageBuffer(5)[0 * stride + 0];
+        let viz_5_yy_0_0_re = baseline_imgsets[5].ImageBuffer(6)[0 * stride + 0];
+        let viz_5_yy_0_0_im = baseline_imgsets[5].ImageBuffer(7)[0 * stride + 0];
+        let viz_5_yy_3_3_re = baseline_imgsets[5].ImageBuffer(6)[3 * stride + 3];
+        let viz_5_yy_3_3_im = baseline_imgsets[5].ImageBuffer(7)[3 * stride + 3];
+
+        assert_eq!(viz_0_xx_0_0_re as f32, 0x10c5be as f32);
+        assert_eq!(viz_0_xx_0_0_im as f32, 0x10c5bf as f32);
+        assert_eq!(viz_5_xx_0_0_re as f32, 0x10f1ce as f32);
+        assert_eq!(viz_5_xx_0_0_im as f32, -0x10f1cf as f32);
+        assert_eq!(viz_5_xy_0_0_re as f32, 0x10ea26 as f32);
+        assert_eq!(viz_5_xy_0_0_im as f32, -0x10ea27 as f32);
+        assert_eq!(viz_5_yx_0_0_re as f32, 0x10f1be as f32);
+        assert_eq!(viz_5_yx_0_0_im as f32, -0x10f1bf as f32);
+        assert_eq!(viz_5_yy_0_0_re as f32, 0x10ea16 as f32);
+        assert_eq!(viz_5_yy_0_0_im as f32, -0x10ea17 as f32);
+        assert_eq!(viz_5_yy_3_3_re as f32, 0x0dec16 as f32);
+        assert_eq!(viz_5_yy_3_3_im as f32, -0x0dec17 as f32);
+
+        // baseline 5, input 1, pol x
+        let length_5_1_x = &context.metafits_context.antennas
+            [context.metafits_context.baselines[5].ant1_index]
+            .rfinput_x
+            .electrical_length_m;
+        // baseline 5, input 1, pol y
+        let length_5_1_y = &context.metafits_context.antennas
+            [context.metafits_context.baselines[5].ant1_index]
+            .rfinput_y
+            .electrical_length_m;
+        // baseline 5, input 2, pol x
+        let length_5_2_x = &context.metafits_context.antennas
+            [context.metafits_context.baselines[5].ant2_index]
+            .rfinput_x
+            .electrical_length_m;
+        // baseline 5, input 2, pol y
+        let length_5_2_y = &context.metafits_context.antennas
+            [context.metafits_context.baselines[5].ant2_index]
+            .rfinput_y
+            .electrical_length_m;
+
+        // baseline 1, pol XX, cc 0, fc 0
+        let length_m_5_xx = length_5_2_x - length_5_1_x;
+        let angle_5_xx_0: f64 =
+            -2.0 * std::f64::consts::PI * length_m_5_xx * (all_freqs_hz[0] as f64)
+                / SPEED_OF_LIGHT_IN_VACUUM;
+        let (sin_5_xx_0_f64, cos_5_xx_0_f64) = angle_5_xx_0.sin_cos();
+        let (sin_5_xx_0, cos_5_xx_0) = (sin_5_xx_0_f64 as f32, cos_5_xx_0_f64 as f32);
+        // baseline 1, pol XY, cc 0, fc 0
+        let length_m_5_xy = length_5_2_y - length_5_1_x;
+        let angle_5_xy_0: f64 =
+            -2.0 * std::f64::consts::PI * length_m_5_xy * (all_freqs_hz[0] as f64)
+                / SPEED_OF_LIGHT_IN_VACUUM;
+        let (sin_5_xy_0_f64, cos_5_xy_0_f64) = angle_5_xy_0.sin_cos();
+        let (sin_5_xy_0, cos_5_xy_0) = (sin_5_xy_0_f64 as f32, cos_5_xy_0_f64 as f32);
+        // baseline 1, pol YX, cc 0, fc 0
+        let length_m_5_yx = length_5_2_x - length_5_1_y;
+        let angle_5_yx_0: f64 =
+            -2.0 * std::f64::consts::PI * length_m_5_yx * (all_freqs_hz[0] as f64)
+                / SPEED_OF_LIGHT_IN_VACUUM;
+        let (sin_5_yx_0_f64, cos_5_yx_0_f64) = angle_5_yx_0.sin_cos();
+        let (sin_5_yx_0, cos_5_yx_0) = (sin_5_yx_0_f64 as f32, cos_5_yx_0_f64 as f32);
+        // baseline 1, pol YY, cc 0, fc 0
+        let length_m_5_yy = length_5_2_y - length_5_1_y;
+        let angle_5_yy_0: f64 =
+            -2.0 * std::f64::consts::PI * length_m_5_yy * (all_freqs_hz[0] as f64)
+                / SPEED_OF_LIGHT_IN_VACUUM;
+        let (sin_5_yy_0_f64, cos_5_yy_0_f64) = angle_5_yy_0.sin_cos();
+        let (sin_5_yy_0, cos_5_yy_0) = (sin_5_yy_0_f64 as f32, cos_5_yy_0_f64 as f32);
+        // baseline 1, pol YY, cc 1, fc 1
+        let angle_5_yy_3: f64 =
+            -2.0 * std::f64::consts::PI * length_m_5_yy * (all_freqs_hz[3] as f64)
+                / SPEED_OF_LIGHT_IN_VACUUM;
+        let (sin_5_yy_3_f64, cos_5_yy_3_f64) = angle_5_yy_3.sin_cos();
+        let (sin_5_yy_3, cos_5_yy_3) = (sin_5_yy_3_f64 as f32, cos_5_yy_3_f64 as f32);
+
+        let baseline_imgsets = correct_cable_lengths(&context, baseline_imgsets).unwrap();
+
+        // there should be no difference in baseline 0
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 0, viz_0_xx_0_0_re);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 0, viz_0_xx_0_0_im);
+
+        ////
+        // baseline 1 should be rotated
+        ////
+        // baseline 1, pol xx, cc 0, fc 0, ts 0
+        let rot_5_xx_0_0_re = (cos_5_xx_0 * viz_5_xx_0_0_re - sin_5_xx_0 * viz_5_xx_0_0_im) as f32;
+        let rot_5_xx_0_0_im = (sin_5_xx_0 * viz_5_xx_0_0_re + cos_5_xx_0 * viz_5_xx_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[5], 0, stride, 0, 0, rot_5_xx_0_0_re);
+        test_imgset_val!(baseline_imgsets[5], 1, stride, 0, 0, rot_5_xx_0_0_im);
+        // baseline 1, pol xy, cc 0, fc 0, ts 0
+        let rot_5_xy_0_0_re = (cos_5_xy_0 * viz_5_xy_0_0_re - sin_5_xy_0 * viz_5_xy_0_0_im) as f32;
+        let rot_5_xy_0_0_im = (sin_5_xy_0 * viz_5_xy_0_0_re + cos_5_xy_0 * viz_5_xy_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[5], 2, stride, 0, 0, rot_5_xy_0_0_re);
+        test_imgset_val!(baseline_imgsets[5], 3, stride, 0, 0, rot_5_xy_0_0_im);
+        // baseline 1, pol yx, cc 0, fc 0, ts 0
+        let rot_5_yx_0_0_re = (cos_5_yx_0 * viz_5_yx_0_0_re - sin_5_yx_0 * viz_5_yx_0_0_im) as f32;
+        let rot_5_yx_0_0_im = (sin_5_yx_0 * viz_5_yx_0_0_re + cos_5_yx_0 * viz_5_yx_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[5], 4, stride, 0, 0, rot_5_yx_0_0_re);
+        test_imgset_val!(baseline_imgsets[5], 5, stride, 0, 0, rot_5_yx_0_0_im);
+        // baseline 1, pol yy, cc 0, fc 0, ts 0
+        let rot_5_yy_0_0_re = (cos_5_yy_0 * viz_5_yy_0_0_re - sin_5_yy_0 * viz_5_yy_0_0_im) as f32;
+        let rot_5_yy_0_0_im = (sin_5_yy_0 * viz_5_yy_0_0_re + cos_5_yy_0 * viz_5_yy_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[5], 6, stride, 0, 0, rot_5_yy_0_0_re);
+        test_imgset_val!(baseline_imgsets[5], 7, stride, 0, 0, rot_5_yy_0_0_im);
+        // baseline 1, pol yy, cc 1, fc 1, ts 1
+        let rot_5_yy_3_3_re = (cos_5_yy_3 * viz_5_yy_3_3_re - sin_5_yy_3 * viz_5_yy_3_3_im) as f32;
+        let rot_5_yy_3_3_im = (sin_5_yy_3 * viz_5_yy_3_3_re + cos_5_yy_3 * viz_5_yy_3_3_im) as f32;
+        test_imgset_val!(baseline_imgsets[5], 6, stride, 3, 3, rot_5_yy_3_3_re);
+        test_imgset_val!(baseline_imgsets[5], 7, stride, 3, 3, rot_5_yy_3_3_im);
     }
 }
