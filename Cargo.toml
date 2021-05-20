@@ -23,6 +23,7 @@ env_logger = "0.8.3"
 fitsio = "0.17.*"
 fitsio-sys = "^0" # fitsio also uses fitsio-sys so ensure we both use the same
 indicatif = "0.16.0"
+itertools = "0.10.0"
 libc = "0.2.86"
 log = "0.4"
 mwalib = "0.7.0"
