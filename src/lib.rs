@@ -71,7 +71,6 @@ use cxx::UniquePtr;
 pub use cxx_aoflagger::ffi::{
     cxx_aoflagger_new, CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy,
 };
-use error::BirliError;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use mwalib::CorrelatorContext;
@@ -433,9 +432,8 @@ fn _correct_cable_length_buffers_cotter(
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new};
+/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, correct_cable_lengths};
 /// use mwalib::CorrelatorContext;
-/// use tempfile::tempdir;
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -453,14 +451,14 @@ fn _correct_cable_length_buffers_cotter(
 /// let aoflagger = unsafe { cxx_aoflagger_new() };
 ///
 /// // generate imagesets for each baseline in the format required by aoflagger
-/// let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+/// let mut baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
 ///
-/// ccorrect_cable_lengths(&context, baseline_imgsets);
+/// correct_cable_lengths(&context, &mut baseline_imgsets);
 /// ```
 pub fn correct_cable_lengths(
     context: &CorrelatorContext,
-    mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>>,
-) -> Result<Vec<UniquePtr<CxxImageSet>>, BirliError> {
+    baseline_imgsets: &mut Vec<UniquePtr<CxxImageSet>>,
+) {
     trace!("start correct_cable_lengths");
 
     let baselines = &context.metafits_context.baselines;
@@ -474,12 +472,10 @@ pub fn correct_cable_lengths(
     let all_freqs_hz: Vec<u32> = coarse_chans
         .iter()
         .flat_map(|coarse_chan| {
-            let chan_start_hz = coarse_chan.chan_start_hz.clone();
-            (0..fine_chans_per_coarse)
-                .map(move |fine_chan_idx| {
-                    chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
-                })
-                .clone()
+            let chan_start_hz = coarse_chan.chan_start_hz;
+            (0..fine_chans_per_coarse).map(move |fine_chan_idx| {
+                chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
+            })
         })
         .collect();
 
@@ -521,7 +517,6 @@ pub fn correct_cable_lengths(
             });
     });
     trace!("end correct_cable_lengths");
-    Ok(baseline_imgsets)
 }
 
 /// Flag an observation's visibilities, given a [`CxxAOFlagger`] instance, a [`CxxStrategy`]
@@ -557,8 +552,6 @@ pub fn flag_imgsets(
     strategy_filename: &str,
     baseline_imgsets: Vec<UniquePtr<CxxImageSet>>,
 ) -> Vec<UniquePtr<CxxFlagMask>> {
-    // TODO: figure out how to parallelize with Rayon, into_iter(). You'll probably need to convert between UniquePtr and Box
-
     trace!("start flag_imgsets");
 
     let flag_progress = ProgressBar::new(baseline_imgsets.len() as u64);
@@ -1019,40 +1012,35 @@ mod tests {
         let stride = (((width - 1) / 8) + 1) * 8;
 
         let coarse_chans = context.coarse_chans.clone();
-        let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz.clone();
-        let fine_chans_per_coarse = context
-            .metafits_context
-            .num_corr_fine_chans_per_coarse
-            .clone();
+        let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz;
+        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
         // A vector of all fine channel frequencies for all coarse channels in ascending order.
         let all_freqs_hz: Vec<u32> = coarse_chans
             .iter()
             .flat_map(|coarse_chan| {
-                let chan_start_hz = coarse_chan.chan_start_hz.clone();
-                (0..fine_chans_per_coarse)
-                    .map(move |fine_chan_idx| {
-                        chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
-                    })
-                    .clone()
+                let chan_start_hz = coarse_chan.chan_start_hz;
+                (0..fine_chans_per_coarse).map(move |fine_chan_idx| {
+                    chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
+                })
             })
             .collect();
 
-        let baseline_imgsets = unsafe {
+        let mut baseline_imgsets = unsafe {
             let aoflagger = cxx_aoflagger_new();
             context_to_baseline_imgsets(&aoflagger, &context)
         };
 
-        let viz_0_xx_0_0_re = baseline_imgsets[0].ImageBuffer(0)[0 * stride + 0];
-        let viz_0_xx_0_0_im = baseline_imgsets[0].ImageBuffer(1)[0 * stride + 0];
-        let viz_1_xx_0_0_re = baseline_imgsets[1].ImageBuffer(0)[0 * stride + 0];
-        let viz_1_xx_0_0_im = baseline_imgsets[1].ImageBuffer(1)[0 * stride + 0];
-        let viz_1_xy_0_0_re = baseline_imgsets[1].ImageBuffer(2)[0 * stride + 0];
-        let viz_1_xy_0_0_im = baseline_imgsets[1].ImageBuffer(3)[0 * stride + 0];
-        let viz_1_yx_0_0_re = baseline_imgsets[1].ImageBuffer(4)[0 * stride + 0];
-        let viz_1_yx_0_0_im = baseline_imgsets[1].ImageBuffer(5)[0 * stride + 0];
-        let viz_1_yy_0_0_re = baseline_imgsets[1].ImageBuffer(6)[0 * stride + 0];
-        let viz_1_yy_0_0_im = baseline_imgsets[1].ImageBuffer(7)[0 * stride + 0];
+        let viz_0_xx_0_0_re = baseline_imgsets[0].ImageBuffer(0)[0];
+        let viz_0_xx_0_0_im = baseline_imgsets[0].ImageBuffer(1)[0];
+        let viz_1_xx_0_0_re = baseline_imgsets[1].ImageBuffer(0)[0];
+        let viz_1_xx_0_0_im = baseline_imgsets[1].ImageBuffer(1)[0];
+        let viz_1_xy_0_0_re = baseline_imgsets[1].ImageBuffer(2)[0];
+        let viz_1_xy_0_0_im = baseline_imgsets[1].ImageBuffer(3)[0];
+        let viz_1_yx_0_0_re = baseline_imgsets[1].ImageBuffer(4)[0];
+        let viz_1_yx_0_0_im = baseline_imgsets[1].ImageBuffer(5)[0];
+        let viz_1_yy_0_0_re = baseline_imgsets[1].ImageBuffer(6)[0];
+        let viz_1_yy_0_0_im = baseline_imgsets[1].ImageBuffer(7)[0];
         let viz_1_yy_3_3_re = baseline_imgsets[1].ImageBuffer(6)[3 * stride + 3];
         let viz_1_yy_3_3_im = baseline_imgsets[1].ImageBuffer(7)[3 * stride + 3];
 
@@ -1125,7 +1113,7 @@ mod tests {
         let (sin_1_yy_3_f64, cos_1_yy_3_f64) = angle_1_yy_3.sin_cos();
         let (sin_1_yy_3, cos_1_yy_3) = (sin_1_yy_3_f64 as f32, cos_1_yy_3_f64 as f32);
 
-        let baseline_imgsets = correct_cable_lengths(&context, baseline_imgsets).unwrap();
+        correct_cable_lengths(&context, &mut baseline_imgsets);
 
         // there should be no difference in baseline 0
         test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 0, viz_0_xx_0_0_re);
@@ -1169,40 +1157,35 @@ mod tests {
         let stride = (((width - 1) / 8) + 1) * 8;
 
         let coarse_chans = context.coarse_chans.clone();
-        let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz.clone();
-        let fine_chans_per_coarse = context
-            .metafits_context
-            .num_corr_fine_chans_per_coarse
-            .clone();
+        let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz;
+        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
         // A vector of all fine channel frequencies for all coarse channels in ascending order.
         let all_freqs_hz: Vec<u32> = coarse_chans
             .iter()
             .flat_map(|coarse_chan| {
-                let chan_start_hz = coarse_chan.chan_start_hz.clone();
-                (0..fine_chans_per_coarse)
-                    .map(move |fine_chan_idx| {
-                        chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
-                    })
-                    .clone()
+                let chan_start_hz = coarse_chan.chan_start_hz;
+                (0..fine_chans_per_coarse).map(move |fine_chan_idx| {
+                    chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
+                })
             })
             .collect();
 
-        let baseline_imgsets = unsafe {
+        let mut baseline_imgsets = unsafe {
             let aoflagger = cxx_aoflagger_new();
             context_to_baseline_imgsets(&aoflagger, &context)
         };
 
-        let viz_0_xx_0_0_re = baseline_imgsets[0].ImageBuffer(0)[0 * stride + 0];
-        let viz_0_xx_0_0_im = baseline_imgsets[0].ImageBuffer(1)[0 * stride + 0];
-        let viz_5_xx_0_0_re = baseline_imgsets[5].ImageBuffer(0)[0 * stride + 0];
-        let viz_5_xx_0_0_im = baseline_imgsets[5].ImageBuffer(1)[0 * stride + 0];
-        let viz_5_xy_0_0_re = baseline_imgsets[5].ImageBuffer(2)[0 * stride + 0];
-        let viz_5_xy_0_0_im = baseline_imgsets[5].ImageBuffer(3)[0 * stride + 0];
-        let viz_5_yx_0_0_re = baseline_imgsets[5].ImageBuffer(4)[0 * stride + 0];
-        let viz_5_yx_0_0_im = baseline_imgsets[5].ImageBuffer(5)[0 * stride + 0];
-        let viz_5_yy_0_0_re = baseline_imgsets[5].ImageBuffer(6)[0 * stride + 0];
-        let viz_5_yy_0_0_im = baseline_imgsets[5].ImageBuffer(7)[0 * stride + 0];
+        let viz_0_xx_0_0_re = baseline_imgsets[0].ImageBuffer(0)[0];
+        let viz_0_xx_0_0_im = baseline_imgsets[0].ImageBuffer(1)[0];
+        let viz_5_xx_0_0_re = baseline_imgsets[5].ImageBuffer(0)[0];
+        let viz_5_xx_0_0_im = baseline_imgsets[5].ImageBuffer(1)[0];
+        let viz_5_xy_0_0_re = baseline_imgsets[5].ImageBuffer(2)[0];
+        let viz_5_xy_0_0_im = baseline_imgsets[5].ImageBuffer(3)[0];
+        let viz_5_yx_0_0_re = baseline_imgsets[5].ImageBuffer(4)[0];
+        let viz_5_yx_0_0_im = baseline_imgsets[5].ImageBuffer(5)[0];
+        let viz_5_yy_0_0_re = baseline_imgsets[5].ImageBuffer(6)[0];
+        let viz_5_yy_0_0_im = baseline_imgsets[5].ImageBuffer(7)[0];
         let viz_5_yy_3_3_re = baseline_imgsets[5].ImageBuffer(6)[3 * stride + 3];
         let viz_5_yy_3_3_im = baseline_imgsets[5].ImageBuffer(7)[3 * stride + 3];
 
@@ -1275,7 +1258,7 @@ mod tests {
         let (sin_5_yy_3_f64, cos_5_yy_3_f64) = angle_5_yy_3.sin_cos();
         let (sin_5_yy_3, cos_5_yy_3) = (sin_5_yy_3_f64 as f32, cos_5_yy_3_f64 as f32);
 
-        let baseline_imgsets = correct_cable_lengths(&context, baseline_imgsets).unwrap();
+        correct_cable_lengths(&context, &mut baseline_imgsets);
 
         // there should be no difference in baseline 0
         test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 0, viz_0_xx_0_0_re);
