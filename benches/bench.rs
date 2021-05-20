@@ -1,4 +1,4 @@
-use birli::{context_to_baseline_imgsets, cxx_aoflagger_new};
+use birli::{context_to_baseline_imgsets, correct_cable_lengths, cxx_aoflagger_new};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use glob::glob;
 use mwalib::CorrelatorContext;
@@ -66,11 +66,31 @@ fn bench_context_to_baseline_imgsets_ord_half_1196175296(crt: &mut Criterion) {
     });
 }
 
+fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
+    let aoflagger = unsafe { cxx_aoflagger_new() };
+    let context = get_context_mwax_half_1247842824();
+    let mut baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+    crt.bench_function("correct_cable_lengths - mwax_half_1247842824", |bch| {
+        bch.iter(|| correct_cable_lengths(black_box(&context), black_box(&mut baseline_imgsets)))
+    });
+}
+
+fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
+    let aoflagger = unsafe { cxx_aoflagger_new() };
+    let context = get_context_ord_half_1196175296();
+    let mut baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+    crt.bench_function("correct_cable_lengths - ord_half_1196175296", |bch| {
+        bch.iter(|| correct_cable_lengths(black_box(&context), black_box(&mut baseline_imgsets)))
+    });
+}
+
 criterion_group!(
     name = benches;
     config = Criterion::default().sample_size(10);
     targets =
         bench_context_to_baseline_imgsets_mwax_half_1247842824,
         bench_context_to_baseline_imgsets_ord_half_1196175296,
+        bench_correct_cable_lengths_mwax_half_1247842824,
+        bench_correct_cable_lengths_ord_half_1196175296,
 );
 criterion_main!(benches);
