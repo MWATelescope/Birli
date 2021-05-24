@@ -427,6 +427,11 @@ fn _correct_cable_length_buffers_cotter(
 /// [`_correct_cable_length_buffers_cotter`]
 ///
 /// ```rust
+/// use itertools::izip;
+/// use std::f64::consts::PI;
+///
+/// const SPEED_OF_LIGHT_IN_VACUUM: f64 = 299792458.0; // speed of light in m/s
+///
 /// fn _correct_cable_length_buffers_precise(
 ///     freq_hz: &u32,
 ///     electrical_length_m: &f64,
