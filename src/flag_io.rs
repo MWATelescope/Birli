@@ -16,7 +16,7 @@ use fitsio::tables::{ColumnDataDescription, ColumnDataType, ConcreteColumnDescri
 use fitsio::FitsFile;
 use fitsio::{self, hdu::FitsHdu};
 use mwalib::{
-    CorrelatorContext, CorrelatorVersion, _get_required_fits_key, _open_hdu, fits_open_hdu,
+    CorrelatorContext, MWAVersion, _get_required_fits_key, _open_hdu, fits_open_hdu,
     get_required_fits_key,
 };
 use regex::Regex;
@@ -81,12 +81,12 @@ pub struct FlagFileSet {
 // TODO: can this just take metafits context instead of a full context?
 impl FlagFileSet {
     fn get_gpubox_filenames(
-        corr_version: CorrelatorVersion,
+        corr_version: MWAVersion,
         filename_template: &str,
         gpubox_ids: &[usize],
     ) -> Result<BTreeMap<usize, String>, BirliError> {
         let num_percents = match corr_version {
-            CorrelatorVersion::Legacy | CorrelatorVersion::OldLegacy => 2,
+            MWAVersion::CorrOldLegacy | MWAVersion::CorrLegacy => 2,
             _ => 3,
         };
         let re_percents = Regex::new(format!("%{{{},}}+", num_percents).as_str()).unwrap();
@@ -146,7 +146,7 @@ impl FlagFileSet {
     ) -> Result<Self, BirliError> {
         let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
         let gpubox_filenames =
-            FlagFileSet::get_gpubox_filenames(context.corr_version, filename_template, gpubox_ids)?;
+            FlagFileSet::get_gpubox_filenames(context.mwa_version, filename_template, gpubox_ids)?;
         for (gpubox_id, fits_filename) in gpubox_filenames.into_iter() {
             match FitsFile::create(Path::new(&fits_filename.to_string())).open() {
                 Ok(fptr) => {
@@ -180,7 +180,7 @@ impl FlagFileSet {
     ) -> Result<Self, BirliError> {
         let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
         let gpubox_filenames =
-            FlagFileSet::get_gpubox_filenames(context.corr_version, filename_template, gpubox_ids)?;
+            FlagFileSet::get_gpubox_filenames(context.mwa_version, filename_template, gpubox_ids)?;
         for (gpubox_id, fits_filename) in gpubox_filenames.into_iter() {
             match FitsFile::open(Path::new(&fits_filename.to_string())) {
                 Ok(fptr) => {
