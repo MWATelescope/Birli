@@ -32,6 +32,17 @@ descriptor for the speed which this library intends to deliver.
 
 for OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) and [macOS](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/macos_test.yml) CI Scripts, as these are tested regularly.
 
+### Linux Setup
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+sudo apt install -y gcc libssl-dev pkg-config
+export MAKEFLAGS="-j $MAKEFLAGS"
+cargo install --force cargo-make
+export LD_LIBRARY_PATH="/usr/local/lib/"
+cargo make ci
+```
+
 ### Installing the binary
 
 ```bash
