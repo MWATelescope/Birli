@@ -39,7 +39,7 @@ rustfmt = "0.10.0"
 tempfile = "3.2.0"
 
 [build-dependencies]
-bindgen = "0.57.0"
+bindgen = "0.58.1"
 cc = {version = "1.0.67", features = ["parallel"]}
 cxx-build = "1.0.32"
 
