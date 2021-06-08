@@ -377,7 +377,6 @@ fn _correct_cable_length_buffers_cotter(
     })
 }
 
-
 /// Perform cable length corrections, given an observation's
 /// [`mwalib::CorrelatorContext`] and a vector of [`CxxImageSet`]s for  each
 /// baseline.
