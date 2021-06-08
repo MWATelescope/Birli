@@ -1,10 +1,12 @@
-use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg, SubCommand};
+use clap::{
+    crate_authors, crate_description, crate_name, crate_version, value_t, App, Arg, SubCommand,
+};
 use log::{debug, info};
 use std::{env, ffi::OsString, fmt::Debug};
 
 use birli::{
-    context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets, get_aoflagger_version_string,
-    write_flags,
+    context_to_baseline_imgsets, correct_cable_lengths, cxx_aoflagger_new, flag_imgsets,
+    get_aoflagger_version_string, write_flags,
 };
 use mwalib::CorrelatorContext;
 
@@ -40,6 +42,13 @@ where
                 .required(true) // TODO: specify a default that works with mwa-ord and mwax
                 .help("Sets the template used to name flag files. Percents are substituted for the zero-prefixed GPUBox ID, which can be up to 3 characters log. Similar to -o in Cotter. Example: FlagFile%%%.mwaf")
         )
+        .arg(
+            Arg::with_name("no-cable-delay")
+                .long("--no-cable-delay")
+                .takes_value(false)
+                .help("Do not perform cable length corrections.")
+                .default_value("false")
+        )
         // TODO: implement specify flag strategy
         // .arg(
         //     Arg::with_name("flag-strategy")
@@ -62,7 +71,15 @@ where
         let fits_files: Vec<&str> = aoflagger_matches.values_of("fits-files").unwrap().collect();
         let context = CorrelatorContext::new(&metafits_path, &fits_files).unwrap();
         debug!("mwalib correlator context:\n{}", &context);
-        let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+        let mut baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+
+        // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
+        let no_cable_delays = value_t!(aoflagger_matches, "no-cable-delay", bool).unwrap();
+        let cable_delays_applied = context.metafits_context.cable_delays_applied;
+        if !cable_delays_applied && !no_cable_delays {
+            correct_cable_lengths(&context, &mut baseline_imgsets);
+        }
+
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
         let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
         let gpubox_ids: Vec<usize> = context
