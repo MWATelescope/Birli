@@ -71,7 +71,12 @@ where
         let fits_files: Vec<&str> = aoflagger_matches.values_of("fits-files").unwrap().collect();
         let context = CorrelatorContext::new(&metafits_path, &fits_files).unwrap();
         debug!("mwalib correlator context:\n{}", &context);
-        let mut baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+        let mut baseline_imgsets = context_to_baseline_imgsets(
+            &aoflagger,
+            &context,
+            &context.common_coarse_chan_indices.clone(),
+            &context.common_timestep_indices.clone(),
+        );
 
         // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
         let no_cable_delays = value_t!(aoflagger_matches, "no-cable-delay", bool).unwrap();
@@ -83,9 +88,9 @@ where
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
         let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
         let gpubox_ids: Vec<usize> = context
-            .coarse_chans
+            .common_coarse_chan_indices
             .iter()
-            .map(|chan| chan.gpubox_number)
+            .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
         write_flags(&context, baseline_flagmasks, flag_template, &gpubox_ids);
     }
@@ -159,9 +164,9 @@ mod tests {
         let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 
         let gpubox_ids: Vec<usize> = context
-            .coarse_chans
+            .common_coarse_chan_indices
             .iter()
-            .map(|chan| chan.gpubox_number)
+            .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
 
         let mut flag_file_set =
@@ -172,7 +177,7 @@ mod tests {
         let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
         let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
-        assert_eq!(chan1_header.num_timesteps, context.num_timesteps);
+        assert_eq!(chan1_header.num_timesteps, context.num_common_timesteps);
         assert_eq!(num_baselines, context.metafits_context.num_baselines);
         assert_eq!(chan1_header.num_channels, num_fine_chans_per_coarse);
         assert_eq!(

@@ -37,7 +37,12 @@
 //! let aoflagger = unsafe { cxx_aoflagger_new() };
 //!
 //! // generate imagesets for each baseline in the format required by aoflagger
-//! let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+//! let baseline_imgsets = context_to_baseline_imgsets(
+//!     &aoflagger,
+//!     &context,
+//!     &context.common_coarse_chan_indices.clone(),
+//!     &context.common_timestep_indices.clone(),
+//! );
 //!
 //! // use the default strategy file location for MWA
 //! let strategy_filename = &aoflagger.FindStrategyFileMWA();
@@ -47,10 +52,10 @@
 //!
 //! // Get a list of all gpubox IDs
 //! let gpubox_ids: Vec<usize> = context
-//!             .coarse_chans
-//!             .iter()
-//!             .map(|chan| chan.gpubox_number)
-//!             .collect();
+//!     .common_coarse_chan_indices
+//!     .iter()
+//!     .map(|&chan| context.coarse_chans[chan].gpubox_number)
+//!     .collect();
 //!
 //! // write the flags to disk as .mwaf
 //! write_flags(&context, baseline_flagmasks, flag_template.to_str().unwrap(), &gpubox_ids);
@@ -86,7 +91,7 @@ use flag_io::FlagFileSet;
 
 pub mod error;
 
-use log::trace;
+use log::{trace, warn};
 
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use crossbeam_utils::thread;
@@ -118,18 +123,83 @@ pub fn get_aoflagger_version_string() -> String {
     return format!("{}.{}.{}", major, minor, sub_minor);
 }
 
-/// Read aan observation's visibilities into a vector containing a [`CxxImageSet`]s for each
-/// baseline in the observation, given a [`CxxAOFlagger`] instance and that observation's
-/// [`mwalib::CorrelatorContext`].
-///
-/// [`mwalib::CorrelatorContext`]: https://docs.rs/mwalib/0.7.0/mwalib/struct.CorrelatorContext.html
+/// Initialize a vector of length [`num_baselines`] containing [`CxxImageSet`] of dimensions
+/// [`width`] and [`height`],
 ///
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new};
+/// use birli::{init_baseline_imgsets, cxx_aoflagger_new};
 /// use mwalib::CorrelatorContext;
 /// use tempfile::tempdir;
+///
+/// // define our input files
+/// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+/// let gpufits_paths = vec![
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+/// ];
+///
+/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+///
+/// let num_baselines = context.metafits_context.num_baselines;
+/// let width = context.num_common_timesteps;
+/// let height = context.num_common_coarse_chans * context.metafits_context.num_corr_fine_chans_per_coarse;
+/// let baseline_imgsets = unsafe {
+///     let aoflagger = cxx_aoflagger_new();
+///     init_baseline_imgsets(&aoflagger, num_baselines, width, height)
+/// };
+/// ```
+pub fn init_baseline_imgsets(
+    aoflagger: &CxxAOFlagger,
+    num_baselines: usize,
+    width: usize,
+    height: usize,
+) -> Vec<UniquePtr<CxxImageSet>> {
+    trace!("start init_baseline_imgsets");
+
+    // Create a progress bar to show the status of allocating
+    let allocation_progress = ProgressBar::new(num_baselines as u64);
+    allocation_progress.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+            )
+            .progress_chars("=> "),
+    );
+    allocation_progress.set_message("allocating imgs");
+
+    // Allocate vector of [`CxxImageSet`]s for each baseline
+    let baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = (0..num_baselines)
+        .into_par_iter()
+        .map(|_| {
+            let imgset = unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) };
+            allocation_progress.inc(1);
+            imgset
+        })
+        .collect();
+
+    allocation_progress.finish();
+
+    trace!("end init_baseline_imgsets");
+    baseline_imgsets
+}
+
+/// Read an observation's visibilities into a vector containing a [`CxxImageSet`]s for each
+/// baseline in the observation, given a [`CxxAOFlagger`] instance and that observation's
+/// [`mwalib::CorrelatorContext`].
+///
+/// [`mwalib::CorrelatorContext`]: https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html
+///
+/// mwalib provides access to all known timesteps, however to maintain  
+///
+/// # Examples
+///
+/// ```rust
+/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new};
+/// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -145,12 +215,19 @@ pub fn get_aoflagger_version_string() -> String {
 ///
 /// let baseline_imgsets = unsafe {
 ///     let aoflagger = cxx_aoflagger_new();
-///     context_to_baseline_imgsets(&aoflagger, &context)
+///     context_to_baseline_imgsets(
+///         &aoflagger,
+///         &context,
+///         &context.common_coarse_chan_indices.clone(),
+///         &context.common_timestep_indices.clone(),
+///     )
 /// };
 /// ```
 pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
     context: &CorrelatorContext,
+    img_coarse_chan_idxs: &[usize],
+    img_timestep_idxs: &[usize],
 ) -> Vec<UniquePtr<CxxImageSet>> {
     trace!("start context_to_baseline_imgsets");
 
@@ -158,66 +235,52 @@ pub fn context_to_baseline_imgsets(
     // efficiently than Vec
     // TODO: error handling instead of unwrap.
 
-    let num_coarse_chans = context.num_coarse_chans;
-    let num_timesteps = context.num_timesteps;
-    let num_baselines = context.metafits_context.num_baselines;
     let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
     let floats_per_finechan = context.metafits_context.num_visibility_pols * 2;
     let floats_per_baseline = fine_chans_per_coarse * floats_per_finechan;
-    let height = context.num_coarse_chans * fine_chans_per_coarse;
-    let width = context.num_timesteps;
-    let img_stride = (((width - 1) / 8) + 1) * 8;
 
-    // Create a progress bar to show the status of allocating
-    let allocation_progress = ProgressBar::new(num_baselines as u64);
-    allocation_progress.set_style(
-        ProgressStyle::default_bar()
-            .template(
-                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
-            )
-            .progress_chars("=> "),
+    let num_img_coarse_chans = img_coarse_chan_idxs.len();
+    let num_img_timesteps = img_timestep_idxs.len();
+
+    let mut baseline_imgsets = init_baseline_imgsets(
+        &aoflagger,
+        context.metafits_context.num_baselines,
+        num_img_timesteps,
+        num_img_coarse_chans * fine_chans_per_coarse,
     );
-    allocation_progress.set_message("allocating imgs");
-
-    // Allocate vector of [`CxxImageSet`]s for each baseline
-    let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = (0..num_baselines)
-        .into_par_iter()
-        .map(|_| {
-            let imgset = unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) };
-            allocation_progress.inc(1);
-            imgset
-        })
-        .collect();
-
     let baseline_imgsets_arc = Arc::new(&mut baseline_imgsets);
-    allocation_progress.finish();
 
-    let num_producers = num_coarse_chans;
+    let num_producers = num_img_coarse_chans;
     let num_pols_complex = context.metafits_context.num_visibility_pols * 2;
 
-    // A queue of coarse channel indices for the producers to work through
-    let (tx_coarse_chan_idx, rx_coarse_chan_idx) = unbounded();
+    // A queue of common coarse channel indices for the producers to work through
+    let (tx_img_coarse_chan_idx, rx_img_coarse_chan_idx) = unbounded();
     // a queue of raw gpufits visibility image buffers for each complex polarization.
     let pol_img_queues: Vec<(Sender<_>, Receiver<_>)> = (0..num_pols_complex)
         .map(|_| bounded(num_producers))
         .collect();
+
+    let (tx_error, rx_error) = unbounded();
 
     // a progress bar containing the progress bars associated with loading the
     // observation's HDUs
     let multi_progress = MultiProgress::new();
     // a vector of progress bars for the visibility reading progress of each
     // channel.
-    let read_progress: Vec<ProgressBar> = (0..num_coarse_chans)
-        .map(|coarse_chan_idx| {
+    let read_progress: Vec<ProgressBar> = (0..num_img_coarse_chans)
+        .map(|img_coarse_chan_idx| {
             multi_progress.add(
-                ProgressBar::new(num_timesteps as _)
+                ProgressBar::new(num_img_timesteps as _)
                     .with_style(
                         ProgressStyle::default_bar()
                             .template("{msg:16}: [{wide_bar}] {pos:4}/{len:4}")
                             .progress_chars("=> "),
                     )
                     .with_position(0)
-                    .with_message(format!("coarse chan {:3}", coarse_chan_idx)),
+                    .with_message(format!(
+                        "coarse chan {:3}",
+                        img_coarse_chan_idxs[img_coarse_chan_idx]
+                    )),
             )
         })
         .collect();
@@ -226,7 +289,7 @@ pub fn context_to_baseline_imgsets(
     let write_progress: Vec<ProgressBar> = (0..num_pols_complex)
         .map(|pol_idx| {
             multi_progress.add(
-                ProgressBar::new((num_timesteps * num_coarse_chans) as _)
+                ProgressBar::new((num_img_timesteps * num_img_coarse_chans) as _)
                     .with_style(
                         ProgressStyle::default_bar()
                             .template("{msg:16}: [{wide_bar}] {pos:4}/{len:4}")
@@ -240,7 +303,7 @@ pub fn context_to_baseline_imgsets(
     // A progress bar for the total progress of visibility loading, with time
     // elapsed, percentage and ETA.
     let total_progress = multi_progress.add(
-        ProgressBar::new((num_timesteps * num_coarse_chans * num_pols_complex) as _)
+        ProgressBar::new((num_img_timesteps * num_img_coarse_chans * num_pols_complex) as _)
             .with_style(
                 ProgressStyle::default_bar()
                     .template(
@@ -254,7 +317,7 @@ pub fn context_to_baseline_imgsets(
     // These [`std::sync::Arc`]s provide concurrent access to the inner values.
     let read_progress_arc = Arc::new(read_progress);
     let write_progress_arc = Arc::new(write_progress);
-    let total_progess_arc = Arc::new(total_progress);
+    let total_progress_arc = Arc::new(total_progress);
 
     thread::scope(|scope| {
         // Spawn a thread to deal with the progress bar
@@ -263,57 +326,76 @@ pub fn context_to_baseline_imgsets(
         });
 
         // Queue up coarse channels to do
-        (0..num_coarse_chans).for_each(|coarse_chan_idx| {
-            tx_coarse_chan_idx.send(coarse_chan_idx).unwrap();
+        img_coarse_chan_idxs.iter().for_each(|&coarse_chan_idx| {
+            tx_img_coarse_chan_idx.send(coarse_chan_idx).unwrap();
         });
         // This indicates the the producer threads that there are no more coarse
         // channels to process.
-        drop(tx_coarse_chan_idx);
+        drop(tx_img_coarse_chan_idx);
 
         // Create multiple producer threads
         for _ in 0..num_producers {
-            let rx_coarse_chan_idx_worker = rx_coarse_chan_idx.clone();
-            let pol_img_queues_worker = pol_img_queues.to_owned();
-            let read_progress_worker = read_progress_arc.to_owned();
+            let rx_img_coarse_chan_idx_worker = rx_img_coarse_chan_idx.clone();
+            let pol_img_queues_worker = pol_img_queues.clone();
+            let read_progress_worker = read_progress_arc.clone();
+            let tx_error_worker = tx_error.clone();
+            let img_coarse_chan_idxs_worker = img_coarse_chan_idxs.clone();
             scope.spawn(move |_| {
                 // Each producer thread consumes the HDUs from one coarse
                 // channel at a time.
-                for coarse_chan_idx in rx_coarse_chan_idx_worker.iter() {
-                    (0..num_timesteps).for_each(|timestep_idx| {
-                        let img_buf = Arc::new(
-                            context
-                                .read_by_baseline(timestep_idx, coarse_chan_idx)
-                                .unwrap(),
-                        );
-                        // Producer sends the visibility buffer to a separate
-                        // queue for each complex polarization.
-                        pol_img_queues_worker.iter().for_each(|(tx_img, _)| {
-                            tx_img
-                                .send((coarse_chan_idx, timestep_idx, img_buf.clone()))
-                                .unwrap();
-                        });
-                        read_progress_worker[coarse_chan_idx].inc(1);
+                for img_coarse_chan_idx in rx_img_coarse_chan_idx_worker.iter() {
+                    let coarse_chan_idx = img_coarse_chan_idxs_worker[img_coarse_chan_idx];
+                    (0..num_img_timesteps).for_each(|img_timestep_idx| {
+                        let timestep_idx = img_timestep_idxs[img_timestep_idx];
+                        match context.read_by_baseline(timestep_idx, coarse_chan_idx) {
+                            Ok(img_buf) => {
+                                let img_buf_arc = Arc::new(img_buf);
+                                // Producer sends the visibility buffer to a separate
+                                // queue for each complex polarization.
+                                pol_img_queues_worker.iter().for_each(|(tx_img, _)| {
+                                    tx_img
+                                        .send((
+                                            img_coarse_chan_idx,
+                                            img_timestep_idx,
+                                            img_buf_arc.clone(),
+                                        ))
+                                        .unwrap();
+                                });
+                            }
+                            Err(err) => {
+                                tx_error_worker.send(err).unwrap();
+                            }
+                        }
+                        read_progress_worker[img_coarse_chan_idx].inc(1);
                     });
-                    read_progress_worker[coarse_chan_idx].finish_and_clear();
+                    read_progress_worker[img_coarse_chan_idx].finish_and_clear();
                 }
                 pol_img_queues_worker.into_iter().for_each(|(tx_img, _)| {
                     drop(tx_img);
                 });
+                drop(tx_error_worker);
             });
         }
+        drop(tx_error);
+
+        // If an error message comes in on this channel, print it.
+        scope.spawn(|_| {
+            for err in rx_error.iter() {
+                warn!("could not read {:?}", err);
+            }
+        });
 
         // create a consumer thread for each complex polarization
         for (pol_idx, (tx_img, rx_img)) in pol_img_queues.into_iter().enumerate() {
             // This ensures that
             drop(tx_img);
-            let rx_img_worker = rx_img.to_owned();
-            let pol_idx_worker = pol_idx.to_owned();
-            let baseline_imgsets_worker = baseline_imgsets_arc.to_owned();
-            let write_progress_worker = write_progress_arc.to_owned();
-            let total_progess_worker = total_progess_arc.to_owned();
+            let rx_img_worker = rx_img.clone();
+            let baseline_imgsets_worker = baseline_imgsets_arc.clone();
+            let write_progress_worker = write_progress_arc.clone();
+            let total_progess_worker = total_progress_arc.clone();
             scope.spawn(move |_| {
                 // The thread consumes an image from it's img queue
-                for (coarse_chan_idx, timestep_idx, img_buf) in rx_img_worker.iter() {
+                for (img_coarse_chan_idx, img_timestep_idx, img_buf) in rx_img_worker.iter() {
                     img_buf
                         .chunks_exact(floats_per_baseline)
                         .zip(Arc::as_ref(&baseline_imgsets_worker).iter())
@@ -324,17 +406,18 @@ pub fn context_to_baseline_imgsets(
                             // complex polarization. This ensures that no two
                             // threads access the same image buffer at the same
                             // time.
-                            let imgset_buf = unsafe { imgset.ImageBufferMutUnsafe(pol_idx_worker) };
+                            let img_stride = imgset.HorizontalStride();
+                            let imgset_buf = unsafe { imgset.ImageBufferMutUnsafe(pol_idx) };
                             baseline_chunk
                                 .chunks_exact(floats_per_finechan)
                                 .enumerate()
                                 .for_each(|(fine_chan_idx, fine_chan_chunk)| {
-                                    let img_x = timestep_idx;
+                                    let img_x = img_timestep_idx;
                                     let img_y =
-                                        fine_chans_per_coarse * coarse_chan_idx + fine_chan_idx;
+                                        fine_chans_per_coarse * img_coarse_chan_idx + fine_chan_idx;
                                     unsafe {
                                         *imgset_buf.get_unchecked_mut(img_y * img_stride + img_x) =
-                                            *fine_chan_chunk.get_unchecked(pol_idx_worker)
+                                            *fine_chan_chunk.get_unchecked(pol_idx)
                                     };
                                 });
                         });
@@ -342,14 +425,9 @@ pub fn context_to_baseline_imgsets(
                     total_progess_worker.inc(1);
                 }
                 write_progress_worker[pol_idx].finish_and_clear();
-                if total_progess_worker.position() >= total_progess_worker.length() {
-                    total_progess_worker.finish();
-                }
             });
         }
-
-        // consume the rx_img queue
-        // total_progress.finish();
+        total_progress_arc.finish();
     })
     .unwrap();
 
@@ -408,7 +486,12 @@ fn _correct_cable_length_buffers_cotter(
 /// let aoflagger = unsafe { cxx_aoflagger_new() };
 ///
 /// // generate imagesets for each baseline in the format required by aoflagger
-/// let mut baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+/// let mut baseline_imgsets = context_to_baseline_imgsets(
+///     &aoflagger,
+///     &context,
+///     &context.common_coarse_chan_indices.clone(),
+///     &context.common_timestep_indices.clone(),
+/// );
 ///
 /// correct_cable_lengths(&context, &mut baseline_imgsets);
 /// ```
@@ -535,10 +618,22 @@ pub fn correct_cable_lengths(
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
 /// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 ///
-/// let baseline_imgsets = unsafe {
-///     let aoflagger = cxx_aoflagger_new();
-///     context_to_baseline_imgsets(&aoflagger, &context)
-/// };
+/// // create a CxxAOFlagger object to perform AOFlagger operations
+/// let aoflagger = unsafe { cxx_aoflagger_new() };
+///
+/// // generate imagesets for each baseline in the format required by aoflagger
+/// let baseline_imgsets = context_to_baseline_imgsets(
+///     &aoflagger,
+///     &context,
+///     &context.common_coarse_chan_indices.clone(),
+///     &context.common_timestep_indices.clone(),
+/// );
+///
+/// // use the default strategy file location for MWA
+/// let strategy_filename = &aoflagger.FindStrategyFileMWA();
+///
+/// // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
+/// let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
 /// ```
 pub fn flag_imgsets(
     aoflagger: &CxxAOFlagger,
@@ -611,7 +706,12 @@ pub fn flag_imgsets(
 /// let aoflagger = unsafe { cxx_aoflagger_new() };
 ///
 /// // generate imagesets for each baseline in the format required by aoflagger
-/// let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+/// let baseline_imgsets = context_to_baseline_imgsets(
+///     &aoflagger,
+///     &context,
+///     &context.common_coarse_chan_indices.clone(),
+///     &context.common_timestep_indices.clone(),
+/// );
 ///
 /// // use the default strategy file location for MWA
 /// let strategy_filename = &aoflagger.FindStrategyFileMWA();
@@ -621,10 +721,10 @@ pub fn flag_imgsets(
 ///
 /// // Get a list of all gpubox IDs
 /// let gpubox_ids: Vec<usize> = context
-///             .coarse_chans
-///             .iter()
-///             .map(|chan| chan.gpubox_number)
-///             .collect();
+///     .common_coarse_chan_indices
+///     .iter()
+///     .map(|&chan| context.coarse_chans[chan].gpubox_number)
+///     .collect();
 ///
 /// // write the flags to disk as .mwaf
 /// write_flags(&context, baseline_flagmasks, flag_template.to_str().unwrap(), &gpubox_ids);
@@ -659,6 +759,7 @@ mod tests {
         SPEED_OF_LIGHT_IN_VACUUM,
     };
     use cxx::UniquePtr;
+    use float_cmp::{approx_eq, F32Margin};
     use glob::glob;
     use mwalib::CorrelatorContext;
     use tempfile::tempdir;
@@ -686,10 +787,16 @@ mod tests {
     }
 
     macro_rules! test_imgset_val {
-        ($imgset:expr, $imgset_idx:expr, $img_stride:expr, $x:expr, $y:expr, $val:expr) => {
-            assert_eq!(
-                $imgset.ImageBuffer($imgset_idx)[$x * $img_stride + $y].round(),
-                ($val as f32).round()
+        ($imgset:expr, $imgset_idx:expr, $stride:expr, $x:expr, $y:expr, $val:expr) => {
+            let left = $imgset.ImageBuffer($imgset_idx)[$x * $stride + $y];
+            let right = $val as f32;
+            assert!(
+                approx_eq!(f32, left, right, F32Margin::default()),
+                "{} (0x{:08x}) != {} (0x{:08x})",
+                left,
+                left as i32,
+                right,
+                right as i32
             )
         };
     }
@@ -701,62 +808,44 @@ mod tests {
         let stride = (((width - 1) / 8) + 1) * 8;
 
         let aoflagger = unsafe { cxx_aoflagger_new() };
-        let baseline_imgsets = context_to_baseline_imgsets(&aoflagger, &context);
+        let baseline_imgsets = context_to_baseline_imgsets(
+            &aoflagger,
+            &context,
+            &context.common_coarse_chan_indices.clone(),
+            &context.common_timestep_indices.clone(),
+        );
 
         test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 0, 0x410000);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 1, 0x410100);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 2, 0x410200);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 3, 0x410300);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 4, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 5, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 6, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 7, 0);
 
         test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 0, 0x410008);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 1, 0x410108);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 2, 0x410208);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 3, 0x410308);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 4, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 5, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 6, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 1, 7, 0);
 
         test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 0, 0x410400);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 1, 0x410500);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 2, 0x410600);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 3, 0x410700);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 4, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 5, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 6, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 2, 7, 0);
 
         test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 0, 0x410408);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 1, 0x410508);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 2, 0x410608);
         test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 3, 0x410708);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 4, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 5, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 6, 0);
-        test_imgset_val!(baseline_imgsets[0], 0, stride, 3, 7, 0);
 
         test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 0, 0x410001);
         test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 1, 0x410101);
         test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 2, 0x410201);
         test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 3, 0x410301);
-        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 4, 0);
-        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 5, 0);
-        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 6, 0);
-        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 7, 0);
 
         /* ... */
+
         test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 0, 0x410007);
         test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 1, 0x410107);
         test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 2, 0x410207);
         test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 3, 0x410307);
-        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 4, 0);
-        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 5, 0);
-        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 6, 0);
-        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 7, 0);
 
         /* ... */
 
@@ -764,113 +853,110 @@ mod tests {
         test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 1, 0x410120);
         test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 2, 0x410220);
         test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 3, 0x410320);
-        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 4, 0);
-        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 5, 0);
-        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 6, 0);
-        test_imgset_val!(baseline_imgsets[2], 0, stride, 0, 7, 0);
 
         test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 0, 0x410028);
         test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 1, 0x410128);
         test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 2, 0x410228);
         test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 3, 0x410328);
-        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 4, 0);
-        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 5, 0);
-        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 6, 0);
-        test_imgset_val!(baseline_imgsets[2], 0, stride, 1, 7, 0);
     }
 
     #[test]
     fn test_context_to_baseline_imgsets_mwa_ord() {
         let context = get_mwa_ord_context();
         let width = context.num_timesteps;
-        let img_stride = (((width - 1) / 8) + 1) * 8;
+        let stride = (((width - 1) / 8) + 1) * 8;
 
         let baseline_imgsets = unsafe {
             let aoflagger = cxx_aoflagger_new();
-            context_to_baseline_imgsets(&aoflagger, &context)
+            context_to_baseline_imgsets(
+                &aoflagger,
+                &context,
+                &context.common_coarse_chan_indices.clone(),
+                &context.common_timestep_indices.clone(),
+            )
         };
 
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 0, 0x10c5be);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 1, 0x14c5be);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 2, 0x18c5be);
-        test_imgset_val!(baseline_imgsets[0], 0, img_stride, 0, 3, 0x1cc5be);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 0, 0x10c5be);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 1, 0x14c5be);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 2, 0x18c5be);
+        test_imgset_val!(baseline_imgsets[0], 0, stride, 0, 3, 0x1cc5be);
 
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 0, 0x10c5bf);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 1, 0x14c5bf);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 2, 0x18c5bf);
-        test_imgset_val!(baseline_imgsets[0], 1, img_stride, 0, 3, 0x1cc5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 0, 0x10c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 1, 0x14c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 2, 0x18c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, stride, 0, 3, 0x1cc5bf);
 
-        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 0, 0x10c5ae);
-        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 1, 0x14c5ae);
-        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 2, 0x18c5ae);
-        test_imgset_val!(baseline_imgsets[0], 2, img_stride, 0, 3, 0x1cc5ae);
+        test_imgset_val!(baseline_imgsets[0], 2, stride, 0, 0, 0x10c5ae);
+        test_imgset_val!(baseline_imgsets[0], 2, stride, 0, 1, 0x14c5ae);
+        test_imgset_val!(baseline_imgsets[0], 2, stride, 0, 2, 0x18c5ae);
+        test_imgset_val!(baseline_imgsets[0], 2, stride, 0, 3, 0x1cc5ae);
 
-        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 0, -0x10c5af);
-        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 1, -0x14c5af);
-        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 2, -0x18c5af);
-        test_imgset_val!(baseline_imgsets[0], 3, img_stride, 0, 3, -0x1cc5af);
+        test_imgset_val!(baseline_imgsets[0], 3, stride, 0, 0, -0x10c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, stride, 0, 1, -0x14c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, stride, 0, 2, -0x18c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, stride, 0, 3, -0x1cc5af);
 
-        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 0, 0x10c5ae);
-        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 1, 0x14c5ae);
-        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 2, 0x18c5ae);
-        test_imgset_val!(baseline_imgsets[0], 4, img_stride, 0, 3, 0x1cc5ae);
+        test_imgset_val!(baseline_imgsets[0], 4, stride, 0, 0, 0x10c5ae);
+        test_imgset_val!(baseline_imgsets[0], 4, stride, 0, 1, 0x14c5ae);
+        test_imgset_val!(baseline_imgsets[0], 4, stride, 0, 2, 0x18c5ae);
+        test_imgset_val!(baseline_imgsets[0], 4, stride, 0, 3, 0x1cc5ae);
 
-        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 0, 0x10c5af);
-        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 1, 0x14c5af);
-        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 2, 0x18c5af);
-        test_imgset_val!(baseline_imgsets[0], 5, img_stride, 0, 3, 0x1cc5af);
+        test_imgset_val!(baseline_imgsets[0], 5, stride, 0, 0, 0x10c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, stride, 0, 1, 0x14c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, stride, 0, 2, 0x18c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, stride, 0, 3, 0x1cc5af);
 
-        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 0, 0x10bec6);
-        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 1, 0x14bec6);
-        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 2, 0x18bec6);
-        test_imgset_val!(baseline_imgsets[0], 6, img_stride, 0, 3, 0x1cbec6);
+        test_imgset_val!(baseline_imgsets[0], 6, stride, 0, 0, 0x10bec6);
+        test_imgset_val!(baseline_imgsets[0], 6, stride, 0, 1, 0x14bec6);
+        test_imgset_val!(baseline_imgsets[0], 6, stride, 0, 2, 0x18bec6);
+        test_imgset_val!(baseline_imgsets[0], 6, stride, 0, 3, 0x1cbec6);
 
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 0, 0x10bec7);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 1, 0x14bec7);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 2, 0x18bec7);
-        test_imgset_val!(baseline_imgsets[0], 7, img_stride, 0, 3, 0x1cbec7);
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 0, 0x10bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 1, 0x14bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 2, 0x18bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, stride, 0, 3, 0x1cbec7);
 
         /* ... */
 
-        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 0, 0x10f1ce);
-        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 1, 0x14f1ce);
-        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 2, 0x18f1ce);
-        test_imgset_val!(baseline_imgsets[5], 0, img_stride, 0, 3, 0x1cf1ce);
+        test_imgset_val!(baseline_imgsets[5], 0, stride, 0, 0, 0x10f1ce);
+        test_imgset_val!(baseline_imgsets[5], 0, stride, 0, 1, 0x14f1ce);
+        test_imgset_val!(baseline_imgsets[5], 0, stride, 0, 2, 0x18f1ce);
+        test_imgset_val!(baseline_imgsets[5], 0, stride, 0, 3, 0x1cf1ce);
 
-        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 0, -0x10f1cf);
-        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 1, -0x14f1cf);
-        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 2, -0x18f1cf);
-        test_imgset_val!(baseline_imgsets[5], 1, img_stride, 0, 3, -0x1cf1cf);
+        test_imgset_val!(baseline_imgsets[5], 1, stride, 0, 0, -0x10f1cf);
+        test_imgset_val!(baseline_imgsets[5], 1, stride, 0, 1, -0x14f1cf);
+        test_imgset_val!(baseline_imgsets[5], 1, stride, 0, 2, -0x18f1cf);
+        test_imgset_val!(baseline_imgsets[5], 1, stride, 0, 3, -0x1cf1cf);
 
-        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 0, 0x10ea26);
-        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 1, 0x14ea26);
-        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 2, 0x18ea26);
-        test_imgset_val!(baseline_imgsets[5], 2, img_stride, 0, 3, 0x1cea26);
+        test_imgset_val!(baseline_imgsets[5], 2, stride, 0, 0, 0x10ea26);
+        test_imgset_val!(baseline_imgsets[5], 2, stride, 0, 1, 0x14ea26);
+        test_imgset_val!(baseline_imgsets[5], 2, stride, 0, 2, 0x18ea26);
+        test_imgset_val!(baseline_imgsets[5], 2, stride, 0, 3, 0x1cea26);
 
-        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 0, -0x10ea27);
-        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 1, -0x14ea27);
-        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 2, -0x18ea27);
-        test_imgset_val!(baseline_imgsets[5], 3, img_stride, 0, 3, -0x1cea27);
+        test_imgset_val!(baseline_imgsets[5], 3, stride, 0, 0, -0x10ea27);
+        test_imgset_val!(baseline_imgsets[5], 3, stride, 0, 1, -0x14ea27);
+        test_imgset_val!(baseline_imgsets[5], 3, stride, 0, 2, -0x18ea27);
+        test_imgset_val!(baseline_imgsets[5], 3, stride, 0, 3, -0x1cea27);
 
-        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 0, 0x10f1be);
-        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 1, 0x14f1be);
-        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 2, 0x18f1be);
-        test_imgset_val!(baseline_imgsets[5], 4, img_stride, 0, 3, 0x1cf1be);
+        test_imgset_val!(baseline_imgsets[5], 4, stride, 0, 0, 0x10f1be);
+        test_imgset_val!(baseline_imgsets[5], 4, stride, 0, 1, 0x14f1be);
+        test_imgset_val!(baseline_imgsets[5], 4, stride, 0, 2, 0x18f1be);
+        test_imgset_val!(baseline_imgsets[5], 4, stride, 0, 3, 0x1cf1be);
 
-        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 0, -0x10f1bf);
-        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 1, -0x14f1bf);
-        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 2, -0x18f1bf);
-        test_imgset_val!(baseline_imgsets[5], 5, img_stride, 0, 3, -0x1cf1bf);
+        test_imgset_val!(baseline_imgsets[5], 5, stride, 0, 0, -0x10f1bf);
+        test_imgset_val!(baseline_imgsets[5], 5, stride, 0, 1, -0x14f1bf);
+        test_imgset_val!(baseline_imgsets[5], 5, stride, 0, 2, -0x18f1bf);
+        test_imgset_val!(baseline_imgsets[5], 5, stride, 0, 3, -0x1cf1bf);
 
-        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 0, 0x10ea16);
-        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 1, 0x14ea16);
-        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 2, 0x18ea16);
-        test_imgset_val!(baseline_imgsets[5], 6, img_stride, 0, 3, 0x1cea16);
+        test_imgset_val!(baseline_imgsets[5], 6, stride, 0, 0, 0x10ea16);
+        test_imgset_val!(baseline_imgsets[5], 6, stride, 0, 1, 0x14ea16);
+        test_imgset_val!(baseline_imgsets[5], 6, stride, 0, 2, 0x18ea16);
+        test_imgset_val!(baseline_imgsets[5], 6, stride, 0, 3, 0x1cea16);
 
-        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 0, -0x10ea17);
-        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 1, -0x14ea17);
-        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 2, -0x18ea17);
-        test_imgset_val!(baseline_imgsets[5], 7, img_stride, 0, 3, -0x1cea17);
+        test_imgset_val!(baseline_imgsets[5], 7, stride, 0, 0, -0x10ea17);
+        test_imgset_val!(baseline_imgsets[5], 7, stride, 0, 1, -0x14ea17);
+        test_imgset_val!(baseline_imgsets[5], 7, stride, 0, 2, -0x18ea17);
+        test_imgset_val!(baseline_imgsets[5], 7, stride, 0, 3, -0x1cea17);
     }
 
     #[test]
@@ -910,9 +996,9 @@ mod tests {
     fn test_write_flags_mwax_minimal() {
         let context = get_mwax_context();
 
-        let height =
-            context.num_coarse_chans * context.metafits_context.num_corr_fine_chans_per_coarse;
-        let width = context.num_timesteps;
+        let width = context.num_common_timesteps;
+        let height = context.num_common_coarse_chans
+            * context.metafits_context.num_corr_fine_chans_per_coarse;
 
         let flag_timestep = 1;
         let flag_channel = 1;
@@ -932,9 +1018,9 @@ mod tests {
         let tmp_dir = tempdir().unwrap();
 
         let gpubox_ids: Vec<usize> = context
-            .coarse_chans
+            .common_coarse_chan_indices
             .iter()
-            .map(|chan| chan.gpubox_number)
+            .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
 
         let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
@@ -1001,7 +1087,7 @@ mod tests {
     #[test]
     fn test_cable_length_corrections_mwax() {
         let context = get_mwax_context();
-        let width = context.num_timesteps;
+        let width = context.num_common_timesteps;
         let stride = (((width - 1) / 8) + 1) * 8;
 
         let coarse_chans = context.coarse_chans.clone();
@@ -1021,7 +1107,12 @@ mod tests {
 
         let mut baseline_imgsets = unsafe {
             let aoflagger = cxx_aoflagger_new();
-            context_to_baseline_imgsets(&aoflagger, &context)
+            context_to_baseline_imgsets(
+                &aoflagger,
+                &context,
+                &context.common_coarse_chan_indices.clone(),
+                &context.common_timestep_indices.clone(),
+            )
         };
 
         let viz_0_xx_0_0_re = baseline_imgsets[0].ImageBuffer(0)[0];
@@ -1146,7 +1237,7 @@ mod tests {
     fn test_cable_length_corrections_ord() {
         let context = get_mwa_ord_context();
 
-        let width = context.num_timesteps;
+        let width = context.num_common_timesteps;
         let stride = (((width - 1) / 8) + 1) * 8;
 
         let coarse_chans = context.coarse_chans.clone();
@@ -1166,7 +1257,12 @@ mod tests {
 
         let mut baseline_imgsets = unsafe {
             let aoflagger = cxx_aoflagger_new();
-            context_to_baseline_imgsets(&aoflagger, &context)
+            context_to_baseline_imgsets(
+                &aoflagger,
+                &context,
+                &context.common_coarse_chan_indices.clone(),
+                &context.common_timestep_indices.clone(),
+            )
         };
 
         let viz_0_xx_0_0_re = baseline_imgsets[0].ImageBuffer(0)[0];

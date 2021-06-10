@@ -61,14 +61,14 @@ impl FlagFileHeaders {
             obs_id: context.metafits_context.obs_id,
             num_channels: context.metafits_context.num_corr_fine_chans_per_coarse,
             num_ants: context.metafits_context.num_ants,
-            num_timesteps: context.num_timesteps,
+            num_timesteps: context.num_common_timesteps,
             num_pols: 1,
             gpubox_id,
             cotter_version: format!("Birli-{}", crate_version!()),
             // TODO: use something like https://github.com/rustyhorde/vergen
             cotter_version_date: "2021-04-14".to_string(),
             bytes_per_row: num_fine_per_coarse / 8 + usize::from(num_fine_per_coarse % 8 != 0),
-            num_rows: context.num_timesteps * context.metafits_context.num_baselines,
+            num_rows: context.num_common_timesteps * context.metafits_context.num_baselines,
         }
     }
 }
@@ -276,11 +276,11 @@ impl FlagFileSet {
     //     };
 
     //     // TODO: check NSCANS?
-    //     // if headers.num_timesteps > context.num_timesteps {
+    //     // if headers.num_timesteps > context.num_common_timesteps {
     //     //     return Err(BirliError::MwafInconsistent {
     //     //         file: String::from(&fptr.filename),
-    //     //         expected: "NSCANS <= context.num_timesteps".to_string(),
-    //     //         found: format!("{} > {}", headers.num_timesteps, context.num_timesteps),
+    //     //         expected: "NSCANS <= context.num_common_timesteps".to_string(),
+    //     //         found: format!("{} > {}", headers.num_timesteps, context.num_common_timesteps),
     //     //     });
     //     // };
 
@@ -318,7 +318,6 @@ impl FlagFileSet {
             .collect();
 
         for (&gpubox_id, fptr) in self.gpubox_fptrs.iter_mut() {
-            // dbg!(&gpubox_id);
             let primary_hdu = fits_open_hdu!(fptr, 0)?;
             let header = FlagFileHeaders::from_gpubox_context(gpubox_id, context);
             let num_baselines = header.num_ants * (header.num_ants + 1) / 2;
@@ -494,15 +493,15 @@ mod tests {
     fn test_flagfileset_enforces_percents_in_filename_template() {
         let mwax_context = get_mwax_context();
         let mwax_gpubox_ids: Vec<_> = mwax_context
-            .coarse_chans
+            .common_coarse_chan_indices
             .iter()
-            .map(|chan| chan.gpubox_number)
+            .map(|&chan| mwax_context.coarse_chans[chan].gpubox_number)
             .collect();
         let mwa_ord_context = get_mwa_ord_context();
         let mwa_ord_gpubox_ids: Vec<_> = mwa_ord_context
-            .coarse_chans
+            .common_coarse_chan_indices
             .iter()
-            .map(|chan| chan.gpubox_number)
+            .map(|&chan| mwa_ord_context.coarse_chans[chan].gpubox_number)
             .collect();
 
         macro_rules! test_percent_enforcement {
@@ -560,9 +559,9 @@ mod tests {
     fn test_flagfileset_fails_with_existing() {
         let context = get_mwax_context();
         let gpubox_ids: Vec<usize> = context
-            .coarse_chans
+            .common_coarse_chan_indices
             .iter()
-            .map(|chan| chan.gpubox_number)
+            .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
 
         let tmp_dir = tempdir().unwrap();
@@ -604,9 +603,9 @@ mod tests {
         .unwrap();
 
         let gpubox_ids: Vec<usize> = context
-            .coarse_chans
+            .common_coarse_chan_indices
             .iter()
-            .map(|chan| chan.gpubox_number)
+            .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
 
         let filename_template = &test_dir.join("Flagfile%%.mwaf");
@@ -629,9 +628,9 @@ mod tests {
     fn test_write_primary_hdu() {
         let context = get_mwax_context();
         let gpubox_ids: Vec<usize> = context
-            .coarse_chans
+            .common_coarse_chan_indices
             .iter()
-            .map(|chan| chan.gpubox_number)
+            .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
 
         let tmp_dir = tempdir().unwrap();
@@ -698,9 +697,9 @@ mod tests {
         .unwrap();
 
         let gpubox_ids: Vec<usize> = context
-            .coarse_chans
+            .common_coarse_chan_indices
             .iter()
-            .map(|chan| chan.gpubox_number)
+            .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
 
         let filename_template = &test_dir.join("Flagfile%%.mwaf");
@@ -744,9 +743,9 @@ mod tests {
     fn test_write_baseline_flagmasks() {
         let context = get_mwax_context();
         let gpubox_ids: Vec<usize> = context
-            .coarse_chans
+            .common_coarse_chan_indices
             .iter()
-            .map(|chan| chan.gpubox_number)
+            .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
 
         let tmp_dir = tempdir().unwrap();
@@ -755,8 +754,10 @@ mod tests {
         let mut idx = 0;
         let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
-        let height = context.num_coarse_chans * num_fine_chans_per_coarse;
-        let width = context.num_timesteps;
+        let width = context.num_common_timesteps;
+        let height = context.num_common_coarse_chans
+            * context.metafits_context.num_corr_fine_chans_per_coarse;
+
         let aoflagger = unsafe { cxx_aoflagger_new() };
         let mut baseline_flagmasks: Vec<UniquePtr<CxxFlagMask>> = context
             .metafits_context
@@ -811,7 +812,7 @@ mod tests {
         dbg!(chan1_flags_raw);
 
         let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
-        assert_eq!(chan1_header.num_timesteps, context.num_timesteps);
+        assert_eq!(chan1_header.num_timesteps, context.num_common_timesteps);
         assert_eq!(num_baselines, context.metafits_context.num_baselines);
         assert_eq!(chan1_header.num_channels, num_fine_chans_per_coarse);
         assert_eq!(
