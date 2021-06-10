@@ -339,12 +339,11 @@ pub fn context_to_baseline_imgsets(
             let pol_img_queues_worker = pol_img_queues.clone();
             let read_progress_worker = read_progress_arc.clone();
             let tx_error_worker = tx_error.clone();
-            let img_coarse_chan_idxs_worker = img_coarse_chan_idxs.clone();
             scope.spawn(move |_| {
                 // Each producer thread consumes the HDUs from one coarse
                 // channel at a time.
                 for img_coarse_chan_idx in rx_img_coarse_chan_idx_worker.iter() {
-                    let coarse_chan_idx = img_coarse_chan_idxs_worker[img_coarse_chan_idx];
+                    let coarse_chan_idx = img_coarse_chan_idxs[img_coarse_chan_idx];
                     (0..num_img_timesteps).for_each(|img_timestep_idx| {
                         let timestep_idx = img_timestep_idxs[img_timestep_idx];
                         match context.read_by_baseline(timestep_idx, coarse_chan_idx) {
