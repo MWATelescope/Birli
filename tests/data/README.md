@@ -48,3 +48,98 @@ example:
           |       |                     'A' Byte marker:
           |<----->|                     -> 0x41 = 'A'
 ```
+
+## 1196175296 - MWA Ord
+
+This is an observation from the legacy MWA Ord Correlator in 2017.
+
+## Generating test files
+
+```bash
+python3 tests/data/generate_test_data.py | tee generate.log
+cotter \
+  -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
+  -o tests/data/1196175296_mwa_ord/FlagfileCotter%%.mwaf \
+  -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
+  -noantennapruning \
+  -nocablelength \
+  -noflagautos \
+  -noflagdcchannels \
+  -nogeom \
+  -norfi \
+  -nosbgains \
+  -nostats \
+  -sbcount 2 \
+  -sbstart 1 \
+  -flag-strategy /usr/local/share/aoflagger/strategies/generic-minimal.lua \
+  tests/data/1196175296_mwa_ord/1196175296_*gpubox*_00.fits \
+  | tee cotter-1196175296-flag.log
+cotter \
+  -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
+  -o tests/data/1196175296_mwa_ord/1196175296.uvfits \
+  -allowmissing \
+  -noantennapruning \
+  -nocablelength \
+  -noflagautos \
+  -noflagdcchannels \
+  -nogeom \
+  -norfi \
+  -nosbgains \
+  -nostats \
+  -sbcount 2 \
+  -sbstart 1 \
+  tests/data/1196175296_mwa_ord/1196175296_*gpubox*_00.fits \
+  | tee cotter-1196175296-uvfits.log
+
+for i in \
+  1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits \
+  1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits \
+  1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits \
+  1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits \
+  1196175296_mwa_ord/1196175296.metafits \
+  1196175296_mwa_ord/FlagfileCotter01.mwaf \
+  1196175296_mwa_ord/FlagfileCotter02.mwaf \
+  1196175296_mwa_ord/1196175296.uvfits \
+  1297526432_mwax/1297526432_20210216160014_ch117_000.fits \
+  1297526432_mwax/1297526432_20210216160014_ch117_001.fits \
+  1297526432_mwax/1297526432_20210216160014_ch118_000.fits \
+  1297526432_mwax/1297526432_20210216160014_ch118_001.fits \
+  1297526432_mwax/1297526432.metafits
+do 
+  fitsheader "tests/data/$i" | tee "tests/data/$i.header.txt";
+done
+```
+
+then with [mwa-scratchpad](https://github.com/derwentx/mwa-scratchpad)
+
+```bash
+cargo run dump-all-data \
+  --dump-filename=../Birli/tests/data/1297526432_mwax/1297526432_dump.csv \
+  --metafits=../Birli/tests/data/1297526432_mwax/1297526432.metafits \
+  ../Birli/tests/data/1297526432_mwax/1297526432_20210216160014_ch*.fits \
+  | tee dump-1297526432.log
+cargo run dump-all-data --vis-radix=16 --absolute \
+  --dump-filename=../Birli/tests/data/1297526432_mwax/1297526432_dump_hex.csv \
+  --metafits=../Birli/tests/data/1297526432_mwax/1297526432.metafits \
+  ../Birli/tests/data/1297526432_mwax/1297526432_20210216160014_ch*.fits \
+  | tee dump-1297526432-hex.log
+cargo run dump-all-data --vis-radix=2 --absolute \
+  --dump-filename=../Birli/tests/data/1297526432_mwax/1297526432_dump_bin.csv \
+  --metafits=../Birli/tests/data/1297526432_mwax/1297526432.metafits \
+  ../Birli/tests/data/1297526432_mwax/1297526432_20210216160014_ch*.fits \
+  | tee dump-1297526432-bin.log
+
+cargo run dump-all-data \
+  --dump-filename=../Birli/tests/data/1196175296_mwa_ord/1196175296_dump.csv \
+  --metafits=../Birli/tests/data/1196175296_mwa_ord/1196175296.metafits \
+  ../Birli/tests/data/1196175296_mwa_ord/1196175296_*.fits \
+  | tee dump-1196175296.log
+cargo run dump-all-data --vis-radix=16 --absolute \
+  --dump-filename=../Birli/tests/data/1196175296_mwa_ord/1196175296_dump_hex.csv \
+  --metafits=../Birli/tests/data/1196175296_mwa_ord/1196175296.metafits \
+  ../Birli/tests/data/1196175296_mwa_ord/1196175296_*.fits \
+  | tee dump-1196175296-hex.log
+```

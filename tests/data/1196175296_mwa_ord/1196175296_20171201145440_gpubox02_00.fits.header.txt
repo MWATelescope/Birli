@@ -1,0 +1,44 @@
+# HDU 0 in tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits:
+SIMPLE  =                    T / conforms to FITS standard                      
+BITPIX  =                    8 / array data type                                
+NAXIS   =                    0 / number of array dimensions                     
+EXTEND  =                    T                                                  
+COMMENT   FITS (Flexible Image Transport System) format is defined in 'Astronomy
+COMMENT   and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H 
+TIME    =           1512140080 / Unix time (seconds)                            
+MILLITIM=                    0 / Milliseconds since TIME                        
+INTTIME =                  0.5 / Integration time (s)                           
+MARKER  =                23120 / Data offset marker (all channels should match) 
+PROJID  = 'D0000' / MWA Project Id                                              
+OBSID   = '1196175296' / MWA Observation Id                                     
+NFINECHS=                    2                                                  
+FINECHAN=                640.0                                                  
+NINPUTS =                  256                                                  
+
+# HDU 1 in tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits:
+XTENSION= 'IMAGE   '           / Image Extension created by MWA DataCapture     
+BITPIX  =                  -64 / number of bits per data pixel                  
+NAXIS   =                    2 / number of data axes                            
+NAXIS1  =                66048 / length of data axis 1                          
+NAXIS2  =                    2 / length of data axis 2                          
+PCOUNT  =                    0                                                  
+GCOUNT  =                    1                                                  
+COMMENT   FITS (Flexible Image Transport System) format is defined in 'Astronomy
+COMMENT   and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H 
+TIME    =           1512140080 / Unix time (seconds)                            
+MILLITIM=                    0 / Milliseconds since TIME                        
+INTTIME =                  0.5 / Integration time (s)                           
+MARKER  =                23120 / Data offset marker (all channels should match) 
+
+# HDU 2 in tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits:
+XTENSION= 'IMAGE   '           / IMAGE extension                                
+BITPIX  =                  -64 / number of bits per data pixel                  
+NAXIS   =                    2 / number of data axes                            
+NAXIS1  =                66048 / length of data axis 1                          
+NAXIS2  =                    2 / length of data axis 2                          
+PCOUNT  =                    0 / required keyword; must = 0                     
+GCOUNT  =                    1 / required keyword; must = 1                     
+TIME    =           1512140080 / Unix time (seconds)                            
+MILLITIM=                  500 / Milliseconds since TIME                        
+INTTIME =                  0.5 / Integration time (s)                           
+MARKER  =                23120 / Data offset marker (all channels should match) 

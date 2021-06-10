@@ -14,7 +14,7 @@ import itertools
 
 
 DST_TEST_DIR_MWAX = "tests/data/1297526432_mwax"
-SRC_TEST_DIR_MWAX = "/Volumes/T7/CIRA/1297526432_mwax"
+SRC_TEST_DIR_MWAX = "/mnt/data/1297526432_mwax"
 TEST_METAFITS_NAME_MWAX = "1297526432.metafits"
 TEST_GPUFITS_NAMES_MWAX = [
     "1297526432_20210216160014_ch117_000.fits",
@@ -22,7 +22,7 @@ TEST_GPUFITS_NAMES_MWAX = [
     "1297526432_20210216160014_ch118_000.fits",
     "1297526432_20210216160014_ch118_001.fits"
 ]
-SRC_TEST_DIR_MWA_ORD = "/Volumes/T7/CIRA/1196175296_vis"
+SRC_TEST_DIR_MWA_ORD = "/mnt/data/1196175296_vis"
 TEST_METAFITS_NAME_MWA_ORD = "1196175296.metafits"
 TEST_GPUFITS_NAMES_MWA_ORD = [
     "1196175296_20171201145440_gpubox01_00.fits",
@@ -52,7 +52,7 @@ def parse_filename(name, corr_type="MWAX", metafits_coarse_chans=[]):
     elif corr_type == "MWA_ORD":
         result = re.match(RE_MWA_ORD_NAME, name).groupdict()
         result['corr_chan'] = int(result['gpubox_num']) - 1
-        result['rec_chan'] = metafits_coarse_chans[result['corr_chan'] - 1]
+        result['rec_chan'] = metafits_coarse_chans[result['corr_chan']]
     result['name'] = name
     return result
 
@@ -72,7 +72,7 @@ def get_input_df(tile_data):
 
 
 def get_limited_antennas(input_df, max_antennas=None):
-    antennas = sorted(list(np.unique(input_df.Antenna)))
+    antennas = list(np.unique(input_df.Antenna))
     if max_antennas:
         antennas = antennas[:max_antennas]
     return antennas
@@ -83,8 +83,15 @@ def get_global_scan_index(channel_index, batch_index, max_batches, scan_index, m
     result = result << math.ceil( math.log2(max_scans)) | scan_index
     return result
 
+def display_float(flt):
+    return f"{flt} (0x{flt:08x}, {flt:064b}, ~2^{math.log2(flt + 1)})"
+
+
+def split_strip_filter(str):
+    return list(filter(None, map( lambda tok: tok.strip(), str.split(',') )))
 
 def generate(args):
+    print(f"generating to {args['dst_dir']}")
     def with_src_dir(n):
         return abspath(path_join(args['src_dir'], n))
 
@@ -128,11 +135,9 @@ def generate(args):
         filtered_input_df = input_df[np.isin(input_df.Antenna, antennas)]
         num_inputs = len(filtered_input_df)
         print(f" -> filtered_inputs({num_inputs}):\n{filtered_input_df}")
-
-
         tile_data = tile_data[np.isin(tile_data.Antenna, antennas)]
 
-        primary_hdu.header['NINPUTS'] = len(tile_data)
+        primary_hdu.header['NINPUTS'] = num_inputs
         meta_fits[1].data = tile_data
 
         ####
@@ -149,8 +154,8 @@ def generate(args):
         ####
 
         receiver_delays = dict(zip(
-            primary_hdu.header['RECVRS'].split(","),
-            primary_hdu.header['DELAYS'].split(",")
+            split_strip_filter(primary_hdu.header['RECVRS']),
+            split_strip_filter(primary_hdu.header['DELAYS'])
         ))
         print(f" -> receiver_delays:\n{receiver_delays}")
         valid_receivers = list(np.unique(filtered_input_df.Rx))
@@ -162,14 +167,52 @@ def generate(args):
         primary_hdu.header['RECVRS'] = ",".join(valid_reciever_delays.keys())
         primary_hdu.header['DELAYS'] = ",".join(valid_reciever_delays.values())
 
-
         ####
         # Handle Coarse Channels
         ####
 
-        metafits_coarse_chans = primary_hdu.header['CHANNELS'].split(",")
-        num_coarse_chans = len(metafits_coarse_chans)
-        print(f" -> metafits_coarse_chans({num_coarse_chans}):\n{metafits_coarse_chans}")
+        metafits_coarse_chans = split_strip_filter(primary_hdu.header['CHANNELS'])
+        num_metafits_coarse_chans = len(metafits_coarse_chans)
+        print(f" -> metafits_coarse_chans({num_metafits_coarse_chans}):\n{metafits_coarse_chans}")
+
+        ####
+        # Analyse GPUFits
+        ####
+
+        gpufits_df = pd.DataFrame([
+            parse_filename(gpubox_name, args['corr_type'], metafits_coarse_chans)
+            for gpubox_name in args['gpufits_names']
+        ])
+        print(f" -> gpufits_df:\n{gpufits_df}")
+
+        rec_coarse_chans = np.unique(gpufits_df.rec_chan)
+        print(f" -> rec_coarse_chans({len(rec_coarse_chans)}):\n{rec_coarse_chans}")
+        # valid_coarse_chans = sorted(rec_coarse_chans)
+        valid_coarse_chans = list(rec_coarse_chans)
+        if 'max_coarse_chans' in args:
+            valid_coarse_chans = valid_coarse_chans[:args['max_coarse_chans']]
+        num_coarse_chans = len(valid_coarse_chans)
+        print(f" -> valid_coarse_chans({num_coarse_chans}):\n{valid_coarse_chans}")
+
+        gpufits_batches = sorted(list(np.unique(gpufits_df.batch)[:args['max_batches']]))
+        num_batches = len(gpufits_batches)
+        print(f" -> gpufits_batches({num_batches}):\n{gpufits_batches}")
+
+        filtered_gpufits = gpufits_df\
+            [np.isin(gpufits_df.rec_chan, valid_coarse_chans)]\
+            [np.isin(gpufits_df.batch, gpufits_batches)]\
+            .sort_values(['corr_chan', 'batch'])
+        print(f" -> filtered_gpufits:\n{filtered_gpufits}")
+
+        ####
+        # Handle Scans
+        ####
+
+        num_scans_total = min(args['max_scans'] * num_batches, primary_hdu.header['NSCANS'])
+        primary_hdu.header['NSCANS'] = num_scans_total
+        int_time = primary_hdu.header['INTTIME']
+        if int_time > 0:
+            primary_hdu.header['EXPOSURE'] = int(num_scans_total * int_time)
 
         ####
         # Handle Coarse/Fine Channel Bandwidth
@@ -178,7 +221,8 @@ def generate(args):
         fine_chan_bandwidth_hz = int(primary_hdu.header['FINECHAN'] * 1_000)  # Header in KHz
         print(f" -> fine_chan_bandwidth (Hz): {fine_chan_bandwidth_hz}")
         total_chan_bandwidth_hz = int(primary_hdu.header['BANDWDTH'] * 1_000_000)  # Header in MHz
-        coarse_chan_bandwidth_hz = total_chan_bandwidth_hz // num_coarse_chans
+        print(f" -> total_chan_bandwidth (Hz): {total_chan_bandwidth_hz}")
+        coarse_chan_bandwidth_hz = total_chan_bandwidth_hz // num_metafits_coarse_chans
         print(f" -> coarse_chan_bandwidth (Hz, derived): {coarse_chan_bandwidth_hz}")
         num_fine_chans = coarse_chan_bandwidth_hz // fine_chan_bandwidth_hz
         print(f" -> num_fine_chans (derived): {num_fine_chans}")
@@ -188,17 +232,25 @@ def generate(args):
         print(f" -> fine_chan_bandwidth (Hz, limited): {fine_chan_bandwidth_hz}")
         coarse_chan_bandwidth_hz = fine_chan_bandwidth_hz * num_fine_chans
         print(f" -> coarse_chan_bandwidth (Hz, limited): {coarse_chan_bandwidth_hz}")
-        primary_hdu.header['FINECHAN'] = fine_chan_bandwidth_hz / 1_000
+        total_chan_bandwidth_hz = coarse_chan_bandwidth_hz * num_coarse_chans
+        print(f" -> total_chan_bandwidth (Hz, limited): {total_chan_bandwidth_hz}")
+        assert total_chan_bandwidth_hz / num_coarse_chans / fine_chan_bandwidth_hz == num_fine_chans
 
         ####
         # Handle Fine Channel Selection
         ####
 
-        coarse_channel_selection = list(filter(None, primary_hdu.header['CHANSEL'].split(',')))
+        coarse_channel_selection = split_strip_filter( primary_hdu.header['CHANSEL'])
         print(f" -> coarse_channel_selection (derived): {coarse_channel_selection}")
-        coarse_channel_selection = coarse_channel_selection[:args['max_coarse_chans']]
+        coarse_channel_selection = coarse_channel_selection[:num_coarse_chans]
         print(f" -> coarse_channel_selection (limited): {coarse_channel_selection}")
-        primary_hdu.header['CHANSEL'] = ','.join(coarse_channel_selection)
+        # primary_hdu.header['CENTCHAN'] = coarse_channel_selection[num_coarse_chans//2]
+        # primary_hdu.header['CHANSEL'] = ','.join(coarse_channel_selection)
+
+        # Observation covers 200.32-231.03 MHz.
+        # Output resolution: 0.5 s / 10 kHz (time avg: 1x, freq avg: 1x).
+        # Using a-priori subband passband with 1536 channels.
+
 
         ####
         # handle NAXIS*
@@ -219,50 +271,11 @@ def generate(args):
         print(f" -> floats_per_img: {floats_per_img}")
 
         ####
-        # Handle Scans
-        ####
-
-        primary_hdu.header['NSCANS'] = min(args['max_scans'], primary_hdu.header['NSCANS'])
-
-        ####
-        # Analyse GPUFits
-        ####
-
-        gpufits_df = pd.DataFrame([
-            parse_filename(gpubox_name, args['corr_type'], metafits_coarse_chans)
-            for gpubox_name in args['gpufits_names']
-        ])
-        print(f" -> gpufits_df:\n{gpufits_df}")
-
-        rec_coarse_chans = np.unique(gpufits_df.rec_chan)
-        print(f" -> rec_coarse_chans({len(rec_coarse_chans)}):\n{rec_coarse_chans}")
-        valid_coarse_chans = sorted(rec_coarse_chans)
-        if 'max_coarse_chans' in args:
-            valid_coarse_chans = valid_coarse_chans[:args['max_coarse_chans']]
-        num_coarse_chans = len(valid_coarse_chans)
-        print(f" -> valid_coarse_chans({num_coarse_chans}):\n{valid_coarse_chans}")
-
-        primary_hdu.header['CHANNELS'] = ','.join(f'{chan}' for chan in valid_coarse_chans)
-        primary_hdu.header['CENTCHAN'] = valid_coarse_chans[num_coarse_chans//2]
-        primary_hdu.header['NCHANS'] = num_coarse_chans * args['max_fine_chans']
-
-        total_chan_bandwidth_hz = coarse_chan_bandwidth_hz * num_coarse_chans
-        primary_hdu.header['BANDWDTH'] = total_chan_bandwidth_hz / 1_000_000
-
-        gpufits_batches = sorted(list(np.unique(gpufits_df.batch)[:args['max_batches']]))
-        print(f" -> gpufits_batches({len(gpufits_batches)}):\n{gpufits_batches}")
-
-        filtered_gpufits = gpufits_df\
-            [np.isin(gpufits_df.rec_chan, valid_coarse_chans)]\
-            [np.isin(gpufits_df.batch, gpufits_batches)]\
-            # .sort_values(['corr_chan', 'batch'])
-        print(f" -> filtered_gpufits:\n{filtered_gpufits}")
-
-        ####
         # Show modifications
         ####
 
         print(f" -> primary_hdu.header\n{repr(primary_hdu.header)}")
+        meta_fits[1].data
 
         ####
         # write MetaFits
@@ -271,6 +284,14 @@ def generate(args):
         if not path_exists(dirname(dst_metafits_path)):
             makedirs(dirname(dst_metafits_path))
 
+        primary_hdu.header['NCHANS'] = num_coarse_chans * num_fine_chans
+        # This is the cotter friendly version
+        meta_fits.writeto(dst_metafits_path.replace(".metafits", "cotter-friendly.metafits"), overwrite=True)
+
+        # This is the one we actually want
+        primary_hdu.header['FINECHAN'] = fine_chan_bandwidth_hz / 1_000
+        primary_hdu.header['CHANNELS'] = ','.join(f'{chan}' for chan in valid_coarse_chans)
+        primary_hdu.header['BANDWDTH'] = total_chan_bandwidth_hz / 1_000_000
         meta_fits.writeto(dst_metafits_path, overwrite=True)
 
     ####
@@ -278,13 +299,14 @@ def generate(args):
     ####
 
     float_count = 0
+    start_times = {}
 
     for row in filtered_gpufits.to_dict('records'):
         gpufits_name = row['name']
         print(f" -> gpufits_name: {gpufits_name}")
         # channel_index = row['corr_chan']
         channel_index = valid_coarse_chans.index(row['rec_chan'])
-        print(f" -> channel_index: {channel_index:08b}")
+        print(f" -> channel_index: 0x{channel_index:08b}")
         batch_index = gpufits_batches.index(row['batch'])
         gpufits_path = with_src_dir(gpufits_name)
         dst_gpufits_path = with_dst_dir(gpufits_name)
@@ -293,6 +315,16 @@ def generate(args):
             # print(f" -> gpu_fits[0].header\n{repr(gpu_fits[0].header)}")
             # print(f" -> gpu_fits[1].header\n{repr(gpu_fits[1].header)}")
             # print(f" -> gpu_fits[2].header\n{repr(gpu_fits[2].header)}")
+
+            time = gpu_fits[1].header['TIME'] + gpu_fits[1].header['MILLITIM'] / 1000
+            if batch_index == 0:
+                start_times[channel_index] = time
+            else:
+                time = start_times[channel_index] + (int_time * args['max_scans'] * batch_index)
+                gpu_fits[0].header['TIME'] = int(time)
+                gpu_fits[0].header['MILLITIM'] = int(1000 * (time % 1))
+                gpu_fits[1].header['TIME'] = int(time)
+                gpu_fits[1].header['MILLITIM'] = int(1000 * (time % 1))
 
             primary_hdu = gpu_fits[0]
             primary_hdu.header['NFINECHS'] = num_fine_chans
@@ -306,7 +338,13 @@ def generate(args):
 
                 scan_hdu_chunks = chunk(gpu_fits[1:][:args['max_scans']*2], 2)
                 for (scan_index, (img_hdu, flag_hdu)) in enumerate(scan_hdu_chunks):
-                    global_scan_index = get_global_scan_index(channel_index, batch_index, args['max_batches'], scan_index, args['max_scans'])
+                    # print(f" -> img_hdu.header\n{repr(img_hdu.header)}")
+                    # print(f" -> flag_hdu.header\n{repr(flag_hdu.header)}")
+                    hdu_time = time + int_time * scan_index
+                    img_hdu.header['TIME'] = int(hdu_time)
+                    img_hdu.header['MILLITIM'] = int(1000 * (hdu_time % 1))
+
+                    global_scan_index = get_global_scan_index(channel_index, batch_index, num_batches, scan_index, args['max_scans'])
                     # prefix scan indices to start with the char 'A'
                     global_scan_index = (0x41 << 8) | global_scan_index
                     print(f" -> global_scan_index: {global_scan_index:08b}")
@@ -317,18 +355,28 @@ def generate(args):
                     img_hdu.header['NAXIS2'] = naxis2
 
                     float_start = global_scan_index << 8 * math.ceil(math.log2(floats_per_img) / 8)
-                    print(f" -> float_start: {float_start} ({float_start:032b}, ~2^{math.log2(float_start)})")
+                    print(f" -> float_start: {display_float(float_start)}")
                     float_end = float_start + floats_per_img
-                    print(f" -> float_end: {float_end} ({float_end:032b}, ~2^{math.log2(float_end)})")
+                    print(f" -> float_end: {display_float(float_end)}")
                     img_hdu.data = np.arange(float_start, float_end).reshape((naxis2, naxis1)).astype(np.int32)
+                    
+                    flag_hdu.header['TIME'] = int(hdu_time)
+                    flag_hdu.header['MILLITIM'] = int(1000 * (hdu_time % 1))
                     flag_hdu.data = flag_hdu.data[:naxis2, :]
 
+                    # print(f" -> modified img_hdu.header\n{repr(img_hdu.header)}")
+                    # print(f" -> modified flag_hdu.header\n{repr(flag_hdu.header)}")
                     scan_hdus.append(img_hdu)
                     scan_hdus.append(flag_hdu)
 
             elif args['corr_type'] == "MWA_ORD":
                 for (scan_index, img_hdu) in enumerate(gpu_fits[1:][:args['max_scans']]):
-                    global_scan_index = get_global_scan_index(channel_index, batch_index, args['max_batches'], scan_index, args['max_scans'])
+                    # print(f" -> img_hdu.header\n{repr(img_hdu.header)}")
+                    hdu_time = time + int_time * scan_index
+                    img_hdu.header['TIME'] = int(hdu_time)
+                    img_hdu.header['MILLITIM'] = int(1000 * (hdu_time % 1))
+
+                    global_scan_index = get_global_scan_index(channel_index, batch_index, num_batches, scan_index, args['max_scans'])
                     # global_scan_index = (0x1001 << 8) | global_scan_index
                     print(f" -> global_scan_index: {global_scan_index:08b}")
 
@@ -341,40 +389,27 @@ def generate(args):
                         float_start = float_count
                     else:
                         float_start = global_scan_index << math.ceil(math.log2(floats_per_img))
-                    print(f" -> float_start: {float_start} ({float_start:064b}, ")
+                    print(f" -> float_start: {display_float(float_start)}")
                     float_end = float_start + floats_per_img
-                    print(f" -> float_end: {float_end} ({float_end:064b}, ~2^{math.log2(float_end)})")
+                    print(f" -> float_end: {display_float(float_end)}")
                     img_hdu.data = np.arange(float_start, float_end).reshape((naxis2, naxis1)).astype(np.float64)
 
                     float_count += floats_per_img
+
+                    # print(f" -> modified img_hdu.header\n{repr(img_hdu.header)}")
                     scan_hdus.append(img_hdu)
 
             new_gpu_fits = fits.HDUList([primary_hdu] + scan_hdus)
+            print(f" -> new_gpu_fits[0].header\n{repr(new_gpu_fits[0].header)}")
+            print(f" -> new_gpu_fits[1].header\n{repr(new_gpu_fits[1].header)}")
 
+            print(f'-> writing {len(scan_hdus)} scans to {dst_gpufits_path}')
             if not path_exists(dirname(dst_gpufits_path)):
                 makedirs(dirname(dst_gpufits_path))
-
-            print(f'-> writing to {dst_gpufits_path}')
             new_gpu_fits.writeto(dst_gpufits_path, overwrite=True)
 
 
 def main():
-    # generate({
-    #     'corr_type': "MWA_ORD",
-    #     'src_dir': '/Users/derwent/Documents/CIRA/code/mwalib/test_files/1101503312_1_timestep/',
-    #     'dst_dir': "tests/data/1101503312_mwa_ord",
-    #     'metafits_name': '1101503312.metafits',
-    #     'gpufits_names': ['1101503312_20141201210818_gpubox01_00.fits'],
-    #     'max_coarse_chans': MAX_COARSE_CHANS,
-    #     'max_batches': MAX_BATCHES,
-    #     'max_scans': MAX_SCANS,
-    #     # 'max_antennas': MAX_ANTENNAS,
-    #     'max_fine_chans': MAX_FINE_CHANS,
-    # })
-    # cargo run dump-all-data \
-    #     --dump-filename=../Birli/tests/data/1101503312_mwa_ord/1101503312_dump.csv \
-    #     --metafits=../Birli/tests/data/1101503312_mwa_ord/1101503312.metafits \
-    #     ../Birli/tests/data/1101503312_mwa_ord/1101503312_*.fits
     generate({
         'corr_type': "MWAX",
         'src_dir': SRC_TEST_DIR_MWAX,
@@ -387,10 +422,6 @@ def main():
         'max_antennas': MAX_ANTENNAS,
         'max_fine_chans': MAX_FINE_CHANS,
     })
-    # cargo run dump-all-data \
-    #   --dump-filename=../Birli/tests/data/1297526432_mwax/1297526432_dump.csv \
-    #   --metafits=../Birli/tests/data/1297526432_mwax/1297526432.metafits \
-    #   ../Birli/tests/data/1297526432_mwax/1297526432_20210216160014_ch*.fits
     generate({
         'corr_type': "MWA_ORD",
         'src_dir': SRC_TEST_DIR_MWA_ORD,
@@ -400,34 +431,9 @@ def main():
         'max_coarse_chans': MAX_COARSE_CHANS,
         'max_batches': MAX_BATCHES,
         'max_scans': MAX_SCANS,
-        # 'max_antennas': MAX_ANTENNAS,
+        # 'max_antennas': MAX_ANTENNAS, <- limiting ord antennas breaks mwalib and cotter.
         'max_fine_chans': MAX_FINE_CHANS,
     })
-    # cargo run dump-all-data --vis-radix=16 --absolute \
-    #     --dump-filename=../Birli/tests/data/1196175296_mwa_ord/1196175296_dump_hex.csv \
-    #     --metafits=../Birli/tests/data/1196175296_mwa_ord/1196175296.metafits \
-    #     ../Birli/tests/data/1196175296_mwa_ord/1196175296_*.fits | tee dump_out.txt
-    # cargo run dump-all-data \
-    #   --dump-filename=../Birli/tests/data/1196175296_mwa_ord/1196175296_dump.csv \
-    #   --metafits=../Birli/tests/data/1196175296_mwa_ord/1196175296.metafits \
-    #   ../Birli/tests/data/1196175296_mwa_ord/1196175296_*.fits
-    generate({
-        'corr_type': "MWA_ORD",
-        'src_dir': SRC_TEST_DIR_MWA_ORD,
-        'dst_dir': "tests/data/1196175296_mwa_ord_seq",
-        'metafits_name': TEST_METAFITS_NAME_MWA_ORD,
-        'gpufits_names': TEST_GPUFITS_NAMES_MWA_ORD,
-        'max_coarse_chans': MAX_COARSE_CHANS,
-        'max_batches': MAX_BATCHES,
-        'max_scans': MAX_SCANS,
-        # 'max_antennas': MAX_ANTENNAS,
-        'max_fine_chans': MAX_FINE_CHANS,
-        'sequential': True,
-    })
-    # cargo run dump-all-data \
-    #   --dump-filename=../Birli/tests/data/1196175296_mwa_ord_seq/1196175296_dump.csv \
-    #   --metafits=../Birli/tests/data/1196175296_mwa_ord_seq/1196175296.metafits \
-    #   ../Birli/tests/data/1196175296_mwa_ord_seq/1196175296_*.fits | tee dump_out.txt
 
 
 if __name__ == '__main__':
