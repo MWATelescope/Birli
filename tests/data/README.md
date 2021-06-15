@@ -59,7 +59,7 @@ This is an observation from the legacy MWA Ord Correlator in 2017.
 python3 tests/data/generate_test_data.py | tee generate.log
 cotter \
   -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
-  -o tests/data/1196175296_mwa_ord/FlagfileCotter%%.mwaf \
+  -o "tests/data/1196175296_mwa_ord/FlagfileCotterGeneric%%.mwaf" \
   -allowmissing \
   -edgewidth 0 \
   -endflag 0 \
@@ -70,13 +70,33 @@ cotter \
   -noflagdcchannels \
   -nogeom \
   -norfi \
-  -nosbgains \
+  -sbpassband tests/data/subband-passband-2ch-unitary.txt \
   -nostats \
   -sbcount 2 \
   -sbstart 1 \
   -flag-strategy /usr/local/share/aoflagger/strategies/generic-minimal.lua \
-  tests/data/1196175296_mwa_ord/1196175296_*gpubox*_00.fits \
-  | tee cotter-1196175296-flag.log
+  tests/data/1196175296_mwa_ord/1196175296_*gpubox*.fits \
+  | tee cotter-1196175296-generic.log
+cotter \
+  -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
+  -o "tests/data/1196175296_mwa_ord/FlagfileCotterMWA%%.mwaf" \
+  -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
+  -noantennapruning \
+  -nocablelength \
+  -noflagautos \
+  -noflagdcchannels \
+  -nogeom \
+  -norfi \
+  -sbpassband tests/data/subband-passband-2ch-unitary.txt \
+  -nostats \
+  -sbcount 2 \
+  -sbstart 1 \
+  -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
+  tests/data/1196175296_mwa_ord/1196175296_*gpubox*.fits \
+  | tee cotter-1196175296-mwa.log
 cotter \
   -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
   -o tests/data/1196175296_mwa_ord/1196175296.uvfits \
@@ -87,27 +107,77 @@ cotter \
   -noflagdcchannels \
   -nogeom \
   -norfi \
-  -nosbgains \
+  -sbpassband tests/data/subband-passband-2ch-unitary.txt \
   -nostats \
   -sbcount 2 \
   -sbstart 1 \
-  tests/data/1196175296_mwa_ord/1196175296_*gpubox*_00.fits \
+  tests/data/1196175296_mwa_ord/1196175296_*gpubox*.fits \
   | tee cotter-1196175296-uvfits.log
+cotter \
+  -m tests/data/1247842824_flags/1247842824cotter-friendly.metafits \
+  -o "tests/data/1247842824_flags/FlagfileCotterGeneric%%.mwaf" \
+  -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
+  -noantennapruning \
+  -nocablelength \
+  -noflagautos \
+  -noflagdcchannels \
+  -nogeom \
+  -sbpassband tests/data/subband-passband-128ch-unitary.txt \
+  -nostats \
+  -sbcount 1 \
+  -sbstart 1 \
+  -flag-strategy /usr/local/share/aoflagger/strategies/generic-minimal.lua \
+  tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits \
+  | tee cotter-1247842824-generic.log
+cotter \
+  -m tests/data/1247842824_flags/1247842824cotter-friendly.metafits \
+  -o "tests/data/1247842824_flags/FlagfileCotterMWA%%.mwaf" \
+  -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
+  -noantennapruning \
+  -nocablelength \
+  -noflagautos \
+  -noflagdcchannels \
+  -nogeom \
+  -sbpassband tests/data/subband-passband-128ch-unitary.txt \
+  -nostats \
+  -sbcount 1 \
+  -sbstart 1 \
+  -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
+  tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits \
+  | tee cotter-1247842824-mwa.log
+# cotter \
+#   -m tests/data/1247842824_flags/1247842824cotter-friendly.metafits \
+#   -o tests/data/1247842824_flags/1247842824.uvfits \
+#   -allowmissing \
+#   -noantennapruning \
+#   -nocablelength \
+#   -noflagautos \
+#   -noflagdcchannels \
+#   -nogeom \
+#   -norfi \
+#   -sbpassband tests/data/subband-passband-128ch-unitary.txt \
+#   -nostats \
+#   -sbcount 1 \
+#   -sbstart 1 \
+#   tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits \
+#   | tee cotter-1247842824-uvfits.log
 
 for i in \
-  1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits \
-  1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits \
-  1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits \
-  1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits \
   1196175296_mwa_ord/1196175296.metafits \
+  1196175296_mwa_ord/1196175296.uvfits \
   1196175296_mwa_ord/FlagfileCotter01.mwaf \
   1196175296_mwa_ord/FlagfileCotter02.mwaf \
-  1196175296_mwa_ord/1196175296.uvfits \
-  1297526432_mwax/1297526432_20210216160014_ch117_000.fits \
-  1297526432_mwax/1297526432_20210216160014_ch117_001.fits \
-  1297526432_mwax/1297526432_20210216160014_ch118_000.fits \
-  1297526432_mwax/1297526432_20210216160014_ch118_001.fits \
-  1297526432_mwax/1297526432.metafits
+  1297526432_mwax/1297526432.metafits \
+  1247842824_flags/1247842824.metafits \
+  # 1247842824_flags/1247842824.uvfits \
+  1247842824_flags/FlagfileCotterMWA01.mwaf \
+  1247842824_flags/FlagfileCotterGeneric01.mwaf
 do 
   fitsheader "tests/data/$i" | tee "tests/data/$i.header.txt";
 done

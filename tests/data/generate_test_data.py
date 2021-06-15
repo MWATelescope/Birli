@@ -30,6 +30,11 @@ TEST_GPUFITS_NAMES_MWA_ORD = [
     "1196175296_20171201145440_gpubox02_00.fits",
     "1196175296_20171201145540_gpubox02_01.fits"
 ]
+SRC_TEST_DIR_MWA_ORD_FLAGS = "/mnt/data/1247842824_vis"
+TEST_METAFITS_NAME_MWA_ORD_FLAGS = "1247842824.metafits"
+TEST_GPUFITS_NAMES_MWA_ORD_FLAGS = [
+    "1247842824_20190722150008_gpubox01_00.fits",
+]
 RE_MWAX_NAME = (
     r"(?P<obsid>\d{10})_(?P<datetime>\d{8}(.)?\d{6})_ch(?P<rec_chan>\d{3})_(?P<batch>\d{3}).fits"
 )
@@ -44,7 +49,7 @@ MAX_ANTENNAS = 2
 MAX_FINE_CHANS = 2
 
 
-def parse_filename(name, corr_type="MWAX", metafits_coarse_chans=[]):
+def parse_filename(name, corr_type="MWAX", metafits_coarse_chans=[], with_src_dir=(lambda x: x)):
     result = {}
     if corr_type == "MWAX":
         result = re.match(RE_MWAX_NAME, name).groupdict()
@@ -54,6 +59,12 @@ def parse_filename(name, corr_type="MWAX", metafits_coarse_chans=[]):
         result['corr_chan'] = int(result['gpubox_num']) - 1
         result['rec_chan'] = metafits_coarse_chans[result['corr_chan']]
     result['name'] = name
+    with fits.open(with_src_dir(name)) as gpu_fits:
+        num_hdus = len(gpu_fits)
+        result['hdus'] = num_hdus
+        result['time'] = gpu_fits[1].header['TIME'] + gpu_fits[1].header['MILLITIM'] / 1000
+        
+        result['nscans'] = get_num_scans(num_hdus, corr_type)
     return result
 
 
@@ -89,6 +100,12 @@ def display_float(flt):
 
 def split_strip_filter(str):
     return list(filter(None, map( lambda tok: tok.strip(), str.split(',') )))
+
+
+def get_num_scans(hdu_len, corr_type):
+    if corr_type == "MWAX":
+        return (hdu_len - 1) / 2
+    return hdu_len - 1
 
 def generate(args):
     print(f"generating to {args['dst_dir']}")
@@ -180,7 +197,7 @@ def generate(args):
         ####
 
         gpufits_df = pd.DataFrame([
-            parse_filename(gpubox_name, args['corr_type'], metafits_coarse_chans)
+            parse_filename(gpubox_name, args['corr_type'], metafits_coarse_chans, with_src_dir)
             for gpubox_name in args['gpufits_names']
         ])
         print(f" -> gpufits_df:\n{gpufits_df}")
@@ -194,13 +211,31 @@ def generate(args):
         num_coarse_chans = len(valid_coarse_chans)
         print(f" -> valid_coarse_chans({num_coarse_chans}):\n{valid_coarse_chans}")
 
-        gpufits_batches = sorted(list(np.unique(gpufits_df.batch)[:args['max_batches']]))
-        num_batches = len(gpufits_batches)
-        print(f" -> gpufits_batches({num_batches}):\n{gpufits_batches}")
+        # batches_df = sorted(list(np.unique(gpufits_df.batch)[:args['max_batches']]))
+        batches_df = pd.DataFrame(
+            sorted(list(
+                (
+                    batch,
+                    np.max(gpufits_df.nscans[gpufits_df.batch == batch])
+                )
+                for batch in gpufits_df['batch']
+            )),
+            columns=['batch', 'max_scans']
+        )
+        num_batches = len(batches_df)
+        max_scans_per_batch = np.max(batches_df.max_scans)
+        print(f" -> batches_df (len: {num_batches}, max: {max_scans_per_batch}):\n{batches_df}")
+        if args.get('max_batches'):
+            batches_df = batches_df[:args['max_batches']]
+        if args.get('max_scans'):
+            batches_df.max_scans = batches_df.max_scans.apply(lambda x: min(x, args['max_scans']))
+        num_batches = len(batches_df)
+        max_scans_per_batch = np.max(batches_df.max_scans)
+        print(f" -> batches_df (limited, len: {num_batches}, max: {max_scans_per_batch}):\n{batches_df}")
 
         filtered_gpufits = gpufits_df\
             [np.isin(gpufits_df.rec_chan, valid_coarse_chans)]\
-            [np.isin(gpufits_df.batch, gpufits_batches)]\
+            [np.isin(gpufits_df.batch, batches_df.batch)]\
             .sort_values(['corr_chan', 'batch'])
         print(f" -> filtered_gpufits:\n{filtered_gpufits}")
 
@@ -208,7 +243,10 @@ def generate(args):
         # Handle Scans
         ####
 
-        num_scans_total = min(args['max_scans'] * num_batches, primary_hdu.header['NSCANS'])
+        num_scans_total = primary_hdu.header['NSCANS']
+        print(f" -> num_scans_total:\n{num_scans_total}")
+        num_scans_total = np.sum(batches_df.max_scans)
+        print(f" -> num_scans_total (limited):\n{num_scans_total}")
         primary_hdu.header['NSCANS'] = num_scans_total
         int_time = primary_hdu.header['INTTIME']
         if int_time > 0:
@@ -226,12 +264,13 @@ def generate(args):
         print(f" -> coarse_chan_bandwidth (Hz, derived): {coarse_chan_bandwidth_hz}")
         num_fine_chans = coarse_chan_bandwidth_hz // fine_chan_bandwidth_hz
         print(f" -> num_fine_chans (derived): {num_fine_chans}")
-        num_fine_chans = min(args['max_fine_chans'], num_fine_chans)
-        print(f" -> num_fine_chans (limited): {num_fine_chans}")
-        fine_chan_bandwidth_hz = coarse_chan_bandwidth_hz // num_fine_chans
-        print(f" -> fine_chan_bandwidth (Hz, limited): {fine_chan_bandwidth_hz}")
-        coarse_chan_bandwidth_hz = fine_chan_bandwidth_hz * num_fine_chans
-        print(f" -> coarse_chan_bandwidth (Hz, limited): {coarse_chan_bandwidth_hz}")
+        if args.get('max_fine_chans'):
+            num_fine_chans = min(args['max_fine_chans'], num_fine_chans)
+            print(f" -> num_fine_chans (limited): {num_fine_chans}")
+            fine_chan_bandwidth_hz = coarse_chan_bandwidth_hz // num_fine_chans
+            print(f" -> fine_chan_bandwidth (Hz, limited): {fine_chan_bandwidth_hz}")
+            coarse_chan_bandwidth_hz = fine_chan_bandwidth_hz * num_fine_chans
+            print(f" -> coarse_chan_bandwidth (Hz, limited): {coarse_chan_bandwidth_hz}")
         total_chan_bandwidth_hz = coarse_chan_bandwidth_hz * num_coarse_chans
         print(f" -> total_chan_bandwidth (Hz, limited): {total_chan_bandwidth_hz}")
         assert total_chan_bandwidth_hz / num_coarse_chans / fine_chan_bandwidth_hz == num_fine_chans
@@ -301,26 +340,27 @@ def generate(args):
     float_count = 0
     start_times = {}
 
-    for row in filtered_gpufits.to_dict('records'):
+    for file_idx, row in enumerate(filtered_gpufits.to_dict('records')):
         gpufits_name = row['name']
         print(f" -> gpufits_name: {gpufits_name}")
         # channel_index = row['corr_chan']
         channel_index = valid_coarse_chans.index(row['rec_chan'])
         print(f" -> channel_index: 0x{channel_index:08b}")
-        batch_index = gpufits_batches.index(row['batch'])
+        batch_index = batches_df.batch.index[batches_df.batch == row['batch']][0]
         gpufits_path = with_src_dir(gpufits_name)
         dst_gpufits_path = with_dst_dir(gpufits_name)
         with fits.open(gpufits_path) as gpu_fits:
             # print(f" -> gpu_fits[0].info()\n{pformat(gpu_fits.info())}")
-            # print(f" -> gpu_fits[0].header\n{repr(gpu_fits[0].header)}")
-            # print(f" -> gpu_fits[1].header\n{repr(gpu_fits[1].header)}")
+            print(f" -> gpu_fits[0].header\n{repr(gpu_fits[0].header)}")
+            print(f" -> gpu_fits[1].header\n{repr(gpu_fits[1].header)}")
             # print(f" -> gpu_fits[2].header\n{repr(gpu_fits[2].header)}")
 
             time = gpu_fits[1].header['TIME'] + gpu_fits[1].header['MILLITIM'] / 1000
             if batch_index == 0:
                 start_times[channel_index] = time
-            else:
-                time = start_times[channel_index] + (int_time * args['max_scans'] * batch_index)
+            elif args.get('max_scans'):
+                cum_scans = np.max(batches_df.max_scans[batches_df.index < batch_index])
+                time = start_times[channel_index] + (int_time * cum_scans)
                 gpu_fits[0].header['TIME'] = int(time)
                 gpu_fits[0].header['MILLITIM'] = int(1000 * (time % 1))
                 gpu_fits[1].header['TIME'] = int(time)
@@ -332,37 +372,43 @@ def generate(args):
             primary_hdu.header['NINPUTS'] = num_inputs
             scan_hdus = []
 
-            if args['corr_type'] == "MWAX":
+            # num_scans = get_num_scans(len(gpu_fits), args['corr_type'])
+            # if args.get('max_scans'):
+            #     num_scans = min(args['max_scans'], num_scans)
+            num_scans = batches_df.max_scans[batches_df.batch == row['batch']][0]
 
+            if args['corr_type'] == "MWAX":
                 primary_hdu.header['CORR_VER'] = 2
 
-                scan_hdu_chunks = chunk(gpu_fits[1:][:args['max_scans']*2], 2)
+                scan_hdu_chunks = chunk(gpu_fits[1:][:num_scans*2], 2)
                 for (scan_index, (img_hdu, flag_hdu)) in enumerate(scan_hdu_chunks):
                     # print(f" -> img_hdu.header\n{repr(img_hdu.header)}")
                     # print(f" -> flag_hdu.header\n{repr(flag_hdu.header)}")
                     hdu_time = time + int_time * scan_index
+
+                    print(f" -> img_hdu[{scan_index}].data ({img_hdu.data.shape}, {img_hdu.data.dtype}): \n{img_hdu.data}")
                     img_hdu.header['TIME'] = int(hdu_time)
                     img_hdu.header['MILLITIM'] = int(1000 * (hdu_time % 1))
 
-                    global_scan_index = get_global_scan_index(channel_index, batch_index, num_batches, scan_index, args['max_scans'])
-                    # prefix scan indices to start with the char 'A'
-                    global_scan_index = (0x41 << 8) | global_scan_index
-                    print(f" -> global_scan_index: {global_scan_index:08b}")
 
-                    print(f" -> img_hdu[{scan_index}].data ({img_hdu.data.shape}, {img_hdu.data.dtype}): \n{img_hdu.data}")
-                    print(f" -> flag_hdu[{scan_index}].data.shape({flag_hdu.data.shape}, {flag_hdu.data.dtype})")
-                    img_hdu.header['NAXIS1'] = naxis1
-                    img_hdu.header['NAXIS2'] = naxis2
-
-                    float_start = global_scan_index << 8 * math.ceil(math.log2(floats_per_img) / 8)
-                    print(f" -> float_start: {display_float(float_start)}")
-                    float_end = float_start + floats_per_img
-                    print(f" -> float_end: {display_float(float_end)}")
-                    img_hdu.data = np.arange(float_start, float_end).reshape((naxis2, naxis1)).astype(np.int32)
+                    if args.get('rewrite_viz'):
+                        global_scan_index = get_global_scan_index(channel_index, batch_index, num_batches, scan_index, num_scans)
+                        # prefix scan indices to start with the char 'A'
+                        global_scan_index = (0x41 << 8) | global_scan_index
+                        print(f" -> global_scan_index: {global_scan_index:08b}")
+                        img_hdu.header['NAXIS1'] = naxis1
+                        img_hdu.header['NAXIS2'] = naxis2
+                        float_start = global_scan_index << 8 * math.ceil(math.log2(floats_per_img) / 8)
+                        print(f" -> float_start: {display_float(float_start)}")
+                        float_end = float_start + floats_per_img
+                        print(f" -> float_end: {display_float(float_end)}")
+                        img_hdu.data = np.arange(float_start, float_end).reshape((naxis2, naxis1)).astype(np.int32)
                     
+                    print(f" -> flag_hdu[{scan_index}].data.shape({flag_hdu.data.shape}, {flag_hdu.data.dtype})")
                     flag_hdu.header['TIME'] = int(hdu_time)
                     flag_hdu.header['MILLITIM'] = int(1000 * (hdu_time % 1))
-                    flag_hdu.data = flag_hdu.data[:naxis2, :]
+                    if args.get('rewrite_viz'):
+                        flag_hdu.data = flag_hdu.data[:naxis2, :]
 
                     # print(f" -> modified img_hdu.header\n{repr(img_hdu.header)}")
                     # print(f" -> modified flag_hdu.header\n{repr(flag_hdu.header)}")
@@ -370,29 +416,28 @@ def generate(args):
                     scan_hdus.append(flag_hdu)
 
             elif args['corr_type'] == "MWA_ORD":
-                for (scan_index, img_hdu) in enumerate(gpu_fits[1:][:args['max_scans']]):
+                for (scan_index, img_hdu) in enumerate(gpu_fits[1:][:num_scans]):
                     # print(f" -> img_hdu.header\n{repr(img_hdu.header)}")
                     hdu_time = time + int_time * scan_index
+
+                    print(f" -> img_hdu[{scan_index}].data ({img_hdu.data.shape}, {img_hdu.data.dtype}): \n{img_hdu.data}")
                     img_hdu.header['TIME'] = int(hdu_time)
                     img_hdu.header['MILLITIM'] = int(1000 * (hdu_time % 1))
 
-                    global_scan_index = get_global_scan_index(channel_index, batch_index, num_batches, scan_index, args['max_scans'])
-                    # global_scan_index = (0x1001 << 8) | global_scan_index
-                    print(f" -> global_scan_index: {global_scan_index:08b}")
-
-                    print(f" -> img_hdu[{scan_index}].data ({img_hdu.data.shape}, {img_hdu.data.dtype}): \n{img_hdu.data}")
-
-                    img_hdu.header['NAXIS1'] = naxis1
-                    img_hdu.header['NAXIS2'] = naxis2
-
-                    if args.get('sequential'):
-                        float_start = float_count
-                    else:
-                        float_start = global_scan_index << math.ceil(math.log2(floats_per_img))
-                    print(f" -> float_start: {display_float(float_start)}")
-                    float_end = float_start + floats_per_img
-                    print(f" -> float_end: {display_float(float_end)}")
-                    img_hdu.data = np.arange(float_start, float_end).reshape((naxis2, naxis1)).astype(np.float64)
+                    if args.get('rewrite_viz'):
+                        img_hdu.header['NAXIS1'] = naxis1
+                        img_hdu.header['NAXIS2'] = naxis2
+                        global_scan_index = get_global_scan_index(channel_index, batch_index, num_batches, scan_index, num_scans)
+                        # global_scan_index = (0x1001 << 8) | global_scan_index
+                        print(f" -> global_scan_index: {global_scan_index:08b}")
+                        if args.get('sequential'):
+                            float_start = float_count
+                        else:
+                            float_start = global_scan_index << math.ceil(math.log2(floats_per_img))
+                        print(f" -> float_start: {display_float(float_start)}")
+                        float_end = float_start + floats_per_img
+                        print(f" -> float_end: {display_float(float_end)}")
+                        img_hdu.data = np.arange(float_start, float_end).reshape((naxis2, naxis1)).astype(np.float64)
 
                     float_count += floats_per_img
 
@@ -400,8 +445,8 @@ def generate(args):
                     scan_hdus.append(img_hdu)
 
             new_gpu_fits = fits.HDUList([primary_hdu] + scan_hdus)
-            print(f" -> new_gpu_fits[0].header\n{repr(new_gpu_fits[0].header)}")
-            print(f" -> new_gpu_fits[1].header\n{repr(new_gpu_fits[1].header)}")
+            # print(f" -> new_gpu_fits[0].header\n{repr(new_gpu_fits[0].header)}")
+            # print(f" -> new_gpu_fits[1].header\n{repr(new_gpu_fits[1].header)}")
 
             print(f'-> writing {len(scan_hdus)} scans to {dst_gpufits_path}')
             if not path_exists(dirname(dst_gpufits_path)):
@@ -421,6 +466,7 @@ def main():
         'max_scans': MAX_SCANS,
         'max_antennas': MAX_ANTENNAS,
         'max_fine_chans': MAX_FINE_CHANS,
+        'rewrite_viz': True,
     })
     generate({
         'corr_type': "MWA_ORD",
@@ -433,6 +479,20 @@ def main():
         'max_scans': MAX_SCANS,
         # 'max_antennas': MAX_ANTENNAS, <- limiting ord antennas breaks mwalib and cotter.
         'max_fine_chans': MAX_FINE_CHANS,
+        'rewrite_viz': True,
+    })
+    generate({
+        'corr_type': "MWA_ORD",
+        'src_dir': SRC_TEST_DIR_MWA_ORD_FLAGS,
+        'dst_dir': "tests/data/1247842824_flags",
+        'metafits_name': TEST_METAFITS_NAME_MWA_ORD_FLAGS,
+        'gpufits_names': TEST_GPUFITS_NAMES_MWA_ORD_FLAGS,
+        'max_coarse_chans': 1,
+        'max_batches': 1,
+        'max_scans': 2,
+        # 'max_antennas': MAX_ANTENNAS, <- limiting ord antennas breaks mwalib and cotter.
+        # 'max_fine_chans': MAX_FINE_CHANS,
+        'rewrite_viz': False,
     })
 
 

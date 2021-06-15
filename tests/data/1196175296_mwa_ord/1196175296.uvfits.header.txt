@@ -62,10 +62,13 @@ COMMENT Created by Cotter MWA preprocessor
 COMMENT Cmdline: cotter "-m" "tests/data/1196175296_mwa_ord/1196175296_cotter-fr
 COMMENT iendly.metafits" "-o" "tests/data/1196175296_mwa_ord/1196175296.uvfits" 
 COMMENT "-allowmissing" "-noantennapruning" "-nocablelength" "-noflagautos" "-no
-COMMENT flagdcchannels" "-nogeom" "-norfi" "-nosbgains" "-nostats" "-sbcount" "2
-COMMENT " "-sbstart" "1" "tests/data/1196175296_mwa_ord/1196175296_2017120114544
-COMMENT 0_gpubox01_00.fits" "tests/data/1196175296_mwa_ord/1196175296_2017120114
-COMMENT 5440_gpubox02_00.fits"                                                  
+COMMENT flagdcchannels" "-nogeom" "-norfi" "-sbpassband" "tests/data/subband-pas
+COMMENT sband-2ch-unitary.txt" "-nostats" "-sbcount" "2" "-sbstart" "1" "tests/d
+COMMENT ata/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits" "test
+COMMENT s/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits" "t
+COMMENT ests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits"
+COMMENT  "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fi
+COMMENT ts"                                                                     
 FIBRFACT= '2.0     '           / Fiber velocity factor                          
 METAVER = '        '           / METAFITS version number                        
 MWAPYVER= '4.5     '           / MWAPY version number                           

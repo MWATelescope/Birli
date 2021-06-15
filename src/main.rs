@@ -1,13 +1,13 @@
-use clap::{
-    crate_authors, crate_description, crate_name, crate_version, value_t, App, Arg, SubCommand,
-};
+use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg, SubCommand};
 use log::{debug, info};
+// use log::{log_enabled, Level};
 use std::{env, ffi::OsString, fmt::Debug};
 
 use birli::{
     context_to_baseline_imgsets, correct_cable_lengths, cxx_aoflagger_new, flag_imgsets,
     get_aoflagger_version_string, write_flags,
 };
+// use birli::util::{dump_flagmask, dump_imgset};
 use mwalib::CorrelatorContext;
 
 fn main_with_args<I, T>(args: I)
@@ -16,7 +16,6 @@ where
     T: Into<OsString> + Clone,
     I: Debug,
 {
-    env_logger::try_init().unwrap_or(());
     debug!("args:\n{:?}", &args);
 
     let aoflagger_version = get_aoflagger_version_string();
@@ -34,6 +33,7 @@ where
             Arg::with_name("fits-files")
                 .required(true)
                 .multiple(true)
+                // .last(true)
         )
         .arg(
             Arg::with_name("flag-template")
@@ -44,10 +44,11 @@ where
         )
         .arg(
             Arg::with_name("no-cable-delay")
-                .long("--no-cable-delay")
+                .long("no-cable-delay")
                 .takes_value(false)
+                .required(false)
+                .number_of_values(0)
                 .help("Do not perform cable length corrections.")
-                .default_value("false")
         )
         // TODO: implement specify flag strategy
         // .arg(
@@ -78,8 +79,17 @@ where
             &context.common_timestep_indices.clone(),
         );
 
+        // if log_enabled!(Level::Debug) {
+        //     baseline_imgsets.iter().take(128).enumerate().for_each(|(baseline_idx, imgset)| {
+        //         let baseline = &context.metafits_context.baselines[baseline_idx];
+        //         if baseline.ant1_index == 0 && baseline.ant2_index == 2 {
+        //             debug!("baseline {:04} ({}, {})\n{}", baseline_idx, baseline.ant1_index, baseline.ant2_index, dump_imgset(imgset, Some(128), Some(128), Some(16)));
+        //         }
+        //     });
+        // }
+
         // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
-        let no_cable_delays = value_t!(aoflagger_matches, "no-cable-delay", bool).unwrap();
+        let no_cable_delays = aoflagger_matches.is_present("no-cable-delay");
         let cable_delays_applied = context.metafits_context.cable_delays_applied;
         if !cable_delays_applied && !no_cable_delays {
             correct_cable_lengths(&context, &mut baseline_imgsets);
@@ -87,6 +97,16 @@ where
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
         let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
+
+        // if log_enabled!(Level::Debug) {
+        //     baseline_flagmasks.iter().take(128).enumerate().for_each(|(baseline_idx, flagmask)| {
+        //         let baseline = &context.metafits_context.baselines[baseline_idx];
+        //         if baseline.ant1_index == 0 && baseline.ant2_index == 2 {
+        //             debug!("baseline {:04} ({}, {})\n{}", baseline_idx, baseline.ant1_index, baseline.ant2_index, dump_flagmask(flagmask, Some(128), Some(128)));
+        //         }
+        //     });
+        // }
+
         let gpubox_ids: Vec<usize> = context
             .common_coarse_chan_indices
             .iter()
@@ -97,6 +117,7 @@ where
 }
 
 fn main() {
+    env_logger::try_init().unwrap_or(());
     info!("start main");
     main_with_args(env::args());
     info!("end main");
@@ -106,6 +127,7 @@ fn main() {
 mod tests {
     use super::main_with_args;
     use birli::{flag_io::FlagFileSet, get_aoflagger_version_string};
+    use itertools::izip;
     use mwalib::CorrelatorContext;
     use std::env;
     use tempfile::tempdir;
@@ -163,44 +185,88 @@ mod tests {
 
         let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 
+        let num_baselines = context.metafits_context.num_baselines;
+        let num_flags_per_row = context.metafits_context.num_corr_fine_chans_per_coarse;
+        let num_common_timesteps = context.num_common_timesteps;
+        let num_rows = num_common_timesteps * num_baselines;
+        let num_flags_per_timestep = num_baselines * num_flags_per_row;
+
+        assert!(num_baselines > 0);
+        assert!(num_rows > 0);
+        assert!(num_flags_per_row > 0);
+
         let gpubox_ids: Vec<usize> = context
             .common_coarse_chan_indices
             .iter()
             .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
 
-        let mut flag_file_set =
-            FlagFileSet::open(&context, filename_template.to_str().unwrap(), &gpubox_ids).unwrap();
-        let chan_header_flags_raw = flag_file_set.read_chan_header_flags_raw().unwrap();
-        let (chan1_header, chan1_flags_raw) = chan_header_flags_raw.get(&gpubox_ids[0]).unwrap();
-        assert_eq!(chan1_header.gpubox_id, gpubox_ids[0]);
-        let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+        assert!(!gpubox_ids.is_empty());
 
-        let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
-        assert_eq!(chan1_header.num_timesteps, context.num_common_timesteps);
-        assert_eq!(num_baselines, context.metafits_context.num_baselines);
-        assert_eq!(chan1_header.num_channels, num_fine_chans_per_coarse);
-        assert_eq!(
-            chan1_flags_raw.len(),
-            chan1_header.num_timesteps * num_baselines * chan1_header.num_channels
-        );
+        let mut birli_flag_file_set = FlagFileSet::open(
+            filename_template.to_str().unwrap(),
+            &gpubox_ids,
+            context.mwa_version,
+        )
+        .unwrap();
+        let birli_chan_header_flags_raw = birli_flag_file_set.read_chan_header_flags_raw().unwrap();
 
-        let tests = [
-            (0, 0, 0, i8::from(true)),
-            (0, 0, 1, i8::from(true)),
-            (0, 1, 0, i8::from(false)),
-            (0, 1, 1, i8::from(false)),
-            (0, 2, 0, i8::from(false)),
-            (0, 2, 1, i8::from(false)),
-        ];
-        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests.iter() {
-            let row_idx = timestep_idx * num_baselines + baseline_idx;
-            let offset = row_idx * num_fine_chans_per_coarse + fine_chan_idx;
+        let mut cotter_flag_file_set = FlagFileSet::open(
+            "tests/data/1247842824_flags/FlagfileCotterMWA%%.mwaf",
+            &gpubox_ids,
+            context.mwa_version,
+        )
+        .unwrap();
+        let cotter_chan_header_flags_raw =
+            cotter_flag_file_set.read_chan_header_flags_raw().unwrap();
+
+        for gpubox_id in gpubox_ids {
+            let (birli_header, birli_flags) = birli_chan_header_flags_raw.get(&gpubox_id).unwrap();
+            let (cotter_header, cotter_flags) =
+                cotter_chan_header_flags_raw.get(&gpubox_id).unwrap();
+            assert_eq!(birli_header.obs_id, cotter_header.obs_id);
+            assert_eq!(birli_header.num_channels, cotter_header.num_channels);
+            assert_eq!(birli_header.num_ants, cotter_header.num_ants);
+            // assert_eq!(birli_header.num_common_timesteps, cotter_header.num_common_timesteps);
+            assert_eq!(birli_header.num_timesteps, num_common_timesteps);
+            assert_eq!(birli_header.num_pols, cotter_header.num_pols);
+            assert_eq!(birli_header.gpubox_id, cotter_header.gpubox_id);
+            assert_eq!(birli_header.bytes_per_row, cotter_header.bytes_per_row);
+            // assert_eq!(birli_header.num_rows, cotter_header.num_rows);
+            assert_eq!(birli_header.num_rows, num_rows);
+
+            // assert_eq!(birli_flags.len(), cotter_flags.len());
             assert_eq!(
-                &chan1_flags_raw[offset], expected_flag,
-                "with timestep {}, baseline {}, fine_chan {}, expected {} at row_idx {}, offset {}",
-                timestep_idx, baseline_idx, fine_chan_idx, expected_flag, row_idx, offset
+                birli_flags.len(),
+                num_common_timesteps * num_baselines * num_flags_per_row
             );
+
+            izip!(
+                birli_flags.chunks(num_flags_per_timestep),
+                cotter_flags.chunks(num_flags_per_timestep)
+            ).enumerate().for_each(|(common_timestep_idx, (birli_timestep_chunk, cotter_timestep_chunk))| {
+                izip!(
+                    context.metafits_context.baselines.iter(),
+                    birli_timestep_chunk.chunks(num_flags_per_row),
+                    cotter_timestep_chunk.chunks(num_flags_per_row)
+                ).enumerate().for_each(|(baseline_idx, (baseline, birli_baseline_chunk, cotter_baseline_chunk))| {
+                    if baseline.ant1_index == baseline.ant2_index {
+                        return
+                    }
+
+                    // TODO: fix flagged antennas
+                    let flagged_antennas = [118];
+                    if flagged_antennas.contains(&baseline.ant1_index) || flagged_antennas.contains(&baseline.ant2_index) {
+                        return
+                    }
+
+                    assert_eq!(
+                        birli_baseline_chunk, cotter_baseline_chunk,
+                        "flag chunks for common timestep {}, baseline {} (ants {}, {}) do not match! \nbirli:\n{:?}\ncotter:\n{:?}", 
+                        common_timestep_idx, baseline_idx, baseline.ant1_index, baseline.ant2_index, birli_baseline_chunk, cotter_baseline_chunk
+                    )
+                });
+            });
         }
     }
 }

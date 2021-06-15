@@ -91,6 +91,8 @@ use flag_io::FlagFileSet;
 
 pub mod error;
 
+// pub mod util;
+
 use log::{trace, warn};
 
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
@@ -738,7 +740,8 @@ pub fn write_flags(
 
     // TODO: error handling instead of unwrap.
 
-    let mut flag_file_set = FlagFileSet::new(context, filename_template, &gpubox_ids).unwrap();
+    let mut flag_file_set =
+        FlagFileSet::new(filename_template, &gpubox_ids, context.mwa_version).unwrap();
     flag_file_set
         .write_baseline_flagmasks(&context, baseline_flagmasks)
         .unwrap();
@@ -1037,9 +1040,9 @@ mod tests {
         assert_eq!(flag_files.count(), selected_gpuboxes.len());
 
         let mut flag_file_set = FlagFileSet::open(
-            &context,
             filename_template.to_str().unwrap(),
             &selected_gpuboxes,
+            context.mwa_version,
         )
         .unwrap();
         let chan_header_flags_raw = flag_file_set.read_chan_header_flags_raw().unwrap();

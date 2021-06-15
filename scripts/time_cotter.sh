@@ -21,7 +21,7 @@ for i in $(seq 10); do
         -nostats \
         -nogeom \
         -noantennapruning \
-        -nosbgains \
+        -sbpassband tests/data/subband-passband-128ch-unitary.txt \
         -noflagautos \
         -noflagdcchannels \
         -nocablelength \

@@ -81,11 +81,11 @@ pub struct FlagFileSet {
 // TODO: can this just take metafits context instead of a full context?
 impl FlagFileSet {
     fn get_gpubox_filenames(
-        corr_version: MWAVersion,
+        mwa_version: MWAVersion,
         filename_template: &str,
         gpubox_ids: &[usize],
     ) -> Result<BTreeMap<usize, String>, BirliError> {
-        let num_percents = match corr_version {
+        let num_percents = match mwa_version {
             MWAVersion::CorrOldLegacy | MWAVersion::CorrLegacy => 2,
             _ => 3,
         };
@@ -139,14 +139,13 @@ impl FlagFileSet {
     /// Will error with [`BirliError::InvalidFlagFilenameTemplate`] if an invalid flag filename
     /// template is provided (wrong number of percents).
     pub fn new(
-        context: &CorrelatorContext,
         filename_template: &str,
-        // TODO: make this optional
         gpubox_ids: &[usize],
+        mwa_version: MWAVersion,
     ) -> Result<Self, BirliError> {
         let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
         let gpubox_filenames =
-            FlagFileSet::get_gpubox_filenames(context.mwa_version, filename_template, gpubox_ids)?;
+            FlagFileSet::get_gpubox_filenames(mwa_version, filename_template, gpubox_ids)?;
         for (gpubox_id, fits_filename) in gpubox_filenames.into_iter() {
             match FitsFile::create(Path::new(&fits_filename.to_string())).open() {
                 Ok(fptr) => {
@@ -166,7 +165,7 @@ impl FlagFileSet {
         Ok(FlagFileSet { gpubox_fptrs })
     }
 
-    /// Open an existing set of flag files, given an observation's context, the flag filename
+    /// Open an existing set of flag files, given an observation's MWA Version, the flag filename
     /// template, and a list of gpubox ids.
     ///
     /// # Errors
@@ -174,13 +173,13 @@ impl FlagFileSet {
     /// will error with [`BirliError::FitsOpen`] if files don't exist
     ///
     pub fn open(
-        context: &CorrelatorContext,
         filename_template: &str,
         gpubox_ids: &[usize],
+        mwa_version: MWAVersion,
     ) -> Result<Self, BirliError> {
         let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
         let gpubox_filenames =
-            FlagFileSet::get_gpubox_filenames(context.mwa_version, filename_template, gpubox_ids)?;
+            FlagFileSet::get_gpubox_filenames(mwa_version, filename_template, gpubox_ids)?;
         for (gpubox_id, fits_filename) in gpubox_filenames.into_iter() {
             match FitsFile::open(Path::new(&fits_filename.to_string())) {
                 Ok(fptr) => {
@@ -460,6 +459,7 @@ mod tests {
     use fitsio::FitsFile;
     use mwalib::{
         CorrelatorContext, _get_optional_fits_key, _open_hdu, fits_open_hdu, get_optional_fits_key,
+        MWAVersion,
     };
     use std::collections::BTreeMap;
     use std::fs::File;
@@ -505,52 +505,52 @@ mod tests {
             .collect();
 
         macro_rules! test_percent_enforcement {
-            ($context:expr, $template_suffix:expr, $gpubox_ids:expr, $expected:pat) => {
+            ($template_suffix:expr, $gpubox_ids:expr, $mwa_version:expr, $expected:pat) => {
                 let tmp_dir = tempdir().unwrap();
                 assert!(matches!(
                     FlagFileSet::new(
-                        $context,
                         tmp_dir.path().join($template_suffix).to_str().unwrap(),
-                        $gpubox_ids
+                        $gpubox_ids,
+                        $mwa_version
                     ),
                     $expected
                 ))
             };
         }
         test_percent_enforcement!(
-            &mwax_context,
             "mwax_no_percents.mwaf",
             &mwax_gpubox_ids,
+            MWAVersion::CorrMWAXv2,
             Err(BirliError::InvalidFlagFilenameTemplate { .. })
         );
         test_percent_enforcement!(
-            &mwa_ord_context,
             "mwa_ord_no_percents.mwaf",
             &mwa_ord_gpubox_ids,
+            MWAVersion::CorrLegacy,
             Err(BirliError::InvalidFlagFilenameTemplate { .. })
         );
         test_percent_enforcement!(
-            &mwax_context,
             "mwax_insufficient_percents_2_%%.mwaf",
             &mwax_gpubox_ids,
+            MWAVersion::CorrMWAXv2,
             Err(BirliError::InvalidFlagFilenameTemplate { .. })
         );
         test_percent_enforcement!(
-            &mwa_ord_context,
             "mwa_ord_sufficient_percents_2_%%.mwaf",
             &mwa_ord_gpubox_ids,
+            MWAVersion::CorrLegacy,
             Ok(FlagFileSet { .. })
         );
         test_percent_enforcement!(
-            &mwax_context,
             "mwax_sufficient_percents_3_%%%.mwaf",
             &mwax_gpubox_ids,
+            MWAVersion::CorrMWAXv2,
             Ok(FlagFileSet { .. })
         );
         test_percent_enforcement!(
-            &mwa_ord_context,
             "mwa_ord_sufficient_percents_3_%%%.mwaf",
             &mwax_gpubox_ids,
+            MWAVersion::CorrLegacy,
             Ok(FlagFileSet { .. })
         );
     }
@@ -578,14 +578,19 @@ mod tests {
         }
 
         assert!(matches!(
-            FlagFileSet::new(&context, filename_template.to_str().unwrap(), &ok_gpuboxes).unwrap(),
+            FlagFileSet::new(
+                filename_template.to_str().unwrap(),
+                &ok_gpuboxes,
+                context.mwa_version
+            )
+            .unwrap(),
             FlagFileSet { .. }
         ));
         assert!(matches!(
             FlagFileSet::new(
-                &context,
                 filename_template.to_str().unwrap(),
-                &colliding_gpuboxes
+                &colliding_gpuboxes,
+                context.mwa_version
             )
             .err(),
             Some(BirliError::FitsOpen { .. })
@@ -608,16 +613,20 @@ mod tests {
             .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
 
-        let filename_template = &test_dir.join("Flagfile%%.mwaf");
-        let mut flag_file_set =
-            FlagFileSet::open(&context, filename_template.to_str().unwrap(), &gpubox_ids).unwrap();
+        let filename_template = &test_dir.join("FlagfileCotterMWA%%.mwaf");
+        let mut flag_file_set = FlagFileSet::open(
+            filename_template.to_str().unwrap(),
+            &gpubox_ids,
+            context.mwa_version,
+        )
+        .unwrap();
 
         for (&gpubox_id, mut fptr) in flag_file_set.gpubox_fptrs.iter_mut() {
             let header = FlagFileSet::read_header(&mut fptr).unwrap();
             assert_eq!(header.obs_id, 1247842824);
             assert_eq!(header.num_channels, 128);
             assert_eq!(header.num_ants, 128);
-            assert_eq!(header.num_timesteps, 120);
+            assert_eq!(header.num_timesteps, 2);
             assert_eq!(header.gpubox_id, gpubox_id);
             assert_eq!(header.cotter_version, "4.5");
             assert_eq!(header.cotter_version_date, "2020-08-10");
@@ -702,9 +711,13 @@ mod tests {
             .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
 
-        let filename_template = &test_dir.join("Flagfile%%.mwaf");
-        let mut flag_file_set =
-            FlagFileSet::open(&context, filename_template.to_str().unwrap(), &gpubox_ids).unwrap();
+        let filename_template = &test_dir.join("FlagfileCotterMWA%%.mwaf");
+        let mut flag_file_set = FlagFileSet::open(
+            filename_template.to_str().unwrap(),
+            &gpubox_ids,
+            context.mwa_version,
+        )
+        .unwrap();
 
         for (_, fptr) in flag_file_set.gpubox_fptrs.iter_mut() {
             let table_hdu = fptr.hdu(1).unwrap();
@@ -719,22 +732,23 @@ mod tests {
         let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
 
         let tests = [
-            (0, 0, 0, i8::from(false)),
-            (0, 0, 1, i8::from(false)),
-            (0, 1, 0, i8::from(false)),
-            (0, 1, 1, i8::from(false)),
-            (1, 0, 0, i8::from(true)),
-            (1, 0, 1, i8::from(true)),
-            (1, 1, 0, i8::from(true)),
-            (1, 1, 1, i8::from(true)),
+            (0, 2, 103, i8::from(false)),
+            (0, 2, 104, i8::from(true)),
+            (0, 2, 105, i8::from(true)),
+            (0, 2, 106, i8::from(false)),
+            (1, 2, 103, i8::from(false)),
+            (1, 2, 104, i8::from(true)),
+            (1, 2, 105, i8::from(true)),
+            (1, 2, 106, i8::from(false)),
         ];
         for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests.iter() {
             let row_idx = timestep_idx * num_baselines + baseline_idx;
-            let offset = row_idx * chan1_header.bytes_per_row + fine_chan_idx;
+            let row = &chan1_flags_raw[(row_idx * chan1_header.num_channels)
+                ..((row_idx + 1) * chan1_header.num_channels)];
             assert_eq!(
-                &chan1_flags_raw[offset], expected_flag,
-                "with timestep {}, baseline {}, fine_chan {}, expected {} at row_idx {}, offset {}",
-                timestep_idx, baseline_idx, fine_chan_idx, expected_flag, row_idx, offset
+                &row[*fine_chan_idx], expected_flag,
+                "with timestep {}, baseline {}, fine_chan {}, expected {} at row_idx {}, row {:?}",
+                timestep_idx, baseline_idx, fine_chan_idx, expected_flag, row_idx, row
             );
         }
     }
@@ -785,9 +799,12 @@ mod tests {
         }
 
         {
-            let mut flag_file_set =
-                FlagFileSet::new(&context, filename_template.to_str().unwrap(), &gpubox_ids)
-                    .unwrap();
+            let mut flag_file_set = FlagFileSet::new(
+                filename_template.to_str().unwrap(),
+                &gpubox_ids,
+                context.mwa_version,
+            )
+            .unwrap();
             flag_file_set
                 .write_baseline_flagmasks(&context, baseline_flagmasks)
                 .unwrap();
@@ -802,8 +819,12 @@ mod tests {
             dbg!(table_hdu);
         }
 
-        let mut flag_file_set =
-            FlagFileSet::open(&context, filename_template.to_str().unwrap(), &gpubox_ids).unwrap();
+        let mut flag_file_set = FlagFileSet::open(
+            filename_template.to_str().unwrap(),
+            &gpubox_ids,
+            context.mwa_version,
+        )
+        .unwrap();
 
         let chan_header_flags_raw = flag_file_set.read_chan_header_flags_raw().unwrap();
 

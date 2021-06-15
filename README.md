@@ -91,28 +91,33 @@ A direct comparison between Birli and Cotter might look like this.
 
 ```bash
 birli aoflagger \
-  -m /mnt/data/1247842824_vis/1247842824.metafits \
-  -f "/mnt/data/1247842824_vis/flags_birli/Flagfile_Birli_%%.mwaf" \
-  /mnt/data/1247842824_vis/1247842824*gpubox*.fits
+  -m tests/data/1247842824_flags/1247842824.metafits \
+  -f "tests/data/1247842824_flags/flags_birli/FlagfileBirliMWA%%.mwaf" \
+  tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits
 ```
 
 ```bash
 cotter \
-  -m /mnt/data/1247842824_vis/1247842824.metafits \
-  -o "/mnt/data/1247842824_vis/flags_cotter/Flagfile_Cotter_%%.mwaf" \
-  -nostats \
-  -nogeom \
+  -m tests/data/1247842824_flags/1247842824cotter-friendly.metafits \
+  -o "tests/data/1247842824_flags/FlagfileCotterMWA%%.mwaf" \
+  -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
   -noantennapruning \
-  -nosbgains \
+  -nocablelength \
   -noflagautos \
   -noflagdcchannels \
-  -nocablelength \
-  -edgewidth 0 \
-  -initflag 0 \
-  -endflag 0 \
-  -flag-strategy  /usr/local/share/aoflagger/strategies/mwa-default.lua \
-  /mnt/data/1247842824_vis/1247842824*gpubox*.fits
+  -nogeom \
+  -sbpassband tests/data/subband-passband-128ch-unitary.txt \
+  -nostats \
+  -sbcount 1 \
+  -sbstart 1 \
+  -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
+  tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits
 ```
+
+
 
 ## Acknowledgement
 
