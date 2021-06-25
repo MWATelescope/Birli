@@ -91,7 +91,7 @@ use flag_io::FlagFileSet;
 
 pub mod error;
 
-// pub mod util;
+pub mod util;
 
 use log::{trace, warn};
 
