@@ -69,7 +69,6 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
-  -norfi \
   -sbpassband tests/data/subband-passband-2ch-unitary.txt \
   -nostats \
   -sbcount 2 \
@@ -89,7 +88,6 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
-  -norfi \
   -sbpassband tests/data/subband-passband-2ch-unitary.txt \
   -nostats \
   -sbcount 2 \
@@ -101,16 +99,19 @@ cotter \
   -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
   -o tests/data/1196175296_mwa_ord/1196175296.uvfits \
   -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
   -noantennapruning \
   -nocablelength \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
-  -norfi \
   -sbpassband tests/data/subband-passband-2ch-unitary.txt \
   -nostats \
   -sbcount 2 \
   -sbstart 1 \
+  -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
   tests/data/1196175296_mwa_ord/1196175296_*gpubox*.fits \
   | tee cotter-1196175296-uvfits.log
 cotter \
@@ -151,22 +152,22 @@ cotter \
   -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
   tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits \
   | tee cotter-1247842824-mwa.log
-# cotter \
-#   -m tests/data/1247842824_flags/1247842824cotter-friendly.metafits \
-#   -o tests/data/1247842824_flags/1247842824.uvfits \
-#   -allowmissing \
-#   -noantennapruning \
-#   -nocablelength \
-#   -noflagautos \
-#   -noflagdcchannels \
-#   -nogeom \
-#   -norfi \
-#   -sbpassband tests/data/subband-passband-128ch-unitary.txt \
-#   -nostats \
-#   -sbcount 1 \
-#   -sbstart 1 \
-#   tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits \
-#   | tee cotter-1247842824-uvfits.log
+cotter \
+  -m tests/data/1247842824_flags/1247842824cotter-friendly.metafits \
+  -o tests/data/1247842824_flags/1247842824.uvfits \
+  -allowmissing \
+  -noantennapruning \
+  -nocablelength \
+  -noflagautos \
+  -noflagdcchannels \
+  -nogeom \
+  -sbpassband tests/data/subband-passband-128ch-unitary.txt \
+  -nostats \
+  -sbcount 1 \
+  -sbstart 1 \
+  -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
+  tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits \
+  | tee cotter-1247842824-uvfits.log
 
 for i in \
   1196175296_mwa_ord/1196175296.metafits \
@@ -175,7 +176,6 @@ for i in \
   1196175296_mwa_ord/FlagfileCotter02.mwaf \
   1297526432_mwax/1297526432.metafits \
   1247842824_flags/1247842824.metafits \
-  # 1247842824_flags/1247842824.uvfits \
   1247842824_flags/FlagfileCotterMWA01.mwaf \
   1247842824_flags/FlagfileCotterGeneric01.mwaf
 do 

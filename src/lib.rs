@@ -189,13 +189,23 @@ pub fn init_baseline_imgsets(
     baseline_imgsets
 }
 
-/// Read an observation's visibilities into a vector containing a [`CxxImageSet`]s for each
-/// baseline in the observation, given a [`CxxAOFlagger`] instance and that observation's
-/// [`mwalib::CorrelatorContext`].
+/// Read an observation's visibilities for the provided coarse channel and timestep indices into a
+/// vector containing a [`CxxImageSet`]s for each baseline in the observation, given a
+/// [`CxxAOFlagger`] instance and that observation's [`mwalib::CorrelatorContext`]
 ///
 /// [`mwalib::CorrelatorContext`]: https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html
 ///
-/// mwalib provides access to all known timesteps, however to maintain  
+/// Observations can sometimes be too large to fit in memory. This method will only load
+/// visibilities from the provided timesteps and coarse channels, in order to enable the visibility to
+/// be read in user-defined "chunks" of time or frequency.
+///
+/// The timesteps are indices in the [`mwalib::CorrelatorContext`]'s timestep array, which should be a contiguous
+/// superset of times from all provided coarse gpubox files. A similar concept applies to coarse channels.
+/// Instead of reading visibilities for all known timesteps / coarse channels, it is recommended to use
+/// `common_coarse_chan_indices` and `common_timestep_indices`, as these ignore timesteps and coarse channels
+/// which are missing contiguous data. `common_good_timestep_indices` is also a good choice to avoid quack time.
+///
+/// For more details, see the [documentation](https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html).
 ///
 /// # Examples
 ///
@@ -215,15 +225,27 @@ pub fn init_baseline_imgsets(
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
 /// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 ///
-/// let baseline_imgsets = unsafe {
-///     let aoflagger = cxx_aoflagger_new();
-///     context_to_baseline_imgsets(
-///         &aoflagger,
-///         &context,
-///         &context.common_coarse_chan_indices.clone(),
-///         &context.common_timestep_indices.clone(),
-///     )
-/// };
+/// let aoflagger = unsafe { cxx_aoflagger_new() };
+///
+/// let baseline_imgsets = context_to_baseline_imgsets(
+///     &aoflagger,
+///     &context,
+///     &context.common_coarse_chan_indices.clone(),
+///     &context.common_timestep_indices.clone(),
+/// );
+///
+/// let width_common = baseline_imgsets[0].Width();
+///
+/// let baseline_imgsets_good = context_to_baseline_imgsets(
+///     &aoflagger,
+///     &context,
+///     &context.common_coarse_chan_indices.clone(),
+///     &context.common_good_timestep_indices.clone(),
+/// );
+///
+/// let width_common_good = baseline_imgsets_good[0].Width();
+///
+/// assert_ne!(width_common, width_common_good);
 /// ```
 pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
@@ -596,6 +618,63 @@ pub fn correct_cable_lengths(
     trace!("end correct_cable_lengths");
 }
 
+/// Initialize a vector of [`CxxFlagMask`]s for each baseline and provided 
+/// coarse channel and timestep indices
+///
+/// TODO: use:
+/// - flagged_coarse_chan_idxs
+/// - flagged_fine_chan_idxs
+/// - flagged_timestep_idxs
+/// to set correlator mask
+pub fn init_baseline_flagmasks(
+    aoflagger: &CxxAOFlagger,
+    context: &CorrelatorContext,
+    // num_baselines: usize,
+    // width: usize,
+    // height: usize,
+    img_coarse_chan_idxs: &[usize],
+    img_timestep_idxs: &[usize],
+    // flagged_baselines: &[usize],
+    // flagged_coarse_chan_idxs: &[usize],
+    // flagged_fine_chan_idxs: &[usize],
+    // flagged_timestep_idxs: &[usize],
+    flag_bad_inputs: bool,
+) -> Vec<UniquePtr<CxxFlagMask>> {
+    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+    let width = img_timestep_idxs.len();
+    let height = img_coarse_chan_idxs.len() * fine_chans_per_coarse;
+
+    // create correlator mask
+    let correlator_mask = unsafe { aoflagger.MakeFlagMask(width, height, false) };
+
+    let antenna_flags: Vec<_> = context
+        .metafits_context
+        .antennas
+        .iter()
+        .map(|antenna| antenna.rfinput_x.flagged || antenna.rfinput_y.flagged)
+        .collect();
+
+    context
+        .metafits_context
+        .baselines
+        .clone()
+        .into_iter()
+        .map(|baseline| {
+            if flag_bad_inputs {
+                if antenna_flags[baseline.ant1_index] || antenna_flags[baseline.ant2_index] {
+                    return unsafe { aoflagger.MakeFlagMask(width, height, true) };
+                }
+            }
+
+            let mut flag_mask = unsafe { aoflagger.MakeFlagMask(width, height, false) };
+            flagmask_set(&mut flag_mask, &correlator_mask);
+            flag_mask
+
+            // TODO: set mask for missing HDUs
+        })
+        .collect()
+}
+
 /// Flag an observation's visibilities, given a [`CxxAOFlagger`] instance, a [`CxxStrategy`]
 /// filename, and a vector of [`CxxImageSet`]s for each baseline in the observation returning a
 /// vector of [`CxxFlagMask`]s.
@@ -665,6 +744,152 @@ pub fn flag_imgsets(
         .collect();
     flag_progress.finish();
     trace!("end flag_imgsets");
+    baseline_flagmasks
+}
+
+/// Perform the binary or operation on the flag buffer of `this_flagmask` with
+/// the buffer of `other_flagmask`
+pub fn flagmask_or(
+    this_flagmask: &mut UniquePtr<CxxFlagMask>,
+    other_flagmask: &UniquePtr<CxxFlagMask>,
+) {
+    assert_eq!(
+        this_flagmask.Width(),
+        other_flagmask.Width(),
+        "flagmasks should have the same width."
+    );
+    assert_eq!(
+        this_flagmask.Height(),
+        other_flagmask.Height(),
+        "flagmasks should have the same height."
+    );
+    let this_buffer: &mut [bool] = this_flagmask.pin_mut().BufferMut();
+    let other_buffer: &[bool] = other_flagmask.Buffer();
+
+    this_buffer
+        .iter_mut()
+        .zip(other_buffer.iter())
+        .for_each(|(this_flag, other_flag)| *this_flag |= other_flag);
+}
+
+/// Set the flag buffer of `this_flagmask` from the buffer of `other_flagmask`
+pub fn flagmask_set(
+    this_flagmask: &mut UniquePtr<CxxFlagMask>,
+    other_flagmask: &UniquePtr<CxxFlagMask>,
+) {
+    assert_eq!(
+        this_flagmask.Width(),
+        other_flagmask.Width(),
+        "flagmasks should have the same width."
+    );
+    assert_eq!(
+        this_flagmask.Height(),
+        other_flagmask.Height(),
+        "flagmasks should have the same height."
+    );
+    let this_buffer: &mut [bool] = this_flagmask.pin_mut().BufferMut();
+    let other_buffer: &[bool] = other_flagmask.Buffer();
+
+    this_buffer
+        .iter_mut()
+        .zip(other_buffer.iter())
+        .for_each(|(this_flag, other_flag)| *this_flag = *other_flag);
+}
+
+/// Flag an observation's visibilities, given a [`CxxAOFlagger`] instance, a [`CxxStrategy`]
+/// filename, and vectors of [`CxxImageSet`]s and [`CxxFlagMask`]s for each baseline in the
+/// observation returning a vector of [`CxxFlagMask`]s.
+///
+/// # Examples
+///
+/// ```
+/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new, flag_imgsets_existing, init_baseline_flagmasks};
+/// use mwalib::CorrelatorContext;
+/// use tempfile::tempdir;
+///
+/// // define our input files
+/// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+/// let gpufits_paths = vec![
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+/// ];
+///
+/// // Create an mwalib::CorrelatorContext for accessing visibilities.
+/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+///
+/// // create a CxxAOFlagger object to perform AOFlagger operations
+/// let aoflagger = unsafe { cxx_aoflagger_new() };
+///
+/// // specify which coarse_chan and timestep indices we want to load into an image.
+/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices.clone();
+/// let img_timestep_idxs = &context.common_timestep_indices.clone();
+///
+/// // generate imagesets for each baseline in the format required by aoflagger
+/// let baseline_imgsets = context_to_baseline_imgsets(
+///     &aoflagger,
+///     &context,
+///     img_coarse_chan_idxs,
+///     img_timestep_idxs,
+/// );
+/// let baseline_flagmasks = init_baseline_flagmasks(
+///     &aoflagger,
+///     &context,
+///     img_coarse_chan_idxs,
+///     img_timestep_idxs,
+///     true,
+/// );
+///
+/// // use the default strategy file location for MWA
+/// let strategy_filename = &aoflagger.FindStrategyFileMWA();
+///
+/// // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
+/// let baseline_flagmasks = flag_imgsets_existing(
+///     &aoflagger,
+///     &strategy_filename,
+///     baseline_imgsets,
+///     baseline_flagmasks,
+///     true
+/// );
+/// ```
+pub fn flag_imgsets_existing(
+    aoflagger: &CxxAOFlagger,
+    strategy_filename: &str,
+    baseline_imgsets: Vec<UniquePtr<CxxImageSet>>,
+    baseline_flagmasks: Vec<UniquePtr<CxxFlagMask>>,
+    re_apply_existing: bool,
+) -> Vec<UniquePtr<CxxFlagMask>> {
+    trace!("start flag_imgsets_existing");
+
+    let flag_progress = ProgressBar::new(baseline_imgsets.len() as u64);
+    flag_progress.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+            )
+            .progress_chars("=> "),
+    );
+    flag_progress.set_message("flagging b.lines");
+
+    assert_eq!(baseline_flagmasks.len(), baseline_flagmasks.len());
+
+    let baseline_flagmasks = baseline_imgsets
+        .par_iter()
+        .zip(baseline_flagmasks)
+        .map(|(imgset, flagmask)| {
+            let mut new_flagmask = aoflagger
+                .LoadStrategyFile(&strategy_filename.to_string())
+                .RunExisting(&imgset, &flagmask);
+            if re_apply_existing {
+                flagmask_or(&mut new_flagmask, &flagmask);
+            }
+            flag_progress.inc(1);
+            new_flagmask
+        })
+        .collect();
+    flag_progress.finish();
+    trace!("end flag_imgsets_existing");
     baseline_flagmasks
 }
 
@@ -754,10 +979,13 @@ mod tests {
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     #![allow(clippy::float_cmp)]
 
-    use super::{context_to_baseline_imgsets, flag_imgsets, write_flags, FlagFileSet};
+    use super::{
+        context_to_baseline_imgsets, flag_imgsets, flagmask_or, flagmask_set, write_flags,
+        FlagFileSet,
+    };
     use crate::{
         correct_cable_lengths,
-        cxx_aoflagger::ffi::{cxx_aoflagger_new, CxxFlagMask, CxxImageSet},
+        cxx_aoflagger::ffi::{cxx_aoflagger_new, CxxAOFlagger, CxxFlagMask, CxxImageSet},
         SPEED_OF_LIGHT_IN_VACUUM,
     };
     use cxx::UniquePtr;
@@ -1383,5 +1611,55 @@ mod tests {
         let rot_5_yy_3_3_im = (sin_5_yy_3 * viz_5_yy_3_3_re + cos_5_yy_3 * viz_5_yy_3_3_im) as f32;
         test_imgset_val!(baseline_imgsets[5], 6, stride, 3, 3, rot_5_yy_3_3_re);
         test_imgset_val!(baseline_imgsets[5], 7, stride, 3, 3, rot_5_yy_3_3_im);
+    }
+
+    fn _get_this_flagmask(aoflagger: &CxxAOFlagger) -> UniquePtr<CxxFlagMask> {
+        let mut this_flagmask = unsafe { aoflagger.MakeFlagMask(2, 2, false) };
+        let this_buffer = this_flagmask.pin_mut().BufferMut();
+        this_buffer[0] = false;
+        this_buffer[1] = false;
+        this_buffer[2] = true;
+        this_buffer[3] = true;
+        this_flagmask
+    }
+
+    fn _get_other_flagmask(aoflagger: &CxxAOFlagger) -> UniquePtr<CxxFlagMask> {
+        let mut other_flagmask = unsafe { aoflagger.MakeFlagMask(2, 2, false) };
+        let other_buffer = other_flagmask.pin_mut().BufferMut();
+        other_buffer[0] = false;
+        other_buffer[1] = true;
+        other_buffer[2] = false;
+        other_buffer[3] = true;
+        other_flagmask
+    }
+
+    #[test]
+    fn test_flagmask_or() {
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+        let mut this_flagmask = _get_this_flagmask(&aoflagger);
+        let other_flagmask = _get_other_flagmask(&aoflagger);
+
+        flagmask_or(&mut this_flagmask, &other_flagmask);
+
+        let this_buffer = this_flagmask.Buffer();
+        assert_eq!(this_buffer[0], false);
+        assert_eq!(this_buffer[1], true);
+        assert_eq!(this_buffer[2], true);
+        assert_eq!(this_buffer[3], true);
+    }
+
+    #[test]
+    fn test_flagmask_set() {
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+        let mut this_flagmask = _get_this_flagmask(&aoflagger);
+        let other_flagmask = _get_other_flagmask(&aoflagger);
+
+        flagmask_set(&mut this_flagmask, &other_flagmask);
+
+        let this_buffer = this_flagmask.Buffer();
+        assert_eq!(this_buffer[0], false);
+        assert_eq!(this_buffer[1], true);
+        assert_eq!(this_buffer[2], false);
+        assert_eq!(this_buffer[3], true);
     }
 }

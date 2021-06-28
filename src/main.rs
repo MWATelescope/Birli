@@ -4,8 +4,8 @@ use log::{debug, info};
 use std::{env, ffi::OsString, fmt::Debug};
 
 use birli::{
-    context_to_baseline_imgsets, correct_cable_lengths, cxx_aoflagger_new, flag_imgsets,
-    get_aoflagger_version_string, write_flags,
+    context_to_baseline_imgsets, correct_cable_lengths, cxx_aoflagger_new, flag_imgsets_existing,
+    get_aoflagger_version_string, init_baseline_flagmasks, write_flags,
 };
 // use birli::util::{dump_flagmask, dump_imgset};
 use mwalib::CorrelatorContext;
@@ -72,11 +72,13 @@ where
         let fits_files: Vec<&str> = aoflagger_matches.values_of("fits-files").unwrap().collect();
         let context = CorrelatorContext::new(&metafits_path, &fits_files).unwrap();
         debug!("mwalib correlator context:\n{}", &context);
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let img_timestep_idxs = &context.common_timestep_indices;
         let mut baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &context.common_coarse_chan_indices.clone(),
-            &context.common_timestep_indices.clone(),
+            img_coarse_chan_idxs,
+            img_timestep_idxs,
         );
 
         // if log_enabled!(Level::Debug) {
@@ -96,7 +98,21 @@ where
         }
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
-        let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
+        let baseline_flagmasks = init_baseline_flagmasks(
+            &aoflagger,
+            &context,
+            img_coarse_chan_idxs,
+            img_timestep_idxs,
+            true, // TODO: do we ever not want to flag bad inputs?
+        );
+
+        let baseline_flagmasks = flag_imgsets_existing(
+            &aoflagger,
+            &strategy_filename,
+            baseline_imgsets,
+            baseline_flagmasks,
+            true,
+        );
 
         // if log_enabled!(Level::Debug) {
         //     baseline_flagmasks.iter().take(128).enumerate().for_each(|(baseline_idx, flagmask)| {
@@ -251,12 +267,6 @@ mod tests {
                     cotter_timestep_chunk.chunks(num_flags_per_row)
                 ).enumerate().for_each(|(baseline_idx, (baseline, birli_baseline_chunk, cotter_baseline_chunk))| {
                     if baseline.ant1_index == baseline.ant2_index {
-                        return
-                    }
-
-                    // TODO: fix flagged antennas
-                    let flagged_antennas = [118];
-                    if flagged_antennas.contains(&baseline.ant1_index) || flagged_antennas.contains(&baseline.ant2_index) {
                         return
                     }
 
