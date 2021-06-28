@@ -618,27 +618,82 @@ pub fn correct_cable_lengths(
     trace!("end correct_cable_lengths");
 }
 
-/// Initialize a vector of [`CxxFlagMask`]s for each baseline and provided 
+/// Produce a vector of flags for antennas whose imputs are flagged in `context`
+///
+/// # Examples
+///
+/// ```rust
+/// use birli::{get_antenna_flags, cxx_aoflagger_new};
+/// use mwalib::CorrelatorContext;
+///
+/// // define our input files
+/// let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
+/// let gpufits_paths = vec![
+///     "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
+///     "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
+///     "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
+///     "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
+/// ];
+///
+/// // Create an mwalib::CorrelatorContext for accessing visibilities.
+/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+/// let antennta_flags = get_antenna_flags(&context);
+///
+/// assert!(!antennta_flags[0]);
+/// assert!(antennta_flags[63]);
+/// assert!(antennta_flags[62]);
+/// assert!(antennta_flags[11]);
+/// assert!(antennta_flags[111]);
+/// assert!(antennta_flags[91]);
+/// assert!(antennta_flags[95]);
+/// assert!(antennta_flags[93]);
+/// assert!(antennta_flags[80]);
+/// assert!(antennta_flags[87]);
+/// ```
+pub fn get_antenna_flags(context: &CorrelatorContext) -> Vec<bool> {
+    context
+        .metafits_context
+        .antennas
+        .iter()
+        .map(|antenna| antenna.rfinput_x.flagged || antenna.rfinput_y.flagged)
+        .collect()
+}
+
+/// Produce a vector of flags for baslines whose antennae are flagged in `antenna_flags`
+fn get_baseline_flags(context: &CorrelatorContext, antenna_flags: Vec<bool>) -> Vec<bool> {
+    assert_eq!(antenna_flags.len(), context.metafits_context.num_ants);
+    context
+        .metafits_context
+        .baselines
+        .clone()
+        .into_iter()
+        .map(|baseline| {
+            antenna_flags[baseline.ant1_index] || antenna_flags[baseline.ant2_index]
+            // *antenna_flags.get(baseline.ant1_index).unwrap_or(&false) || *antenna_flags.get(baseline.ant2_index).unwrap_or(&false)
+        })
+        .collect()
+}
+
+/// Initialize a vector of [`CxxFlagMask`]s for each baseline and provided
 /// coarse channel and timestep indices
 ///
 /// TODO: use:
-/// - flagged_coarse_chan_idxs
-/// - flagged_fine_chan_idxs
-/// - flagged_timestep_idxs
+/// - coarse_chan_flags
+/// - fine_chan_flags
+/// - timestep_flags
 /// to set correlator mask
 pub fn init_baseline_flagmasks(
     aoflagger: &CxxAOFlagger,
     context: &CorrelatorContext,
     // num_baselines: usize,
-    // width: usize,
-    // height: usize,
+    // fine_chans_per_coarse: usize,
     img_coarse_chan_idxs: &[usize],
     img_timestep_idxs: &[usize],
-    // flagged_baselines: &[usize],
-    // flagged_coarse_chan_idxs: &[usize],
-    // flagged_fine_chan_idxs: &[usize],
-    // flagged_timestep_idxs: &[usize],
-    flag_bad_inputs: bool,
+    antenna_flags: Option<Vec<bool>>,
+    // coarse_chan_flags: Option<Vec<bool>>,
+    // fine_chan_flags: Option<Vec<bool>>,
+    // timestep_flags: Option<Vec<bool>>,
+    // flag_bad_inputs: bool,
 ) -> Vec<UniquePtr<CxxFlagMask>> {
     let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
     let width = img_timestep_idxs.len();
@@ -647,30 +702,23 @@ pub fn init_baseline_flagmasks(
     // create correlator mask
     let correlator_mask = unsafe { aoflagger.MakeFlagMask(width, height, false) };
 
-    let antenna_flags: Vec<_> = context
-        .metafits_context
-        .antennas
+    let antenna_flags = match antenna_flags {
+        Some(antenna_flags) => antenna_flags,
+        None => (0..context.metafits_context.num_ants)
+            .map(|_| false)
+            .collect(),
+    };
+
+    get_baseline_flags(&context, antenna_flags)
         .iter()
-        .map(|antenna| antenna.rfinput_x.flagged || antenna.rfinput_y.flagged)
-        .collect();
-
-    context
-        .metafits_context
-        .baselines
-        .clone()
-        .into_iter()
-        .map(|baseline| {
-            if flag_bad_inputs {
-                if antenna_flags[baseline.ant1_index] || antenna_flags[baseline.ant2_index] {
-                    return unsafe { aoflagger.MakeFlagMask(width, height, true) };
-                }
+        .map(|&baseline_flag| {
+            if baseline_flag {
+                unsafe { aoflagger.MakeFlagMask(width, height, true) }
+            } else {
+                let mut flag_mask = unsafe { aoflagger.MakeFlagMask(width, height, false) };
+                flagmask_set(&mut flag_mask, &correlator_mask);
+                flag_mask
             }
-
-            let mut flag_mask = unsafe { aoflagger.MakeFlagMask(width, height, false) };
-            flagmask_set(&mut flag_mask, &correlator_mask);
-            flag_mask
-
-            // TODO: set mask for missing HDUs
         })
         .collect()
 }
@@ -803,7 +851,9 @@ pub fn flagmask_set(
 /// # Examples
 ///
 /// ```
-/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new, flag_imgsets_existing, init_baseline_flagmasks};
+/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags,
+///     cxx_aoflagger_new, flag_imgsets_existing, init_baseline_flagmasks,
+///     get_antenna_flags};
 /// use mwalib::CorrelatorContext;
 /// use tempfile::tempdir;
 ///
@@ -838,7 +888,7 @@ pub fn flagmask_set(
 ///     &context,
 ///     img_coarse_chan_idxs,
 ///     img_timestep_idxs,
-///     true,
+///     Some(get_antenna_flags(&context)),
 /// );
 ///
 /// // use the default strategy file location for MWA
@@ -980,8 +1030,8 @@ mod tests {
     #![allow(clippy::float_cmp)]
 
     use super::{
-        context_to_baseline_imgsets, flag_imgsets, flagmask_or, flagmask_set, write_flags,
-        FlagFileSet,
+        context_to_baseline_imgsets, flag_imgsets, flag_imgsets_existing, flagmask_or,
+        flagmask_set, get_antenna_flags, init_baseline_flagmasks, write_flags, FlagFileSet,
     };
     use crate::{
         correct_cable_lengths,
@@ -1193,23 +1243,27 @@ mod tests {
     fn test_flag_imgsets_minimal() {
         let width = 64;
         let height = 64;
-        let img_stride = (((width - 1) / 8) + 1) * 8;
+        let count = 8;
+        let num_baselines = 2;
 
+        let noise_bl = 1;
         let noise_x = 32;
         let noise_y = 32;
         let noise_z = 1;
+        let signal_val = 0 as f32;
         let noise_val = 0xffffff as f32;
 
         let aoflagger = unsafe { cxx_aoflagger_new() };
 
-        let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = (0..2)
+        let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = (0..num_baselines)
             .into_iter()
-            .map(|_| unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) })
+            .map(|_| unsafe { aoflagger.MakeImageSet(width, height, count, signal_val, width) })
             .collect();
 
+        let img_stride = baseline_imgsets[0].HorizontalStride();
         // modify the imageset to add some synthetic noise
-        baseline_imgsets[1].pin_mut().ImageBufferMut(noise_z)[noise_y * img_stride + noise_x] =
-            noise_val;
+        baseline_imgsets[noise_bl].pin_mut().ImageBufferMut(noise_z)
+            [noise_y * img_stride + noise_x] = noise_val;
 
         let strategy_file_minimal = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
 
@@ -1218,8 +1272,109 @@ mod tests {
         let flag_stride = baseline_flagmasks[0].HorizontalStride();
         assert!(!baseline_flagmasks[0].Buffer()[0]);
         assert!(!baseline_flagmasks[0].Buffer()[noise_y * flag_stride + noise_x]);
-        assert!(!baseline_flagmasks[1].Buffer()[0]);
-        assert!(baseline_flagmasks[1].Buffer()[noise_y * flag_stride + noise_x]);
+        assert!(!baseline_flagmasks[noise_bl].Buffer()[0]);
+        assert!(baseline_flagmasks[noise_bl].Buffer()[noise_y * flag_stride + noise_x]);
+    }
+
+    #[test]
+    fn test_flag_imgsets_existing_minimal() {
+        let width = 64;
+        let height = 64;
+        let count = 8;
+        let num_baselines = 2;
+
+        // parameters for simulated noise
+        let noise_bl = 1;
+        let noise_x = 32;
+        let noise_y = 32;
+        let noise_z = 1;
+        let signal_val = 0 as f32;
+        let noise_val = 0xffffff as f32;
+
+        // parameters for simulated pre-existing flag
+        let existing_bl = 0;
+        let existing_x = 1;
+        let existing_y = 2;
+
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+        let mut baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = (0..num_baselines)
+            .into_iter()
+            .map(|_| unsafe { aoflagger.MakeImageSet(width, height, count, signal_val, width) })
+            .collect();
+
+        // modify the imageset to add some synthetic noise
+        let img_stride = baseline_imgsets[0].HorizontalStride();
+        baseline_imgsets[noise_bl].pin_mut().ImageBufferMut(noise_z)
+            [noise_y * img_stride + noise_x] = noise_val;
+
+        let strategy_file_minimal = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
+
+        let mut existing_flagmasks: Vec<UniquePtr<CxxFlagMask>> = (0..num_baselines)
+            .into_iter()
+            .map(|_| unsafe { aoflagger.MakeFlagMask(width, height, false) })
+            .collect();
+        let flag_stride = existing_flagmasks[0].HorizontalStride();
+        existing_flagmasks[existing_bl].pin_mut().BufferMut()
+            [existing_y * flag_stride + existing_x] = true;
+
+        let baseline_flagmasks = flag_imgsets_existing(
+            &aoflagger,
+            &strategy_file_minimal,
+            baseline_imgsets,
+            existing_flagmasks,
+            true,
+        );
+
+        assert!(!baseline_flagmasks[0].Buffer()[0]);
+        assert!(!baseline_flagmasks[0].Buffer()[noise_y * flag_stride + noise_x]);
+        assert!(baseline_flagmasks[existing_bl].Buffer()[existing_y * flag_stride + existing_x]);
+        assert!(!baseline_flagmasks[noise_bl].Buffer()[0]);
+        assert!(baseline_flagmasks[noise_bl].Buffer()[noise_y * flag_stride + noise_x]);
+    }
+
+    #[test]
+    fn test_flag_imgsets_existing_ord() {
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+        let context = get_mwa_ord_context();
+
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let img_timestep_idxs = &context.common_timestep_indices;
+        let baseline_imgsets = context_to_baseline_imgsets(
+            &aoflagger,
+            &context,
+            img_coarse_chan_idxs,
+            img_timestep_idxs,
+        );
+
+        let strategy_filename = &aoflagger.FindStrategyFileMWA();
+        let baseline_flagmasks = init_baseline_flagmasks(
+            &aoflagger,
+            &context,
+            img_coarse_chan_idxs,
+            img_timestep_idxs,
+            Some(get_antenna_flags(&context)),
+        );
+
+        let baseline_flagmasks = flag_imgsets_existing(
+            &aoflagger,
+            &strategy_filename,
+            baseline_imgsets,
+            baseline_flagmasks,
+            true,
+        );
+
+        // test that flagged antennas are indeed flagged
+
+        assert!(!baseline_flagmasks[0].Buffer()[7]);
+        assert!(baseline_flagmasks[63].Buffer()[7]);
+        assert!(baseline_flagmasks[62].Buffer()[7]);
+        assert!(baseline_flagmasks[11].Buffer()[7]);
+        assert!(baseline_flagmasks[111].Buffer()[7]);
+        assert!(baseline_flagmasks[91].Buffer()[7]);
+        assert!(baseline_flagmasks[95].Buffer()[7]);
+        assert!(baseline_flagmasks[93].Buffer()[7]);
+        assert!(baseline_flagmasks[80].Buffer()[7]);
+        assert!(baseline_flagmasks[87].Buffer()[7]);
     }
 
     #[test]

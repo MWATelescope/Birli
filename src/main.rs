@@ -5,7 +5,7 @@ use std::{env, ffi::OsString, fmt::Debug};
 
 use birli::{
     context_to_baseline_imgsets, correct_cable_lengths, cxx_aoflagger_new, flag_imgsets_existing,
-    get_aoflagger_version_string, init_baseline_flagmasks, write_flags,
+    get_antenna_flags, get_aoflagger_version_string, init_baseline_flagmasks, write_flags,
 };
 // use birli::util::{dump_flagmask, dump_imgset};
 use mwalib::CorrelatorContext;
@@ -81,15 +81,6 @@ where
             img_timestep_idxs,
         );
 
-        // if log_enabled!(Level::Debug) {
-        //     baseline_imgsets.iter().take(128).enumerate().for_each(|(baseline_idx, imgset)| {
-        //         let baseline = &context.metafits_context.baselines[baseline_idx];
-        //         if baseline.ant1_index == 0 && baseline.ant2_index == 2 {
-        //             debug!("baseline {:04} ({}, {})\n{}", baseline_idx, baseline.ant1_index, baseline.ant2_index, dump_imgset(imgset, Some(128), Some(128), Some(16)));
-        //         }
-        //     });
-        // }
-
         // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
         let no_cable_delays = aoflagger_matches.is_present("no-cable-delay");
         let cable_delays_applied = context.metafits_context.cable_delays_applied;
@@ -103,7 +94,7 @@ where
             &context,
             img_coarse_chan_idxs,
             img_timestep_idxs,
-            true, // TODO: do we ever not want to flag bad inputs?
+            Some(get_antenna_flags(&context)),
         );
 
         let baseline_flagmasks = flag_imgsets_existing(
@@ -113,15 +104,6 @@ where
             baseline_flagmasks,
             true,
         );
-
-        // if log_enabled!(Level::Debug) {
-        //     baseline_flagmasks.iter().take(128).enumerate().for_each(|(baseline_idx, flagmask)| {
-        //         let baseline = &context.metafits_context.baselines[baseline_idx];
-        //         if baseline.ant1_index == 0 && baseline.ant2_index == 2 {
-        //             debug!("baseline {:04} ({}, {})\n{}", baseline_idx, baseline.ant1_index, baseline.ant2_index, dump_flagmask(flagmask, Some(128), Some(128)));
-        //         }
-        //     });
-        // }
 
         let gpubox_ids: Vec<usize> = context
             .common_coarse_chan_indices
