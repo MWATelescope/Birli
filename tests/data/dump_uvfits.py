@@ -67,8 +67,8 @@ def main(argv):
     uv = fits.open(args.uvfile)
     print(f"-> uv.info():")
     uv.info()
-    print("-> shapes, colnames:") 
-    print([(x,x.data.shape,x.data.dtype.names,x.columns) for x in uv])
+    # print("-> shapes, colnames:") 
+    # print([(x,x.data.shape,x.data.dtype.names,x.columns) for x in uv])
 
 
 
@@ -76,7 +76,7 @@ def main(argv):
     print("VISIBILITIES")
     print("")
 
-    print(uv[0].header.cards)
+    print(repr(uv[0].header))
 
     print(f"-> data.shape {uv[0].data.shape}")
 
@@ -155,8 +155,8 @@ def main(argv):
     print("")
     print("ANTENNA INFO")
     print("")
-
-    print(uv[1].header.cards)
+    
+    print(repr(uv[1].header))
 
     print(f"-> data ({uv[1].data.shape})")
     print(tabulate(uv[1].data, headers=uv[1].data.names))

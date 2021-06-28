@@ -35,9 +35,9 @@ def main(argv):
     print(f"-> hdus.info():")
     hdus.info()
 
-    ####
-    # Primary HDU
-    #### 
+    print("")
+    print("HEADER")
+    print("")
 
     primary_hdu = hdus[0]
     print(f" -> primary_hdu.header\n{repr(primary_hdu.header)}")

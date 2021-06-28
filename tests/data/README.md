@@ -171,15 +171,24 @@ cotter \
 
 for i in \
   1196175296_mwa_ord/1196175296.metafits \
-  1196175296_mwa_ord/1196175296.uvfits \
+  1297526432_mwax/1297526432.metafits \
+  1247842824_flags/1247842824.metafits
+do
+  python3 tests/data/dump_metafits.py "tests/data/$i" | tee "tests/data/$i.txt"
+done
+for i in \
   1196175296_mwa_ord/FlagfileCotter01.mwaf \
   1196175296_mwa_ord/FlagfileCotter02.mwaf \
-  1297526432_mwax/1297526432.metafits \
-  1247842824_flags/1247842824.metafits \
   1247842824_flags/FlagfileCotterMWA01.mwaf \
   1247842824_flags/FlagfileCotterGeneric01.mwaf
+do
+  python3 tests/data/dump_mwaf.py --timestep-limit=2 --baseline-limit=2 "tests/data/$i" | tee "tests/data/$i.txt"
+done
+for i in \
+  1196175296_mwa_ord/1196175296.uvfits \
+  1247842824_flags/1247842824.uvfits
 do 
-  fitsheader "tests/data/$i" | tee "tests/data/$i.header.txt";
+  python3 tests/data/dump_uvfits.py  --timestep-limit=2 --baseline-limit=2 --antenna-limit=2 "tests/data/$i" | tee "tests/data/$i.txt";
 done
 ```
 

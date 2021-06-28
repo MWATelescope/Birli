@@ -40,24 +40,24 @@ def main(argv):
     hdus = fits.open(args.file)
     print(f"-> hdus.info():")
     hdus.info()
+    
+    print("")
+    print("HEADER")
+    print("")
 
-    ####
-    # Primary HDU
-    #### 
-
-    primary_hdu = hdus[0]
-    print(f" -> primary_hdu.header\n{repr(primary_hdu.header)}")
-    # hdus[0].info()
-    num_scans = primary_hdu.header['NSCANS']
-    num_antenna = primary_hdu.header['NANTENNA'] 
+    print(repr(hdus[0].header))
+    
+    num_scans = hdus[0].header['NSCANS']
+    num_antenna = hdus[0].header['NANTENNA'] 
     num_baselines = (num_antenna * (num_antenna + 1) // 2)
     print(f" -> num baselines: {num_baselines}")
 
-    # ####
-    # # Flag Data
-    # ####
+    print("")
+    print("FLAG DATA")
+    print("")
 
-    # flag_header = hdus[1].data.dtype.names
+    print(repr(hdus[1].header))
+
     flag_data = hdus[1].data
     print(f"flags shape {flag_data.shape}")
     rows = flag_data.shape[0]
