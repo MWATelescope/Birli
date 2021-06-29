@@ -1,7 +1,7 @@
 #[cxx::bridge]
 // These are necessary for binding to aoflagger
 #[allow(clippy::ptr_arg)]
-#[allow(clippy::clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub mod ffi {
     unsafe extern "C++" {
         include!("birli/include/cxx_aoflagger.h");
