@@ -1797,10 +1797,10 @@ mod tests {
         flagmask_or(&mut this_flagmask, &other_flagmask);
 
         let this_buffer = this_flagmask.Buffer();
-        assert_eq!(this_buffer[0], false);
-        assert_eq!(this_buffer[1], true);
-        assert_eq!(this_buffer[2], true);
-        assert_eq!(this_buffer[3], true);
+        assert!(!this_buffer[0]);
+        assert!(this_buffer[1]);
+        assert!(this_buffer[2]);
+        assert!(this_buffer[3]);
     }
 
     #[test]
@@ -1812,9 +1812,9 @@ mod tests {
         flagmask_set(&mut this_flagmask, &other_flagmask);
 
         let this_buffer = this_flagmask.Buffer();
-        assert_eq!(this_buffer[0], false);
-        assert_eq!(this_buffer[1], true);
-        assert_eq!(this_buffer[2], false);
-        assert_eq!(this_buffer[3], true);
+        assert!(!this_buffer[0]);
+        assert!(this_buffer[1]);
+        assert!(!this_buffer[2]);
+        assert!(this_buffer[3]);
     }
 }
