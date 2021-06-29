@@ -62,8 +62,10 @@ def main(argv):
     print(f"flags shape {flag_data.shape}")
     rows = flag_data.shape[0]
     
-    assert rows == num_scans * num_baselines
-    timestep_limit = num_scans
+    timestep_limit = rows // num_baselines
+    if rows != num_scans * num_baselines:
+        print(f"num_scans ({num_scans}) * num_baselines({num_baselines}) != rows({rows})")
+    print(f"actual num_scans: {timestep_limit}")
     if args.timestep_limit:
         timestep_limit = min(args.timestep_limit, timestep_limit)
     baseline_limit = num_baselines

@@ -1,6 +1,6 @@
--> args {'file': 'tests/data/1196175296_mwa_ord/FlagfileCotter01.mwaf', 'timestep_limit': 2, 'baseline_limit': 2}
+-> args {'file': 'tests/data/1196175296_mwa_ord/FlagfileCotterMWA01.mwaf', 'timestep_limit': 12, 'baseline_limit': 12}
 -> hdus.info():
-Filename: tests/data/1196175296_mwa_ord/FlagfileCotter01.mwaf
+Filename: tests/data/1196175296_mwa_ord/FlagfileCotterMWA01.mwaf
 No.    Name      Ver    Type      Cards   Dimensions   Format
   0  PRIMARY       1 PrimaryHDU      15   ()      
   1                1 BinTableHDU     10   33024R x 1C   [2X]   
@@ -37,10 +37,64 @@ TFIELDS =                    1 / number of fields in each row
 TTYPE1  = 'FLAGS   '           / label for field   1                            
 TFORM1  = '2X      '           / data format of field: BIT                      
 flags shape (33024,)
--> limits: baseline=2, timestep=2
+-> limits: baseline=12, timestep=4
 -> bl 0000:
  --> ts 0000: ..
  --> ts 0001: ..
+ --> ts 0002: ..
+ --> ts 0003: ..
 -> bl 0001:
  --> ts 0000: ..
  --> ts 0001: ..
+ --> ts 0002: ..
+ --> ts 0003: ..
+-> bl 0002:
+ --> ts 0000: ..
+ --> ts 0001: ..
+ --> ts 0002: ..
+ --> ts 0003: ..
+-> bl 0003:
+ --> ts 0000: ..
+ --> ts 0001: ..
+ --> ts 0002: ..
+ --> ts 0003: ..
+-> bl 0004:
+ --> ts 0000: ..
+ --> ts 0001: ..
+ --> ts 0002: ..
+ --> ts 0003: ..
+-> bl 0005:
+ --> ts 0000: ..
+ --> ts 0001: ..
+ --> ts 0002: ..
+ --> ts 0003: ..
+-> bl 0006:
+ --> ts 0000: ..
+ --> ts 0001: ..
+ --> ts 0002: ..
+ --> ts 0003: ..
+-> bl 0007:
+ --> ts 0000: ..
+ --> ts 0001: ..
+ --> ts 0002: ..
+ --> ts 0003: ..
+-> bl 0008:
+ --> ts 0000: ..
+ --> ts 0001: ..
+ --> ts 0002: ..
+ --> ts 0003: ..
+-> bl 0009:
+ --> ts 0000: ..
+ --> ts 0001: ..
+ --> ts 0002: ..
+ --> ts 0003: ..
+-> bl 0010:
+ --> ts 0000: ..
+ --> ts 0001: ..
+ --> ts 0002: ..
+ --> ts 0003: ..
+-> bl 0011:
+ --> ts 0000: ##
+ --> ts 0001: ##
+ --> ts 0002: ##
+ --> ts 0003: ##

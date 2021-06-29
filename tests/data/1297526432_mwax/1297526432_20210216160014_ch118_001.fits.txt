@@ -1,0 +1,88 @@
+-> hdus.info():
+Filename: tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits
+No.    Name      Ver    Type      Cards   Dimensions   Format
+  0  PRIMARY       1 PrimaryHDU      22   ()      
+  1                1 ImageHDU        10   (16, 3)   int32   
+  2                1 ImageHDU        10   (4, 3)   float32   
+  3                1 ImageHDU        10   (16, 3)   int32   
+  4                1 ImageHDU        10   (4, 3)   float32   
+
+HEADER
+
+SIMPLE  =                    T / conforms to FITS standard                      
+BITPIX  =                    8 / array data type                                
+NAXIS   =                    0 / number of array dimensions                     
+EXTEND  =                    T                                                  
+COMMENT FITS (Flexible Image Transport System) format is defined in 'Astronomy  
+COMMENT and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H   
+CORR_VER=                    2 / MWA Correlator Version                         
+COMMENT Visibilities: 1 integration per HDU: [baseline][finechan][pol][r,i]     
+COMMENT Weights: 1 integration per HDU: [baseline][pol][weight]                 
+MARKER  =                  160 / Data offset marker (all channels should match) 
+TIME    =           1613491215 / Unix time (seconds)                            
+MILLITIM=                    0 / Milliseconds since TIME                        
+PROJID  = 'C001    '           / MWA Project Id                                 
+OBSID   =           1297526432 / MWA Observation Id                             
+FINECHAN=                640.0 / [kHz] Fine channel width                       
+NFINECHS=                    2 / Number of fine channels in this coarse channel 
+INTTIME =                  0.5 / Integration time (s)                           
+NINPUTS =                    4 / Number of rf inputs into the correlation produc
+CORRHOST= 'mwax02  '           / Correlator host                                
+CORRCHAN=                   10 / Correlator coarse channel                      
+MC_IP   = '0.0.0.0 '           / Multicast IP                                   
+MC_PORT =                    0 / Multicast Port                                 
+
+VISIBILITIES
+
+
+ -> SCAN 0 IMAGE
+
+XTENSION= 'IMAGE   '           / IMAGE extension                                
+BITPIX  =                   32 / number of bits per data pixel                  
+NAXIS   =                    2 / number of data axes                            
+NAXIS1  =                   16 / length of data axis 1                          
+NAXIS2  =                    3 / length of data axis 2                          
+PCOUNT  =                    0 / required keyword; must = 0                     
+GCOUNT  =                    1 / required keyword; must = 1                     
+TIME    =           1613491215 / Unix time (seconds)                            
+MILLITIM=                    0 / Milliseconds since TIME                        
+MARKER  =                  160 / Data offset marker (all channels should match) 
+
+ -> SCAN 0 FLAG
+
+XTENSION= 'IMAGE   '           / IMAGE extension                                
+BITPIX  =                  -32 / number of bits per data pixel                  
+NAXIS   =                    2 / number of data axes                            
+NAXIS1  =                    4 / length of data axis 1                          
+NAXIS2  =                    3 / length of data axis 2                          
+PCOUNT  =                    0 / required keyword; must = 0                     
+GCOUNT  =                    1 / required keyword; must = 1                     
+TIME    =           1613491215 / Unix time (seconds)                            
+MILLITIM=                    0 / Milliseconds since TIME                        
+MARKER  =                  160 / Data offset marker (all channels should match) 
+
+ -> SCAN 1 IMAGE
+
+XTENSION= 'IMAGE   '           / IMAGE extension                                
+BITPIX  =                   32 / number of bits per data pixel                  
+NAXIS   =                    2 / number of data axes                            
+NAXIS1  =                   16 / length of data axis 1                          
+NAXIS2  =                    3 / length of data axis 2                          
+PCOUNT  =                    0 / required keyword; must = 0                     
+GCOUNT  =                    1 / required keyword; must = 1                     
+TIME    =           1613491215 / Unix time (seconds)                            
+MILLITIM=                  500 / Milliseconds since TIME                        
+MARKER  =                  161 / Data offset marker (all channels should match) 
+
+ -> SCAN 1 FLAG
+
+XTENSION= 'IMAGE   '           / IMAGE extension                                
+BITPIX  =                  -32 / number of bits per data pixel                  
+NAXIS   =                    2 / number of data axes                            
+NAXIS1  =                    4 / length of data axis 1                          
+NAXIS2  =                    3 / length of data axis 2                          
+PCOUNT  =                    0 / required keyword; must = 0                     
+GCOUNT  =                    1 / required keyword; must = 1                     
+TIME    =           1613491215 / Unix time (seconds)                            
+MILLITIM=                  500 / Milliseconds since TIME                        
+MARKER  =                  161 / Data offset marker (all channels should match) 

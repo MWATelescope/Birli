@@ -64,23 +64,20 @@ def main(argv):
     #     print(f" --> flags \n{pd.DataFrame(flags)}")
 
 
-    uv = fits.open(args.uvfile)
-    print(f"-> uv.info():")
-    uv.info()
-    # print("-> shapes, colnames:") 
-    # print([(x,x.data.shape,x.data.dtype.names,x.columns) for x in uv])
-
+    hdus = fits.open(args.uvfile)
+    print(f"-> hdus.info():")
+    hdus.info()
 
 
     print("")
     print("VISIBILITIES")
     print("")
 
-    print(repr(uv[0].header))
+    print(repr(hdus[0].header))
 
-    print(f"-> data.shape {uv[0].data.shape}")
+    print(f"-> data.shape {hdus[0].data.shape}")
 
-    baselines = np.unique(uv[0].data.par("BASELINE"))
+    baselines = np.unique(hdus[0].data.par("BASELINE"))
     num_baselines = len(baselines)
     # assert(pyuv.Nbls == num_baselines)
     baseline_limit = num_baselines
@@ -88,7 +85,7 @@ def main(argv):
         if args.baseline_limit < baseline_limit:
             baseline_limit = args.baseline_limit
             show_baseline_ellipses = True
-    timesteps = np.unique(uv[0].data.par("DATE"))
+    timesteps = np.unique(hdus[0].data.par("DATE"))
     num_timesteps = len(timesteps)
     timestep_limit = num_timesteps
     if args.timestep_limit:
@@ -97,15 +94,15 @@ def main(argv):
             show_timestep_ellipses = True
 
     # assert(pyuv.Ntimes == num_timesteps)
-    assert(uv[0].data.shape[0] == num_baselines * num_timesteps)
-    # blt_data = np.reshape(np.array(uv[0].data), (num_baselines, num_timesteps))
+    assert(hdus[0].data.shape[0] == num_baselines * num_timesteps)
+    # blt_data = np.reshape(np.array(hdus[0].data), (num_baselines, num_timesteps))
     # for bl in baselines[:baseline_limit]:
     #     for ts in timestep[:timestep_limit]:
-    blt_data = uv[0].data[::num_baselines]
+    blt_data = hdus[0].data[::num_baselines]
     for bl_idx in range(baseline_limit):
         print(bl_idx)
         print(f"baseline idx {bl_idx}")
-        bl_data = uv[0].data[bl_idx::num_baselines]
+        bl_data = hdus[0].data[bl_idx::num_baselines]
         # vis_data = bl_data[:, :, :, :, :, 0] - 1j * bl_data[:, :, :, :, :, 1]
         # print(f"--> vis_data ({vis_data.shape}):")
         # print(vis_data)
@@ -156,19 +153,11 @@ def main(argv):
     print("ANTENNA INFO")
     print("")
     
-    print(repr(uv[1].header))
+    print(repr(hdus[1].header))
 
-    print(f"-> data ({uv[1].data.shape})")
-    print(tabulate(uv[1].data, headers=uv[1].data.names))
+    print(f"-> data ({hdus[1].data.shape})")
+    print(tabulate(hdus[1].data, headers=hdus[1].data.names))
 
 
 if __name__ == '__main__':
     main(sys.argv[1:])
-    # main([
-    #     "tests/data/1247842824_flags/1247842824.uvfits",
-    #     # "tests/data/1196175296_mwa_ord/1196175296.uvfits",
-    #     "--baseline-limit=5",
-    #     "--timestep-limit=5",
-    #     "--antenna-limit=1"
-    # ])
-

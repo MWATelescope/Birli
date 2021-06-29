@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 from os.path import abspath, exists, dirname
 from os.path import join as path_join, exists as path_exists
@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 import math
 import re
-import itertools
 
+from .common import get_gpufits_num_scans, chunk
 
 DST_TEST_DIR_MWAX = "tests/data/1297526432_mwax"
 SRC_TEST_DIR_MWAX = "/mnt/data/1297526432_mwax"
@@ -64,14 +64,8 @@ def parse_filename(name, corr_type="MWAX", metafits_coarse_chans=[], with_src_di
         result['hdus'] = num_hdus
         result['time'] = gpu_fits[1].header['TIME'] + gpu_fits[1].header['MILLITIM'] / 1000
         
-        result['nscans'] = get_num_scans(num_hdus, corr_type)
+        result['nscans'] = get_gpufits_num_scans(num_hdus, corr_type)
     return result
-
-
-def chunk(iterable, n):
-    "Collect data into fixed-length chunks or blocks"
-    args = [iter(iterable)] * n
-    return zip(*args)
 
 
 def get_input_df(tile_data):
@@ -101,11 +95,6 @@ def display_float(flt):
 def split_strip_filter(str):
     return list(filter(None, map( lambda tok: tok.strip(), str.split(',') )))
 
-
-def get_num_scans(hdu_len, corr_type):
-    if corr_type == "MWAX":
-        return (hdu_len - 1) / 2
-    return hdu_len - 1
 
 def generate(args):
     print(f"generating to {args['dst_dir']}")
@@ -372,9 +361,6 @@ def generate(args):
             primary_hdu.header['NINPUTS'] = num_inputs
             scan_hdus = []
 
-            # num_scans = get_num_scans(len(gpu_fits), args['corr_type'])
-            # if args.get('max_scans'):
-            #     num_scans = min(args['max_scans'], num_scans)
             num_scans = batches_df.max_scans[batches_df.batch == row['batch']][0]
 
             if args['corr_type'] == "MWAX":

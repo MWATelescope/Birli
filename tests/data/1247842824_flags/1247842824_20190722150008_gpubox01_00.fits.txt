@@ -1,0 +1,59 @@
+-> hdus.info():
+Filename: tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits
+No.    Name      Ver    Type      Cards   Dimensions   Format
+  0  PRIMARY       1 PrimaryHDU      15   ()      
+  1  COMPRESSED_IMAGE    1 CompImageHDU     13   (66048, 128)   int32   
+  2  COMPRESSED_IMAGE    1 CompImageHDU     13   (66048, 128)   int32   
+
+HEADER
+
+SIMPLE  =                    T / conforms to FITS standard                      
+BITPIX  =                    8 / array data type                                
+NAXIS   =                    0 / number of array dimensions                     
+EXTEND  =                    T                                                  
+COMMENT   FITS (Flexible Image Transport System) format is defined in 'Astronomy
+COMMENT   and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H 
+TIME    =           1563807607 / Unix time (seconds)                            
+MILLITIM=                    0 / Milliseconds since TIME                        
+INTTIME =                   1. / Integration time (s)                           
+MARKER  =                   80 / Data offset marker (all channels should match) 
+PROJID  = 'C001' / MWA Project Id                                               
+OBSID   = '1247842824' / MWA Observation Id                                     
+NFINECHS=                  128                                                  
+FINECHAN=                 10.0                                                  
+NINPUTS =                  256                                                  
+
+VISIBILITIES
+
+
+ -> SCAN 0 IMAGE
+
+XTENSION= 'IMAGE   '           / Image Extension created by MWA DataCapture     
+BITPIX  =                   32 / number of bits per data pixel                  
+NAXIS   =                    2 / number of data axes                            
+NAXIS1  =                66048 / length of data axis 1                          
+NAXIS2  =                  128 / length of data axis 2                          
+PCOUNT  =                    0                                                  
+GCOUNT  =                    1                                                  
+COMMENT   FITS (Flexible Image Transport System) format is defined in 'Astronomy
+COMMENT   and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H 
+TIME    =           1563807607 / Unix time (seconds)                            
+MILLITIM=                    0 / Milliseconds since TIME                        
+INTTIME =                   1. / Integration time (s)                           
+MARKER  =                   80 / Data offset marker (all channels should match) 
+
+ -> SCAN 1 IMAGE
+
+XTENSION= 'IMAGE   '           / Image Extension created by MWA DataCapture     
+BITPIX  =                   32 / number of bits per data pixel                  
+NAXIS   =                    2 / number of data axes                            
+NAXIS1  =                66048 / length of data axis 1                          
+NAXIS2  =                  128 / length of data axis 2                          
+PCOUNT  =                    0                                                  
+GCOUNT  =                    1                                                  
+COMMENT   FITS (Flexible Image Transport System) format is defined in 'Astronomy
+COMMENT   and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H 
+TIME    =           1563807608 / Unix time (seconds)                            
+MILLITIM=                    0 / Milliseconds since TIME                        
+INTTIME =                   1. / Integration time (s)                           
+MARKER  =                  100 / Data offset marker (all channels should match) 
