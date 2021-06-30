@@ -4,10 +4,8 @@ use crate::cxx_aoflagger::ffi::CxxImageSet;
 use cxx::UniquePtr;
 use itertools::izip;
 use log::trace;
-use mwalib::CorrelatorContext;
+use mwalib::{CorrelatorContext, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S};
 use std::f64::consts::PI;
-
-const SPEED_OF_LIGHT_IN_VACUUM: f64 = 299792458.0; // speed of light in m/s
 
 fn _correct_cable_length_buffers_cotter(
     freq_hz: &u32,
@@ -15,7 +13,8 @@ fn _correct_cable_length_buffers_cotter(
     buf_re: &mut [f32],
     buf_im: &mut [f32],
 ) {
-    let angle: f64 = -2.0 * PI * electrical_length_m * (*freq_hz as f64) / SPEED_OF_LIGHT_IN_VACUUM;
+    let angle: f64 =
+        -2.0 * PI * electrical_length_m * (*freq_hz as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
     let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
     let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
 
@@ -84,7 +83,7 @@ fn _correct_cable_length_buffers_cotter(
 /// use itertools::izip;
 /// use std::f64::consts::PI;
 ///
-/// const SPEED_OF_LIGHT_IN_VACUUM: f64 = 299792458.0; // speed of light in m/s
+/// const SPEED_OF_LIGHT_IN_VACUUM_M_PER_S: f64 = 299792458.0; // speed of light in m/s
 ///
 /// fn _correct_cable_length_buffers_precise(
 ///     freq_hz: &u32,
@@ -92,7 +91,7 @@ fn _correct_cable_length_buffers_cotter(
 ///     buf_re: &mut [f32],
 ///     buf_im: &mut [f32],
 /// ) {
-///     let angle: f64 = -2.0 * PI * electrical_length_m * (*freq_hz as f64) / SPEED_OF_LIGHT_IN_VACUUM;
+///     let angle: f64 = -2.0 * PI * electrical_length_m * (*freq_hz as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
 ///     let (sin_angle, cos_angle) = angle.sin_cos();
 ///     izip!(buf_re.iter_mut(), buf_im.iter_mut()).for_each(|(re, im)| {
 ///         let vis_re = *re as f64;
@@ -171,7 +170,7 @@ pub fn correct_cable_lengths(
 mod tests {
     #![allow(clippy::float_cmp)]
 
-    use super::{correct_cable_lengths, SPEED_OF_LIGHT_IN_VACUUM};
+    use super::{correct_cable_lengths, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S};
     use float_cmp::{approx_eq, F32Margin};
     use mwalib::CorrelatorContext;
 
@@ -308,34 +307,34 @@ mod tests {
         let length_m_1_xx = length_1_2_x - length_1_1_x;
         let angle_1_xx_0: f64 =
             -2.0 * std::f64::consts::PI * length_m_1_xx * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM;
+                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_1_xx_0_f64, cos_1_xx_0_f64) = angle_1_xx_0.sin_cos();
         let (sin_1_xx_0, cos_1_xx_0) = (sin_1_xx_0_f64 as f32, cos_1_xx_0_f64 as f32);
         // baseline 1, pol XY, cc 0, fc 0
         let length_m_1_xy = length_1_2_y - length_1_1_x;
         let angle_1_xy_0: f64 =
             -2.0 * std::f64::consts::PI * length_m_1_xy * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM;
+                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_1_xy_0_f64, cos_1_xy_0_f64) = angle_1_xy_0.sin_cos();
         let (sin_1_xy_0, cos_1_xy_0) = (sin_1_xy_0_f64 as f32, cos_1_xy_0_f64 as f32);
         // baseline 1, pol YX, cc 0, fc 0
         let length_m_1_yx = length_1_2_x - length_1_1_y;
         let angle_1_yx_0: f64 =
             -2.0 * std::f64::consts::PI * length_m_1_yx * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM;
+                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_1_yx_0_f64, cos_1_yx_0_f64) = angle_1_yx_0.sin_cos();
         let (sin_1_yx_0, cos_1_yx_0) = (sin_1_yx_0_f64 as f32, cos_1_yx_0_f64 as f32);
         // baseline 1, pol YY, cc 0, fc 0
         let length_m_1_yy = length_1_2_y - length_1_1_y;
         let angle_1_yy_0: f64 =
             -2.0 * std::f64::consts::PI * length_m_1_yy * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM;
+                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_1_yy_0_f64, cos_1_yy_0_f64) = angle_1_yy_0.sin_cos();
         let (sin_1_yy_0, cos_1_yy_0) = (sin_1_yy_0_f64 as f32, cos_1_yy_0_f64 as f32);
         // baseline 1, pol YY, cc 1, fc 1
         let angle_1_yy_3: f64 =
             -2.0 * std::f64::consts::PI * length_m_1_yy * (all_freqs_hz[3] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM;
+                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_1_yy_3_f64, cos_1_yy_3_f64) = angle_1_yy_3.sin_cos();
         let (sin_1_yy_3, cos_1_yy_3) = (sin_1_yy_3_f64 as f32, cos_1_yy_3_f64 as f32);
 
@@ -449,34 +448,34 @@ mod tests {
         let length_m_5_xx = length_5_2_x - length_5_1_x;
         let angle_5_xx_0: f64 =
             -2.0 * std::f64::consts::PI * length_m_5_xx * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM;
+                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_5_xx_0_f64, cos_5_xx_0_f64) = angle_5_xx_0.sin_cos();
         let (sin_5_xx_0, cos_5_xx_0) = (sin_5_xx_0_f64 as f32, cos_5_xx_0_f64 as f32);
         // baseline 1, pol XY, cc 0, fc 0
         let length_m_5_xy = length_5_2_y - length_5_1_x;
         let angle_5_xy_0: f64 =
             -2.0 * std::f64::consts::PI * length_m_5_xy * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM;
+                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_5_xy_0_f64, cos_5_xy_0_f64) = angle_5_xy_0.sin_cos();
         let (sin_5_xy_0, cos_5_xy_0) = (sin_5_xy_0_f64 as f32, cos_5_xy_0_f64 as f32);
         // baseline 1, pol YX, cc 0, fc 0
         let length_m_5_yx = length_5_2_x - length_5_1_y;
         let angle_5_yx_0: f64 =
             -2.0 * std::f64::consts::PI * length_m_5_yx * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM;
+                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_5_yx_0_f64, cos_5_yx_0_f64) = angle_5_yx_0.sin_cos();
         let (sin_5_yx_0, cos_5_yx_0) = (sin_5_yx_0_f64 as f32, cos_5_yx_0_f64 as f32);
         // baseline 1, pol YY, cc 0, fc 0
         let length_m_5_yy = length_5_2_y - length_5_1_y;
         let angle_5_yy_0: f64 =
             -2.0 * std::f64::consts::PI * length_m_5_yy * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM;
+                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_5_yy_0_f64, cos_5_yy_0_f64) = angle_5_yy_0.sin_cos();
         let (sin_5_yy_0, cos_5_yy_0) = (sin_5_yy_0_f64 as f32, cos_5_yy_0_f64 as f32);
         // baseline 1, pol YY, cc 1, fc 1
         let angle_5_yy_3: f64 =
             -2.0 * std::f64::consts::PI * length_m_5_yy * (all_freqs_hz[3] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM;
+                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_5_yy_3_f64, cos_5_yy_3_f64) = angle_5_yy_3.sin_cos();
         let (sin_5_yy_3, cos_5_yy_3) = (sin_5_yy_3_f64 as f32, cos_5_yy_3_f64 as f32);
 
