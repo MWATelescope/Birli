@@ -169,6 +169,68 @@ mod tests {
             .unwrap();
     }
 
+    macro_rules! assert_flagsets_eq {
+        ($context:expr, $left_flagset:expr, $right_flagset:expr, $gpubox_ids:expr) => {
+            let num_baselines = $context.metafits_context.num_baselines;
+            let num_flags_per_row = $context.metafits_context.num_corr_fine_chans_per_coarse;
+            let num_common_timesteps = $context.num_common_timesteps;
+            let num_rows = num_common_timesteps * num_baselines;
+            let num_flags_per_timestep = num_baselines * num_flags_per_row;
+
+            assert!(num_baselines > 0);
+            assert!(num_rows > 0);
+            assert!(num_flags_per_row > 0);
+
+            let right_chan_header_flags_raw =
+            $right_flagset.read_chan_header_flags_raw().unwrap();
+
+            let left_chan_header_flags_raw = $left_flagset.read_chan_header_flags_raw().unwrap();
+
+            for gpubox_id in $gpubox_ids {
+                let (left_header, left_flags) = left_chan_header_flags_raw.get(&gpubox_id).unwrap();
+                let (right_header, right_flags) =
+                    right_chan_header_flags_raw.get(&gpubox_id).unwrap();
+                assert_eq!(left_header.obs_id, right_header.obs_id);
+                assert_eq!(left_header.num_channels, right_header.num_channels);
+                assert_eq!(left_header.num_ants, right_header.num_ants);
+                // assert_eq!(left_header.num_common_timesteps, right_header.num_common_timesteps);
+                assert_eq!(left_header.num_timesteps, num_common_timesteps);
+                assert_eq!(left_header.num_pols, right_header.num_pols);
+                assert_eq!(left_header.gpubox_id, right_header.gpubox_id);
+                assert_eq!(left_header.bytes_per_row, right_header.bytes_per_row);
+                // assert_eq!(left_header.num_rows, right_header.num_rows);
+                assert_eq!(left_header.num_rows, num_rows);
+
+                // assert_eq!(left_flags.len(), right_flags.len());
+                assert_eq!(
+                    left_flags.len(),
+                    num_common_timesteps * num_baselines * num_flags_per_row
+                );
+
+                izip!(
+                    left_flags.chunks(num_flags_per_timestep),
+                    right_flags.chunks(num_flags_per_timestep)
+                ).enumerate().for_each(|(common_timestep_idx, (left_timestep_chunk, right_timestep_chunk))| {
+                    izip!(
+                        $context.metafits_context.baselines.iter(),
+                        left_timestep_chunk.chunks(num_flags_per_row),
+                        right_timestep_chunk.chunks(num_flags_per_row)
+                    ).enumerate().for_each(|(baseline_idx, (baseline, left_baseline_chunk, right_baseline_chunk))| {
+                        if baseline.ant1_index == baseline.ant2_index {
+                            return
+                        }
+
+                        assert_eq!(
+                            left_baseline_chunk, right_baseline_chunk,
+                            "flag chunks for common timestep {}, baseline {} (ants {}, {}) do not match! \nbirli:\n{:?}\ncotter:\n{:?}",
+                            common_timestep_idx, baseline_idx, baseline.ant1_index, baseline.ant2_index, left_baseline_chunk, right_baseline_chunk
+                        )
+                    });
+                });
+            }
+        };
+    }
+
     #[test]
     fn aoflagger_outputs_flags() {
         let tmp_dir = tempdir().unwrap();
@@ -193,16 +255,6 @@ mod tests {
 
         let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 
-        let num_baselines = context.metafits_context.num_baselines;
-        let num_flags_per_row = context.metafits_context.num_corr_fine_chans_per_coarse;
-        let num_common_timesteps = context.num_common_timesteps;
-        let num_rows = num_common_timesteps * num_baselines;
-        let num_flags_per_timestep = num_baselines * num_flags_per_row;
-
-        assert!(num_baselines > 0);
-        assert!(num_rows > 0);
-        assert!(num_flags_per_row > 0);
-
         let gpubox_ids: Vec<usize> = context
             .common_coarse_chan_indices
             .iter()
@@ -217,7 +269,6 @@ mod tests {
             context.mwa_version,
         )
         .unwrap();
-        let birli_chan_header_flags_raw = birli_flag_file_set.read_chan_header_flags_raw().unwrap();
 
         let mut cotter_flag_file_set = FlagFileSet::open(
             "tests/data/1247842824_flags/FlagfileCotterMWA%%.mwaf",
@@ -225,50 +276,14 @@ mod tests {
             context.mwa_version,
         )
         .unwrap();
-        let cotter_chan_header_flags_raw =
-            cotter_flag_file_set.read_chan_header_flags_raw().unwrap();
 
-        for gpubox_id in gpubox_ids {
-            let (birli_header, birli_flags) = birli_chan_header_flags_raw.get(&gpubox_id).unwrap();
-            let (cotter_header, cotter_flags) =
-                cotter_chan_header_flags_raw.get(&gpubox_id).unwrap();
-            assert_eq!(birli_header.obs_id, cotter_header.obs_id);
-            assert_eq!(birli_header.num_channels, cotter_header.num_channels);
-            assert_eq!(birli_header.num_ants, cotter_header.num_ants);
-            // assert_eq!(birli_header.num_common_timesteps, cotter_header.num_common_timesteps);
-            assert_eq!(birli_header.num_timesteps, num_common_timesteps);
-            assert_eq!(birli_header.num_pols, cotter_header.num_pols);
-            assert_eq!(birli_header.gpubox_id, cotter_header.gpubox_id);
-            assert_eq!(birli_header.bytes_per_row, cotter_header.bytes_per_row);
-            // assert_eq!(birli_header.num_rows, cotter_header.num_rows);
-            assert_eq!(birli_header.num_rows, num_rows);
-
-            // assert_eq!(birli_flags.len(), cotter_flags.len());
-            assert_eq!(
-                birli_flags.len(),
-                num_common_timesteps * num_baselines * num_flags_per_row
-            );
-
-            izip!(
-                birli_flags.chunks(num_flags_per_timestep),
-                cotter_flags.chunks(num_flags_per_timestep)
-            ).enumerate().for_each(|(common_timestep_idx, (birli_timestep_chunk, cotter_timestep_chunk))| {
-                izip!(
-                    context.metafits_context.baselines.iter(),
-                    birli_timestep_chunk.chunks(num_flags_per_row),
-                    cotter_timestep_chunk.chunks(num_flags_per_row)
-                ).enumerate().for_each(|(baseline_idx, (baseline, birli_baseline_chunk, cotter_baseline_chunk))| {
-                    if baseline.ant1_index == baseline.ant2_index {
-                        return
-                    }
-
-                    assert_eq!(
-                        birli_baseline_chunk, cotter_baseline_chunk,
-                        "flag chunks for common timestep {}, baseline {} (ants {}, {}) do not match! \nbirli:\n{:?}\ncotter:\n{:?}", 
-                        common_timestep_idx, baseline_idx, baseline.ant1_index, baseline.ant2_index, birli_baseline_chunk, cotter_baseline_chunk
-                    )
-                });
-            });
-        }
+        assert_flagsets_eq!(
+            context,
+            birli_flag_file_set,
+            cotter_flag_file_set,
+            gpubox_ids
+        );
     }
+
+    // TODO: test uvfits output with / without cable-delay
 }
