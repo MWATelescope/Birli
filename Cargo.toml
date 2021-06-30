@@ -27,8 +27,8 @@ indicatif = "0.16.0"
 itertools = "0.10.0"
 libc = "0.2.86"
 log = "0.4"
-# mwalib = "0.7.1"
-mwalib = {branch="timestep_coarse_chan_refactor", git="https://github.com/MWATelescope/mwalib.git"}
+# TODO: unpin from this rev once the timestep_coarse_chan_refactor branch is merged
+mwalib = {rev="fbdfd7bdc3d95f62c6a906b449462216e28b9988", git="https://github.com/MWATelescope/mwalib.git"}
 rayon = "1.5.*"
 regex = "1.4.*"
 thiserror = "1.0.*"
