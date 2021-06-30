@@ -74,13 +74,13 @@ def main(argv):
 
     print(repr(hdus[0].header))
 
-    print("")
-    print("VISIBILITIES")
-    print("")
-
-    timestep_limit = get_gpufits_num_scans(len(hdus), args.corr_type)
+    timestep_limit = num_scans = get_gpufits_num_scans(len(hdus), args.corr_type)
     if args.timestep_limit:
         timestep_limit = min(args.timestep_limit, timestep_limit)
+
+    print("")
+    print(f"VISIBILITIES ({num_scans}):")
+    print("")
 
     if args.corr_type == "MWAX":
         scan_hdu_chunks = chunk(hdus[1:][:timestep_limit*2], 2)

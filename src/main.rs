@@ -5,7 +5,8 @@ use std::{env, ffi::OsString, fmt::Debug};
 
 use birli::{
     context_to_baseline_imgsets, correct_cable_lengths, cxx_aoflagger_new, flag_imgsets_existing,
-    get_antenna_flags, get_aoflagger_version_string, init_baseline_flagmasks, write_flags,
+    get_antenna_flags, get_aoflagger_version_string, get_flaggable_timesteps,
+    init_baseline_flagmasks, write_flags,
 };
 // use birli::util::{dump_flagmask, dump_imgset};
 use mwalib::CorrelatorContext;
@@ -70,15 +71,31 @@ where
         let metafits_path = aoflagger_matches.value_of("metafits").unwrap();
         let flag_template = aoflagger_matches.value_of("flag-template").unwrap();
         let fits_files: Vec<&str> = aoflagger_matches.values_of("fits-files").unwrap().collect();
-        let context = CorrelatorContext::new(&metafits_path, &fits_files).unwrap();
+        let context = match CorrelatorContext::new(&metafits_path, &fits_files) {
+            Ok(context) => context,
+            Err(err) => panic!("unable to get mwalib context: {}", err),
+        };
         debug!("mwalib correlator context:\n{}", &context);
         let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_timestep_idxs = &context.common_timestep_indices;
+        let img_timestep_idxs = match get_flaggable_timesteps(&context) {
+            Ok(timestep_idxs) => timestep_idxs,
+            Err(err) => panic!("unable to determine flaggable timesteps: {}", err),
+        };
+
+        let mut baseline_flagmasks = init_baseline_flagmasks(
+            &aoflagger,
+            &context,
+            &img_coarse_chan_idxs,
+            &img_timestep_idxs,
+            Some(get_antenna_flags(&context)),
+        );
+
         let mut baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            img_coarse_chan_idxs,
-            img_timestep_idxs,
+            &img_coarse_chan_idxs,
+            &img_timestep_idxs,
+            Some(&mut baseline_flagmasks),
         );
 
         // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
@@ -89,19 +106,12 @@ where
         }
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
-        let baseline_flagmasks = init_baseline_flagmasks(
-            &aoflagger,
-            &context,
-            img_coarse_chan_idxs,
-            img_timestep_idxs,
-            Some(get_antenna_flags(&context)),
-        );
 
-        let baseline_flagmasks = flag_imgsets_existing(
+        flag_imgsets_existing(
             &aoflagger,
             &strategy_filename,
-            baseline_imgsets,
-            baseline_flagmasks,
+            &baseline_imgsets,
+            &mut baseline_flagmasks,
             true,
         );
 

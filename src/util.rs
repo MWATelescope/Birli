@@ -31,6 +31,7 @@ use std::{cmp::min, fmt::Write};
 ///         &context,
 ///         &context.common_coarse_chan_indices.clone(),
 ///         &context.common_timestep_indices.clone(),
+///         None,
 ///     )
 /// };
 ///
@@ -83,6 +84,7 @@ pub fn dump_baseline_imgsets(
 ///         &context,
 ///         &context.common_coarse_chan_indices.clone(),
 ///         &context.common_timestep_indices.clone(),
+///         None,
 ///     )
 /// };
 /// // if log_enabled!(Level::Debug) {
@@ -164,6 +166,7 @@ pub fn dump_imgset(
 ///         &context,
 ///         &context.common_coarse_chan_indices.clone(),
 ///         &context.common_timestep_indices.clone(),
+///         None,
 ///     );
 ///     let strategy_filename = &aoflagger.FindStrategyFileMWA();
 ///     flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets)
@@ -217,6 +220,7 @@ pub fn dump_baseline_flagmasks(
 ///         &context,
 ///         &context.common_coarse_chan_indices.clone(),
 ///         &context.common_timestep_indices.clone(),
+///         None,
 ///     );
 ///     let strategy_filename = &aoflagger.FindStrategyFileMWA();
 ///     flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets)

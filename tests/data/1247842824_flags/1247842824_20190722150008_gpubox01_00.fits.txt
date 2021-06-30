@@ -23,7 +23,7 @@ NFINECHS=                  128
 FINECHAN=                 10.0                                                  
 NINPUTS =                  256                                                  
 
-VISIBILITIES
+VISIBILITIES (2):
 
 
  -> SCAN 0 IMAGE

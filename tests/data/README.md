@@ -62,18 +62,43 @@ python3 tests/data/adjust_gpufits.py \
   --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits \
   --out-file=tests/data/1196175296_mwa_ord/adjusted_-1/1196175296_20171201145440_gpubox01_00.fits \
   --corr-type=MWA_ORD --timestep-offset=-1
+# python3 tests/data/adjust_gpufits.py \
+#   --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits \
+#   --out-file=tests/data/1196175296_mwa_ord/adjusted_-1/1196175296_20171201145540_gpubox01_01.fits \
+#   --corr-type=MWA_ORD --timestep-offset=-1
+# python3 tests/data/adjust_gpufits.py \
+#   --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits \
+#   --out-file=tests/data/1196175296_mwa_ord/adjusted_+1/1196175296_20171201145440_gpubox01_00.fits \
+#   --corr-type=MWA_ORD --timestep-offset=1
+# python3 tests/data/adjust_gpufits.py \
+#   --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits \
+#   --out-file=tests/data/1196175296_mwa_ord/adjusted_+1/1196175296_20171201145540_gpubox01_01.fits \
+#   --corr-type=MWA_ORD --timestep-offset=1
+# python3 tests/data/adjust_gpufits.py \
+#   --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits \
+#   --out-file=tests/data/1196175296_mwa_ord/limited_1/1196175296_20171201145440_gpubox01_00.fits \
+#   --corr-type=MWA_ORD --timestep-limit=1
 python3 tests/data/adjust_gpufits.py \
   --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits \
-  --out-file=tests/data/1196175296_mwa_ord/adjusted_-1/1196175296_20171201145540_gpubox01_01.fits \
-  --corr-type=MWA_ORD --timestep-offset=-1
-python3 tests/data/adjust_gpufits.py \
-  --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits \
-  --out-file=tests/data/1196175296_mwa_ord/adjusted_+1/1196175296_20171201145440_gpubox01_00.fits \
-  --corr-type=MWA_ORD --timestep-offset=1
-python3 tests/data/adjust_gpufits.py \
-  --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits \
-  --out-file=tests/data/1196175296_mwa_ord/adjusted_+1/1196175296_20171201145540_gpubox01_01.fits \
-  --corr-type=MWA_ORD --timestep-offset=1
+  --out-file=tests/data/1196175296_mwa_ord/limited_1/1196175296_20171201145540_gpubox01_01.fits \
+  --corr-type=MWA_ORD --timestep-limit=1
+# python3 tests/data/adjust_gpufits.py \
+#   --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits \
+#   --out-file=tests/data/1196175296_mwa_ord/limited_0/1196175296_20171201145440_gpubox01_00.fits \
+#   --corr-type=MWA_ORD --timestep-limit=0
+# python3 tests/data/adjust_gpufits.py \
+#   --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits \
+#   --out-file=tests/data/1196175296_mwa_ord/limited_0/1196175296_20171201145540_gpubox01_01.fits \
+#   --corr-type=MWA_ORD --timestep-limit=0
+# python3 tests/data/adjust_gpufits.py \
+#   --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits \
+#   --out-file=tests/data/1196175296_mwa_ord/empty/1196175296_20171201145440_gpubox01_00.fits \
+#   --corr-type=MWA_ORD --timestep-limit=1 --empty-data
+# python3 tests/data/adjust_gpufits.py \
+#   --in-file=tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits \
+#   --out-file=tests/data/1196175296_mwa_ord/empty/1196175296_20171201145540_gpubox01_01.fits \
+#   --corr-type=MWA_ORD --timestep-limit=1 --empty-data
+
 
 # Cotter flags on 1196175296_mwa_ord with generic flagging 
 cotter \
@@ -301,9 +326,7 @@ for line in \
   "1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits|MWA_ORD" \
   "1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits|MWA_ORD" \
   "1196175296_mwa_ord/adjusted_-1/1196175296_20171201145440_gpubox01_00.fits|MWA_ORD" \
-  "1196175296_mwa_ord/adjusted_-1/1196175296_20171201145540_gpubox01_01.fits|MWA_ORD" \
-  "1196175296_mwa_ord/adjusted_+1/1196175296_20171201145440_gpubox01_00.fits|MWA_ORD" \
-  "1196175296_mwa_ord/adjusted_+1/1196175296_20171201145540_gpubox01_01.fits|MWA_ORD" \
+  "1196175296_mwa_ord/limited_1/1196175296_20171201145540_gpubox01_01.fits|MWA_ORD" \
   "1297526432_mwax/1297526432_20210216160014_ch117_000.fits|MWAX" \
   "1297526432_mwax/1297526432_20210216160014_ch117_001.fits|MWAX" \
   "1297526432_mwax/1297526432_20210216160014_ch118_000.fits|MWAX" \
@@ -318,14 +341,6 @@ for i in \
   1196175296_mwa_ord/FlagfileCotterGeneric02.mwaf \
   1196175296_mwa_ord/FlagfileCotterMWA01.mwaf \
   1196175296_mwa_ord/FlagfileCotterMWA02.mwaf \
-  1196175296_mwa_ord/adjusted_-1/FlagfileCotterMWA01.mwaf \
-  1196175296_mwa_ord/adjusted_-1/FlagfileCotterMWA02.mwaf \
-  1196175296_mwa_ord/adjusted_-1/FlagfileCotterMWA_both01.mwaf \
-  1196175296_mwa_ord/adjusted_-1/FlagfileCotterMWA_both02.mwaf \
-  1196175296_mwa_ord/adjusted_+1/FlagfileCotterMWA01.mwaf \
-  1196175296_mwa_ord/adjusted_+1/FlagfileCotterMWA02.mwaf \
-  1196175296_mwa_ord/adjusted_+1/FlagfileCotterMWA_both01.mwaf \
-  1196175296_mwa_ord/adjusted_+1/FlagfileCotterMWA_both02.mwaf \
   1247842824_flags/FlagfileCotterMWA01.mwaf \
   1247842824_flags/FlagfileCotterGeneric01.mwaf
 do

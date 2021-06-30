@@ -1,9 +1,8 @@
 -> hdus.info():
-Filename: tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits
+Filename: tests/data/1196175296_mwa_ord/limited_1/1196175296_20171201145540_gpubox01_01.fits
 No.    Name      Ver    Type      Cards   Dimensions   Format
   0  PRIMARY       1 PrimaryHDU      15   ()      
   1  COMPRESSED_IMAGE    1 CompImageHDU     13   (66048, 2)   float64   
-  2  COMPRESSED_IMAGE    1 CompImageHDU     11   (66048, 2)   float64   
 
 HEADER
 
@@ -23,7 +22,7 @@ NFINECHS=                    2
 FINECHAN=                640.0                                                  
 NINPUTS =                  256                                                  
 
-VISIBILITIES (2):
+VISIBILITIES (1):
 
 
  -> SCAN 0 IMAGE
@@ -39,19 +38,5 @@ COMMENT   FITS (Flexible Image Transport System) format is defined in 'Astronomy
 COMMENT   and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H 
 TIME    =           1512140081 / Unix time (seconds)                            
 MILLITIM=                    0 / Milliseconds since TIME                        
-INTTIME =                  0.5 / Integration time (s)                           
-MARKER  =                24320 / Data offset marker (all channels should match) 
-
- -> SCAN 1 IMAGE
-
-XTENSION= 'IMAGE   '           / IMAGE extension                                
-BITPIX  =                  -64 / number of bits per data pixel                  
-NAXIS   =                    2 / number of data axes                            
-NAXIS1  =                66048 / length of data axis 1                          
-NAXIS2  =                    2 / length of data axis 2                          
-PCOUNT  =                    0 / required keyword; must = 0                     
-GCOUNT  =                    1 / required keyword; must = 1                     
-TIME    =           1512140081 / Unix time (seconds)                            
-MILLITIM=                  500 / Milliseconds since TIME                        
 INTTIME =                  0.5 / Integration time (s)                           
 MARKER  =                24320 / Data offset marker (all channels should match) 

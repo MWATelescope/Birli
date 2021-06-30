@@ -32,7 +32,7 @@ CORRCHAN=                   10 / Correlator coarse channel
 MC_IP   = '0.0.0.0 '           / Multicast IP                                   
 MC_PORT =                    0 / Multicast Port                                 
 
-VISIBILITIES
+VISIBILITIES (2):
 
 
  -> SCAN 0 IMAGE

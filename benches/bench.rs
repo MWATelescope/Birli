@@ -61,6 +61,7 @@ fn bench_context_to_baseline_imgsets_mwax_half_1247842824(crt: &mut Criterion) {
                     black_box(&context),
                     &context.common_coarse_chan_indices.clone(),
                     &context.common_timestep_indices.clone(),
+                    None,
                 )
             })
         },
@@ -77,6 +78,7 @@ fn bench_context_to_baseline_imgsets_ord_half_1196175296(crt: &mut Criterion) {
                 black_box(&context),
                 &context.common_coarse_chan_indices.clone(),
                 &context.common_timestep_indices.clone(),
+                None,
             )
         })
     });
@@ -90,6 +92,7 @@ fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
         &context,
         &context.common_coarse_chan_indices.clone(),
         &context.common_timestep_indices.clone(),
+        None,
     );
     crt.bench_function("correct_cable_lengths - mwax_half_1247842824", |bch| {
         bch.iter(|| correct_cable_lengths(black_box(&context), black_box(&mut baseline_imgsets)))
@@ -104,6 +107,7 @@ fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
         &context,
         &context.common_coarse_chan_indices.clone(),
         &context.common_timestep_indices.clone(),
+        None,
     );
     crt.bench_function("correct_cable_lengths - ord_half_1196175296", |bch| {
         bch.iter(|| correct_cable_lengths(black_box(&context), black_box(&mut baseline_imgsets)))
