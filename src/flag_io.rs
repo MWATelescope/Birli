@@ -556,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn test_flagfileset_fails_with_existing() {
+    fn test_flagfileset_new_fails_with_existing() {
         let context = get_mwax_context();
         let gpubox_ids: Vec<usize> = context
             .common_coarse_chan_indices
@@ -582,18 +582,40 @@ mod tests {
                 filename_template.to_str().unwrap(),
                 &ok_gpuboxes,
                 context.mwa_version
-            )
-            .unwrap(),
-            FlagFileSet { .. }
+            ),
+            Ok(FlagFileSet { .. })
         ));
         assert!(matches!(
             FlagFileSet::new(
                 filename_template.to_str().unwrap(),
                 &colliding_gpuboxes,
                 context.mwa_version
-            )
-            .err(),
-            Some(BirliError::FitsOpen { .. })
+            ),
+            Err(BirliError::FitsOpen { .. })
+        ));
+    }
+
+    #[test]
+    fn test_flagfileset_open_fails_with_non_existing() {
+        let context = get_mwax_context();
+        let gpubox_ids: Vec<usize> = context
+            .common_coarse_chan_indices
+            .iter()
+            .map(|&chan| context.coarse_chans[chan].gpubox_number)
+            .collect();
+
+        let tmp_dir = tempdir().unwrap();
+        let filename_template = tmp_dir.path().join("FlagfileNONEXISTING%%%.mwaf");
+
+        let gpuboxes = gpubox_ids[..1].to_vec();
+
+        assert!(matches!(
+            FlagFileSet::open(
+                filename_template.to_str().unwrap(),
+                &gpuboxes,
+                context.mwa_version
+            ),
+            Err(BirliError::FitsOpen { .. })
         ));
     }
 

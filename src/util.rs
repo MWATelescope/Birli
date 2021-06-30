@@ -260,3 +260,75 @@ pub fn dump_flagmask(
         });
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{dump_baseline_flagmasks, dump_baseline_imgsets};
+    use crate::{
+        context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets, get_flaggable_timesteps,
+    };
+    use mwalib::CorrelatorContext;
+
+    // TODO: deduplicate this from lib.rs
+    fn get_mwax_context() -> CorrelatorContext {
+        let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+        let gpufits_paths = vec![
+            "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+            "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+            "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+            "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+        ];
+        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+    }
+
+    fn get_mwa_ord_context() -> CorrelatorContext {
+        let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
+        let gpufits_paths = vec![
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
+        ];
+        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+    }
+
+    #[test]
+    fn test_dump_baseline_imgsets_mwa_ord() {
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+        let context = get_mwa_ord_context();
+
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+
+        let baseline_imgsets = context_to_baseline_imgsets(
+            &aoflagger,
+            &context,
+            &img_coarse_chan_idxs,
+            &img_timestep_idxs,
+            None,
+        );
+
+        dump_baseline_imgsets(&baseline_imgsets, Some(2), Some(2), Some(2), Some(16));
+    }
+
+    #[test]
+    fn test_dump_baseline_flagmasks_mwax() {
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+        let context = get_mwax_context();
+
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+
+        let baseline_imgsets = context_to_baseline_imgsets(
+            &aoflagger,
+            &context,
+            &img_coarse_chan_idxs,
+            &img_timestep_idxs,
+            None,
+        );
+        let strategy_filename = &aoflagger.FindStrategyFileMWA();
+        let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
+
+        dump_baseline_flagmasks(&baseline_flagmasks, Some(2), Some(2), Some(16));
+    }
+}
