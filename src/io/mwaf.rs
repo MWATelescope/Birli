@@ -10,6 +10,10 @@
 
 use crate::cxx_aoflagger::ffi::CxxFlagMask;
 use crate::error::BirliError;
+use crate::io::error::{
+    IOError,
+    IOError::{FitsIO, FitsOpen, InvalidFlagFilenameTemplate, InvalidGpuBox, MwafInconsistent},
+};
 use clap::crate_version;
 use cxx::UniquePtr;
 use fitsio::tables::{ColumnDataDescription, ColumnDataType, ConcreteColumnDescription};
@@ -84,7 +88,7 @@ impl FlagFileSet {
         mwa_version: MWAVersion,
         filename_template: &str,
         gpubox_ids: &[usize],
-    ) -> Result<BTreeMap<usize, String>, BirliError> {
+    ) -> Result<BTreeMap<usize, String>, IOError> {
         let num_percents = match mwa_version {
             MWAVersion::CorrOldLegacy | MWAVersion::CorrLegacy => 2,
             _ => 3,
@@ -92,7 +96,7 @@ impl FlagFileSet {
         let re_percents = Regex::new(format!("%{{{},}}+", num_percents).as_str()).unwrap();
 
         if !re_percents.is_match(filename_template) {
-            return Err(BirliError::InvalidFlagFilenameTemplate {
+            return Err(InvalidFlagFilenameTemplate {
                 source_file: file!(),
                 source_line: line!(),
                 filename_template: String::from(filename_template),
@@ -142,7 +146,7 @@ impl FlagFileSet {
         filename_template: &str,
         gpubox_ids: &[usize],
         mwa_version: MWAVersion,
-    ) -> Result<Self, BirliError> {
+    ) -> Result<Self, IOError> {
         let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
         let gpubox_filenames =
             FlagFileSet::get_gpubox_filenames(mwa_version, filename_template, gpubox_ids)?;
@@ -152,7 +156,7 @@ impl FlagFileSet {
                     gpubox_fptrs.insert(gpubox_id, fptr);
                 }
                 Err(fits_error) => {
-                    return Err(BirliError::FitsOpen {
+                    return Err(FitsOpen {
                         fits_error,
                         fits_filename,
                         source_file: file!(),
@@ -176,7 +180,7 @@ impl FlagFileSet {
         filename_template: &str,
         gpubox_ids: &[usize],
         mwa_version: MWAVersion,
-    ) -> Result<Self, BirliError> {
+    ) -> Result<Self, IOError> {
         let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
         let gpubox_filenames =
             FlagFileSet::get_gpubox_filenames(mwa_version, filename_template, gpubox_ids)?;
@@ -186,7 +190,7 @@ impl FlagFileSet {
                     gpubox_fptrs.insert(gpubox_id, fptr);
                 }
                 Err(fits_error) => {
-                    return Err(BirliError::FitsOpen {
+                    return Err(FitsOpen {
                         fits_error,
                         fits_filename,
                         source_file: file!(),
@@ -203,7 +207,7 @@ impl FlagFileSet {
         fptr: &mut FitsFile,
         hdu: &FitsHdu,
         header: &FlagFileHeaders,
-    ) -> Result<(), BirliError> {
+    ) -> Result<(), IOError> {
         hdu.write_key(fptr, "VERSION", header.version.to_string())?;
         hdu.write_key(fptr, "GPSTIME", header.obs_id)?;
         hdu.write_key(fptr, "NCHANS", header.num_channels as u32)?;
@@ -220,13 +224,13 @@ impl FlagFileSet {
         fptr: &mut FitsFile,
         hdu: &FitsHdu,
         header: &FlagFileHeaders,
-    ) -> Result<(), BirliError> {
+    ) -> Result<(), IOError> {
         hdu.write_key(fptr, "NAXIS1", header.bytes_per_row as u32)?;
         hdu.write_key(fptr, "NAXIS2", header.num_rows as u32)?;
         Ok(())
     }
 
-    fn read_header(fptr: &mut FitsFile) -> Result<FlagFileHeaders, BirliError> {
+    fn read_header(fptr: &mut FitsFile) -> Result<FlagFileHeaders, IOError> {
         let hdu0 = fits_open_hdu!(fptr, 0)?;
         let hdu1 = fits_open_hdu!(fptr, 1)?;
         let header = FlagFileHeaders {
@@ -244,7 +248,7 @@ impl FlagFileSet {
         };
         let baselines = header.num_ants * (header.num_ants + 1) / 2;
         if header.num_rows != header.num_timesteps * baselines {
-            return Err(BirliError::MwafInconsistent {
+            return Err(MwafInconsistent {
                 file: String::from(&fptr.filename),
                 expected: "NSCANS * NANTENNA * (NANTENNA+1) / 2 = NAXIS2".to_string(),
                 found: format!(
@@ -309,7 +313,7 @@ impl FlagFileSet {
         &mut self,
         context: &CorrelatorContext,
         baseline_flagmasks: Vec<UniquePtr<CxxFlagMask>>,
-    ) -> Result<(), BirliError> {
+    ) -> Result<(), IOError> {
         let gpubox_chan_numbers: BTreeMap<usize, usize> = context
             .coarse_chans
             .iter()
@@ -325,7 +329,7 @@ impl FlagFileSet {
             let chan_number = match gpubox_chan_numbers.get(&gpubox_id) {
                 Some(chan_number) => chan_number,
                 None => {
-                    return Err(BirliError::InvalidGpuBox {
+                    return Err(InvalidGpuBox {
                         expected: format!("{:?}", gpubox_chan_numbers.keys()),
                         found: format!("{}", gpubox_id),
                     })
@@ -372,7 +376,7 @@ impl FlagFileSet {
                             &mut status,
                         );
                     }
-                    fitsio::errors::check_status(status).map_err(|e| BirliError::FitsIO {
+                    fitsio::errors::check_status(status).map_err(|e| FitsIO {
                         fits_error: e,
                         fits_filename: String::from(&fptr.filename),
                         hdu_num: 1,
@@ -403,7 +407,7 @@ impl FlagFileSet {
                 &mut status,
             );
         }
-        fitsio::errors::check_status(status).map_err(|e| BirliError::FitsIO {
+        fitsio::errors::check_status(status).map_err(|e| FitsIO {
             fits_error: e,
             fits_filename: String::from(&fptr.filename),
             hdu_num: 1,
@@ -454,7 +458,7 @@ impl FlagFileSet {
 mod tests {
     use super::{FlagFileHeaders, FlagFileSet};
     use crate::cxx_aoflagger::ffi::{cxx_aoflagger_new, CxxFlagMask};
-    use crate::error::BirliError;
+    use crate::io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate};
     use cxx::UniquePtr;
     use fitsio::FitsFile;
     use mwalib::{
@@ -521,19 +525,19 @@ mod tests {
             "mwax_no_percents.mwaf",
             &mwax_gpubox_ids,
             MWAVersion::CorrMWAXv2,
-            Err(BirliError::InvalidFlagFilenameTemplate { .. })
+            Err(InvalidFlagFilenameTemplate { .. })
         );
         test_percent_enforcement!(
             "mwa_ord_no_percents.mwaf",
             &mwa_ord_gpubox_ids,
             MWAVersion::CorrLegacy,
-            Err(BirliError::InvalidFlagFilenameTemplate { .. })
+            Err(InvalidFlagFilenameTemplate { .. })
         );
         test_percent_enforcement!(
             "mwax_insufficient_percents_2_%%.mwaf",
             &mwax_gpubox_ids,
             MWAVersion::CorrMWAXv2,
-            Err(BirliError::InvalidFlagFilenameTemplate { .. })
+            Err(InvalidFlagFilenameTemplate { .. })
         );
         test_percent_enforcement!(
             "mwa_ord_sufficient_percents_2_%%.mwaf",
@@ -591,7 +595,7 @@ mod tests {
                 &colliding_gpuboxes,
                 context.mwa_version
             ),
-            Err(BirliError::FitsOpen { .. })
+            Err(FitsOpen { .. })
         ));
     }
 
@@ -615,7 +619,7 @@ mod tests {
                 &gpuboxes,
                 context.mwa_version
             ),
-            Err(BirliError::FitsOpen { .. })
+            Err(FitsOpen { .. })
         ));
     }
 

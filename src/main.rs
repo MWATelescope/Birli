@@ -134,7 +134,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::main_with_args;
-    use birli::{flag_io::FlagFileSet, get_aoflagger_version_string};
+    use birli::{get_aoflagger_version_string, io::mwaf::FlagFileSet};
     use itertools::izip;
     use mwalib::CorrelatorContext;
     use std::env;
