@@ -88,6 +88,10 @@ def main(argv):
         if args.baseline_limit < baseline_limit:
             baseline_limit = args.baseline_limit
             show_baseline_ellipses = True
+
+    print(f"-> baselines({num_baselines}):\n{baselines[:baseline_limit]}")
+    if show_baseline_ellipses:
+        print("...")
     timesteps = np.unique(hdus[0].data.par("DATE"))
     num_timesteps = len(timesteps)
 
@@ -102,15 +106,21 @@ def main(argv):
             timestep_limit = args.timestep_limit
             show_timestep_ellipses = True
 
+    print(f"-> timesteps({num_timesteps}):\n{timesteps[:timestep_limit]}")
+    if show_timestep_ellipses:
+        print("...")
+
     # assert(hdus[0].data.shape[0] == num_baselines * num_timesteps)
     # blt_data = np.reshape(np.array(hdus[0].data), (num_baselines, num_timesteps))
     # for bl in baselines[:baseline_limit]:
     #     for ts in timestep[:timestep_limit]:
-    blt_data = hdus[0].data[::num_baselines]
+    # blt_data = hdus[0].data[::num_baselines]
     for bl_idx in range(baseline_limit):
         print(bl_idx)
         print(f"baseline idx {bl_idx}")
-        bl_data = hdus[0].data[bl_idx::num_baselines]
+        blt_data = hdus[0].data[bl_idx::num_baselines]
+        print(f"--> uvfits baseline idx {blt_data[0]['BASELINE']}")
+        print(f"--> uvw {blt_data[0][0:3]}")
         # vis_data = bl_data[:, :, :, :, :, 0] - 1j * bl_data[:, :, :, :, :, 1]
         # print(f"--> vis_data ({vis_data.shape}):")
         # print(vis_data)
@@ -121,9 +131,9 @@ def main(argv):
         # pass
         vis_data = None
         flag_data = None
-        for row in blt_data[:timestep_limit]:
+        for timestep_idx, row in enumerate(blt_data[:timestep_limit]):
             row_data = row['data']
-            print(f"--> row_data {(row_data)}")
+            print(f"--> timestep={timestep_idx}, data({row_data.shape})=\n{row_data}")
 
             # assert(pyuv.Nfreqs == row_data.shape[2])
             # assert(pyuv.Npols == row_data.shape[3])
@@ -134,8 +144,6 @@ def main(argv):
             row_vis_data = row_real_data - 1j *  row_imag_data
             
             if vis_data is None:
-                print(f"--> baseline {row['BASELINE']}")
-                print(f"--> uvw {row[0:3]}")
                 print(f"--> row_data shape {row_data.shape}")
                 print(f"--> row_vis_data shape {row_vis_data.shape}")
                 vis_data = row_vis_data.reshape(row_vis_data.shape + (1, ))
@@ -151,7 +159,9 @@ def main(argv):
             print(pd.DataFrame(vis_data[:, pol, :].reshape(vis_data.shape[0], vis_data.shape[2]).transpose()))
 
             print(f"---> flag_data ({flag_data.shape}):")
-            print(pd.DataFrame(flag_data[:, pol, :].reshape(flag_data.shape[0], flag_data.shape[2]).transpose()))
+            flag_df = pd.DataFrame(flag_data[:, pol, :].reshape(flag_data.shape[0], flag_data.shape[2]).transpose())
+            print(flag_df)
+            
     if show_baseline_ellipses:
         print("...")
 
@@ -170,7 +180,4 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    # main(sys.argv[1:])
-    main([
-        "tests/data/test_header.uvfits"
-    ])
+    main(sys.argv[1:])
