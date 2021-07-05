@@ -2,3 +2,4 @@
 
 pub mod error;
 pub mod mwaf;
+pub mod uvfits;

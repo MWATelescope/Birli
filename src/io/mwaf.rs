@@ -10,7 +10,7 @@
 
 use crate::cxx_aoflagger::ffi::CxxFlagMask;
 use crate::error::BirliError;
-use crate::io::error::{
+use super::error::{
     IOError,
     IOError::{FitsIO, FitsOpen, InvalidFlagFilenameTemplate, InvalidGpuBox, MwafInconsistent},
 };

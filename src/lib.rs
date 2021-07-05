@@ -106,13 +106,15 @@ use std::os::raw::c_short;
 use mwalib::CorrelatorContext;
 // use std::collections::BTreeMap;
 
+pub mod constants;
+
 use std::sync::Arc;
 
-pub mod flags;
-pub use flags::{
-    flag_imgsets, flag_imgsets_existing, get_antenna_flags, get_flaggable_timesteps,
-    init_baseline_flagmasks, write_flags,
-};
+pub mod error;
+
+pub mod math;
+
+pub mod coord;
 
 pub mod io;
 
@@ -121,7 +123,11 @@ pub use io::mwaf::FlagFileSet;
 pub mod corrections;
 pub use corrections::correct_cable_lengths;
 
-pub mod error;
+pub mod flags;
+pub use flags::{
+    flag_imgsets, flag_imgsets_existing, get_antenna_flags, get_flaggable_timesteps,
+    init_baseline_flagmasks, write_flags,
+};
 
 pub mod util;
 

@@ -77,6 +77,9 @@ def main(argv):
 
     print(f"-> data.shape {hdus[0].data.shape}")
 
+    show_baseline_ellipses = False
+    show_timestep_ellipses = False
+
     baselines = np.unique(hdus[0].data.par("BASELINE"))
     num_baselines = len(baselines)
     # assert(pyuv.Nbls == num_baselines)
@@ -87,14 +90,19 @@ def main(argv):
             show_baseline_ellipses = True
     timesteps = np.unique(hdus[0].data.par("DATE"))
     num_timesteps = len(timesteps)
+
+    # assert(pyuv.Ntimes == num_timesteps)
+    data_rows = hdus[0].data.shape[0]
+    if data_rows != num_baselines * num_timesteps:
+        print(f" !! data_rows({data_rows}) != num_baselines({num_baselines}) * num_timesteps({num_timesteps}).")
+
     timestep_limit = num_timesteps
     if args.timestep_limit:
         if args.timestep_limit < timestep_limit:
             timestep_limit = args.timestep_limit
             show_timestep_ellipses = True
 
-    # assert(pyuv.Ntimes == num_timesteps)
-    assert(hdus[0].data.shape[0] == num_baselines * num_timesteps)
+    # assert(hdus[0].data.shape[0] == num_baselines * num_timesteps)
     # blt_data = np.reshape(np.array(hdus[0].data), (num_baselines, num_timesteps))
     # for bl in baselines[:baseline_limit]:
     #     for ts in timestep[:timestep_limit]:
@@ -152,7 +160,9 @@ def main(argv):
     print("")
     print("ANTENNA INFO")
     print("")
-    
+    if len(hdus) < 2:
+        print("no antenna hdu")
+        exit()
     print(repr(hdus[1].header))
 
     print(f"-> data ({hdus[1].data.shape})")
@@ -160,4 +170,7 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    # main(sys.argv[1:])
+    main([
+        "tests/data/test_header.uvfits"
+    ])
