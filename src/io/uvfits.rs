@@ -5,33 +5,36 @@
 //! Module for uvfits file format reading and writing
 //! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
-use std::collections::HashSet;
+// use std::collections::HashSet;
 use std::ffi::CString;
 use std::path::Path;
 
 use erfa_sys::{ERFA_DJM0, ERFA_WGS84};
 use fitsio::{errors::check_status as fits_check_status, FitsFile};
 use hifitime::Epoch;
-use ndarray::prelude::*;
+use itertools::{izip, Itertools};
+use log::warn;
+// use ndarray::prelude::*;
 
 use super::error::UvfitsWriteError;
-use crate::coord::ENH;
 use crate::{
-    coord::{RADec, XyzGeocentric, XyzGeodetic, UVW},
+    constants::HIFITIME_GPS_FACTOR,
+    cxx_aoflagger::ffi::{CxxFlagMask, CxxImageSet},
     math::{cross_correlation_baseline_to_tiles, num_tiles_from_num_baselines},
+    pos::{RADec, XyzGeocentric, XyzGeodetic, ENH, UVW},
 };
-
-// use mwa_hyperdrive_core::{
-//     Jones, RADec, XyzGeocentric, XyzGeodetic, UVW,
-// };
-use mwalib::{fitsio, fitsio_sys, Antenna, CorrelatorContext, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S};
+use cxx::UniquePtr;
+use mwalib::{
+    fitsio, fitsio_sys, Baseline, CorrelatorContext, MetafitsContext, TimeStep,
+    SPEED_OF_LIGHT_IN_VACUUM_M_PER_S,
+};
 
 /// From a `hifitime` [Epoch], get a formatted date string with the hours,
 /// minutes and seconds set to 0.
 fn get_truncated_date_string(epoch: &Epoch) -> String {
     let (year, month, day, _, _, _, _) = epoch.as_gregorian_utc();
     format!(
-        "{year}-{month}-{day}T00:00:00.0",
+        "{year}-{month:02}-{day:02}T00:00:00.0",
         year = year,
         month = month,
         day = day
@@ -106,7 +109,7 @@ pub(crate) struct UvfitsWriter<'a> {
 
     /// A `hifitime` [Epoch] struct associated with the first timestep of the
     /// data.
-    start_epoch: &'a Epoch,
+    start_epoch: Epoch,
 }
 
 impl<'a> UvfitsWriter<'a> {
@@ -116,7 +119,7 @@ impl<'a> UvfitsWriter<'a> {
         num_timesteps: usize,
         num_baselines: usize,
         num_chans: usize,
-        start_epoch: &'a Epoch,
+        start_epoch: Epoch,
         fine_chan_width_hz: f64,
         centre_freq_hz: f64,
         centre_freq_chan: usize,
@@ -225,6 +228,8 @@ impl<'a> UvfitsWriter<'a> {
         hdu.write_key(&mut u, "TELESCOP", "MWA")?;
         hdu.write_key(&mut u, "INSTRUME", "MWA")?;
 
+        // TODO: write obsid?
+
         // This is apparently required...
         let history = CString::new("AIPS WTSCAL =  1.0").unwrap();
         unsafe {
@@ -271,9 +276,41 @@ impl<'a> UvfitsWriter<'a> {
         })
     }
 
+    pub(crate) fn from_mwalib(
+        filename: &'a Path,
+        context: &CorrelatorContext,
+        img_timestep_idxs: &[usize],
+        img_coarse_chan_idxs: &[usize],
+        // TODO: if the obsid doesn't match the actual start time, what do?
+    ) -> Result<Self, UvfitsWriteError> {
+        let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+        let num_img_coarse_chans = img_coarse_chan_idxs.len();
+        let num_img_chans = num_fine_chans_per_coarse * num_img_coarse_chans;
+        // let obsid = context.metafits_context.obs_id;
+        // let start_epoch = Epoch::from_tai_seconds(obsid as f64 + 19.0 + HIFITIME_GPS_FACTOR);
+        let first_gps_time = context.timesteps[img_timestep_idxs[0]].gps_time_ms as f64 / 1000.0;
+        let start_epoch = Epoch::from_tai_seconds(first_gps_time + 19.0 + HIFITIME_GPS_FACTOR);
+        let phase_centre = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+        let centre_freq_chan = num_img_chans / 2;
+        Self::new(
+            filename,
+            img_timestep_idxs.len(),
+            context.metafits_context.num_baselines,
+            num_img_chans,
+            start_epoch,
+            context.metafits_context.corr_fine_chan_width_hz as f64,
+            context.metafits_context.centre_freq_hz as f64,
+            centre_freq_chan,
+            &phase_centre,
+            Some(&context.metafits_context.obs_name.as_str()),
+        )
+    }
 
     /// Opens the associated uvfits file in edit mode, returning the [FitsFile]
     /// struct.
+    ///
+    /// Closing the file can be achieved by `drop`ing all references to the
+    /// [`FitsFile`]
     pub(crate) fn open(&self) -> Result<FitsFile, fitsio::errors::Error> {
         let mut f = FitsFile::edit(&self.path)?;
         // Ensure HDU 0 is opened.
@@ -296,6 +333,7 @@ impl<'a> UvfitsWriter<'a> {
         self,
         antenna_names: &[T],
         positions: &[XyzGeodetic],
+        array_xyz_geoc: Option<XyzGeocentric>
     ) -> Result<(), UvfitsWriteError> {
         if self.current_num_rows != self.total_num_rows {
             return Err(UvfitsWriteError::NotEnoughRowsWritten {
@@ -344,38 +382,57 @@ impl<'a> UvfitsWriter<'a> {
         // Open the newly-created HDU.
         let hdu = uvfits.hdu(1)?;
 
-        // Set ARRAYX, Y and Z to the MWA's coordinates in XYZ (geocentric). The
-        // results here are slightly different to those given by cotter. This is
-        // at least partly due to different constants (the altitude is
-        // definitely slightly different), but possibly also because ERFA is
-        // more accurate than cotter's "homebrewed" Geodetic2XYZ.
-        let mut mwa_xyz: [f64; 3] = [0.0; 3];
-        unsafe {
-            status = erfa_sys::eraGd2gc(
-                ERFA_WGS84 as i32,             // ellipsoid identifier (Note 1)
-                mwalib::MWA_LONGITUDE_RADIANS, // longitude (radians, east +ve)
-                mwalib::MWA_LATITUDE_RADIANS,  // latitude (geodetic, radians, Note 3)
-                mwalib::MWA_ALTITUDE_METRES,   // height above ellipsoid (geodetic, Notes 2,3)
-                mwa_xyz.as_mut_ptr(),          // geocentric vector (Note 2)
-            );
-        }
-        if status != 0 {
-            return Err(UvfitsWriteError::Erfa {
-                source_file: file!(),
-                source_line: line!(),
-                status,
-                function: "eraGd2gc",
-            });
-        }
-        let mwa_xyz = XyzGeocentric {
-            x: mwa_xyz[0],
-            y: mwa_xyz[1],
-            z: mwa_xyz[2],
+        let array_xyz_geoc = match array_xyz_geoc {
+            Some(xyz) => xyz,
+            None => {
+                warn!("we are using MWA lat / lng / height from mwalib for array xyz");
+                // If no Geocentric array position provided,
+                // Set ARRAYX, Y and Z to the MWA's coordinates in XYZ (geocentric). The
+                // results here are slightly different to those given by cotter. This is
+                // at least partly due to different constants (the altitude is
+                // definitely slightly different), but possibly also because ERFA is
+                // more accurate than cotter's "homebrewed" Geodetic2XYZ.
+                //
+                // let mut tmp_xyz: [f64; 3] = [0.0; 3];
+                // unsafe {
+                //     status = erfa_sys::eraGd2gc(
+                //         ERFA_WGS84 as i32,             // ellipsoid identifier (Note 1)
+                //         mwalib::MWA_LONGITUDE_RADIANS, // longitude (radians, east +ve)
+                //         mwalib::MWA_LATITUDE_RADIANS,  // latitude (geodetic, radians, Note 3)
+                //         mwalib::MWA_ALTITUDE_METRES,   // height above ellipsoid (geodetic, Notes 2,3)
+                //         tmp_xyz.as_mut_ptr(),          // geocentric vector (Note 2)
+                //     );
+                // }
+                // if status != 0 {
+                //     return Err(UvfitsWriteError::Erfa {
+                //         source_file: file!(),
+                //         source_line: line!(),
+                //         status,
+                //         function: "eraGd2gc",
+                //     });
+                // }
+                // let xyz = XyzGeocentric {
+                //     x: tmp_xyz[0],
+                //     y: tmp_xyz[1],
+                //     z: tmp_xyz[2],
+                // };
+                // xyz
+                match XyzGeocentric::get_geocentric_vector(
+                    mwalib::MWA_LONGITUDE_RADIANS,
+                    mwalib::MWA_LATITUDE_RADIANS,
+                    mwalib::MWA_ALTITUDE_METRES,
+                ) {
+                    Ok(xyz) => xyz,
+                    Err(err) => {
+                        return Err(UvfitsWriteError::from(err));
+                    }
+                }
+            }
         };
 
-        hdu.write_key(&mut uvfits, "ARRAYX", mwa_xyz.x)?;
-        hdu.write_key(&mut uvfits, "ARRAYY", mwa_xyz.y)?;
-        hdu.write_key(&mut uvfits, "ARRAYZ", mwa_xyz.z)?;
+        hdu.write_key(&mut uvfits, "ARRAYX", array_xyz_geoc.x)?;
+        hdu.write_key(&mut uvfits, "ARRAYY", array_xyz_geoc.y)?;
+        hdu.write_key(&mut uvfits, "ARRAYZ", array_xyz_geoc.z)?;
 
         hdu.write_key(&mut uvfits, "FREQ", self.centre_freq)?;
 
@@ -386,7 +443,7 @@ impl<'a> UvfitsWriter<'a> {
         hdu.write_key(&mut uvfits, "GSTIA0", gst)?;
         hdu.write_key(&mut uvfits, "DEGPDY", 3.60985e2)?; // Earth's rotation rate
 
-        let date_truncated = get_truncated_date_string(self.start_epoch);
+        let date_truncated = get_truncated_date_string(&self.start_epoch);
         hdu.write_key(&mut uvfits, "RDATE", date_truncated)?;
 
         hdu.write_key(&mut uvfits, "POLARX", 0.0)?;
@@ -537,6 +594,32 @@ impl<'a> UvfitsWriter<'a> {
         Ok(())
     }
 
+    pub(crate) fn write_ants_from_mwalib(
+        self,
+        context: &MetafitsContext,
+        latitude_rad: Option<f64>,
+        // longitude_rad: Option<f64>,
+        // height_meters: Option<f64>
+    ) -> Result<(), UvfitsWriteError> {
+        let (antenna_names, positions): (Vec<String>, Vec<XyzGeodetic>) = context
+            .antennas
+            .iter()
+            .map(|antenna| {
+                let position_enh = ENH {
+                    e: antenna.east_m,
+                    n: antenna.north_m,
+                    h: antenna.height_m,
+                };
+                let position = match latitude_rad {
+                    Some(rad) => position_enh.to_xyz(rad),
+                    None => position_enh.to_xyz_mwa(),
+                };
+                (antenna.tile_name.to_owned(), position)
+            })
+            .unzip();
+        self.write_uvfits_antenna_table(&antenna_names, &positions, None)
+    }
+
     /// Write a visibility row into the uvfits file.
     ///
     /// `uvfits` must have been opened in write mode and currently have HDU 0
@@ -594,66 +677,142 @@ impl<'a> UvfitsWriter<'a> {
         Ok(())
     }
 
-    // /// Assumes that `vis_array` has already had `weights` applied; these need
-    // /// to be undone locally by this function.
-    // // TODO: Assumes that all fine channels are written for all baselines in
-    // // `vis_array.`
-    // pub(crate) fn write_from_vis(
-    //     &mut self,
-    //     uvfits: &mut FitsFile,
-    //     vis_array: ArrayView2<Jones<f32>>,
-    //     weights: ArrayView2<f32>,
-    //     uvws: &[UVW],
-    //     epoch: &Epoch,
-    //     num_fine_chans: usize,
-    //     fine_chan_flags: &HashSet<usize>,
-    // ) -> Result<(), UvfitsWriteError> {
-    //     let num_unflagged_baselines = vis_array.len_of(Axis(0));
-    //     let num_unflagged_tiles = num_tiles_from_num_baselines(num_unflagged_baselines);
-    //     // Write out all the baselines of the timestep we received.
-    //     let mut vis: Vec<f32> = Vec::with_capacity(12 * num_fine_chans);
-    //     for (unflagged_bl, uvw) in (0..num_unflagged_baselines).into_iter().zip(uvws.iter()) {
-    //         // uvfits expects the tile numbers to be from 1 to the total number
-    //         // of tiles sequentially, so don't use the actual unflagged tile
-    //         // numbers.
-    //         let (tile1, tile2) =
-    //             cross_correlation_baseline_to_tiles(num_unflagged_tiles, unflagged_bl);
-    //         let mut unflagged_chan_index = 0;
-    //         for fine_chan_index in 0..num_fine_chans {
-    //             if fine_chan_flags.contains(&fine_chan_index) {
-    //                 vis.extend_from_slice(&[0.0; 12])
-    //             } else {
-    //                 let weight = unsafe { weights.uget((unflagged_bl, unflagged_chan_index)) };
-    //                 let jones = (unsafe { vis_array.uget((unflagged_bl, unflagged_chan_index)) })
-    //                     .clone()
-    //                     // Undo the weight.
-    //                     * (1.0 / weight);
-    //                 unflagged_chan_index += 1;
-    //                 vis.extend_from_slice(&[
-    //                     // XX
-    //                     jones[0].re,
-    //                     jones[0].im,
-    //                     *weight,
-    //                     // YY
-    //                     jones[3].re,
-    //                     jones[3].im,
-    //                     *weight,
-    //                     // XY
-    //                     jones[1].re,
-    //                     jones[1].im,
-    //                     *weight,
-    //                     // YX
-    //                     jones[2].re,
-    //                     jones[2].im,
-    //                     *weight,
-    //                 ]);
-    //             };
-    //         }
-    //         self.write_vis(uvfits, uvw, tile1, tile2, epoch, &vis)?;
-    //         vis.clear();
-    //     }
-    //     Ok(())
-    // }
+    // TODO: 
+    pub(crate) fn write_baseline_imgset_flagmasks(
+        &mut self,
+        uvfits: &mut FitsFile,
+        context: &CorrelatorContext,
+        baseline_idxs: &[usize],
+        baseline_imgsets: &[UniquePtr<CxxImageSet>],
+        baseline_flagmasks: &[UniquePtr<CxxFlagMask>],
+        img_timestep_idxs: &[usize],
+        img_coarse_chan_idxs: &[usize],
+    ) -> Result<(), UvfitsWriteError> {
+        let num_baselines = baseline_idxs.len();
+        assert_eq!(num_baselines, baseline_imgsets.len());
+        assert_eq!(num_baselines, baseline_flagmasks.len());
+
+        let phase_center_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+        let lst_rad = context.metafits_context.lst_rad;
+        let phase_center_ha = phase_center_ra.to_hadec(lst_rad);
+        let tiles_xyz_geod = XyzGeodetic::get_tiles_mwalib(&context.metafits_context);
+
+        let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+        let num_img_coarse_chans = img_coarse_chan_idxs.len();
+        let num_img_chans = num_fine_chans_per_coarse * num_img_coarse_chans;
+
+
+	    // Weights are normalized so that default res of 10 kHz, 1s has weight of "1" per sample
+
+        // TODO: deal with weight factor when doing averaging.
+        // TODO: deal with passband gains
+        let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
+        let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz as f64;
+        let weight_factor = fine_chan_width_hz * integration_time_s;
+
+
+
+        for &timestep_idx in img_timestep_idxs {
+            let gps_time_s = context.timesteps[timestep_idx].gps_time_ms as f64 / 1000.0;
+            let epoch = Epoch::from_tai_seconds(gps_time_s + 19.0 + HIFITIME_GPS_FACTOR);
+            for (&baseline_idx, imgset, flagmask) in
+                izip!(baseline_idxs, baseline_imgsets, baseline_flagmasks)
+            {
+                let baseline: &Baseline = &context.metafits_context.baselines[baseline_idx];
+                let imgset: &UniquePtr<CxxImageSet> = imgset;
+                let flagmask: &UniquePtr<CxxFlagMask> = flagmask;
+
+                let ant1_idx = baseline.ant1_index;
+                let ant2_idx = baseline.ant2_index;
+
+                let vis = vec![f32::from(69.0); 12 * num_img_chans];
+
+                (0..num_img_chans).for_each(|chan_idx| {
+
+                });
+
+                let uvw = UVW::from_xyz(
+                    // TODO: which way around is it?
+                    &(tiles_xyz_geod[ant1_idx].clone() - &tiles_xyz_geod[ant2_idx]),
+                    &phase_center_ha,
+                );
+
+                // dbg!(&uvw, &ant1_idx, &ant2_idx, &epoch, &vis);
+
+                // TODO: calculate weights, vis
+                let result = self.write_vis(uvfits, &uvw, ant1_idx, ant2_idx, &epoch, &vis);
+                if let Err(err) = result {
+                    return Err(err);
+                };
+            }
+        }
+
+        // panic!("Finish this!");
+
+        Ok(())
+    }
+
+    /// Assumes that `vis_array` has already had `weights` applied; these need
+    /// to be undone locally by this function.
+    // TODO: Assumes that all fine channels are written for all baselines in
+    // `vis_array.`
+    pub(crate) fn write_from_vis(
+        &mut self,
+        uvfits: &mut FitsFile,
+        vis_array: ArrayView2<Jones<f32>>,
+        weights: ArrayView2<f32>,
+        uvws: &[UVW],
+        epoch: &Epoch,
+        num_fine_chans: usize,
+        fine_chan_flags: &HashSet<usize>,
+    ) -> Result<(), UvfitsWriteError> {
+        let num_unflagged_baselines = vis_array.len_of(Axis(0));
+        let num_unflagged_tiles = num_tiles_from_num_baselines(num_unflagged_baselines);
+        // Write out all the baselines of the timestep we received.
+        // TODO: why 12?
+        let mut vis: Vec<f32> = Vec::with_capacity(12 * num_fine_chans);
+        for (unflagged_bl, uvw) in (0..num_unflagged_baselines).into_iter().zip(uvws.iter()) {
+            // uvfits expects the tile numbers to be from 1 to the total number
+            // of tiles sequentially, so don't use the actual unflagged tile
+            // numbers.
+            let (tile1, tile2) =
+                cross_correlation_baseline_to_tiles(num_unflagged_tiles, unflagged_bl);
+            let mut unflagged_chan_index = 0;
+            for fine_chan_index in 0..num_fine_chans {
+                if fine_chan_flags.contains(&fine_chan_index) {
+                    vis.extend_from_slice(&[0.0; 12])
+                } else {
+                    let weight = unsafe { weights.uget((unflagged_bl, unflagged_chan_index)) };
+                    let jones = (unsafe { vis_array.uget((unflagged_bl, unflagged_chan_index)) })
+                        .clone()
+                        // Undo the weight.
+                        * (1.0 / weight);
+                    unflagged_chan_index += 1;
+                    vis.extend_from_slice(&[
+                        // XX
+                        jones[0].re,
+                        jones[0].im,
+                        *weight,
+                        // YY
+                        jones[3].re,
+                        jones[3].im,
+                        *weight,
+                        // XY
+                        jones[1].re,
+                        jones[1].im,
+                        *weight,
+                        // YX
+                        jones[2].re,
+                        jones[2].im,
+                        *weight,
+                    ]);
+                };
+            }
+            self.write_vis(uvfits, uvw, tile1, tile2, epoch, &vis)?;
+            vis.clear();
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -667,7 +826,12 @@ mod tests {
 
     use float_cmp::{approx_eq, F64Margin};
 
-    use crate::{get_flaggable_timesteps, constants::{COTTER_MWA_LATITUDE_RADIANS, HIFITIME_GPS_FACTOR}};
+    use crate::{
+        constants::{COTTER_MWA_LATITUDE_RADIANS, HIFITIME_GPS_FACTOR},
+        context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags,
+        get_flaggable_timesteps, init_baseline_flagmasks,
+        pos::xyz::xyzs_to_uvws,
+    };
 
     #[test]
     // Make a tiny uvfits file. The result has been verified by CASA's
@@ -686,7 +850,7 @@ mod tests {
             num_timesteps,
             num_baselines,
             num_chans,
-            &start_epoch,
+            start_epoch,
             40e3,
             170e6,
             3,
@@ -730,7 +894,7 @@ mod tests {
                 z: i as f64 * 3.0,
             })
             .collect();
-        u.write_uvfits_antenna_table(&names, &positions).unwrap();
+        u.write_uvfits_antenna_table(&names, &positions, None).unwrap();
     }
 
     // TODO: dedup this from lib.rs
@@ -745,6 +909,67 @@ mod tests {
         CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
     }
 
+    macro_rules! assert_short_string_keys_eq {
+        ($keys:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr) => {
+            for key in $keys {
+                let left_result: Result<String, _> =
+                    get_required_fits_key!($left_fptr, &$left_hdu, key);
+                let right_result: Result<String, _> =
+                    get_required_fits_key!($right_fptr, &$right_hdu, key);
+                match (left_result, right_result) {
+                    (Ok(left_val), Ok(right_val)) => {
+                        assert_eq!(
+                            left_val, right_val,
+                            "mismatch for metafits short string key {}",
+                            key,
+                        );
+                    }
+                    (Err(err), Ok(right_val)) => {
+                        panic!(
+                            "unable to get left short string key {}. Right val={:?}. err={}",
+                            key, right_val, err
+                        );
+                    }
+                    (.., Err(err)) => {
+                        panic!("unable to get right short string key {}. {}", key, err);
+                    }
+                }
+            }
+        };
+    }
+
+    macro_rules! assert_f64_string_keys_eq {
+        ($keys:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr) => {
+            for key in $keys {
+                let left_result: Result<f64, _> =
+                    get_required_fits_key!($left_fptr, &$left_hdu, key);
+                let right_result: Result<f64, _> =
+                    get_required_fits_key!($right_fptr, &$right_hdu, key);
+                match (left_result, right_result) {
+                    (Ok(left_val), Ok(right_val)) => {
+                        assert!(
+                            approx_eq!(f64, left_val, right_val, F64Margin::default()),
+                            "mismatch for metafits short f64 key {}. {} != {} (margin={:?})",
+                            key,
+                            left_val,
+                            right_val,
+                            F64Margin::default()
+                        );
+                    }
+                    (Err(err), Ok(right_val)) => {
+                        panic!(
+                            "unable to get left short f64 key {}. Right val={}. err={}",
+                            key, right_val, err
+                        );
+                    }
+                    (.., Err(err)) => {
+                        panic!("unable to get right short f64 key {}. {}", key, err);
+                    }
+                }
+            }
+        };
+    }
+
     fn assert_uvfits_primary_hdu_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
         let mut left_primary_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
         let mut right_primary_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
@@ -757,10 +982,18 @@ mod tests {
 
         let short_string_keys = vec![
             "SIMPLE", "EXTEND", "GROUPS", "PCOUNT", "GCOUNT", "PTYPE1", "PTYPE2", "PTYPE3",
-            "PTYPE4", "PTYPE5", "CTYPE2", "CTYPE3", "CTYPE4", "CTYPE5", "CTYPE6", "TELESCOP", 
+            "PTYPE4", "PTYPE5", "CTYPE2", "CTYPE3", "CTYPE4", "CTYPE5", "CTYPE6", "TELESCOP",
             "INSTRUME",
             // TODO: "DATE-OBS",
         ];
+
+        assert_short_string_keys_eq!(
+            short_string_keys,
+            left_fptr,
+            left_primary_hdu,
+            right_fptr,
+            right_primary_hdu
+        );
 
         let f64_keys = vec![
             "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "NAXIS3", "NAXIS4", "NAXIS5", "NAXIS6",
@@ -771,69 +1004,53 @@ mod tests {
             // TODO: "FIBRFACT",
         ];
 
-        for key in short_string_keys {
-            let left_result: Result<String, _> =
-                get_required_fits_key!(left_fptr, &left_primary_hdu, key);
-            let right_result: Result<String, _> =
-                get_required_fits_key!(right_fptr, &right_primary_hdu, key);
-            match (left_result, right_result) {
-                (Ok(left_val), Ok(right_val)) => {
-                    assert_eq!(
-                        left_val, right_val,
-                        "mismatch for metafits short string key {}",
-                        key,
-                    );
-                }
-                (Err(err), Ok(right_val)) => {
-                    panic!(
-                        "unable to get left short string key {}. Right val={:?}. err={}",
-                        key, right_val, err
-                    );
-                }
-                (.., Err(err)) => {
-                    panic!("unable to get right short string key {}. {}", key, err);
-                }
-            }
-        }
-
-        for key in f64_keys {
-            let left_result: Result<f64, _> =
-                get_required_fits_key!(left_fptr, &left_primary_hdu, key);
-            let right_result: Result<f64, _> =
-                get_required_fits_key!(right_fptr, &right_primary_hdu, key);
-            match (left_result, right_result) {
-                (Ok(left_val), Ok(right_val)) => {
-                    assert!(
-                        approx_eq!(f64, left_val, right_val, F64Margin::default()),
-                        "mismatch for metafits short f64 key {}. {} != {} (margin={:?})",
-                        key,
-                        left_val,
-                        right_val,
-                        F64Margin::default()
-                    );
-                }
-                (Err(err), Ok(right_val)) => {
-                    panic!(
-                        "unable to get left short f64 key {}. Right val={}. err={}",
-                        key, right_val, err
-                    );
-                }
-                (.., Err(err)) => {
-                    panic!("unable to get right short f64 key {}. {}", key, err);
-                }
-            }
-        }
+        assert_f64_string_keys_eq!(
+            f64_keys,
+            left_fptr,
+            left_primary_hdu,
+            right_fptr,
+            right_primary_hdu
+        );
     }
 
-    fn assert_uvfits_ants_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
+    fn assert_uvfits_ant_hdu_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
         let mut left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
         let mut right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
+
+        let short_string_keys = vec![
+            "XTENSION", "TTYPE1", "TFORM1", "TTYPE2", "TFORM2", "TUNIT2", "TTYPE3", "TFORM3",
+            "TTYPE4", "TFORM4", "TTYPE5", "TFORM5", "TUNIT5", "TTYPE6", "TFORM6", "TTYPE7",
+            "TFORM7", "TUNIT7", "TTYPE8", "TFORM8", "TTYPE9", "TFORM9", "TTYPE10", "TFORM10",
+            "TUNIT10", "TTYPE11", "TFORM11", "EXTNAME", "TIMSYS", "ARRNAM",
+        ];
+
+        assert_short_string_keys_eq!(
+            short_string_keys,
+            left_fptr,
+            left_ant_hdu,
+            right_fptr,
+            right_ant_hdu
+        );
+
+        let f64_keys = vec![
+            "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "PCOUNT", "GCOUNT", "TFIELDS", "ARRAYX",
+            "ARRAYY", "ARRAYZ", "FREQ", "GSTIA0", "DEGPDY", "RDATE", "POLARX", "POLARY", "UT1UTC", "DATUTC",
+            "NUMORB", "NOPCAL", "FREQID", "IATUTC",
+        ];
+
+        assert_f64_string_keys_eq!(
+            f64_keys,
+            left_fptr,
+            left_ant_hdu,
+            right_fptr,
+            right_ant_hdu
+        );
 
         panic!("TODO: read ants");
     }
 
     #[test]
-    fn test_uvfits_from_context_matches_cotter_header() {
+    fn uvfits_from_mwalib_matches_cotter_header() {
         let context = get_mwa_ord_context();
 
         let obsid = context.metafits_context.obs_id;
@@ -845,12 +1062,11 @@ mod tests {
         let timestep_idxs = get_flaggable_timesteps(&context).unwrap();
         let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
 
-        let mut u = UvfitsWriter::from_context(
+        let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
             &context,
             &timestep_idxs,
             &coarse_chan_idxs,
-            &start_epoch,
         )
         .unwrap();
 
@@ -866,10 +1082,8 @@ mod tests {
         assert_uvfits_primary_hdu_eq(&mut birli_fptr, &mut cotter_fptr)
     }
 
-    
     #[test]
-    fn test_uvfits_vis_from_imgsets_matches_cotter() {
-
+    fn uvfits_vis_from_imgsets_matches_cotter() {
         let context = get_mwa_ord_context();
 
         let obsid = context.metafits_context.obs_id;
@@ -880,22 +1094,19 @@ mod tests {
         let timestep_idxs = get_flaggable_timesteps(&context).unwrap();
         let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
 
-        let mut u = UvfitsWriter::from_context(
+        let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file,
             &context,
             &timestep_idxs,
             &coarse_chan_idxs,
-            &start_epoch,
         )
         .unwrap();
 
         let mut f = u.open().unwrap();
-
     }
 
     #[test]
-    fn test_uvfits_antenna_table_from_context_matches_cotter() {
-
+    fn uvfits_antenna_table_from_mwalib_matches_cotter() {
         let context = get_mwa_ord_context();
 
         let obsid = context.metafits_context.obs_id;
@@ -903,23 +1114,62 @@ mod tests {
 
         let tmp_uvfits_file = Path::new("tests/data/test_ants.uvfits");
 
-        let timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        let img_coarse_chan_idxs = context.common_coarse_chan_indices.clone();
 
-        let mut u = UvfitsWriter::from_context(
+        let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file,
             &context,
-            &timestep_idxs,
-            &coarse_chan_idxs,
-            &start_epoch,
+            &img_timestep_idxs,
+            &img_coarse_chan_idxs,
         )
         .unwrap();
 
         let mut f = u.open().unwrap();
 
-        panic!("TODO: write visibilities!");
-        
-        u.write_ants_from_context(&context, Some(COTTER_MWA_LATITUDE_RADIANS)).unwrap();
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+
+        let mut baseline_flagmasks = init_baseline_flagmasks(
+            &aoflagger,
+            &context,
+            &img_coarse_chan_idxs,
+            &img_timestep_idxs,
+            Some(get_antenna_flags(&context)),
+        );
+
+        let baseline_imgsets = context_to_baseline_imgsets(
+            &aoflagger,
+            &context,
+            &img_coarse_chan_idxs,
+            &img_timestep_idxs,
+            None,
+        );
+
+        let strategy_filename = &aoflagger.FindStrategyFileMWA();
+
+        flag_imgsets_existing(
+            &aoflagger,
+            &strategy_filename,
+            &baseline_imgsets,
+            &mut baseline_flagmasks,
+            true,
+        );
+
+        let baseline_idxs = (0..context.metafits_context.num_baselines).collect_vec();
+
+        u.write_baseline_imgset_flagmasks(
+            &mut f,
+            &context,
+            &baseline_idxs,
+            &baseline_imgsets,
+            &baseline_flagmasks,
+            &img_timestep_idxs,
+            &img_coarse_chan_idxs,
+        )
+        .unwrap();
+
+        u.write_ants_from_mwalib(&context.metafits_context, Some(COTTER_MWA_LATITUDE_RADIANS))
+            .unwrap();
 
         drop(f);
 
@@ -928,7 +1178,7 @@ mod tests {
         let mut birli_fptr = fits_open!(&tmp_uvfits_file).unwrap();
         let mut cotter_fptr = fits_open!(&cotter_uvfits_path).unwrap();
 
-        assert_uvfits_ants_eq(&mut birli_fptr, &mut cotter_fptr)
+        assert_uvfits_ant_hdu_eq(&mut birli_fptr, &mut cotter_fptr)
 
         // TODO
         // let tmp_uvfits_file = NamedTempFile::new().unwrap();

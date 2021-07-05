@@ -3,6 +3,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //! Handle (hour angle, declination) coordinates.
+//!
+//! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
 use super::azel::AzEl;
 use super::radec::RADec;

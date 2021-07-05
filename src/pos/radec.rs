@@ -3,11 +3,13 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //! Handle (right ascension, declination) coordinates.
+//!
 //! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
 use std::f64::consts::*;
 
 use log::warn;
+use mwalib::MetafitsContext;
 use serde::{Deserialize, Serialize};
 
 use super::hadec::HADec;
@@ -49,6 +51,30 @@ impl RADec {
         Self {
             ra: lst_rad - hadec.ha,
             dec: hadec.dec,
+        }
+    }
+
+    pub fn from_mwalib_phase_center(context: &MetafitsContext) -> Option<Self> {
+        match (
+            context.ra_phase_center_degrees,
+            context.dec_phase_center_degrees,
+        ) {
+            (Some(ra), Some(dec)) => Some(RADec::new_degrees(ra, dec)),
+            (..) => None,
+        }
+    }
+
+    pub fn from_mwalib_tile_pointing(context: &MetafitsContext) -> Self {
+        RADec::new_degrees(
+            context.ra_tile_pointing_degrees,
+            context.dec_tile_pointing_degrees,
+        )
+    }
+
+    pub fn from_mwalib_phase_or_pointing(context: &MetafitsContext) -> Self {
+        match RADec::from_mwalib_phase_center(&context) {
+            Some(radec) => radec,
+            None => RADec::from_mwalib_tile_pointing(&context)
         }
     }
 

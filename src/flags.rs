@@ -20,12 +20,14 @@ use rayon::prelude::*;
 /// These timesteps:
 /// - are contiguous, and are each separated by an integration time
 /// - start at the latest start time of visibilities in all provided gpubox files
+///   (AKA the first common timestep) 
 /// - end at the latest provided visibility
 ///
 /// Start times are determined from the TIME and MILLITIM headers of individual
 /// gpubox visibility HDUs
 ///
 /// [`mwalib::CorrelatorContext`]: https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html
+/// mwalib core concepts: https://github.com/MWATelescope/mwalib/wiki/Key-Concepts#timesteps-and-coarse-channels
 ///
 /// # Examples
 ///
@@ -367,8 +369,6 @@ pub fn flagmask_set(
 ///     true
 /// );
 /// ```
-///
-/// # TODO: just write back in to existing
 pub fn flag_imgsets_existing(
     aoflagger: &CxxAOFlagger,
     strategy_filename: &str,

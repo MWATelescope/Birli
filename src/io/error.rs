@@ -74,6 +74,9 @@ pub enum IOError {
     },
 }
 
+
+///
+/// Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 #[derive(Error, Debug)]
 pub enum UvfitsWriteError {
     #[error("Tried to write to row number {row_num}, but only {num_rows} rows are expected")]
@@ -83,13 +86,16 @@ pub enum UvfitsWriteError {
     NotEnoughRowsWritten { current: usize, total: usize },
 
     /// An error associated with ERFA.
-    #[error("{source_file}:{source_line} Call to ERFA function {function} returned status code {status}")]
-    Erfa {
-        source_file: &'static str,
-        source_line: u32,
-        status: i32,
-        function: &'static str,
-    },
+    // #[error("{source_file}:{source_line} Call to ERFA function {function} returned status code {status}")]
+    // Erfa {
+    //     source_file: &'static str,
+    //     source_line: u32,
+    //     status: i32,
+    //     function: &'static str,
+    // },
+
+    #[error("{0}")]
+    Erfa(#[from] crate::pos::xyz::ErfaError),
 
     /// An error associated with fitsio.
     #[error("{0}")]

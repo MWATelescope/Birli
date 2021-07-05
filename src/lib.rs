@@ -114,7 +114,7 @@ pub mod error;
 
 pub mod math;
 
-pub mod coord;
+pub mod pos;
 
 pub mod io;
 
@@ -561,10 +561,11 @@ mod tests {
     /// Get a dummy MWA Ord context with multiple holes in the data
     ///
     /// The gpubox (batch, hdu) tuples look like this:
+    /// - ts is according to [`mwalib::correlatorContext`]
     ///
-    /// | gpubox \ timestep | 0      | 1      | 2      | 3      | 4      |
+    /// |                   | ts=0   | 1      | 2      | 3      | 4      |
     /// | ----------------- | ------ | ------ | ------ | ------ | ------ |
-    /// | 00                | (0, 0) | (0, 1) | .      | (1, 0) | .      |
+    /// | gpubox=00         | (0, 0) | (0, 1) | .      | (1, 0) | .      |
     /// | 01                | .      | (0, 0) | (0, 1) | (1, 0) | (1, 1) |
     fn get_mwa_ord_dodgy_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";

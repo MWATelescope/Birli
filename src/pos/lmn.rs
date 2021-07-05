@@ -7,6 +7,8 @@
 //! This coordinate system is discussed at length in Interferometry and
 //! Synthesis in Radio Astronomy, Third Edition, Section 4: Geometrical
 //! Relationships, Polarimetry, and the Measurement Equation.
+//!
+//! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
 /// (l,m,n) direction-cosine coordinates. All units are in radians.
 ///

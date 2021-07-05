@@ -23,6 +23,5 @@ pub const COTTER_MWA_HEIGHT_METRES: f64 = 377.0;
 /// is 1980 Jan 5, but `hifitime` uses 1900 for everything; subtracting this
 /// number from the result of `hifitime::Epoch::as_gpst_seconds` gives the
 /// expected GPS time.
-#[cfg(test)]
 pub(crate) const HIFITIME_GPS_FACTOR: f64 =
     hifitime::SECONDS_PER_YEAR * 80.0 + hifitime::SECONDS_PER_DAY * 4.0;

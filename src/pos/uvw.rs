@@ -3,6 +3,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //! Handle UVW coordinates.
+//!
+//! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
 use super::hadec::HADec;
 use super::xyz::XyzBaseline;
@@ -122,7 +124,7 @@ impl approx::AbsDiffEq for UVW {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coord::XyzGeodetic;
+    use crate::pos::XyzGeodetic;
     use approx::*;
 
     #[test]

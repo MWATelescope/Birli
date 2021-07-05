@@ -260,44 +260,6 @@ impl FlagFileSet {
         Ok(header)
     }
 
-    // pub fn read_validated_header(
-    //     context: &CorrelatorContext,
-    //     fptr: &mut FitsFile,
-    // ) -> Result<FlagFileHeaders, BirliError> {
-    //     let headers = FlagFileSet::read_header(fptr)?;
-    //     let header_baselines = headers.num_ants * (headers.num_ants + 1) / 2;
-    //     if header_baselines != context.metafits_context.num_baselines {
-    //         return Err(BirliError::MwafInconsistent {
-    //             file: String::from(&fptr.filename),
-    //             expected: "NANTENNA * (NANTENNA+1) / 2 = context.metafits_context.num_baselines"
-    //                 .to_string(),
-    //             found: format!(
-    //                 "{} != {}",
-    //                 header_baselines, context.metafits_context.num_baselines
-    //             ),
-    //         });
-    //     };
-
-    //     // TODO: check NSCANS?
-    //     // if headers.num_timesteps > context.num_common_timesteps {
-    //     //     return Err(BirliError::MwafInconsistent {
-    //     //         file: String::from(&fptr.filename),
-    //     //         expected: "NSCANS <= context.num_common_timesteps".to_string(),
-    //     //         found: format!("{} > {}", headers.num_timesteps, context.num_common_timesteps),
-    //     //     });
-    //     // };
-
-    //     if headers.bytes_per_row * 8 < context.metafits_context.num_corr_fine_chans_per_coarse {
-    //         return Err(BirliError::MwafInconsistent {
-    //             file: String::from(&fptr.filename),
-    //             expected: "headers.bytes_per_row * 8 >= context.metafits_context.num_corr_fine_chans_per_coarse".to_string(),
-    //             found: format!("{} < {}", headers.bytes_per_row, context.metafits_context.num_corr_fine_chans_per_coarse),
-    //         });
-    //     }
-
-    //     Ok(headers)
-    // }
-
     /// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], and a
     /// vector of [`CxxFlagMask`]s for each baseline in the observation.
     ///
@@ -388,6 +350,49 @@ impl FlagFileSet {
         }
         Ok(())
     }
+}
+
+/// TODO: These are just for tests, and should be deprecated. 
+/// TODO: Why doesn't #[cfg(test)] work? 
+impl FlagFileSet {
+
+    // pub fn read_validated_header(
+    //     context: &CorrelatorContext,
+    //     fptr: &mut FitsFile,
+    // ) -> Result<FlagFileHeaders, BirliError> {
+    //     let headers = FlagFileSet::read_header(fptr)?;
+    //     let header_baselines = headers.num_ants * (headers.num_ants + 1) / 2;
+    //     if header_baselines != context.metafits_context.num_baselines {
+    //         return Err(BirliError::MwafInconsistent {
+    //             file: String::from(&fptr.filename),
+    //             expected: "NANTENNA * (NANTENNA+1) / 2 = context.metafits_context.num_baselines"
+    //                 .to_string(),
+    //             found: format!(
+    //                 "{} != {}",
+    //                 header_baselines, context.metafits_context.num_baselines
+    //             ),
+    //         });
+    //     };
+
+    //     // TODO: check NSCANS?
+    //     // if headers.num_timesteps > context.num_common_timesteps {
+    //     //     return Err(BirliError::MwafInconsistent {
+    //     //         file: String::from(&fptr.filename),
+    //     //         expected: "NSCANS <= context.num_common_timesteps".to_string(),
+    //     //         found: format!("{} > {}", headers.num_timesteps, context.num_common_timesteps),
+    //     //     });
+    //     // };
+
+    //     if headers.bytes_per_row * 8 < context.metafits_context.num_corr_fine_chans_per_coarse {
+    //         return Err(BirliError::MwafInconsistent {
+    //             file: String::from(&fptr.filename),
+    //             expected: "headers.bytes_per_row * 8 >= context.metafits_context.num_corr_fine_chans_per_coarse".to_string(),
+    //             found: format!("{} < {}", headers.bytes_per_row, context.metafits_context.num_corr_fine_chans_per_coarse),
+    //         });
+    //     }
+
+    //     Ok(headers)
+    // }
 
     fn read_flags_raw(
         fptr: &mut FitsFile,

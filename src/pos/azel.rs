@@ -3,6 +3,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //! Handle (azimuth, elevation) coordinates.
+//!
+//! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
 use std::f64::consts::FRAC_PI_2;
 use mwalib::MWA_LATITUDE_RADIANS;

@@ -4,6 +4,8 @@
 
 //! Handle East, North and Height coordinates (typically associated with MWA
 //! tiles).
+//!
+//! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
 use super::{XyzGeodetic};
 use mwalib::MWA_LATITUDE_RADIANS;

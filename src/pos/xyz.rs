@@ -11,8 +11,10 @@
 //! This coordinate system is discussed at length in Interferometry and
 //! Synthesis in Radio Astronomy, Third Edition, Section 4: Geometrical
 //! Relationships, Polarimetry, and the Measurement Equation.
+//!
+//! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
-use mwalib::{MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS, MWA_LONGITUDE_RADIANS};
+use mwalib::{MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS, MWA_LONGITUDE_RADIANS, MetafitsContext};
 use rayon::prelude::*;
 use thiserror::Error;
 
@@ -72,7 +74,7 @@ impl XyzGeodetic {
     /// "input"; e.g. in the metafits file, Tile104 is often the first tile
     /// listed ("input" 0), Tile103 second ("input" 2), so the first baseline
     /// would naively be between Tile104 and Tile103.
-    pub fn get_tiles_mwalib(context: &mwalib::MetafitsContext) -> Vec<Self> {
+    pub fn get_tiles_mwalib(context: &MetafitsContext) -> Vec<Self> {
         context
             .rf_inputs
             .iter()
@@ -97,7 +99,7 @@ impl XyzGeodetic {
     /// "input"; e.g. in the metafits file, Tile104 is often the first tile
     /// listed ("input" 0), Tile103 second ("input" 2), so the first baseline
     /// would naively be between Tile104 and Tile103.
-    pub fn get_baselines_mwalib(context: &mwalib::MetafitsContext) -> Vec<XyzBaseline> {
+    pub fn get_baselines_mwalib(context: &MetafitsContext) -> Vec<XyzBaseline> {
         Self::get_baselines(&Self::get_tiles_mwalib(context))
     }
 
@@ -242,6 +244,8 @@ impl std::ops::Sub<&XyzGeodetic> for XyzGeodetic {
 /// This coordinate system is discussed at length in Interferometry and
 /// Synthesis in Radio Astronomy, Third Edition, Section 4: Geometrical
 /// Relationships, Polarimetry, and the Measurement Equation.
+///
+/// TODO: What's the difference between XyzBaseline and XyzGeodetic?
 #[derive(Clone, Debug)]
 pub struct XyzBaseline {
     /// x-coordinate \[meters\]
@@ -271,7 +275,7 @@ pub struct XyzGeocentric {
 impl XyzGeocentric {
     /// Get a geocentric coordinate vector With the given geodetic coordinates
     /// (longitude, latitude and height). The ellipsoid model is WGS84.
-    fn get_geocentric_vector(
+    pub fn get_geocentric_vector(
         longitude_rad: f64,
         latitude_rad: f64,
         height_metres: f64,
