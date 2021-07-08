@@ -6,10 +6,9 @@ name: Linux Tests
 
 jobs:
   test:
-    name: Linux Tests
     strategy:
       matrix:
-        os: ["ubuntu-20.04"]
+        os: ["ubuntu-18.04", "ubuntu-20.04"]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout sources
@@ -17,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install stable toolchain
+      - name: Install stable Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
@@ -29,8 +28,7 @@ jobs:
         uses: davidB/rust-cargo-make@v1
 
       - name: Install Dependencies
-        run: |
-          cargo make install_deps
+        run: cargo make install_deps
 
       - name: Cargo Make CI
         run: cargo make ci
