@@ -10,119 +10,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # build-linux-release:
-  #   name: Build release for Linux
-  #   runs-on: ubuntu-latest
-
-  #   steps:
-  #   - name: Checkout sources
-  #     uses: actions/checkout@v2
-  #     with:
-  #       fetch-depth: 0
-
-  #   - name: Install stable toolchain
-  #     uses: actions-rs/toolchain@v1
-  #     with:
-  #       profile: minimal
-  #       toolchain: stable
-  #       override: true
-  #       components: rustfmt, clippy
-
-  #   - name: Install Cargo Make
-  #     uses: davidB/rust-cargo-make@v1
-
-  #   - name: Install Birli Dependencies
-  #     run: |
-  #       cargo make install_deps
-
-  #   - name: Build release
-  #     run: cargo build --release
-
-  #   - name: Create release tarball
-  #     run: |
-  #         mv target/release/libbirli.{a,so} include/birli.h .
-  #         tar -acvf birli-$(git describe --tags)-linux_x86_64.tar.gz LICENSE LICENSE-cfitsio CHANGELOG.md libbirli.{a,so} birli.h
-
-  #   - name: Upload tarball
-  #     uses: actions/upload-artifact@v2
-  #     with:
-  #       name: linux_x86_64.tar.gz
-  #       path: "birli-*-linux_x86_64.tar.gz"
-  #       if-no-files-found: error
-
-  #   - uses: katyo/publish-crates@v1
-  #     with:
-  #         registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-  # build-macos-release:
-  #   name: Build release for MacOS
-  #   runs-on: macos-latest
-
-  #   steps:
-  #   - name: Checkout sources
-  #     uses: actions/checkout@v2
-  #     with:
-  #       fetch-depth: 0
-
-  #   - name: Install stable toolchain
-  #     uses: actions-rs/toolchain@v1
-  #     with:
-  #       profile: minimal
-  #       toolchain: stable
-  #       override: true
-  #       components: rustfmt, clippy
-
-  #   - name: Install Cargo Make
-  #     uses: davidB/rust-cargo-make@v1
-
-  #   - name: Install Dependencies
-  #     run: |
-  #       brew tap derwentx/tap
-  #       wget https://github.com/derwentx/homebrew-tap/releases/download/v2021.03.08/casacore-data--2021.02.26.catalina.bottle.tar.gz
-  #       brew install -f casacore-data--2021.02.26.catalina.bottle.tar.gz
-  #       wget https://github.com/derwentx/homebrew-tap/releases/download/v2021.03.08/casacore--3.4.0.catalina.bottle.tar.gz
-  #       brew install -f casacore--3.4.0.catalina.bottle.tar.gz
-  #       wget https://github.com/derwentx/homebrew-tap/releases/download/v2021.03.08/aoflagger--3.0.0.catalina.bottle.tar.gz
-  #       brew install -f aoflagger--3.0.0.catalina.bottle.tar.gz
-  #       cargo make install_deps
-
-  #   - name: Build release
-  #     run: cargo build --release
-
-  #   - name: Create release tarball
-  #     run: |
-  #         mv target/release/libbirli.{a,dylib} include/birli.h .
-  #         tar -acvf birli-$(git describe --tags)-macosx.tar.gz LICENSE LICENSE-cfitsio CHANGELOG.md libbirli.{a,dylib} birli.h
-
-  #   - name: Upload tarball
-  #     uses: actions/upload-artifact@v2
-  #     with:
-  #       name: macos.tar.gz
-  #       path: "birli-*-macos.tar.gz"
-  #       if-no-files-found: error
-
-  # create-release:
-  #   name: Create a new release
-  #   runs-on: ubuntu-latest
-  #   needs: [build-linux-release, build-macos-release]
-  #   steps:
-  #     - name: Download Linux artifact
-  #       uses: actions/download-artifact@v2
-  #       with:
-  #         name: linux_x86_64.tar.gz
-
-  #     - name: Download MacOS artifact
-  #       uses: actions/download-artifact@v2
-  #       with:
-  #         name: macos.tar.gz
-
-  #     - name: Provide new release asset
-  #       uses: "marvinpinto/action-automatic-releases@latest"
-  #       with:
-  #         repo_token: "${{ secrets.GITHUB_TOKEN }}"
-  #         prerelease: true
-  #         files: |
-  #           *.tar.gz
 
   publish-crate:
     name: Publish to crates.io
@@ -149,6 +36,15 @@ jobs:
       run: |
         cargo make install_deps
 
-    - uses: katyo/publish-crates@v1
+    - run: cargo package
+    - uses: taiki-e/create-gh-release-action@v1
+      with:
+        changelog: RELEASES.md
+        title: $version
       env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - run: |
+        cargo login "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+        cargo publish
+      env:
+        CARGO_REGISTRY_TOKEN: "${{ secrets.CARGO_REGISTRY_TOKEN }}"

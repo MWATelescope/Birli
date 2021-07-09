@@ -1,10 +1,26 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.1.3 (2021-05-05)
+# Version 0.1.4 (2021-07-09)
+
+* [EOR-22] correct_cable_lengths
+* [EOR-18] Implement updated mwalib timestep / coarse channel interface
+* [EOR-28] flag antennas flagged in TILEDATA HDU
+* [EOR-29] handle misaligned coarse channels, flag missing hdus
+* Updates:
+  * mwalib = "0.8.3"
+  * bindgen = "0.58.1"
+* testing:
+  * validate flagging output matches cotter exactly
+  * utilities for dumping fits files
+  * cotter-friendly metafits files
+* other:
+  * refactor lib,flag_io into flags, corrections, io
+
+# Version 0.1.3 (2021-05-13)
 
 * Release was created to test a fix for docs.rs.
 
-# Version 0.1.2 (2021-05-05)
+# Version 0.1.2 (2021-05-13)
 
 * Release was created to test release automation.
 * [EOR-19] optimizations:
