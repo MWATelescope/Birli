@@ -87,30 +87,44 @@ fn bench_context_to_baseline_imgsets_ord_half_1196175296(crt: &mut Criterion) {
 fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
     let aoflagger = unsafe { cxx_aoflagger_new() };
     let context = get_context_mwax_half_1247842824();
+    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
     let mut baseline_imgsets = context_to_baseline_imgsets(
         &aoflagger,
         &context,
-        &context.common_coarse_chan_indices.clone(),
+        &img_coarse_chan_idxs,
         &context.common_timestep_indices.clone(),
         None,
     );
     crt.bench_function("correct_cable_lengths - mwax_half_1247842824", |bch| {
-        bch.iter(|| correct_cable_lengths(black_box(&context), black_box(&mut baseline_imgsets)))
+        bch.iter(|| {
+            correct_cable_lengths(
+                black_box(&context),
+                black_box(&mut baseline_imgsets),
+                black_box(img_coarse_chan_idxs),
+            )
+        })
     });
 }
 
 fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
     let aoflagger = unsafe { cxx_aoflagger_new() };
     let context = get_context_ord_half_1196175296();
+    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
     let mut baseline_imgsets = context_to_baseline_imgsets(
         &aoflagger,
         &context,
-        &context.common_coarse_chan_indices.clone(),
+        &img_coarse_chan_idxs,
         &context.common_timestep_indices.clone(),
         None,
     );
     crt.bench_function("correct_cable_lengths - ord_half_1196175296", |bch| {
-        bch.iter(|| correct_cable_lengths(black_box(&context), black_box(&mut baseline_imgsets)))
+        bch.iter(|| {
+            correct_cable_lengths(
+                black_box(&context),
+                black_box(&mut baseline_imgsets),
+                black_box(img_coarse_chan_idxs),
+            )
+        })
     });
 }
 

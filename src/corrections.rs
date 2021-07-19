@@ -25,6 +25,24 @@ fn _correct_cable_length_buffers_cotter(
     })
 }
 
+/// A vector of all fine channel frequencies for the provided coarse channels
+/// in order of provided `coarse_chan_idxs`, and ascending fine channel index
+fn _get_all_freqs_hz(context: &CorrelatorContext, coarse_chan_idxs: &[usize]) -> Vec<u32> {
+    let coarse_chans = context.coarse_chans.clone();
+    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+    let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz;
+    coarse_chan_idxs
+        .iter()
+        .flat_map(|&coarse_chan_idx| {
+            let coarse_chan = &coarse_chans[coarse_chan_idx];
+            let chan_start_hz = coarse_chan.chan_start_hz;
+            (0..fine_chans_per_coarse).map(move |fine_chan_idx| {
+                chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
+            })
+        })
+        .collect()
+}
+
 /// Perform cable length corrections, given an observation's
 /// [`mwalib::CorrelatorContext`] and a vector of [`CxxImageSet`]s for  each
 /// baseline.
@@ -52,6 +70,10 @@ fn _correct_cable_length_buffers_cotter(
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
 /// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 ///
+/// // Determine which timesteps and coarse channels we want to use
+/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+/// let img_timestep_idxs = &context.common_timestep_indices;
+///
 /// // create a CxxAOFlagger object to perform AOFlagger operations
 /// let aoflagger = unsafe { cxx_aoflagger_new() };
 ///
@@ -59,12 +81,12 @@ fn _correct_cable_length_buffers_cotter(
 /// let mut baseline_imgsets = context_to_baseline_imgsets(
 ///     &aoflagger,
 ///     &context,
-///     &context.common_coarse_chan_indices.clone(),
-///     &context.common_timestep_indices.clone(),
+///     &img_coarse_chan_idxs,
+///     &img_timestep_idxs,
 ///     None,
 /// );
 ///
-/// correct_cable_lengths(&context, &mut baseline_imgsets);
+/// correct_cable_lengths(&context, &mut baseline_imgsets, &img_coarse_chan_idxs);
 /// ```
 ///
 /// # Accuracy
@@ -101,30 +123,32 @@ fn _correct_cable_length_buffers_cotter(
 ///     })
 /// }
 /// ```
-
 pub fn correct_cable_lengths(
     context: &CorrelatorContext,
     baseline_imgsets: &mut Vec<UniquePtr<CxxImageSet>>,
+    img_coarse_chan_idxs: &[usize],
 ) {
     trace!("start correct_cable_lengths");
 
     let baselines = &context.metafits_context.baselines;
     let antennas = &context.metafits_context.antennas;
-    let coarse_chans = &context.coarse_chans;
+    // let coarse_chans = &context.coarse_chans;
 
-    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-    let fine_chan_width_hz = &context.metafits_context.corr_fine_chan_width_hz;
+    // let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+    // let fine_chan_width_hz = &context.metafits_context.corr_fine_chan_width_hz;
 
     // A vector of all fine channel frequencies for all coarse channels in ascending order.
-    let all_freqs_hz: Vec<u32> = coarse_chans
-        .iter()
-        .flat_map(|coarse_chan| {
-            let chan_start_hz = coarse_chan.chan_start_hz;
-            (0..fine_chans_per_coarse).map(move |fine_chan_idx| {
-                chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
-            })
-        })
-        .collect();
+    // let all_freqs_hz: Vec<u32> = coarse_chans
+    //     .iter()
+    //     .flat_map(|coarse_chan| {
+    //         let chan_start_hz = coarse_chan.chan_start_hz;
+    //         (0..fine_chans_per_coarse).map(move |fine_chan_idx| {
+    //             chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
+    //         })
+    //     })
+    //     .collect();
+
+    let all_freqs_hz = _get_all_freqs_hz(&context, img_coarse_chan_idxs);
 
     izip!(baseline_imgsets.iter_mut(), baselines).for_each(|(imgset, baseline)| {
         let imgset_stride: usize = imgset.HorizontalStride();
@@ -174,7 +198,7 @@ mod tests {
     use float_cmp::{approx_eq, F32Margin};
     use mwalib::CorrelatorContext;
 
-    use crate::{context_to_baseline_imgsets, cxx_aoflagger_new, get_flaggable_timesteps};
+    use crate::{context_to_baseline_imgsets, cxx_aoflagger_new, get_flaggable_timesteps, corrections::_get_all_freqs_hz};
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     // TODO: deduplicate from lib.rs
@@ -213,24 +237,6 @@ mod tests {
                 right as i32
             )
         };
-    }
-
-    /// A vector of all fine channel frequencies for the provided coarse channels
-    /// in order of provided `coarse_chan_idxs`, and ascending fine channel index
-    fn _get_all_freqs_hz(context: &CorrelatorContext, coarse_chan_idxs: &[usize]) -> Vec<u32> {
-        let coarse_chans = context.coarse_chans.clone();
-        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-        let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz;
-        coarse_chan_idxs
-            .iter()
-            .flat_map(|&coarse_chan_idx| {
-                let coarse_chan = &coarse_chans[coarse_chan_idx];
-                let chan_start_hz = coarse_chan.chan_start_hz;
-                (0..fine_chans_per_coarse).map(move |fine_chan_idx| {
-                    chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
-                })
-            })
-            .collect()
     }
 
     #[test]
@@ -338,7 +344,7 @@ mod tests {
         let (sin_1_yy_3_f64, cos_1_yy_3_f64) = angle_1_yy_3.sin_cos();
         let (sin_1_yy_3, cos_1_yy_3) = (sin_1_yy_3_f64 as f32, cos_1_yy_3_f64 as f32);
 
-        correct_cable_lengths(&context, &mut baseline_imgsets);
+        correct_cable_lengths(&context, &mut baseline_imgsets, img_coarse_chan_idxs);
 
         // there should be no difference in baseline 0
         test_imgset_val!(baseline_imgsets[0], 0, 0, 0, viz_0_xx_0_0_re);
@@ -479,7 +485,7 @@ mod tests {
         let (sin_5_yy_3_f64, cos_5_yy_3_f64) = angle_5_yy_3.sin_cos();
         let (sin_5_yy_3, cos_5_yy_3) = (sin_5_yy_3_f64 as f32, cos_5_yy_3_f64 as f32);
 
-        correct_cable_lengths(&context, &mut baseline_imgsets);
+        correct_cable_lengths(&context, &mut baseline_imgsets, img_coarse_chan_idxs);
 
         // there should be no difference in baseline 0
         test_imgset_val!(baseline_imgsets[0], 0, 0, 0, viz_0_xx_0_0_re);

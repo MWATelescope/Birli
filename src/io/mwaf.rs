@@ -274,12 +274,19 @@ impl FlagFileSet {
     pub fn write_baseline_flagmasks(
         &mut self,
         context: &CorrelatorContext,
-        baseline_flagmasks: Vec<UniquePtr<CxxFlagMask>>,
+        baseline_flagmasks: &[UniquePtr<CxxFlagMask>],
+        img_coarse_chan_idxs: &[usize]
     ) -> Result<(), IOError> {
-        let gpubox_chan_numbers: BTreeMap<usize, usize> = context
+        // let gpubox_chan_numbers: BTreeMap<usize, usize> = context
+        //     .coarse_chans
+        //     .iter()
+        //     .map(|chan| (chan.gpubox_number, chan.corr_chan_number))
+        //     .collect();
+        let gpubox_to_chan_idx: BTreeMap<usize, usize> = context
             .coarse_chans
             .iter()
-            .map(|chan| (chan.gpubox_number, chan.corr_chan_number))
+            .enumerate()
+            .map(|(chan_idx, chan)| (chan.gpubox_number, chan_idx))
             .collect();
 
         for (&gpubox_id, fptr) in self.gpubox_fptrs.iter_mut() {
@@ -288,12 +295,30 @@ impl FlagFileSet {
             let num_baselines = header.num_ants * (header.num_ants + 1) / 2;
             let num_fine_chans_per_coarse = header.num_channels;
             FlagFileSet::write_primary_hdu(fptr, &primary_hdu, &header)?;
-            let chan_number = match gpubox_chan_numbers.get(&gpubox_id) {
+            // let chan_number = match gpubox_chan_numbers.get(&gpubox_id) {
+            //     Some(chan_number) => chan_number,
+            //     None => {
+            //         return Err(InvalidGpuBox {
+            //             expected: format!("{:?}", gpubox_chan_numbers.keys()),
+            //             found: format!("{}", gpubox_id),
+            //         })
+            //     }
+            // };
+            let coarse_chan_idx = match gpubox_to_chan_idx.get(&gpubox_id) {
                 Some(chan_number) => chan_number,
                 None => {
                     return Err(InvalidGpuBox {
-                        expected: format!("{:?}", gpubox_chan_numbers.keys()),
+                        expected: format!("{:?}", gpubox_to_chan_idx.keys()),
                         found: format!("{}", gpubox_id),
+                    })
+                }
+            };
+            let img_coarse_chan_idx = match img_coarse_chan_idxs.iter().position(|idx| idx == coarse_chan_idx) {
+                Some(img_coarse_chan_idx) => img_coarse_chan_idx,
+                None => {
+                    return Err(InvalidGpuBox {
+                        expected: format!("{:?}", img_coarse_chan_idxs),
+                        found: format!("{}", coarse_chan_idx),
                     })
                 }
             };
@@ -312,18 +337,25 @@ impl FlagFileSet {
 
             let mut status = 0;
             for (baseline_idx, flagmask) in baseline_flagmasks.iter().enumerate() {
-                // TODO: Assert baseline_idx < num_baselines?
+                assert!(baseline_idx < num_baselines);
+                // Flag buffer can be thought of as a 2D buffer of bools,
+                // indexed by channel (y), then timestep (x). flag stride is the width
                 let flag_buffer = flagmask.Buffer();
                 let flag_stride = flagmask.HorizontalStride();
                 let num_timesteps = flagmask.Width();
-                for timestep_idx in 0..num_timesteps {
-                    let row_idx = (timestep_idx * num_baselines) + baseline_idx;
-                    // TODO: document this, it's not super clear
-                    let mut cell: Vec<i8> = flag_buffer
+                let num_channels = flagmask.Height();
+                assert_eq!(num_channels, img_coarse_chan_idxs.len() * num_fine_chans_per_coarse);
+                for img_timestep_idx in 0..num_timesteps {
+                    let row_idx = (img_timestep_idx * num_baselines) + baseline_idx;
+                    // All flags for img_timestep_idx
+                    let timestep_flags = flag_buffer
                         .iter()
-                        .skip(timestep_idx)
-                        .step_by(flag_stride)
-                        .skip(chan_number * num_fine_chans_per_coarse)
+                        .skip(img_timestep_idx)
+                        .step_by(flag_stride);
+
+                    // All flags for timestep_idx and img_coarse_chan_idx
+                    let mut cell: Vec<i8> = timestep_flags
+                        .skip(img_coarse_chan_idx * num_fine_chans_per_coarse)
                         .take(num_fine_chans_per_coarse)
                         .map(|&flag| i8::from(flag))
                         .collect();
@@ -799,8 +831,11 @@ mod tests {
         let mut idx = 0;
         let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let num_img_coarse_chans = img_coarse_chan_idxs.len();
+
         let width = context.num_common_timesteps;
-        let height = context.num_common_coarse_chans
+        let height = num_img_coarse_chans
             * context.metafits_context.num_corr_fine_chans_per_coarse;
 
         let aoflagger = unsafe { cxx_aoflagger_new() };
@@ -811,15 +846,15 @@ mod tests {
             .map(|_| unsafe { aoflagger.MakeFlagMask(width, height, false) })
             .collect();
 
-        for (coarse_chan_idx, _) in context.coarse_chans.iter().enumerate() {
-            for (timestep_idx, _) in context.timesteps.iter().enumerate() {
+        for img_coarse_chan_idx in 0..num_img_coarse_chans {
+            for img_timestep_idx in 0..width {
                 for flag_mask_ptr in baseline_flagmasks.iter_mut() {
                     let flag_stride = flag_mask_ptr.HorizontalStride();
                     let flag_buf = flag_mask_ptr.pin_mut().BufferMut();
                     for fine_chan_idx in 0..num_fine_chans_per_coarse {
                         let flag_offset_y =
-                            coarse_chan_idx * num_fine_chans_per_coarse + fine_chan_idx;
-                        let flag_idx = flag_offset_y * flag_stride + timestep_idx;
+                            img_coarse_chan_idx * num_fine_chans_per_coarse + fine_chan_idx;
+                        let flag_idx = flag_offset_y * flag_stride + img_timestep_idx;
                         assert!(flag_idx < flag_stride * height);
                         dbg!(flag_idx, fine_chan_idx, idx, 1 << fine_chan_idx & idx);
                         flag_buf[flag_idx] = 1 << fine_chan_idx & idx != 0;
@@ -829,26 +864,16 @@ mod tests {
             }
         }
 
-        {
-            let mut flag_file_set = FlagFileSet::new(
-                filename_template.to_str().unwrap(),
-                &gpubox_ids,
-                context.mwa_version,
-            )
+        let mut flag_file_set = FlagFileSet::new(
+            filename_template.to_str().unwrap(),
+            &gpubox_ids,
+            context.mwa_version,
+        )
+        .unwrap();
+        flag_file_set
+            .write_baseline_flagmasks(&context, &baseline_flagmasks, &img_coarse_chan_idxs)
             .unwrap();
-            flag_file_set
-                .write_baseline_flagmasks(&context, baseline_flagmasks)
-                .unwrap();
-        }
-
-        for &gpubox_id in gpubox_ids.iter() {
-            let flag_path = tmp_dir
-                .path()
-                .join(format!("Flagfile{:03}.mwaf", gpubox_id));
-            let mut flag_fptr = FitsFile::open(flag_path).unwrap();
-            let table_hdu = flag_fptr.hdu(1).unwrap();
-            dbg!(table_hdu);
-        }
+        drop(flag_file_set);
 
         let mut flag_file_set = FlagFileSet::open(
             filename_template.to_str().unwrap(),

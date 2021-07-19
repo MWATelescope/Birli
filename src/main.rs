@@ -102,7 +102,7 @@ where
         let no_cable_delays = aoflagger_matches.is_present("no-cable-delay");
         let cable_delays_applied = context.metafits_context.cable_delays_applied;
         if !cable_delays_applied && !no_cable_delays {
-            correct_cable_lengths(&context, &mut baseline_imgsets);
+            correct_cable_lengths(&context, &mut baseline_imgsets, img_coarse_chan_idxs);
         }
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
@@ -120,7 +120,15 @@ where
             .iter()
             .map(|&chan| context.coarse_chans[chan].gpubox_number)
             .collect();
-        write_flags(&context, baseline_flagmasks, flag_template, &gpubox_ids);
+            
+        write_flags(
+            &context,
+            baseline_flagmasks,
+            flag_template,
+            &gpubox_ids,
+            &img_coarse_chan_idxs,
+        )
+        .unwrap();
     }
 }
 

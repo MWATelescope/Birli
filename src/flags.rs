@@ -5,6 +5,7 @@ use crate::{
         BirliError,
         BirliError::{NoCommonTimesteps, NoProvidedTimesteps},
     },
+    io::error::IOError,
     CxxAOFlagger, CxxFlagMask, CxxImageSet, FlagFileSet,
 };
 use cxx::UniquePtr;
@@ -20,7 +21,7 @@ use rayon::prelude::*;
 /// These timesteps:
 /// - are contiguous, and are each separated by an integration time
 /// - start at the latest start time of visibilities in all provided gpubox files
-///   (AKA the first common timestep) 
+///   (AKA the first common timestep)
 /// - end at the latest provided visibility
 ///
 /// Start times are determined from the TIME and MILLITIM headers of individual
@@ -447,12 +448,16 @@ pub fn flag_imgsets_existing(
 /// // create a CxxAOFlagger object to perform AOFlagger operations
 /// let aoflagger = unsafe { cxx_aoflagger_new() };
 ///
+/// // Determine which timesteps and coarse channels we want to use
+/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+/// let img_timestep_idxs = &context.common_timestep_indices;
+///
 /// // generate imagesets for each baseline in the format required by aoflagger
 /// let baseline_imgsets = context_to_baseline_imgsets(
 ///     &aoflagger,
 ///     &context,
-///     &context.common_coarse_chan_indices.clone(),
-///     &context.common_timestep_indices.clone(),
+///     &img_coarse_chan_idxs,
+///     &img_timestep_idxs,
 ///     None,
 /// );
 ///
@@ -470,25 +475,30 @@ pub fn flag_imgsets_existing(
 ///     .collect();
 ///
 /// // write the flags to disk as .mwaf
-/// write_flags(&context, baseline_flagmasks, flag_template.to_str().unwrap(), &gpubox_ids);
+/// write_flags(
+///     &context, 
+///     &baseline_flagmasks, 
+///     flag_template.to_str().unwrap(), 
+///     &gpubox_ids, 
+///     img_coarse_chan_idxs
+/// );
 /// ```
 pub fn write_flags(
     context: &CorrelatorContext,
-    baseline_flagmasks: Vec<UniquePtr<CxxFlagMask>>,
+    baseline_flagmasks: &[UniquePtr<CxxFlagMask>],
     filename_template: &str,
     gpubox_ids: &[usize],
-) {
+    img_coarse_chan_idxs: &[usize],
+) -> Result<(), IOError> {
     trace!("start write_flags");
 
     // TODO: error handling instead of unwrap.
 
-    let mut flag_file_set =
-        FlagFileSet::new(filename_template, &gpubox_ids, context.mwa_version).unwrap();
-    flag_file_set
-        .write_baseline_flagmasks(&context, baseline_flagmasks)
-        .unwrap();
+    let mut flag_file_set = FlagFileSet::new(filename_template, &gpubox_ids, context.mwa_version)?;
+    flag_file_set.write_baseline_flagmasks(&context, baseline_flagmasks, img_coarse_chan_idxs)?;
 
     trace!("end write_flags");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -761,10 +771,11 @@ mod tests {
         let context = get_mwax_context();
 
         let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
 
         let width = img_timestep_idxs.len();
-        let height = context.num_common_coarse_chans
-            * context.metafits_context.num_corr_fine_chans_per_coarse;
+        let height =
+            img_coarse_chan_idxs.len() * context.metafits_context.num_corr_fine_chans_per_coarse;
 
         let flag_timestep = 1;
         let flag_channel = 1;
@@ -794,10 +805,12 @@ mod tests {
 
         write_flags(
             &context,
-            baseline_flagmasks,
+            &baseline_flagmasks,
             filename_template.to_str().unwrap(),
             &selected_gpuboxes,
-        );
+            &img_coarse_chan_idxs,
+        )
+        .unwrap();
 
         let flag_files = glob(&tmp_dir.path().join("Flagfile*.mwaf").to_str().unwrap()).unwrap();
 

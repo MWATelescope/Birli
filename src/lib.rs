@@ -82,7 +82,7 @@
 //!     .collect();
 //!
 //! // write the flags to disk as .mwaf
-//! write_flags(&context, baseline_flagmasks, flag_template.to_str().unwrap(), &gpubox_ids);
+//! write_flags(&context, &baseline_flagmasks, flag_template.to_str().unwrap(), &gpubox_ids, img_coarse_chan_idxs);
 //! ```
 //!
 //! # Details
@@ -117,8 +117,7 @@ pub mod math;
 pub mod pos;
 
 pub mod io;
-
-pub use io::mwaf::FlagFileSet;
+pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter};
 
 pub mod corrections;
 pub use corrections::correct_cable_lengths;
