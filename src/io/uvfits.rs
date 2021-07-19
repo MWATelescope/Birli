@@ -12,7 +12,7 @@ use std::path::Path;
 use erfa_sys::{ERFA_DJM0, ERFA_WGS84};
 use fitsio::{errors::check_status as fits_check_status, FitsFile};
 use hifitime::Epoch;
-use itertools::{izip, Itertools};
+use itertools::{iproduct, izip, Itertools};
 use log::warn;
 // use ndarray::prelude::*;
 
@@ -83,7 +83,7 @@ fn decode_uvfits_baseline(bl: usize) -> (usize, usize) {
 /// A helper struct to write out a uvfits file.
 ///
 /// TODO: make writer and reader a single class?
-pub(crate) struct UvfitsWriter<'a> {
+pub struct UvfitsWriter<'a> {
     /// The path to the uvifts file.
     path: &'a Path,
 
@@ -114,7 +114,7 @@ pub(crate) struct UvfitsWriter<'a> {
 
 impl<'a> UvfitsWriter<'a> {
     /// Create a new uvfits file at the specified filename.
-    pub(crate) fn new(
+    pub fn new(
         filename: &'a Path,
         num_timesteps: usize,
         num_baselines: usize,
@@ -276,7 +276,7 @@ impl<'a> UvfitsWriter<'a> {
         })
     }
 
-    pub(crate) fn from_mwalib(
+    pub fn from_mwalib(
         filename: &'a Path,
         context: &CorrelatorContext,
         img_timestep_idxs: &[usize],
@@ -311,7 +311,7 @@ impl<'a> UvfitsWriter<'a> {
     ///
     /// Closing the file can be achieved by `drop`ing all references to the
     /// [`FitsFile`]
-    pub(crate) fn open(&self) -> Result<FitsFile, fitsio::errors::Error> {
+    pub fn open(&self) -> Result<FitsFile, fitsio::errors::Error> {
         let mut f = FitsFile::edit(&self.path)?;
         // Ensure HDU 0 is opened.
         f.hdu(0)?;
@@ -329,11 +329,11 @@ impl<'a> UvfitsWriter<'a> {
     /// `Self` must have only have a single HDU when this function is called
     /// (true when using methods only provided by `Self`).
     // Derived from cotter.
-    pub(crate) fn write_uvfits_antenna_table<T: AsRef<str>>(
+    pub fn write_uvfits_antenna_table<T: AsRef<str>>(
         self,
         antenna_names: &[T],
         positions: &[XyzGeodetic],
-        array_xyz_geoc: Option<XyzGeocentric>
+        array_xyz_geoc: Option<XyzGeocentric>,
     ) -> Result<(), UvfitsWriteError> {
         if self.current_num_rows != self.total_num_rows {
             return Err(UvfitsWriteError::NotEnoughRowsWritten {
@@ -594,7 +594,7 @@ impl<'a> UvfitsWriter<'a> {
         Ok(())
     }
 
-    pub(crate) fn write_ants_from_mwalib(
+    pub fn write_ants_from_mwalib(
         self,
         context: &MetafitsContext,
         latitude_rad: Option<f64>,
@@ -633,7 +633,7 @@ impl<'a> UvfitsWriter<'a> {
     // TODO: Assumes that all fine channels are written in `vis.` This needs to
     // be updated to add visibilities to an existing uvfits row.
     #[inline]
-    pub(crate) fn write_vis(
+    pub fn write_vis(
         &mut self,
         uvfits: &mut FitsFile,
         uvw: &UVW,
@@ -677,8 +677,8 @@ impl<'a> UvfitsWriter<'a> {
         Ok(())
     }
 
-    // TODO: 
-    pub(crate) fn write_baseline_imgset_flagmasks(
+    // TODO: handle averaging
+    pub fn write_baseline_imgset_flagmasks(
         &mut self,
         uvfits: &mut FitsFile,
         context: &CorrelatorContext,
@@ -701,35 +701,76 @@ impl<'a> UvfitsWriter<'a> {
         let num_img_coarse_chans = img_coarse_chan_idxs.len();
         let num_img_chans = num_fine_chans_per_coarse * num_img_coarse_chans;
 
+        let num_img_pols = context.metafits_context.num_visibility_pols;
+        // number of complex components (real, imaginary)
+        let num_cplx = 2;
 
-	    // Weights are normalized so that default res of 10 kHz, 1s has weight of "1" per sample
+        // Weights are normalized so that default res of 10 kHz, 1s has weight of "1" per sample
 
         // TODO: deal with weight factor when doing averaging.
         // TODO: deal with passband gains
         let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
         let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz as f64;
-        let weight_factor = fine_chan_width_hz * integration_time_s;
+        let weight_factor = fine_chan_width_hz * integration_time_s / 10000.0;
 
+        // MWA/CASA/AOFlagger visibility order is XX,XY,YX,YY
+        // UVFits visibility order is XX,YY,XY,YX
+        let pol_order = vec![0, 3, 1, 2];
+        // Real and imaginary component offsets within image width
+        // let re_im = vec![0, 1];
 
-
-        for &timestep_idx in img_timestep_idxs {
+        for (img_timestep_idx, &timestep_idx) in img_timestep_idxs.iter().enumerate() {
             let gps_time_s = context.timesteps[timestep_idx].gps_time_ms as f64 / 1000.0;
-            let epoch = Epoch::from_tai_seconds(gps_time_s + 19.0 + HIFITIME_GPS_FACTOR);
+            // TODO: document where this 19 comes from?
+            let epoch = Epoch::from_tai_seconds(
+                gps_time_s + 19.0 + HIFITIME_GPS_FACTOR + integration_time_s / 2.0,
+            );
             for (&baseline_idx, imgset, flagmask) in
                 izip!(baseline_idxs, baseline_imgsets, baseline_flagmasks)
             {
                 let baseline: &Baseline = &context.metafits_context.baselines[baseline_idx];
                 let imgset: &UniquePtr<CxxImageSet> = imgset;
+                let img_stride: usize = imgset.HorizontalStride();
+
+                // let img_buffers: Vec<&[f32]> = iproduct!(
+                //     (0..num_img_pols),
+                //     (0..num_cplx)
+                // ).map(|(img_pol_idx, re_im_idx)| {
+                //     let buffer_idx = img_pol_idx * 2 + re_im_idx;
+                //     let img_buffer: &[f32] = imgset.ImageBuffer(buffer_idx);
+                //     let img_ts_chunks: Vec<&[f32]> = img_buffer.chunks_exact(img_stride).collect();
+                //     img_ts_chunks[img_timestep_idx]
+                // }).collect();
+
                 let flagmask: &UniquePtr<CxxFlagMask> = flagmask;
+                let flag_buffer: &[bool] = flagmask.Buffer();
+                let flag_stride: usize = flagmask.HorizontalStride();
 
                 let ant1_idx = baseline.ant1_index;
                 let ant2_idx = baseline.ant2_index;
 
-                let vis = vec![f32::from(69.0); 12 * num_img_chans];
+                // TODO: this is extremely inefficient.
 
-                (0..num_img_chans).for_each(|chan_idx| {
-
-                });
+                let vis: Vec<f32> = (0..num_img_chans)
+                    .flat_map(|chan_idx| {
+                        pol_order
+                            .iter()
+                            .flat_map(|img_pol_idx| {
+                                // Grab the real component
+                                let img_buffer_re: &[f32] = imgset.ImageBuffer(img_pol_idx * 2);
+                                let vis_re =
+                                    img_buffer_re[img_timestep_idx * img_stride + chan_idx];
+                                // Grab the imaginary component
+                                let img_buffer_im: &[f32] = imgset.ImageBuffer(img_pol_idx * 2 + 1);
+                                let vis_im =
+                                    img_buffer_im[img_timestep_idx * img_stride + chan_idx];
+                                // TODO: weight
+                                let weight = weight_factor as f32;
+                                vec![vis_re, vis_im, weight]
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
 
                 let uvw = UVW::from_xyz(
                     // TODO: which way around is it?
@@ -740,7 +781,7 @@ impl<'a> UvfitsWriter<'a> {
                 // dbg!(&uvw, &ant1_idx, &ant2_idx, &epoch, &vis);
 
                 // TODO: calculate weights, vis
-                let result = self.write_vis(uvfits, &uvw, ant1_idx, ant2_idx, &epoch, &vis);
+                let result = self.write_vis(uvfits, &uvw, ant1_idx, ant2_idx, &epoch, &vis.clone());
                 if let Err(err) = result {
                     return Err(err);
                 };
@@ -752,85 +793,94 @@ impl<'a> UvfitsWriter<'a> {
         Ok(())
     }
 
-    /// Assumes that `vis_array` has already had `weights` applied; these need
-    /// to be undone locally by this function.
-    // TODO: Assumes that all fine channels are written for all baselines in
+    // /// Assumes that `vis_array` has already had `weights` applied; these need
+    // /// to be undone locally by this function.
+    // // TODO: Assumes that all fine channels are written for all baselines in
     // `vis_array.`
-    pub(crate) fn write_from_vis(
-        &mut self,
-        uvfits: &mut FitsFile,
-        vis_array: ArrayView2<Jones<f32>>,
-        weights: ArrayView2<f32>,
-        uvws: &[UVW],
-        epoch: &Epoch,
-        num_fine_chans: usize,
-        fine_chan_flags: &HashSet<usize>,
-    ) -> Result<(), UvfitsWriteError> {
-        let num_unflagged_baselines = vis_array.len_of(Axis(0));
-        let num_unflagged_tiles = num_tiles_from_num_baselines(num_unflagged_baselines);
-        // Write out all the baselines of the timestep we received.
-        // TODO: why 12?
-        let mut vis: Vec<f32> = Vec::with_capacity(12 * num_fine_chans);
-        for (unflagged_bl, uvw) in (0..num_unflagged_baselines).into_iter().zip(uvws.iter()) {
-            // uvfits expects the tile numbers to be from 1 to the total number
-            // of tiles sequentially, so don't use the actual unflagged tile
-            // numbers.
-            let (tile1, tile2) =
-                cross_correlation_baseline_to_tiles(num_unflagged_tiles, unflagged_bl);
-            let mut unflagged_chan_index = 0;
-            for fine_chan_index in 0..num_fine_chans {
-                if fine_chan_flags.contains(&fine_chan_index) {
-                    vis.extend_from_slice(&[0.0; 12])
-                } else {
-                    let weight = unsafe { weights.uget((unflagged_bl, unflagged_chan_index)) };
-                    let jones = (unsafe { vis_array.uget((unflagged_bl, unflagged_chan_index)) })
-                        .clone()
-                        // Undo the weight.
-                        * (1.0 / weight);
-                    unflagged_chan_index += 1;
-                    vis.extend_from_slice(&[
-                        // XX
-                        jones[0].re,
-                        jones[0].im,
-                        *weight,
-                        // YY
-                        jones[3].re,
-                        jones[3].im,
-                        *weight,
-                        // XY
-                        jones[1].re,
-                        jones[1].im,
-                        *weight,
-                        // YX
-                        jones[2].re,
-                        jones[2].im,
-                        *weight,
-                    ]);
-                };
-            }
-            self.write_vis(uvfits, uvw, tile1, tile2, epoch, &vis)?;
-            vis.clear();
-        }
-        Ok(())
-    }
+    // pub fn write_from_vis(
+    //     &mut self,
+    //     uvfits: &mut FitsFile,
+    //     vis_array: ArrayView2<Jones<f32>>,
+    //     weights: ArrayView2<f32>,
+    //     uvws: &[UVW],
+    //     epoch: &Epoch,
+    //     num_fine_chans: usize,
+    //     fine_chan_flags: &HashSet<usize>,
+    // ) -> Result<(), UvfitsWriteError> {
+    //     let num_unflagged_baselines = vis_array.len_of(Axis(0));
+    //     let num_unflagged_tiles = num_tiles_from_num_baselines(num_unflagged_baselines);
+    //     // Write out all the baselines of the timestep we received.
+    //     // TODO: why 12?
+    //     let mut vis: Vec<f32> = Vec::with_capacity(12 * num_fine_chans);
+    //     for (unflagged_bl, uvw) in (0..num_unflagged_baselines).into_iter().zip(uvws.iter()) {
+    //         // uvfits expects the tile numbers to be from 1 to the total number
+    //         // of tiles sequentially, so don't use the actual unflagged tile
+    //         // numbers.
+    //         let (tile1, tile2) =
+    //             cross_correlation_baseline_to_tiles(num_unflagged_tiles, unflagged_bl);
+    //         let mut unflagged_chan_index = 0;
+    //         for fine_chan_index in 0..num_fine_chans {
+    //             if fine_chan_flags.contains(&fine_chan_index) {
+    //                 vis.extend_from_slice(&[0.0; 12])
+    //             } else {
+    //                 let weight = unsafe { weights.uget((unflagged_bl, unflagged_chan_index)) };
+    //                 let jones = (unsafe { vis_array.uget((unflagged_bl, unflagged_chan_index)) })
+    //                     .clone()
+    //                     // Undo the weight.
+    //                     * (1.0 / weight);
+    //                 unflagged_chan_index += 1;
+    //                 vis.extend_from_slice(&[
+    //                     // XX
+    //                     jones[0].re,
+    //                     jones[0].im,
+    //                     *weight,
+    //                     // YY
+    //                     jones[3].re,
+    //                     jones[3].im,
+    //                     *weight,
+    //                     // XY
+    //                     jones[1].re,
+    //                     jones[1].im,
+    //                     *weight,
+    //                     // YX
+    //                     jones[2].re,
+    //                     jones[2].im,
+    //                     *weight,
+    //                 ]);
+    //             };
+    //         }
+    //         self.write_vis(uvfits, uvw, tile1, tile2, epoch, &vis)?;
+    //         vis.clear();
+    //     }
+    //     Ok(())
+    // }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Index;
+
     use super::*;
+    use fitsio_sys::LONGLONG;
     use mwalib::{
-        _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
-        get_required_fits_key,
+        _get_fits_col, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
+        get_fits_col, get_required_fits_key,
     };
     use tempfile::NamedTempFile;
 
-    use float_cmp::{approx_eq, F64Margin};
+    use float_cmp::{approx_eq, F32Margin, F64Margin};
 
     use crate::{
         constants::{COTTER_MWA_LATITUDE_RADIANS, HIFITIME_GPS_FACTOR},
         context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags,
         get_flaggable_timesteps, init_baseline_flagmasks,
         pos::xyz::xyzs_to_uvws,
+    };
+
+    use fitsio::{
+        errors::{check_status as fits_check_status, FitsError},
+        hdu::{FitsHdu, HduInfo},
+        tables::ConcreteColumnDescription,
     };
 
     #[test]
@@ -894,7 +944,8 @@ mod tests {
                 z: i as f64 * 3.0,
             })
             .collect();
-        u.write_uvfits_antenna_table(&names, &positions, None).unwrap();
+        u.write_uvfits_antenna_table(&names, &positions, None)
+            .unwrap();
     }
 
     // TODO: dedup this from lib.rs
@@ -912,12 +963,11 @@ mod tests {
     macro_rules! assert_short_string_keys_eq {
         ($keys:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr) => {
             for key in $keys {
-                let left_result: Result<String, _> =
-                    get_required_fits_key!($left_fptr, &$left_hdu, key);
-                let right_result: Result<String, _> =
-                    get_required_fits_key!($right_fptr, &$right_hdu, key);
-                match (left_result, right_result) {
-                    (Ok(left_val), Ok(right_val)) => {
+                match (
+                    get_required_fits_key!($left_fptr, &$left_hdu, key),
+                    get_required_fits_key!($right_fptr, &$right_hdu, key),
+                ) {
+                    (Ok::<String, _>(left_val), Ok::<String, _>(right_val)) => {
                         assert_eq!(
                             left_val, right_val,
                             "mismatch for metafits short string key {}",
@@ -941,11 +991,10 @@ mod tests {
     macro_rules! assert_f64_string_keys_eq {
         ($keys:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr) => {
             for key in $keys {
-                let left_result: Result<f64, _> =
-                    get_required_fits_key!($left_fptr, &$left_hdu, key);
-                let right_result: Result<f64, _> =
-                    get_required_fits_key!($right_fptr, &$right_hdu, key);
-                match (left_result, right_result) {
+                match (
+                    get_required_fits_key!($left_fptr, &$left_hdu, key),
+                    get_required_fits_key!($right_fptr, &$right_hdu, key),
+                ) {
                     (Ok(left_val), Ok(right_val)) => {
                         assert!(
                             approx_eq!(f64, left_val, right_val, F64Margin::default()),
@@ -970,42 +1019,185 @@ mod tests {
         };
     }
 
-    fn assert_uvfits_primary_hdu_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
+    macro_rules! assert_table_column_descriptions_match {
+        ( $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr ) => {
+            match (&$left_hdu.info, &$right_hdu.info) {
+                (
+                    HduInfo::TableInfo {
+                        column_descriptions: left_columns,
+                        ..
+                    },
+                    HduInfo::TableInfo {
+                        column_descriptions: right_columns,
+                        ..
+                    },
+                ) => {
+                    for (col_idx, (left_col, right_col)) in
+                        izip!(left_columns, right_columns).enumerate()
+                    {
+                        assert_eq!(
+                            left_col, right_col,
+                            "column description at index {} does not match",
+                            col_idx
+                        );
+                    }
+                    left_columns
+                        .iter()
+                        .map(|col| col.name.clone())
+                        .collect::<Vec<String>>()
+                }
+                _ => {
+                    panic!("could not read left ant HDU as a table")
+                }
+            };
+        };
+    }
+
+    macro_rules! assert_table_string_column_values_match {
+        ( $col_names:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr ) => {
+            for col_name in $col_names {
+                let left_col: Vec<String> =
+                    get_fits_col!($left_fptr, &$left_hdu, col_name).unwrap();
+                let right_col: Vec<String> =
+                    get_fits_col!($right_fptr, &$right_hdu, col_name).unwrap();
+                assert_eq!(
+                    left_col.len(),
+                    right_col.len(),
+                    "tables not the same length."
+                );
+                for (row_idx, (left_cell, right_cell)) in izip!(left_col, right_col).enumerate() {
+                    assert_eq!(
+                        left_cell, right_cell,
+                        "cells don't match in column {}, row {}",
+                        col_name, row_idx
+                    );
+                }
+            }
+        };
+    }
+
+    macro_rules! assert_table_f64_column_values_match {
+        ( $col_names:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr ) => {
+            for col_name in $col_names {
+                let left_col: Vec<f64> = get_fits_col!($left_fptr, &$left_hdu, col_name).unwrap();
+                let right_col: Vec<f64> =
+                    get_fits_col!($right_fptr, &$right_hdu, col_name).unwrap();
+                assert_eq!(
+                    left_col.len(),
+                    right_col.len(),
+                    "tables not the same length."
+                );
+                for (row_idx, (left_cell, right_cell)) in izip!(left_col, right_col).enumerate() {
+                    assert!(
+                        approx_eq!(f64, left_cell, right_cell, F64Margin::default()),
+                        "cells don't match in column {}, row {}. {} != {}",
+                        col_name,
+                        row_idx,
+                        left_cell,
+                        right_cell
+                    );
+                }
+            }
+        };
+    }
+
+    macro_rules! assert_table_vector_f64_column_values_match {
+        ( $col_descriptions:expr, $col_info:expr, $row_len:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr ) => {
+            for (col_name, len) in $col_info
+                .into_iter()
+                .map(|(_str, len)| (_str.to_string(), len))
+            {
+                let col_num = $col_descriptions
+                    .iter()
+                    .position(|description| description == &col_name)
+                    .expect(format!("could not find a column with the name {}", col_name).as_str());
+
+                let mut status = 0;
+                let mut left_cell_vector: Vec<f64> = vec![0.0; len as usize];
+                let mut right_cell_vector: Vec<f64> = vec![0.0; len as usize];
+
+                for row_idx in 0..$row_len {
+                    unsafe {
+                        fitsio_sys::ffgcvd(
+                            $left_fptr.as_raw(),
+                            (col_num + 1) as _,
+                            (row_idx + 1) as _,
+                            1,
+                            len,
+                            0 as _,
+                            left_cell_vector.as_mut_ptr() as _,
+                            &mut 0,
+                            &mut status,
+                        );
+                        fits_check_status(status).unwrap();
+                        fitsio_sys::ffgcvd(
+                            $right_fptr.as_raw(),
+                            (col_num + 1) as _,
+                            (row_idx + 1) as _,
+                            1,
+                            len,
+                            0 as _,
+                            right_cell_vector.as_mut_ptr() as _,
+                            &mut 0,
+                            &mut status,
+                        );
+                        fits_check_status(status).unwrap();
+                    }
+                    for (cell_idx, (&left_cell, &right_cell)) in
+                        izip!(&left_cell_vector, &right_cell_vector).enumerate()
+                    {
+                        assert!(
+                            approx_eq!(
+                                f64,
+                                left_cell,
+                                right_cell,
+                                F64Margin::default().epsilon(1e-12)
+                            ),
+                            "cells don't match in column {}, row {}, cell index {}. {} != {}",
+                            col_name,
+                            row_idx,
+                            cell_idx,
+                            left_cell,
+                            right_cell
+                        );
+                    }
+                }
+            }
+        };
+    }
+
+    fn assert_uvfits_primary_header_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
         let mut left_primary_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
         let mut right_primary_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
 
-        // WONTFIX:
-        // "METAVER",
-        // "COTVER"
-        // "MWAPYVER",
-        // "OBJECT",
-
-        let short_string_keys = vec![
-            "SIMPLE", "EXTEND", "GROUPS", "PCOUNT", "GCOUNT", "PTYPE1", "PTYPE2", "PTYPE3",
-            "PTYPE4", "PTYPE5", "CTYPE2", "CTYPE3", "CTYPE4", "CTYPE5", "CTYPE6", "TELESCOP",
-            "INSTRUME",
-            // TODO: "DATE-OBS",
-        ];
-
         assert_short_string_keys_eq!(
-            short_string_keys,
+            vec![
+                "SIMPLE", "EXTEND", "GROUPS", "PCOUNT", "GCOUNT", "PTYPE1", "PTYPE2", "PTYPE3",
+                "PTYPE4", "PTYPE5", "CTYPE2", "CTYPE3", "CTYPE4", "CTYPE5", "CTYPE6", "TELESCOP",
+                "INSTRUME",
+                "DATE-OBS",
+                // WONTFIX:
+                // "METAVER",
+                // "COTVER"
+                // "MWAPYVER",
+                // "OBJECT",
+            ],
             left_fptr,
             left_primary_hdu,
             right_fptr,
             right_primary_hdu
         );
 
-        let f64_keys = vec![
-            "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "NAXIS3", "NAXIS4", "NAXIS5", "NAXIS6",
-            "BSCALE", "PSCAL1", "PZERO1", "PSCAL2", "PZERO2", "PSCAL3", "PZERO3", "PSCAL4",
-            "PZERO4", "PSCAL5", "PZERO5", "CRVAL2", "CRPIX2", "CDELT2", "CRVAL3", "CDELT3",
-            "CRPIX3", "CRVAL4", "CDELT4", "CRPIX4", "CRVAL5", "CRPIX5", "CDELT5", "CRVAL6",
-            "CRPIX6", "CDELT6", "EPOCH", "OBSRA", "OBSDEC",
-            // TODO: "FIBRFACT",
-        ];
-
         assert_f64_string_keys_eq!(
-            f64_keys,
+            vec![
+                "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "NAXIS3", "NAXIS4", "NAXIS5", "NAXIS6",
+                "BSCALE", "PSCAL1", "PZERO1", "PSCAL2", "PZERO2", "PSCAL3", "PZERO3", "PSCAL4",
+                "PZERO4", "PSCAL5", "PZERO5", "CRVAL2", "CRPIX2", "CDELT2", "CRVAL3", "CDELT3",
+                "CRPIX3", "CRVAL4", "CDELT4", "CRPIX4", "CRVAL5", "CRPIX5", "CDELT5", "CRVAL6",
+                "CRPIX6", "CDELT6", "EPOCH", "OBSRA",
+                "OBSDEC",
+                // TODO: "FIBRFACT", (v-factor, cable type?)
+            ],
             left_fptr,
             left_primary_hdu,
             right_fptr,
@@ -1013,40 +1205,248 @@ mod tests {
         );
     }
 
-    fn assert_uvfits_ant_hdu_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
+    fn assert_uvfits_ant_header_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
         let mut left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
         let mut right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
 
-        let short_string_keys = vec![
-            "XTENSION", "TTYPE1", "TFORM1", "TTYPE2", "TFORM2", "TUNIT2", "TTYPE3", "TFORM3",
-            "TTYPE4", "TFORM4", "TTYPE5", "TFORM5", "TUNIT5", "TTYPE6", "TFORM6", "TTYPE7",
-            "TFORM7", "TUNIT7", "TTYPE8", "TFORM8", "TTYPE9", "TFORM9", "TTYPE10", "TFORM10",
-            "TUNIT10", "TTYPE11", "TFORM11", "EXTNAME", "TIMSYS", "ARRNAM",
-        ];
-
         assert_short_string_keys_eq!(
-            short_string_keys,
+            vec![
+                "XTENSION", "TTYPE1", "TFORM1", "TTYPE2", "TFORM2", "TUNIT2", "TTYPE3", "TFORM3",
+                "TTYPE4", "TFORM4", "TTYPE5", "TFORM5", "TUNIT5", "TTYPE6", "TFORM6", "TTYPE7",
+                "TFORM7", "TUNIT7", "TTYPE8", "TFORM8", "TTYPE9", "TFORM9", "TTYPE10", "TFORM10",
+                "TUNIT10", "TTYPE11", "TFORM11", "EXTNAME", "TIMSYS", "ARRNAM",
+            ],
             left_fptr,
             left_ant_hdu,
             right_fptr,
             right_ant_hdu
         );
-
-        let f64_keys = vec![
-            "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "PCOUNT", "GCOUNT", "TFIELDS", "ARRAYX",
-            "ARRAYY", "ARRAYZ", "FREQ", "GSTIA0", "DEGPDY", "RDATE", "POLARX", "POLARY", "UT1UTC", "DATUTC",
-            "NUMORB", "NOPCAL", "FREQID", "IATUTC",
-        ];
 
         assert_f64_string_keys_eq!(
-            f64_keys,
+            vec![
+                "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "PCOUNT", "GCOUNT", "TFIELDS",
+                // TODO: "ARRAYX", "ARRAYY", "ARRAYZ",
+                "FREQ",   // TODO: "GSTIA0",
+                "DEGPDY", // TODO: "RDATE",
+                "POLARX", "POLARY", "UT1UTC", "DATUTC", "NUMORB", "NOPCAL", "FREQID", "IATUTC",
+            ],
             left_fptr,
             left_ant_hdu,
             right_fptr,
             right_ant_hdu
         );
+    }
 
-        panic!("TODO: read ants");
+    pub fn get_group_column_description(
+        fptr: &mut FitsFile,
+        hdu: &FitsHdu,
+    ) -> Result<Vec<String>, mwalib::FitsError> {
+        let pcount: usize = get_required_fits_key!(fptr, &hdu, "PCOUNT")?;
+        let mut result = Vec::with_capacity(pcount);
+        for p in 0..pcount {
+            let ptype: String =
+                get_required_fits_key!(fptr, &hdu, format!("PTYPE{}", p + 1).as_str())?;
+            result.push(ptype);
+        }
+        Ok(result)
+    }
+
+    macro_rules! assert_group_column_descriptions_match {
+        ( $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr ) => {
+            match (
+                get_group_column_description($left_fptr, $left_hdu),
+                get_group_column_description($left_fptr, $left_hdu),
+            ) {
+                (Ok(left_columns), Ok(right_columns)) => {
+                    for (col_idx, (left_col, right_col)) in
+                        izip!(&left_columns, &right_columns).enumerate()
+                    {
+                        assert_eq!(
+                            left_col, right_col,
+                            "column description at index {} does not match",
+                            col_idx
+                        );
+                    }
+                    left_columns
+                }
+                _ => {
+                    panic!("could not read HDUs as group table")
+                }
+            };
+        };
+    }
+
+    fn assert_uvfits_vis_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
+        let mut left_vis_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
+        let mut right_vis_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
+
+        let column_info = assert_group_column_descriptions_match!(
+            left_fptr,
+            &left_vis_hdu,
+            right_fptr,
+            &right_vis_hdu
+        );
+
+        let left_length: usize =
+            get_required_fits_key!(left_fptr, &left_vis_hdu, "GCOUNT").unwrap();
+        let right_length: usize =
+            get_required_fits_key!(right_fptr, &right_vis_hdu, "GCOUNT").unwrap();
+
+        assert_eq!(left_length, right_length, "group lengths don't match");
+        let group_len = left_length;
+
+        let pcount = get_required_fits_key!(left_fptr, &left_vis_hdu, "PCOUNT").unwrap();
+        let floats_per_pol: usize =
+            get_required_fits_key!(left_fptr, &left_vis_hdu, "NAXIS2").unwrap();
+        let num_pols: usize = get_required_fits_key!(left_fptr, &left_vis_hdu, "NAXIS3").unwrap();
+        let num_fine_freq_chans: usize =
+            get_required_fits_key!(left_fptr, &left_vis_hdu, "NAXIS4").unwrap();
+
+        let mut left_group_params: Vec<f32> = vec![0.0; pcount];
+        let mut right_group_params: Vec<f32> = vec![0.0; pcount];
+        let mut left_vis: Vec<f32> = vec![0.0; num_fine_freq_chans * num_pols * floats_per_pol];
+        let mut right_vis: Vec<f32> = vec![0.0; num_fine_freq_chans * num_pols * floats_per_pol];
+
+        for row_idx in 0..group_len {
+            let mut status = 0;
+            unsafe {
+                // ffggpe = fits_read_grppar_flt
+                fitsio_sys::ffggpe(
+                    left_fptr.as_raw(),             /* I - FITS file pointer                       */
+                    1 + row_idx as i64, /* I - group to read (1 = 1st group)           */
+                    1,                  /* I - first vector element to read (1 = 1st)  */
+                    pcount as i64,      /* I - number of values to read                */
+                    left_group_params.as_mut_ptr(), /* O - array of values that are returned       */
+                    &mut status, /* IO - error status                           */
+                );
+                fits_check_status(status).unwrap();
+                // ffggpe = fits_read_grppar_flt
+                fitsio_sys::ffggpe(
+                    right_fptr.as_raw(),             /* I - FITS file pointer                       */
+                    1 + row_idx as i64, /* I - group to read (1 = 1st group)           */
+                    1,                  /* I - first vector element to read (1 = 1st)  */
+                    pcount as i64,      /* I - number of values to read                */
+                    right_group_params.as_mut_ptr(), /* O - array of values that are returned       */
+                    &mut status, /* IO - error status                           */
+                );
+                fits_check_status(status).unwrap();
+            }
+
+            for (param_name, left_group_param, right_group_param) in
+                izip!(&column_info, &left_group_params, &right_group_params)
+            {
+                assert!(
+                    approx_eq!(
+                        f32,
+                        *left_group_param,
+                        *right_group_param,
+                        F32Margin::default()
+                    ),
+                    "cells don't match in param {}, row {}. {} != {}",
+                    param_name,
+                    row_idx,
+                    left_group_param,
+                    right_group_param
+                );
+            }
+
+            unsafe {
+                // ffgpve = fits_read_img_flt
+                fitsio_sys::ffgpve(
+                    left_fptr.as_raw(),    /* I - FITS file pointer                       */
+                    1 + row_idx as i64,    /* I - group to read (1 = 1st group)           */
+                    1,                     /* I - first vector element to read (1 = 1st)  */
+                    left_vis.len() as i64, /* I - number of values to read                */
+                    0.0,                   /* I - value for undefined pixels              */
+                    left_vis.as_mut_ptr(), /* O - array of values that are returned       */
+                    &mut 0,                /* O - set to 1 if any values are null; else 0 */
+                    &mut status,           /* IO - error status                           */
+                );
+                fits_check_status(status).unwrap();
+
+                // ffgpve = fits_read_img_flt
+                fitsio_sys::ffgpve(
+                    right_fptr.as_raw(),    /* I - FITS file pointer                       */
+                    1 + row_idx as i64,     /* I - group to read (1 = 1st group)           */
+                    1,                      /* I - first vector element to read (1 = 1st)  */
+                    right_vis.len() as i64, /* I - number of values to read                */
+                    0.0,                    /* I - value for undefined pixels              */
+                    right_vis.as_mut_ptr(), /* O - array of values that are returned       */
+                    &mut 0,                 /* O - set to 1 if any values are null; else 0 */
+                    &mut status,            /* IO - error status                           */
+                );
+                fits_check_status(status).unwrap();
+            }
+
+            // println!(
+            //     "row {}\n{:?}\n{:?}",
+            //     row_idx, &left_vis, &right_vis
+            // );
+
+            // for (vis_idx, (left_val, right_val)) in izip!(&left_vis, &right_vis).enumerate() {
+            //     assert!(
+            //         approx_eq!(f32, *left_val, *right_val, F32Margin::default()),
+            //         "cells don't match in row {}, vis index {}. {:?} != {:?}",
+            //         row_idx,
+            //         vis_idx,
+            //         &left_vis,
+            //         &right_vis
+            //     );
+            // }
+        }
+        // assert!(false);
+    }
+
+    fn assert_uvfits_ant_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
+        let mut left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
+        let mut right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
+
+        let column_info = assert_table_column_descriptions_match!(
+            left_fptr,
+            &left_ant_hdu,
+            right_fptr,
+            &right_ant_hdu
+        );
+
+        let first_col_name = &column_info[0];
+        let left_length = {
+            let left_annames: Vec<String> =
+                get_fits_col!(left_fptr, &left_ant_hdu, first_col_name.as_str()).unwrap();
+            left_annames.len()
+        };
+        let right_length = {
+            let right_annames: Vec<String> =
+                get_fits_col!(right_fptr, &right_ant_hdu, first_col_name.as_str()).unwrap();
+            right_annames.len()
+        };
+        assert_eq!(left_length, right_length, "column lengths don't match");
+        let row_len = left_length;
+
+        assert_table_string_column_values_match!(
+            vec!["ANNAME", "POLTYA", "POLTYB"],
+            left_fptr,
+            &left_ant_hdu,
+            right_fptr,
+            &right_ant_hdu
+        );
+
+        assert_table_f64_column_values_match!(
+            vec!["NOSTA", "MNTSTA", "STAXOF", "POLAA", "POLAB"],
+            left_fptr,
+            &left_ant_hdu,
+            right_fptr,
+            &right_ant_hdu
+        );
+
+        assert_table_vector_f64_column_values_match!(
+            column_info,
+            vec![("STABXYZ", 3), ("POLCALA", 3), ("POLCALB", 3)],
+            row_len,
+            left_fptr,
+            &left_ant_hdu,
+            right_fptr,
+            &right_ant_hdu
+        );
     }
 
     #[test]
@@ -1079,40 +1479,18 @@ mod tests {
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
         let mut cotter_fptr = fits_open!(&cotter_uvfits_path).unwrap();
 
-        assert_uvfits_primary_hdu_eq(&mut birli_fptr, &mut cotter_fptr)
+        assert_uvfits_primary_header_eq(&mut birli_fptr, &mut cotter_fptr)
     }
 
     #[test]
-    fn uvfits_vis_from_imgsets_matches_cotter() {
+    fn uvfits_tables_from_mwalib_matches_cotter() {
         let context = get_mwa_ord_context();
 
         let obsid = context.metafits_context.obs_id;
         let start_epoch = Epoch::from_tai_seconds(obsid as f64 + 19.0 + HIFITIME_GPS_FACTOR);
 
-        let tmp_uvfits_file = Path::new("tests/data/test_ants.uvfits");
-
-        let timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
-
-        let mut u = UvfitsWriter::from_mwalib(
-            tmp_uvfits_file,
-            &context,
-            &timestep_idxs,
-            &coarse_chan_idxs,
-        )
-        .unwrap();
-
-        let mut f = u.open().unwrap();
-    }
-
-    #[test]
-    fn uvfits_antenna_table_from_mwalib_matches_cotter() {
-        let context = get_mwa_ord_context();
-
-        let obsid = context.metafits_context.obs_id;
-        let start_epoch = Epoch::from_tai_seconds(obsid as f64 + 19.0 + HIFITIME_GPS_FACTOR);
-
-        let tmp_uvfits_file = Path::new("tests/data/test_ants.uvfits");
+        // let tmp_uvfits_file = NamedTempFile::new().unwrap();
+        let tmp_uvfits_file = Path::new("tests/data/test_ants2.uvfits");
 
         let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
         let img_coarse_chan_idxs = context.common_coarse_chan_indices.clone();
@@ -1178,66 +1556,9 @@ mod tests {
         let mut birli_fptr = fits_open!(&tmp_uvfits_file).unwrap();
         let mut cotter_fptr = fits_open!(&cotter_uvfits_path).unwrap();
 
-        assert_uvfits_ant_hdu_eq(&mut birli_fptr, &mut cotter_fptr)
-
-        // TODO
-        // let tmp_uvfits_file = NamedTempFile::new().unwrap();
-        // let num_timesteps = 1;
-        // let num_baselines = 3;
-        // let num_chans = 2;
-        // let obsid = 1065880128;
-        // let start_epoch = Epoch::from_tai_seconds(obsid as f64 + 19.0 + HIFITIME_GPS_FACTOR);
-
-        // let mut u = UvfitsWriter::new(
-        //     // tmp_uvfits_file.path(),
-        //     Path::new("tests/data/test_antenna.uvfits"),
-        //     num_timesteps,
-        //     num_baselines,
-        //     num_chans,
-        //     &start_epoch,
-        //     40e3,
-        //     170e6,
-        //     3,
-        //     &RADec::new_degrees(0.0, 60.0),
-        //     Some("test"),
-        // )
-        // .unwrap();
-
-        // let mut f = u.open().unwrap();
-        // for _timestep_index in 0..num_timesteps {
-        //     for baseline_index in 0..num_baselines {
-        //         let (tile1, tile2) = match baseline_index {
-        //             0 => (0, 1),
-        //             1 => (0, 2),
-        //             2 => (1, 2),
-        //             _ => unreachable!(),
-        //         };
-
-        //         u.write_vis(
-        //             &mut f,
-        //             &UVW::default(),
-        //             tile1,
-        //             tile2,
-        //             &start_epoch,
-        //             (baseline_index..baseline_index + num_chans)
-        //                 .into_iter()
-        //                 .map(|int| int as f32)
-        //                 .collect::<Vec<_>>()
-        //                 .as_slice(),
-        //         )
-        //         .unwrap();
-        //     }
-        // }
-
-        // let names = ["Tile1", "Tile2", "Tile3"];
-        // let positions: Vec<XyzGeodetic> = (0..names.len())
-        //     .into_iter()
-        //     .map(|i| XyzGeodetic {
-        //         x: i as f64,
-        //         y: i as f64 * 2.0,
-        //         z: i as f64 * 3.0,
-        //     })
-        //     .collect();
-        // u.write_uvfits_antenna_table(&names, &positions).unwrap();
+        assert_uvfits_primary_header_eq(&mut birli_fptr, &mut cotter_fptr);
+        assert_uvfits_vis_table_eq(&mut birli_fptr, &mut cotter_fptr);
+        assert_uvfits_ant_header_eq(&mut birli_fptr, &mut cotter_fptr);
+        assert_uvfits_ant_table_eq(&mut birli_fptr, &mut cotter_fptr);
     }
 }

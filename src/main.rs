@@ -1,12 +1,12 @@
 use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg, SubCommand};
 use log::{debug, info};
 // use log::{log_enabled, Level};
-use std::{env, ffi::OsString, fmt::Debug};
+use std::{env, ffi::OsString, fmt::Debug, path::Path};
 
 use birli::{
     context_to_baseline_imgsets, correct_cable_lengths, cxx_aoflagger_new, flag_imgsets_existing,
     get_antenna_flags, get_aoflagger_version_string, get_flaggable_timesteps,
-    init_baseline_flagmasks, write_flags,
+    init_baseline_flagmasks, io::uvfits, write_flags, UvfitsWriter,
 };
 // use birli::util::{dump_flagmask, dump_imgset};
 use mwalib::CorrelatorContext;
@@ -39,9 +39,14 @@ where
         .arg(
             Arg::with_name("flag-template")
                 .short("f")
-                .takes_value(true)
-                .required(true) // TODO: specify a default that works with mwa-ord and mwax
+                .takes_value(true)// TODO: specify a default that works with mwa-ord and mwax
                 .help("Sets the template used to name flag files. Percents are substituted for the zero-prefixed GPUBox ID, which can be up to 3 characters log. Similar to -o in Cotter. Example: FlagFile%%%.mwaf")
+        )
+        .arg(
+            Arg::with_name("uvfits-out")
+                .short("u")
+                .takes_value(true)
+                .help("Filename for uvfits output. Similar to -o in Cotter. Example: 1196175296.uvfits")
         )
         .arg(
             Arg::with_name("no-cable-delay")
@@ -69,7 +74,8 @@ where
     if let Some(aoflagger_matches) = matches.subcommand_matches("aoflagger") {
         let aoflagger = unsafe { cxx_aoflagger_new() };
         let metafits_path = aoflagger_matches.value_of("metafits").unwrap();
-        let flag_template = aoflagger_matches.value_of("flag-template").unwrap();
+        let flag_template = aoflagger_matches.value_of("flag-template");
+        let uvfits_out = aoflagger_matches.value_of("uvfits-out");
         let fits_files: Vec<&str> = aoflagger_matches.values_of("fits-files").unwrap().collect();
         let context = match CorrelatorContext::new(&metafits_path, &fits_files) {
             Ok(context) => context,
@@ -115,20 +121,55 @@ where
             true,
         );
 
-        let gpubox_ids: Vec<usize> = context
-            .common_coarse_chan_indices
-            .iter()
-            .map(|&chan| context.coarse_chans[chan].gpubox_number)
-            .collect();
-            
-        write_flags(
-            &context,
-            baseline_flagmasks,
-            flag_template,
-            &gpubox_ids,
-            &img_coarse_chan_idxs,
-        )
-        .unwrap();
+        if let Some(flag_template) = flag_template {
+            let gpubox_ids: Vec<usize> = context
+                .common_coarse_chan_indices
+                .iter()
+                .map(|&chan| context.coarse_chans[chan].gpubox_number)
+                .collect();
+
+            write_flags(
+                &context,
+                &baseline_flagmasks,
+                flag_template,
+                &gpubox_ids,
+                &img_coarse_chan_idxs,
+            )
+            .unwrap();
+        }
+
+        if let Some(uvfits_out) = uvfits_out {
+            let mut uvfits_writer = UvfitsWriter::from_mwalib(
+                Path::new(uvfits_out),
+                &context,
+                &img_timestep_idxs,
+                &img_coarse_chan_idxs,
+            )
+            .unwrap();
+
+            let mut fits_file = uvfits_writer.open().unwrap();
+
+            let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+
+            uvfits_writer
+                .write_baseline_imgset_flagmasks(
+                    &mut fits_file,
+                    &context,
+                    &baseline_idxs,
+                    &baseline_imgsets,
+                    &baseline_flagmasks,
+                    &img_timestep_idxs,
+                    &img_coarse_chan_idxs,
+                )
+                .unwrap();
+
+            uvfits_writer
+                .write_ants_from_mwalib(
+                    &context.metafits_context,
+                    None,
+                )
+                .unwrap();
+        }
     }
 }
 
