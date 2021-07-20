@@ -64,7 +64,7 @@ dependencies = ["linux_install_cfitsio"]
 [tasks.linux_install_deps]
 script = """
 [ $(id -u) != 0 ] && SUDO="sudo" || SUDO=""
-$SUDO apt-get install -y zip
+$SUDO apt-get install -y zip liberfa-dev
 """
 dependencies = ["linux_install_aoflagger"]
 
