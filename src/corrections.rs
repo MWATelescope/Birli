@@ -420,7 +420,7 @@ mod tests {
         let viz_5_yy_3_3_im = baseline_imgsets[5].ImageBuffer(7)[3 * stride + 3];
 
         assert_eq!(viz_0_xx_0_0_re as f32, 0x10c5be as f32);
-        assert_eq!(viz_0_xx_0_0_im as f32, 0x10c5bf as f32);
+        assert_eq!(viz_0_xx_0_0_im as f32, -0x10c5bf as f32);
         assert_eq!(viz_5_xx_0_0_re as f32, 0x10f1ce as f32);
         assert_eq!(viz_5_xx_0_0_im as f32, -0x10f1cf as f32);
         assert_eq!(viz_5_xy_0_0_re as f32, 0x10ea26 as f32);

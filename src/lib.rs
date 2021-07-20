@@ -625,45 +625,53 @@ mod tests {
             Some(&mut baseline_flagmasks),
         );
 
+        // bl 0, XX, Re
         test_imgset_val!(baseline_imgsets[0], 0, 0, 0, 0x10c5be);
         test_imgset_val!(baseline_imgsets[0], 0, 0, 1, 0x14c5be);
         test_imgset_val!(baseline_imgsets[0], 0, 0, 2, 0x18c5be);
         test_imgset_val!(baseline_imgsets[0], 0, 0, 3, 0x1cc5be);
 
-        test_imgset_val!(baseline_imgsets[0], 1, 0, 0, 0x10c5bf);
-        test_imgset_val!(baseline_imgsets[0], 1, 0, 1, 0x14c5bf);
-        test_imgset_val!(baseline_imgsets[0], 1, 0, 2, 0x18c5bf);
-        test_imgset_val!(baseline_imgsets[0], 1, 0, 3, 0x1cc5bf);
+        // bl 0, XX, Im
+        test_imgset_val!(baseline_imgsets[0], 1, 0, 0, -0x10c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, 0, 1, -0x14c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, 0, 2, -0x18c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, 0, 3, -0x1cc5bf);
 
+        // bl 0, XY, Re
         test_imgset_val!(baseline_imgsets[0], 2, 0, 0, 0x10c5ae);
         test_imgset_val!(baseline_imgsets[0], 2, 0, 1, 0x14c5ae);
         test_imgset_val!(baseline_imgsets[0], 2, 0, 2, 0x18c5ae);
         test_imgset_val!(baseline_imgsets[0], 2, 0, 3, 0x1cc5ae);
 
-        test_imgset_val!(baseline_imgsets[0], 3, 0, 0, -0x10c5af);
-        test_imgset_val!(baseline_imgsets[0], 3, 0, 1, -0x14c5af);
-        test_imgset_val!(baseline_imgsets[0], 3, 0, 2, -0x18c5af);
-        test_imgset_val!(baseline_imgsets[0], 3, 0, 3, -0x1cc5af);
+        // bl 0, XY, Im
+        test_imgset_val!(baseline_imgsets[0], 3, 0, 0, 0x10c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, 0, 1, 0x14c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, 0, 2, 0x18c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, 0, 3, 0x1cc5af);
 
+        // bl 0, YX, Re
         test_imgset_val!(baseline_imgsets[0], 4, 0, 0, 0x10c5ae);
         test_imgset_val!(baseline_imgsets[0], 4, 0, 1, 0x14c5ae);
         test_imgset_val!(baseline_imgsets[0], 4, 0, 2, 0x18c5ae);
         test_imgset_val!(baseline_imgsets[0], 4, 0, 3, 0x1cc5ae);
 
-        test_imgset_val!(baseline_imgsets[0], 5, 0, 0, 0x10c5af);
-        test_imgset_val!(baseline_imgsets[0], 5, 0, 1, 0x14c5af);
-        test_imgset_val!(baseline_imgsets[0], 5, 0, 2, 0x18c5af);
-        test_imgset_val!(baseline_imgsets[0], 5, 0, 3, 0x1cc5af);
+        // bl 0, YX, Im
+        test_imgset_val!(baseline_imgsets[0], 5, 0, 0, -0x10c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, 0, 1, -0x14c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, 0, 2, -0x18c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, 0, 3, -0x1cc5af);
 
+        // bl 0, YY, Re
         test_imgset_val!(baseline_imgsets[0], 6, 0, 0, 0x10bec6);
         test_imgset_val!(baseline_imgsets[0], 6, 0, 1, 0x14bec6);
         test_imgset_val!(baseline_imgsets[0], 6, 0, 2, 0x18bec6);
         test_imgset_val!(baseline_imgsets[0], 6, 0, 3, 0x1cbec6);
 
-        test_imgset_val!(baseline_imgsets[0], 7, 0, 0, 0x10bec7);
-        test_imgset_val!(baseline_imgsets[0], 7, 0, 1, 0x14bec7);
-        test_imgset_val!(baseline_imgsets[0], 7, 0, 2, 0x18bec7);
-        test_imgset_val!(baseline_imgsets[0], 7, 0, 3, 0x1cbec7);
+        // bl 0, YY, Im
+        test_imgset_val!(baseline_imgsets[0], 7, 0, 0, -0x10bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, 0, 1, -0x14bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, 0, 2, -0x18bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, 0, 3, -0x1cbec7);
 
         /* ... */
 
@@ -811,40 +819,40 @@ mod tests {
         test_imgset_val!(baseline_imgsets[0], 0, 0, 2, 0x18c5be);
         test_imgset_val!(baseline_imgsets[0], 0, 0, 3, 0x1cc5be);
 
-        test_imgset_val!(baseline_imgsets[0], 1, 0, 0, 0x10c5bf);
-        test_imgset_val!(baseline_imgsets[0], 1, 0, 1, 0x14c5bf);
-        test_imgset_val!(baseline_imgsets[0], 1, 0, 2, 0x18c5bf);
-        test_imgset_val!(baseline_imgsets[0], 1, 0, 3, 0x1cc5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, 0, 0, -0x10c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, 0, 1, -0x14c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, 0, 2, -0x18c5bf);
+        test_imgset_val!(baseline_imgsets[0], 1, 0, 3, -0x1cc5bf);
 
         test_imgset_val!(baseline_imgsets[0], 2, 0, 0, 0x10c5ae);
         test_imgset_val!(baseline_imgsets[0], 2, 0, 1, 0x14c5ae);
         test_imgset_val!(baseline_imgsets[0], 2, 0, 2, 0x18c5ae);
         test_imgset_val!(baseline_imgsets[0], 2, 0, 3, 0x1cc5ae);
 
-        test_imgset_val!(baseline_imgsets[0], 3, 0, 0, -0x10c5af);
-        test_imgset_val!(baseline_imgsets[0], 3, 0, 1, -0x14c5af);
-        test_imgset_val!(baseline_imgsets[0], 3, 0, 2, -0x18c5af);
-        test_imgset_val!(baseline_imgsets[0], 3, 0, 3, -0x1cc5af);
+        test_imgset_val!(baseline_imgsets[0], 3, 0, 0, 0x10c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, 0, 1, 0x14c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, 0, 2, 0x18c5af);
+        test_imgset_val!(baseline_imgsets[0], 3, 0, 3, 0x1cc5af);
 
         test_imgset_val!(baseline_imgsets[0], 4, 0, 0, 0x10c5ae);
         test_imgset_val!(baseline_imgsets[0], 4, 0, 1, 0x14c5ae);
         test_imgset_val!(baseline_imgsets[0], 4, 0, 2, 0x18c5ae);
         test_imgset_val!(baseline_imgsets[0], 4, 0, 3, 0x1cc5ae);
 
-        test_imgset_val!(baseline_imgsets[0], 5, 0, 0, 0x10c5af);
-        test_imgset_val!(baseline_imgsets[0], 5, 0, 1, 0x14c5af);
-        test_imgset_val!(baseline_imgsets[0], 5, 0, 2, 0x18c5af);
-        test_imgset_val!(baseline_imgsets[0], 5, 0, 3, 0x1cc5af);
+        test_imgset_val!(baseline_imgsets[0], 5, 0, 0, -0x10c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, 0, 1, -0x14c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, 0, 2, -0x18c5af);
+        test_imgset_val!(baseline_imgsets[0], 5, 0, 3, -0x1cc5af);
 
         test_imgset_val!(baseline_imgsets[0], 6, 0, 0, 0x10bec6);
         test_imgset_val!(baseline_imgsets[0], 6, 0, 1, 0x14bec6);
         test_imgset_val!(baseline_imgsets[0], 6, 0, 2, 0x18bec6);
         test_imgset_val!(baseline_imgsets[0], 6, 0, 3, 0x1cbec6);
 
-        test_imgset_val!(baseline_imgsets[0], 7, 0, 0, 0x10bec7);
-        test_imgset_val!(baseline_imgsets[0], 7, 0, 1, 0x14bec7);
-        test_imgset_val!(baseline_imgsets[0], 7, 0, 2, 0x18bec7);
-        test_imgset_val!(baseline_imgsets[0], 7, 0, 3, 0x1cbec7);
+        test_imgset_val!(baseline_imgsets[0], 7, 0, 0, -0x10bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, 0, 1, -0x14bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, 0, 2, -0x18bec7);
+        test_imgset_val!(baseline_imgsets[0], 7, 0, 3, -0x1cbec7);
 
         /* ... */
 

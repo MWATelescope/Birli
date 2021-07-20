@@ -29,7 +29,7 @@ indicatif = { version = "0.16.*", features = ["rayon"] }
 itertools = "0.10.0"
 libc = "0.2.86"
 log = "0.4"
-mwalib = "0.8.3"
+mwalib = "0.8.4"
 ndarray = { version = "0.15.*", features = ["rayon"] }
 num = "0.4.*"
 rayon = "1.5.*"
