@@ -425,31 +425,7 @@ impl<'a> UvfitsWriter<'a> {
                 // at least partly due to different constants (the altitude is
                 // definitely slightly different), but possibly also because ERFA is
                 // more accurate than cotter's "homebrewed" Geodetic2XYZ.
-                //
-                // let mut tmp_xyz: [f64; 3] = [0.0; 3];
-                // unsafe {
-                //     status = erfa_sys::eraGd2gc(
-                //         ERFA_WGS84 as i32,             // ellipsoid identifier (Note 1)
-                //         mwalib::MWA_LONGITUDE_RADIANS, // longitude (radians, east +ve)
-                //         mwalib::MWA_LATITUDE_RADIANS,  // latitude (geodetic, radians, Note 3)
-                //         mwalib::MWA_ALTITUDE_METRES,   // height above ellipsoid (geodetic, Notes 2,3)
-                //         tmp_xyz.as_mut_ptr(),          // geocentric vector (Note 2)
-                //     );
-                // }
-                // if status != 0 {
-                //     return Err(UvfitsWriteError::Erfa {
-                //         source_file: file!(),
-                //         source_line: line!(),
-                //         status,
-                //         function: "eraGd2gc",
-                //     });
-                // }
-                // let xyz = XyzGeocentric {
-                //     x: tmp_xyz[0],
-                //     y: tmp_xyz[1],
-                //     z: tmp_xyz[2],
-                // };
-                // xyz
+
                 match XyzGeocentric::get_geocentric_vector(
                     mwalib::MWA_LONGITUDE_RADIANS,
                     mwalib::MWA_LATITUDE_RADIANS,
@@ -824,8 +800,8 @@ impl<'a> UvfitsWriter<'a> {
                 // }).collect();
 
                 let flagmask: &UniquePtr<CxxFlagMask> = flagmask;
-                let _flag_buffer: &[bool] = flagmask.Buffer();
-                let _flag_stride: usize = flagmask.HorizontalStride();
+                let flag_buffer: &[bool] = flagmask.Buffer();
+                let flag_stride: usize = flagmask.HorizontalStride();
 
                 let ant1_idx = baseline.ant1_index;
                 let ant2_idx = baseline.ant2_index;
@@ -843,8 +819,12 @@ impl<'a> UvfitsWriter<'a> {
                                     img_buffer_re[chan_idx * img_stride + img_timestep_idx];
                                 let vis_im =
                                     img_buffer_im[chan_idx * img_stride + img_timestep_idx];
+                                let flag = flag_buffer[chan_idx * flag_stride + img_timestep_idx];
                                 // TODO: weight from flags
-                                let weight = weight_factor as f32;
+                                let mut weight = weight_factor as f32;
+                                if flag {
+                                    weight *= -1.0;
+                                }
                                 vec![vis_re, vis_im, weight]
                             })
                             .collect::<Vec<_>>()
@@ -1396,16 +1376,16 @@ mod tests {
                 fits_check_status(status).unwrap();
             }
 
-            // for (vis_idx, (left_val, right_val)) in izip!(&left_vis, &right_vis).enumerate() {
-            //     assert!(
-            //         approx_eq!(f32, *left_val, *right_val, F32Margin::default()),
-            //         "cells don't match in row {}, vis index {}. {:?} != {:?}",
-            //         row_idx,
-            //         vis_idx,
-            //         &left_vis,
-            //         &right_vis
-            //     );
-            // }
+            for (vis_idx, (left_val, right_val)) in izip!(&left_vis, &right_vis).enumerate() {
+                assert!(
+                    approx_eq!(f32, *left_val, *right_val, F32Margin::default()),
+                    "cells don't match in row {}, vis index {}. {:?} != {:?}",
+                    row_idx,
+                    vis_idx,
+                    &left_vis,
+                    &right_vis
+                );
+            }
         }
     }
 
