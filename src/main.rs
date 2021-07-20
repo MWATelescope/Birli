@@ -6,9 +6,7 @@ use std::{env, ffi::OsString, fmt::Debug, path::Path};
 use birli::{
     context_to_baseline_imgsets, correct_cable_lengths, cxx_aoflagger_new, flag_imgsets_existing,
     get_antenna_flags, get_aoflagger_version_string, get_flaggable_timesteps,
-    init_baseline_flagmasks,
-    io::write_uvfits,
-    write_flags,
+    init_baseline_flagmasks, io::write_uvfits, write_flags,
 };
 // use birli::util::{dump_flagmask, dump_imgset};
 use mwalib::CorrelatorContext;
@@ -170,7 +168,8 @@ where
                 &baseline_flagmasks,
                 &img_timestep_idxs,
                 &img_coarse_chan_idxs,
-            ).unwrap();
+            )
+            .unwrap();
         }
     }
 }

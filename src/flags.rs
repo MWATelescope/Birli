@@ -469,12 +469,18 @@ pub fn flag_imgsets_existing(
 ///
 /// // write the flags to disk as .mwaf
 /// write_flags(
-///     &context, 
-///     &baseline_flagmasks, 
-///     flag_template.to_str().unwrap(), 
+///     &context,
+///     &baseline_flagmasks,
+///     flag_template.to_str().unwrap(),
 ///     img_coarse_chan_idxs
 /// );
 /// ```
+///
+/// # Errors
+///
+/// - Will error with [IOError::FitsOpen] if there are files already present at the paths specified in filename template.
+/// - Will error with [IOError::InvalidFlagFilenameTemplate] if an invalid flag filename template is provided (wrong number of percents).
+
 pub fn write_flags(
     context: &CorrelatorContext,
     baseline_flagmasks: &[UniquePtr<CxxFlagMask>],
@@ -488,7 +494,11 @@ pub fn write_flags(
         .map(|&chan| context.coarse_chans[chan].gpubox_number)
         .collect();
 
-    trace!("writing flags to template: {}, gpubox ids: {:?}", filename_template, gpubox_ids);
+    trace!(
+        "writing flags to template: {}, gpubox ids: {:?}",
+        filename_template,
+        gpubox_ids
+    );
 
     let mut flag_file_set = FlagFileSet::new(filename_template, &gpubox_ids, context.mwa_version)?;
     flag_file_set.write_baseline_flagmasks(&context, baseline_flagmasks, img_coarse_chan_idxs)?;

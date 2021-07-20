@@ -198,7 +198,10 @@ mod tests {
     use float_cmp::{approx_eq, F32Margin};
     use mwalib::CorrelatorContext;
 
-    use crate::{context_to_baseline_imgsets, cxx_aoflagger_new, get_flaggable_timesteps, corrections::_get_all_freqs_hz};
+    use crate::{
+        context_to_baseline_imgsets, corrections::_get_all_freqs_hz, cxx_aoflagger_new,
+        get_flaggable_timesteps,
+    };
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     // TODO: deduplicate from lib.rs

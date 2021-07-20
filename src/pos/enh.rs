@@ -7,7 +7,7 @@
 //!
 //! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
-use super::{XyzGeodetic};
+use super::XyzGeodetic;
 use mwalib::MWA_LATITUDE_RADIANS;
 
 /// East, North and Height coordinates.

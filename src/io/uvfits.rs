@@ -9,10 +9,10 @@
 use std::ffi::CString;
 use std::path::Path;
 
-use erfa_sys::{ERFA_DJM0, ERFA_WGS84};
+use erfa_sys::ERFA_DJM0;
 use fitsio::{errors::check_status as fits_check_status, FitsFile};
 use hifitime::Epoch;
-use itertools::{iproduct, izip, Itertools};
+use itertools::izip;
 use log::warn;
 // use ndarray::prelude::*;
 
@@ -20,12 +20,11 @@ use super::error::UvfitsWriteError;
 use crate::{
     constants::HIFITIME_GPS_FACTOR,
     cxx_aoflagger::ffi::{CxxFlagMask, CxxImageSet},
-    math::{cross_correlation_baseline_to_tiles, num_tiles_from_num_baselines},
     pos::{RADec, XyzGeocentric, XyzGeodetic, ENH, UVW},
 };
 use cxx::UniquePtr;
 use mwalib::{
-    fitsio, fitsio_sys, Baseline, CorrelatorContext, MetafitsContext, TimeStep,
+    fitsio, fitsio_sys, Baseline, CorrelatorContext, MetafitsContext,
     SPEED_OF_LIGHT_IN_VACUUM_M_PER_S,
 };
 
@@ -68,6 +67,7 @@ fn encode_uvfits_baseline(ant1: usize, ant2: usize) -> usize {
 
 /// Decode a uvfits baseline into the antennas that formed it. Antenna indices
 /// start at 1.
+#[allow(dead_code)]
 fn decode_uvfits_baseline(bl: usize) -> (usize, usize) {
     if bl < 65_535 {
         let ant2 = bl % 256;
@@ -87,16 +87,6 @@ pub struct UvfitsWriter<'a> {
     /// The path to the uvifts file.
     path: &'a Path,
 
-    /// The number of timesteps to be written.    
-    num_timesteps: usize,
-
-    /// The number of baselines per timestep to be written.
-    num_baselines: usize,
-
-    /// The number of fine channels per baseline to be written. uvfits has no
-    /// notion of "fine channel" or "coarse channel".
-    num_chans: usize,
-
     /// The number of uvfits rows. This is equal to `num_timesteps` *
     /// `num_baselines`.
     total_num_rows: usize,
@@ -114,6 +104,39 @@ pub struct UvfitsWriter<'a> {
 
 impl<'a> UvfitsWriter<'a> {
     /// Create a new uvfits file at the specified filename.
+    ///
+    /// This will destroy any existing uvfits file at that path
+    ///
+    /// `num_timesteps`, `num_baselines` and `num_chans` are the number of
+    /// timesteps, baselines and channels in this uvfits file respectively.
+    ///
+    /// `start_epoch` can be calculated from GPS Time using the hifitime library, e.g.
+    ///
+    /// ```rust
+    /// let first_gps_time = 1196175296.0;
+    /// let start_epoch = hifitime::Epoch::from_tai_seconds(first_gps_time + 19.0 + birli::constants::HIFITIME_GPS_FACTOR);
+    /// ```
+    ///
+    /// `centre_freq_hz` is the centre frequency of the coarse band that this
+    /// uvfits file pertains to [Hz].
+    ///
+    /// `centre_freq_chan` is the index (from zero) of the centre frequency of
+    /// the channels of this uvfits file.
+    ///
+    /// `phase_centre` is a [`RADec`] of the observation's phase center, used to
+    /// populate the `OBSRA` and `OBSDEC` keys.
+    ///
+    /// `obs_name` an optional name for the object under observation. Used to
+    /// populate the `OBJECT` keys.
+    ///
+    /// # Errors
+    ///
+    /// Will return an [`UvfitsWriteError`] if:
+    /// - there is an existing file at `filename` which cannot be removed.
+    /// - a fits operation fails.
+    ///
+    /// TODO: replace all these args with birli_context
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         filename: &'a Path,
         num_timesteps: usize,
@@ -266,9 +289,6 @@ impl<'a> UvfitsWriter<'a> {
 
         Ok(Self {
             path: filename,
-            num_timesteps,
-            num_baselines,
-            num_chans,
             total_num_rows,
             current_num_rows: 0,
             centre_freq: centre_freq_hz,
@@ -276,18 +296,23 @@ impl<'a> UvfitsWriter<'a> {
         })
     }
 
+    /// Create a new uvfits file at the specified filename using an [`mwalib::CorrelatorContext`]
+    ///
+    /// start epoch is determined by the first time provided in `img_timestep_idxs`
+    /// which may not necessarily match the obsid.
+    ///
+    /// # Errors
+    ///
+    /// See: [`UvfitsWriter::new`]
     pub fn from_mwalib(
         filename: &'a Path,
         context: &CorrelatorContext,
         img_timestep_idxs: &[usize],
         img_coarse_chan_idxs: &[usize],
-        // TODO: if the obsid doesn't match the actual start time, what do?
     ) -> Result<Self, UvfitsWriteError> {
         let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
         let num_img_coarse_chans = img_coarse_chan_idxs.len();
         let num_img_chans = num_fine_chans_per_coarse * num_img_coarse_chans;
-        // let obsid = context.metafits_context.obs_id;
-        // let start_epoch = Epoch::from_tai_seconds(obsid as f64 + 19.0 + HIFITIME_GPS_FACTOR);
         let first_gps_time = context.timesteps[img_timestep_idxs[0]].gps_time_ms as f64 / 1000.0;
         let start_epoch = Epoch::from_tai_seconds(first_gps_time + 19.0 + HIFITIME_GPS_FACTOR);
         let phase_centre = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
@@ -311,6 +336,10 @@ impl<'a> UvfitsWriter<'a> {
     ///
     /// Closing the file can be achieved by `drop`ing all references to the
     /// [`FitsFile`]
+    ///
+    /// # Errors
+    ///
+    /// Will return an [`fitsio::errors::Error`] if the file can't be edited.
     pub fn open(&self) -> Result<FitsFile, fitsio::errors::Error> {
         let mut f = FitsFile::edit(&self.path)?;
         // Ensure HDU 0 is opened.
@@ -321,14 +350,18 @@ impl<'a> UvfitsWriter<'a> {
     /// Write the antenna table to a uvfits file. Assumes that the array
     /// location is MWA.
     ///
-    /// `centre_freq` is the centre frequency of the coarse band that this
-    /// uvfits file pertains to. `positions` are the [XyzGeodetic] coordinates
+    /// `positions` are the [XyzGeodetic] coordinates
     /// of the MWA tiles. These positions need to have the MWA's "centre" XYZ
     /// coordinates subtracted to make them local XYZ.
     ///
     /// `Self` must have only have a single HDU when this function is called
     /// (true when using methods only provided by `Self`).
-    // Derived from cotter.
+    ///
+    /// Derived from cotter.
+    ///
+    /// # Errors
+    ///
+    /// Will return an [`UvfitsWriteError`] if a fits operation fails.
     pub fn write_uvfits_antenna_table<T: AsRef<str>>(
         self,
         antenna_names: &[T],
@@ -594,6 +627,18 @@ impl<'a> UvfitsWriter<'a> {
         Ok(())
     }
 
+    /// Write the antenna table to a uvfits file using the provided
+    /// [`mwalib::CorrelatorContext`]
+    ///
+    /// `self` must have only have a single HDU when this function is called
+    /// (true when using methods only provided by `Self`).
+    ///
+    /// `latitude_rad` Optionally override the latitude of the array [Radians]
+    ///
+    /// # Errors
+    ///
+    /// See: [`UvfitsWriter::write_uvfits_antenna_table`]
+    ///
     pub fn write_ants_from_mwalib(
         self,
         context: &MetafitsContext,
@@ -630,8 +675,16 @@ impl<'a> UvfitsWriter<'a> {
     ///
     /// `tile_index1` and `tile_index2` are expected to be zero indexed; they
     /// are made one indexed by this function.
-    // TODO: Assumes that all fine channels are written in `vis.` This needs to
-    // be updated to add visibilities to an existing uvfits row.
+    ///
+    /// # Errors
+    ///
+    /// Will return an [`UvfitsWriteError`] if a fits operation fails.
+    ///
+    /// TODO: Assumes that all fine channels are written in `vis.` This needs to
+    /// be updated to add visibilities to an existing uvfits row.
+    ///
+    /// TODO: replace all these args with birli_context
+    #[allow(clippy::too_many_arguments)]
     #[inline]
     pub fn write_vis(
         &mut self,
@@ -677,8 +730,39 @@ impl<'a> UvfitsWriter<'a> {
         Ok(())
     }
 
-    /// TODO: doc
-    // TODO: handle averaging
+    /// Write visibilty rows into the uvfits file from the provided
+    /// [`mwalib::CorrelatorContext`].
+    ///
+    /// `uvfits` must have been opened in write mode and currently have HDU 0
+    /// open. The [FitsFile] must be supplied to this function to force the
+    /// caller to think about calling this function efficiently; opening the
+    /// file for every call would be a problem, and keeping the file open in
+    /// [UvfitsWriter] would mean the struct is not thread safe.
+    ///
+    /// `baseline_idxs` the baseline indices (according to mwalib)
+    /// which should be written to the file
+    ///
+    /// `baseline_imgsets` a [`CxxImageSet`] for each baseline in `baseline_idxs`
+    ///
+    /// `baseline_flagmasks` a [`CxxFlagMask`] for each baseline in `baseline_idxs`
+    ///
+    /// `img_timestep_idxs` the timestep indices (according to mwalib)
+    /// which are used in all of the images in `baseline_imgsets` and all of the
+    /// flagmasks in `baseline_flagmasks`
+    ///
+    /// `img_coarse_chan_idxs` the coarse channel indices (according to mwalib)
+    /// which are used in all of the images in `baseline_imgsets` and all of the
+    /// flagmasks in `baseline_flagmasks`
+    ///
+    /// TODO: handle averaging
+    ///
+    /// # Errors
+    ///
+    /// Will return an [`UvfitsWriteError`] if a fits operation fails.
+    ///
+    ///
+    /// TODO: replace all these args with birli_context
+    #[allow(clippy::too_many_arguments)]
     pub fn write_baseline_imgset_flagmasks(
         &mut self,
         uvfits: &mut FitsFile,
@@ -701,10 +785,6 @@ impl<'a> UvfitsWriter<'a> {
         let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
         let num_img_coarse_chans = img_coarse_chan_idxs.len();
         let num_img_chans = num_fine_chans_per_coarse * num_img_coarse_chans;
-
-        let num_img_pols = context.metafits_context.num_visibility_pols;
-        // number of complex components (real, imaginary)
-        let num_cplx = 2;
 
         // Weights are normalized so that default res of 10 kHz, 1s has weight of "1" per sample
 
@@ -744,8 +824,8 @@ impl<'a> UvfitsWriter<'a> {
                 // }).collect();
 
                 let flagmask: &UniquePtr<CxxFlagMask> = flagmask;
-                let flag_buffer: &[bool] = flagmask.Buffer();
-                let flag_stride: usize = flagmask.HorizontalStride();
+                let _flag_buffer: &[bool] = flagmask.Buffer();
+                let _flag_stride: usize = flagmask.HorizontalStride();
 
                 let ant1_idx = baseline.ant1_index;
                 let ant2_idx = baseline.ant2_index;
@@ -763,7 +843,7 @@ impl<'a> UvfitsWriter<'a> {
                                     img_buffer_re[chan_idx * img_stride + img_timestep_idx];
                                 let vis_im =
                                     img_buffer_im[chan_idx * img_stride + img_timestep_idx];
-                                // TODO: weight
+                                // TODO: weight from flags
                                 let weight = weight_factor as f32;
                                 vec![vis_re, vis_im, weight]
                             })
@@ -772,12 +852,9 @@ impl<'a> UvfitsWriter<'a> {
                     .collect();
 
                 let uvw = UVW::from_xyz(
-                    // TODO: which way around is it?
                     &(tiles_xyz_geod[ant1_idx].clone() - &tiles_xyz_geod[ant2_idx]),
                     &phase_center_ha,
                 );
-
-                // dbg!(&uvw, &ant1_idx, &ant2_idx, &epoch, &vis);
 
                 // TODO: calculate weights
                 let result = self.write_vis(uvfits, &uvw, ant1_idx, ant2_idx, &epoch, &vis.clone());
@@ -787,80 +864,14 @@ impl<'a> UvfitsWriter<'a> {
             }
         }
 
-        // panic!("Finish this!");
-
         Ok(())
     }
-
-    // /// Assumes that `vis_array` has already had `weights` applied; these need
-    // /// to be undone locally by this function.
-    // // TODO: Assumes that all fine channels are written for all baselines in
-    // `vis_array.`
-    // pub fn write_from_vis(
-    //     &mut self,
-    //     uvfits: &mut FitsFile,
-    //     vis_array: ArrayView2<Jones<f32>>,
-    //     weights: ArrayView2<f32>,
-    //     uvws: &[UVW],
-    //     epoch: &Epoch,
-    //     num_fine_chans: usize,
-    //     fine_chan_flags: &HashSet<usize>,
-    // ) -> Result<(), UvfitsWriteError> {
-    //     let num_unflagged_baselines = vis_array.len_of(Axis(0));
-    //     let num_unflagged_tiles = num_tiles_from_num_baselines(num_unflagged_baselines);
-    //     // Write out all the baselines of the timestep we received.
-    //     // TODO: why 12?
-    //     let mut vis: Vec<f32> = Vec::with_capacity(12 * num_fine_chans);
-    //     for (unflagged_bl, uvw) in (0..num_unflagged_baselines).into_iter().zip(uvws.iter()) {
-    //         // uvfits expects the tile numbers to be from 1 to the total number
-    //         // of tiles sequentially, so don't use the actual unflagged tile
-    //         // numbers.
-    //         let (tile1, tile2) =
-    //             cross_correlation_baseline_to_tiles(num_unflagged_tiles, unflagged_bl);
-    //         let mut unflagged_chan_index = 0;
-    //         for fine_chan_index in 0..num_fine_chans {
-    //             if fine_chan_flags.contains(&fine_chan_index) {
-    //                 vis.extend_from_slice(&[0.0; 12])
-    //             } else {
-    //                 let weight = unsafe { weights.uget((unflagged_bl, unflagged_chan_index)) };
-    //                 let jones = (unsafe { vis_array.uget((unflagged_bl, unflagged_chan_index)) })
-    //                     .clone()
-    //                     // Undo the weight.
-    //                     * (1.0 / weight);
-    //                 unflagged_chan_index += 1;
-    //                 vis.extend_from_slice(&[
-    //                     // XX
-    //                     jones[0].re,
-    //                     jones[0].im,
-    //                     *weight,
-    //                     // YY
-    //                     jones[3].re,
-    //                     jones[3].im,
-    //                     *weight,
-    //                     // XY
-    //                     jones[1].re,
-    //                     jones[1].im,
-    //                     *weight,
-    //                     // YX
-    //                     jones[2].re,
-    //                     jones[2].im,
-    //                     *weight,
-    //                 ]);
-    //             };
-    //         }
-    //         self.write_vis(uvfits, uvw, tile1, tile2, epoch, &vis)?;
-    //         vis.clear();
-    //     }
-    //     Ok(())
-    // }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Index;
 
     use super::*;
-    use fitsio_sys::LONGLONG;
     use mwalib::{
         _get_fits_col, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
         get_fits_col, get_required_fits_key,
@@ -873,13 +884,11 @@ mod tests {
         constants::{COTTER_MWA_LATITUDE_RADIANS, HIFITIME_GPS_FACTOR},
         context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags,
         get_flaggable_timesteps, init_baseline_flagmasks,
-        pos::xyz::xyzs_to_uvws,
     };
 
     use fitsio::{
-        errors::{check_status as fits_check_status, FitsError},
+        errors::check_status as fits_check_status,
         hdu::{FitsHdu, HduInfo},
-        tables::ConcreteColumnDescription,
     };
 
     #[test]
@@ -894,8 +903,7 @@ mod tests {
         let start_epoch = Epoch::from_tai_seconds(obsid as f64 + 19.0 + HIFITIME_GPS_FACTOR);
 
         let mut u = UvfitsWriter::new(
-            // tmp_uvfits_file.path(),
-            Path::new("tests/data/test.uvfits"),
+            tmp_uvfits_file.path(),
             num_timesteps,
             num_baselines,
             num_chans,
@@ -1166,8 +1174,8 @@ mod tests {
     }
 
     fn assert_uvfits_primary_header_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
-        let mut left_primary_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
-        let mut right_primary_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
+        let mut _left_primary_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
+        let mut _right_primary_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
 
         assert_short_string_keys_eq!(
             vec![
@@ -1182,9 +1190,9 @@ mod tests {
                 // "OBJECT",
             ],
             left_fptr,
-            left_primary_hdu,
+            _left_primary_hdu,
             right_fptr,
-            right_primary_hdu
+            _right_primary_hdu
         );
 
         assert_f64_string_keys_eq!(
@@ -1198,15 +1206,15 @@ mod tests {
                 // TODO: "FIBRFACT", (v-factor, cable type?)
             ],
             left_fptr,
-            left_primary_hdu,
+            _left_primary_hdu,
             right_fptr,
-            right_primary_hdu
+            _right_primary_hdu
         );
     }
 
     fn assert_uvfits_ant_header_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
-        let mut left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
-        let mut right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
+        let mut _left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
+        let mut _right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
 
         assert_short_string_keys_eq!(
             vec![
@@ -1216,9 +1224,9 @@ mod tests {
                 "TUNIT10", "TTYPE11", "TFORM11", "EXTNAME", "TIMSYS", "ARRNAM",
             ],
             left_fptr,
-            left_ant_hdu,
+            _left_ant_hdu,
             right_fptr,
-            right_ant_hdu
+            _right_ant_hdu
         );
 
         assert_f64_string_keys_eq!(
@@ -1230,9 +1238,9 @@ mod tests {
                 "POLARX", "POLARY", "UT1UTC", "DATUTC", "NUMORB", "NOPCAL", "FREQID", "IATUTC",
             ],
             left_fptr,
-            left_ant_hdu,
+            _left_ant_hdu,
             right_fptr,
-            right_ant_hdu
+            _right_ant_hdu
         );
     }
 
@@ -1276,30 +1284,30 @@ mod tests {
     }
 
     fn assert_uvfits_vis_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
-        let mut left_vis_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
-        let mut right_vis_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
+        let mut _left_vis_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
+        let mut _right_vis_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
 
         let column_info = assert_group_column_descriptions_match!(
             left_fptr,
-            &left_vis_hdu,
+            &_left_vis_hdu,
             right_fptr,
-            &right_vis_hdu
+            &_right_vis_hdu
         );
 
         let left_length: usize =
-            get_required_fits_key!(left_fptr, &left_vis_hdu, "GCOUNT").unwrap();
+            get_required_fits_key!(left_fptr, &_left_vis_hdu, "GCOUNT").unwrap();
         let right_length: usize =
-            get_required_fits_key!(right_fptr, &right_vis_hdu, "GCOUNT").unwrap();
+            get_required_fits_key!(right_fptr, &_right_vis_hdu, "GCOUNT").unwrap();
 
         assert_eq!(left_length, right_length, "group lengths don't match");
         let group_len = left_length;
 
-        let pcount = get_required_fits_key!(left_fptr, &left_vis_hdu, "PCOUNT").unwrap();
+        let pcount = get_required_fits_key!(left_fptr, &_left_vis_hdu, "PCOUNT").unwrap();
         let floats_per_pol: usize =
-            get_required_fits_key!(left_fptr, &left_vis_hdu, "NAXIS2").unwrap();
-        let num_pols: usize = get_required_fits_key!(left_fptr, &left_vis_hdu, "NAXIS3").unwrap();
+            get_required_fits_key!(left_fptr, &_left_vis_hdu, "NAXIS2").unwrap();
+        let num_pols: usize = get_required_fits_key!(left_fptr, &_left_vis_hdu, "NAXIS3").unwrap();
         let num_fine_freq_chans: usize =
-            get_required_fits_key!(left_fptr, &left_vis_hdu, "NAXIS4").unwrap();
+            get_required_fits_key!(left_fptr, &_left_vis_hdu, "NAXIS4").unwrap();
 
         let mut left_group_params: Vec<f32> = vec![0.0; pcount];
         let mut right_group_params: Vec<f32> = vec![0.0; pcount];
@@ -1402,44 +1410,44 @@ mod tests {
     }
 
     fn assert_uvfits_ant_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
-        let mut left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
-        let mut right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
+        let mut _left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
+        let mut _right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
 
         let column_info = assert_table_column_descriptions_match!(
             left_fptr,
-            &left_ant_hdu,
+            &_left_ant_hdu,
             right_fptr,
-            &right_ant_hdu
+            &_right_ant_hdu
         );
 
         let first_col_name = &column_info[0];
         let left_length = {
             let left_annames: Vec<String> =
-                get_fits_col!(left_fptr, &left_ant_hdu, first_col_name.as_str()).unwrap();
+                get_fits_col!(left_fptr, &_left_ant_hdu, first_col_name.as_str()).unwrap();
             left_annames.len()
         };
         let right_length = {
             let right_annames: Vec<String> =
-                get_fits_col!(right_fptr, &right_ant_hdu, first_col_name.as_str()).unwrap();
+                get_fits_col!(right_fptr, &_right_ant_hdu, first_col_name.as_str()).unwrap();
             right_annames.len()
         };
         assert_eq!(left_length, right_length, "column lengths don't match");
         let row_len = left_length;
 
         assert_table_string_column_values_match!(
-            vec!["ANNAME", "POLTYA", "POLTYB"],
+            &["ANNAME", "POLTYA", "POLTYB"],
             left_fptr,
-            &left_ant_hdu,
+            &_left_ant_hdu,
             right_fptr,
-            &right_ant_hdu
+            &_right_ant_hdu
         );
 
         assert_table_f64_column_values_match!(
-            vec!["NOSTA", "MNTSTA", "STAXOF", "POLAA", "POLAB"],
+            &["NOSTA", "MNTSTA", "STAXOF", "POLAA", "POLAB"],
             left_fptr,
-            &left_ant_hdu,
+            &_left_ant_hdu,
             right_fptr,
-            &right_ant_hdu
+            &_right_ant_hdu
         );
 
         assert_table_vector_f64_column_values_match!(
@@ -1447,9 +1455,9 @@ mod tests {
             vec![("STABXYZ", 3), ("POLCALA", 3), ("POLCALB", 3)],
             row_len,
             left_fptr,
-            &left_ant_hdu,
+            &_left_ant_hdu,
             right_fptr,
-            &right_ant_hdu
+            &_right_ant_hdu
         );
     }
 
@@ -1457,16 +1465,13 @@ mod tests {
     fn uvfits_from_mwalib_matches_cotter_header() {
         let context = get_mwa_ord_context();
 
-        let obsid = context.metafits_context.obs_id;
-        let start_epoch = Epoch::from_tai_seconds(obsid as f64 + 19.0 + HIFITIME_GPS_FACTOR);
-
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
         // let tmp_uvfits_file = Path::new("tests/data/test_header.uvfits");
 
         let timestep_idxs = get_flaggable_timesteps(&context).unwrap();
         let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
 
-        let mut u = UvfitsWriter::from_mwalib(
+        let u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
             &context,
             &timestep_idxs,
@@ -1474,12 +1479,11 @@ mod tests {
         )
         .unwrap();
 
-        let mut f = u.open().unwrap();
+        let f = u.open().unwrap();
 
         drop(f);
 
-        let cotter_uvfits_path =
-            Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
+        let cotter_uvfits_path = Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
 
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
         let mut cotter_fptr = fits_open!(&cotter_uvfits_path).unwrap();
@@ -1490,9 +1494,6 @@ mod tests {
     #[test]
     fn uvfits_tables_from_mwalib_matches_cotter() {
         let context = get_mwa_ord_context();
-
-        let obsid = context.metafits_context.obs_id;
-        let start_epoch = Epoch::from_tai_seconds(obsid as f64 + 19.0 + HIFITIME_GPS_FACTOR);
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
 
@@ -1537,7 +1538,7 @@ mod tests {
             true,
         );
 
-        let baseline_idxs = (0..context.metafits_context.num_baselines).collect_vec();
+        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 
         u.write_baseline_imgset_flagmasks(
             &mut f,
@@ -1555,8 +1556,7 @@ mod tests {
 
         drop(f);
 
-        let cotter_uvfits_path =
-            Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
+        let cotter_uvfits_path = Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
 
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
         let mut cotter_fptr = fits_open!(&cotter_uvfits_path).unwrap();

@@ -6,8 +6,8 @@
 //!
 //! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
-use std::f64::consts::FRAC_PI_2;
 use mwalib::MWA_LATITUDE_RADIANS;
+use std::f64::consts::FRAC_PI_2;
 
 use super::hadec::HADec;
 

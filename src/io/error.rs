@@ -74,26 +74,29 @@ pub enum IOError {
     },
 }
 
-
 ///
 /// Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 #[derive(Error, Debug)]
 pub enum UvfitsWriteError {
+    /// An error when trying to write to an unexpected row.
     #[error("Tried to write to row number {row_num}, but only {num_rows} rows are expected")]
-    BadRowNum { row_num: usize, num_rows: usize },
+    BadRowNum {
+        /// The row number (0-indexed)
+        row_num: usize,
+        /// Total number of rows expected.
+        num_rows: usize,
+    },
 
+    /// An error when less rows were written to an HDU than expected.
     #[error("Expected {total} uvfits rows to be written, but only {current} were written")]
-    NotEnoughRowsWritten { current: usize, total: usize },
+    NotEnoughRowsWritten {
+        /// Number of rows written
+        current: usize,
+        /// Total number of rows expected.
+        total: usize,
+    },
 
     /// An error associated with ERFA.
-    // #[error("{source_file}:{source_line} Call to ERFA function {function} returned status code {status}")]
-    // Erfa {
-    //     source_file: &'static str,
-    //     source_line: u32,
-    //     status: i32,
-    //     function: &'static str,
-    // },
-
     #[error("{0}")]
     Erfa(#[from] crate::pos::xyz::ErfaError),
 

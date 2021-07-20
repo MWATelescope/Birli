@@ -54,6 +54,8 @@ impl RADec {
         }
     }
 
+    /// Given an [`mwalib::MetafitsContext`], make an [Option<RADec>] from
+    /// the `(ra|dec)_phase_center_degrees` if these are available, otherwise None
     pub fn from_mwalib_phase_center(context: &MetafitsContext) -> Option<Self> {
         match (
             context.ra_phase_center_degrees,
@@ -64,6 +66,8 @@ impl RADec {
         }
     }
 
+    /// Given an [`mwalib::MetafitsContext`], make a [RADec] from
+    /// the `(ra|dec)_tile_pointing_degrees`.
     pub fn from_mwalib_tile_pointing(context: &MetafitsContext) -> Self {
         RADec::new_degrees(
             context.ra_tile_pointing_degrees,
@@ -71,10 +75,13 @@ impl RADec {
         )
     }
 
+    /// Given an [`mwalib::MetafitsContext`], make a [RADec] from
+    /// the `(ra|dec)_phase_center_degrees` if these are available, otherwise
+    /// use the `(ra|dec)_tile_pointing_degrees`.
     pub fn from_mwalib_phase_or_pointing(context: &MetafitsContext) -> Self {
         match RADec::from_mwalib_phase_center(&context) {
             Some(radec) => radec,
-            None => RADec::from_mwalib_tile_pointing(&context)
+            None => RADec::from_mwalib_tile_pointing(&context),
         }
     }
 

@@ -16,7 +16,14 @@ use crate::{CxxFlagMask, CxxImageSet};
 
 use self::error::UvfitsWriteError;
 
-/// TODO: doc
+/// Write the given [`BirliContext`] to a uvfits file.
+///
+/// # Errors
+///
+/// See: [`UvfitsWriter`]
+///
+/// TODO: replace all these args with birli_context
+#[allow(clippy::too_many_arguments)]
 pub fn write_uvfits<'a>(
     filename: &'a Path,
     context: &CorrelatorContext,
@@ -52,7 +59,6 @@ pub fn write_uvfits<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use fitsio::errors::check_status as fits_check_status;
     use float_cmp::{approx_eq, F32Margin};
@@ -143,7 +149,7 @@ mod tests {
 
         // Test the values have been correctly populated.
         let mut fptr = fits_open!(&uvfits_out).unwrap();
-        let mut vis_hdu = fits_open_hdu!(&mut fptr, 0).unwrap();
+        let vis_hdu = fits_open_hdu!(&mut fptr, 0).unwrap();
 
         let pcount: usize = get_required_fits_key!(&mut fptr, &vis_hdu, "PCOUNT").unwrap();
         let floats_per_pol: usize = get_required_fits_key!(&mut fptr, &vis_hdu, "NAXIS2").unwrap();

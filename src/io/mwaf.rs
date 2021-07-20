@@ -8,12 +8,12 @@
 //! one column. Each cell in the table containsa binary vector of flags for each fine channel in
 //! the coarse channel.
 
-use crate::cxx_aoflagger::ffi::CxxFlagMask;
-use crate::error::BirliError;
 use super::error::{
     IOError,
     IOError::{FitsIO, FitsOpen, InvalidFlagFilenameTemplate, InvalidGpuBox, MwafInconsistent},
 };
+use crate::cxx_aoflagger::ffi::CxxFlagMask;
+use crate::error::BirliError;
 use clap::crate_version;
 use cxx::UniquePtr;
 use fitsio::tables::{ColumnDataDescription, ColumnDataType, ConcreteColumnDescription};
@@ -275,7 +275,7 @@ impl FlagFileSet {
         &mut self,
         context: &CorrelatorContext,
         baseline_flagmasks: &[UniquePtr<CxxFlagMask>],
-        img_coarse_chan_idxs: &[usize]
+        img_coarse_chan_idxs: &[usize],
     ) -> Result<(), IOError> {
         // let gpubox_chan_numbers: BTreeMap<usize, usize> = context
         //     .coarse_chans
@@ -313,7 +313,10 @@ impl FlagFileSet {
                     })
                 }
             };
-            let img_coarse_chan_idx = match img_coarse_chan_idxs.iter().position(|idx| idx == coarse_chan_idx) {
+            let img_coarse_chan_idx = match img_coarse_chan_idxs
+                .iter()
+                .position(|idx| idx == coarse_chan_idx)
+            {
                 Some(img_coarse_chan_idx) => img_coarse_chan_idx,
                 None => {
                     return Err(InvalidGpuBox {
@@ -344,7 +347,10 @@ impl FlagFileSet {
                 let flag_stride = flagmask.HorizontalStride();
                 let num_timesteps = flagmask.Width();
                 let num_channels = flagmask.Height();
-                assert_eq!(num_channels, img_coarse_chan_idxs.len() * num_fine_chans_per_coarse);
+                assert_eq!(
+                    num_channels,
+                    img_coarse_chan_idxs.len() * num_fine_chans_per_coarse
+                );
                 for img_timestep_idx in 0..num_timesteps {
                     let row_idx = (img_timestep_idx * num_baselines) + baseline_idx;
                     // All flags for img_timestep_idx
@@ -384,10 +390,9 @@ impl FlagFileSet {
     }
 }
 
-/// TODO: These are just for tests, and should be deprecated. 
-/// TODO: Why doesn't #[cfg(test)] work? 
+/// TODO: These are just for tests, and should be deprecated.
+/// TODO: Why doesn't #[cfg(test)] work?
 impl FlagFileSet {
-
     // pub fn read_validated_header(
     //     context: &CorrelatorContext,
     //     fptr: &mut FitsFile,
@@ -835,8 +840,7 @@ mod tests {
         let num_img_coarse_chans = img_coarse_chan_idxs.len();
 
         let width = context.num_common_timesteps;
-        let height = num_img_coarse_chans
-            * context.metafits_context.num_corr_fine_chans_per_coarse;
+        let height = num_img_coarse_chans * context.metafits_context.num_corr_fine_chans_per_coarse;
 
         let aoflagger = unsafe { cxx_aoflagger_new() };
         let mut baseline_flagmasks: Vec<UniquePtr<CxxFlagMask>> = context

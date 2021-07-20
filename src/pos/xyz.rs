@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#![allow(clippy::missing_errors_doc)]
 //! Handle (x,y,z) coordinates of an antenna (a.k.a. tile or station), geodetic
 //! or geocentric.
 //!
@@ -14,7 +15,7 @@
 //!
 //! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
-use mwalib::{MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS, MWA_LONGITUDE_RADIANS, MetafitsContext};
+use mwalib::{MetafitsContext, MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS, MWA_LONGITUDE_RADIANS};
 use rayon::prelude::*;
 use thiserror::Error;
 
@@ -414,6 +415,8 @@ pub fn geocentric_to_geodetic_parallel(
 #[error(
     "{source_file}:{source_line} Call to ERFA function {function} returned status code {status}"
 )]
+
+/// An error associated with ERFA.
 pub struct ErfaError {
     source_file: &'static str,
     source_line: u32,

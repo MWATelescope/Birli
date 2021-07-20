@@ -96,10 +96,13 @@ pub(crate) fn num_tiles_from_num_baselines(num_baselines: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{atan2, cexp, cos, exp, sin, cross_correlation_baseline_to_tiles, num_tiles_from_num_baselines};
+    use super::{
+        atan2, cexp, cos, cross_correlation_baseline_to_tiles, exp, num_tiles_from_num_baselines,
+        sin,
+    };
     use approx::assert_abs_diff_eq;
-    use std::f64::consts::{FRAC_PI_6, FRAC_PI_4, FRAC_PI_3, PI, E};
     use num::complex::Complex64 as c64;
+    use std::f64::consts::{E, FRAC_PI_3, FRAC_PI_4, FRAC_PI_6, PI};
 
     #[test]
     fn test_sin() {
