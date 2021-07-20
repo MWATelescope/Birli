@@ -1,3 +1,5 @@
+from sys import stderr, stdout
+
 def chunk(iterable, n):
     "Collect data into fixed-length chunks or blocks"
     args = [iter(iterable)] * n
@@ -7,3 +9,7 @@ def get_gpufits_num_scans(hdu_len, corr_type):
     if corr_type == "MWAX":
         return (hdu_len - 1) // 2
     return hdu_len - 1
+
+def eprint(*args, **kwargs):
+    print(file=stderr, *args, **kwargs)
+

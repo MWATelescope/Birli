@@ -102,7 +102,7 @@ python3 tests/data/adjust_gpufits.py \
 
 # Cotter flags on 1196175296_mwa_ord with generic flagging 
 cotter \
-  -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
+  -m tests/data/1196175296_mwa_ord/1196175296.cotter.metafits \
   -o "tests/data/1196175296_mwa_ord/FlagfileCotterGeneric%%.mwaf" \
   -allowmissing \
   -edgewidth 0 \
@@ -113,6 +113,7 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
+  -nosbgains \
   -sbpassband tests/data/subband-passband-2ch-unitary.txt \
   -nostats \
   -sbcount 2 \
@@ -122,7 +123,7 @@ cotter \
   | tee cotter-1196175296-generic.log
 # Cotter flags on 1196175296_mwa_ord with MWA flagging
 cotter \
-  -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
+  -m tests/data/1196175296_mwa_ord/1196175296.cotter.metafits \
   -o "tests/data/1196175296_mwa_ord/FlagfileCotterMWA%%.mwaf" \
   -allowmissing \
   -edgewidth 0 \
@@ -133,6 +134,7 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
+  -nosbgains \
   -sbpassband tests/data/subband-passband-2ch-unitary.txt \
   -nostats \
   -sbcount 2 \
@@ -142,7 +144,7 @@ cotter \
   | tee cotter-1196175296-mwa.log
 # Cotter flags on 1196175296_mwa_ord with MWA flagging, 01_00 offset by -1
 cotter \
-  -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
+  -m tests/data/1196175296_mwa_ord/1196175296.cotter.metafits \
   -o "tests/data/1196175296_mwa_ord/adjusted_-1/FlagfileCotterMWA%%.mwaf" \
   -allowmissing \
   -edgewidth 0 \
@@ -153,6 +155,7 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
+  -nosbgains \
   -sbpassband tests/data/subband-passband-2ch-unitary.txt \
   -nostats \
   -sbcount 2 \
@@ -165,7 +168,7 @@ cotter \
   | tee cotter-1196175296-mwa_-1.log
 # Cotter flags on 1196175296_mwa_ord with MWA flagging, 01_00 and 01_01 offset by -1
 cotter \
-  -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
+  -m tests/data/1196175296_mwa_ord/1196175296.cotter.metafits \
   -o "tests/data/1196175296_mwa_ord/adjusted_-1/FlagfileCotterMWA_both%%.mwaf" \
   -allowmissing \
   -edgewidth 0 \
@@ -176,6 +179,7 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
+  -nosbgains \
   -sbpassband tests/data/subband-passband-2ch-unitary.txt \
   -nostats \
   -sbcount 2 \
@@ -188,7 +192,7 @@ cotter \
   | tee cotter-1196175296-mwa_-1_both.log
 # Cotter flags on 1196175296_mwa_ord with MWA flagging, 01_00 offset by +1
 cotter \
-  -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
+  -m tests/data/1196175296_mwa_ord/1196175296.cotter.metafits \
   -o "tests/data/1196175296_mwa_ord/adjusted_+1/FlagfileCotterMWA%%.mwaf" \
   -allowmissing \
   -edgewidth 0 \
@@ -199,6 +203,7 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
+  -nosbgains \
   -sbpassband tests/data/subband-passband-2ch-unitary.txt \
   -nostats \
   -sbcount 2 \
@@ -211,7 +216,7 @@ cotter \
   | tee cotter-1196175296-mwa_+1.log
 # Cotter flags on 1196175296_mwa_ord with MWA flagging, 01_00 and 01_01 offset by +1
 cotter \
-  -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
+  -m tests/data/1196175296_mwa_ord/1196175296.cotter.metafits \
   -o "tests/data/1196175296_mwa_ord/adjusted_+1/FlagfileCotterMWA_both%%.mwaf" \
   -allowmissing \
   -edgewidth 0 \
@@ -222,6 +227,7 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
+  -nosbgains \
   -sbpassband tests/data/subband-passband-2ch-unitary.txt \
   -nostats \
   -sbcount 2 \
@@ -235,7 +241,7 @@ cotter \
 
 # Cotter uvfits on 1196175296_mwa_ord with MWA flagging
 cotter \
-  -m tests/data/1196175296_mwa_ord/1196175296_cotter-friendly.metafits \
+  -m tests/data/1196175296_mwa_ord/1196175296.cotter.metafits \
   -o tests/data/1196175296_mwa_ord/1196175296.uvfits \
   -allowmissing \
   -edgewidth 0 \
@@ -246,16 +252,38 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
+  -nosbgains \
   -sbpassband tests/data/subband-passband-2ch-unitary.txt \
-  -nostats \
-  -sbcount 2 \
   -sbstart 1 \
+  -sbcount 2 \
+  -nostats \
   -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
   tests/data/1196175296_mwa_ord/1196175296_*gpubox*.fits \
   | tee cotter-1196175296-uvfits.log
+# # Cotter uvfits on 1196175296_mwa_ord with MWA flagging 4s averaging
+# cotter \
+#   -m tests/data/1196175296_mwa_ord/1196175296.cotter.metafits \
+#   -o tests/data/1196175296_mwa_ord/1196175296_4s.uvfits \
+#   -allowmissing \
+#   -edgewidth 0 \
+#   -endflag 0 \
+#   -initflag 0 \
+#   -noantennapruning \
+#   -nocablelength \
+#   -noflagautos \
+#   -noflagdcchannels \
+#   -nogeom \
+#   -nosbgains \
+#   -sbpassband tests/data/subband-passband-2ch-unitary.txt \
+#   -nostats \
+#   -timeres 4 \
+#   -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
+#   tests/data/1196175296_mwa_ord/1196175296_*gpubox*.fits \
+#   | tee cotter-1196175296-uvfits.log
+
 # Cotter flags on 1247842824_flags with generic flagging
 cotter \
-  -m tests/data/1247842824_flags/1247842824cotter-friendly.metafits \
+  -m tests/data/1247842824_flags/1247842824.cotter.metafits \
   -o "tests/data/1247842824_flags/FlagfileCotterGeneric%%.mwaf" \
   -allowmissing \
   -edgewidth 0 \
@@ -266,6 +294,7 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
+  -nosbgains \
   -sbpassband tests/data/subband-passband-128ch-unitary.txt \
   -nostats \
   -sbcount 1 \
@@ -275,7 +304,7 @@ cotter \
   | tee cotter-1247842824-generic.log
 # Cotter flags on 1247842824_flags with MWA flagging
 cotter \
-  -m tests/data/1247842824_flags/1247842824cotter-friendly.metafits \
+  -m tests/data/1247842824_flags/1247842824.cotter.metafits \
   -o "tests/data/1247842824_flags/FlagfileCotterMWA%%.mwaf" \
   -allowmissing \
   -edgewidth 0 \
@@ -286,6 +315,7 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
+  -nosbgains \
   -sbpassband tests/data/subband-passband-128ch-unitary.txt \
   -nostats \
   -sbcount 1 \
@@ -295,7 +325,7 @@ cotter \
   | tee cotter-1247842824-mwa.log
 # Cotter uvfits on 1247842824_flags with MWA flagging
 cotter \
-  -m tests/data/1247842824_flags/1247842824cotter-friendly.metafits \
+  -m tests/data/1247842824_flags/1247842824.cotter.metafits \
   -o tests/data/1247842824_flags/1247842824.uvfits \
   -allowmissing \
   -noantennapruning \
@@ -303,6 +333,7 @@ cotter \
   -noflagautos \
   -noflagdcchannels \
   -nogeom \
+  -nosbgains \
   -sbpassband tests/data/subband-passband-128ch-unitary.txt \
   -nostats \
   -sbcount 1 \
@@ -344,7 +375,7 @@ for i in \
   1247842824_flags/FlagfileCotterMWA01.mwaf \
   1247842824_flags/FlagfileCotterGeneric01.mwaf
 do
-  python3 tests/data/dump_mwaf.py --timestep-limit=12 --baseline-limit=12 "tests/data/$i" | tee "tests/data/$i.txt"
+  python3 tests/data/dump_mwaf.py --timestep-limit=12 --baseline-limit=2 "tests/data/$i" | tee "tests/data/$i.txt"
 done
 # dump uvfits files
 for i in \
@@ -353,6 +384,12 @@ for i in \
 do 
   python3 tests/data/dump_uvfits.py  --timestep-limit=2 --baseline-limit=2 --antenna-limit=2 "tests/data/$i" | tee "tests/data/$i.txt";
 done
+
+python3 tests/data/dump_uvfits.py \
+  tests/data/1196175296_mwa_ord/1196175296.uvfits \
+  --dump-mode=vis-only \
+  --dump-csv=tests/data/1196175296_mwa_ord/1196175296.uvfits.vis.csv \
+  | tee tests/data/1196175296_mwa_ord/1196175296.uvfits.txt
 ```
 
 then with [mwa-scratchpad](https://github.com/derwentx/mwa-scratchpad)

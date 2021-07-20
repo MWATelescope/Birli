@@ -38,16 +38,18 @@ DELAYS  = '24,20,16,12,20,16,12,8,16,12,8,4,12,8,4,0' / Beamformer delays
 CALIBRAT=                    T / Intended for calibration                       
 CALIBSRC= 'HerA    '           / Calibrator source                              
 CENTCHAN=                  116 / Center coarse channel                          
-CHANNELS= '104     '           / Coarse channels                                
-CHANSEL = '0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23' / Indi
+CHANNELS= '104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120&'
+CONTINUE  ',121,122,123,124,125,126,127&'                                       
+CONTINUE  '' / Coarse channels                                                  
+CHANSEL = '0       '           / Indi                                           
 SUN-ALT =   -70.62030153383721 / [deg] Altitude of Sun                          
 FINECHAN=                 10.0 / [kHz] Fine channel width - correlator freq_res 
 INTTIME =                  1.0 / [s] Individual integration time                
 NAV_FREQ=                    1 / Assumed frequency averaging                    
 NSCANS  =                    2 / Number of time instants in correlation products
 NINPUTS =                  256 / Number of inputs into the correlation products 
-NCHANS  =                  128 / Number of (averaged) fine channels in spectrum 
-BANDWDTH=                 1.28 / [MHz] Total bandwidth                          
+NCHANS  =                 3072 / Number of (averaged) fine channels in spectrum 
+BANDWDTH=                30.72 / [MHz] Total bandwidth                          
 FREQCENT=               147.84 / [MHz] Center frequency of observation          
 TIMEOFF =                    0 / [s] Deprecated, use QUACKTIM or GOODTIME       
 DATESTRT= '2019-07-22T15:00:06' / [UT] Date and time of correlations start      

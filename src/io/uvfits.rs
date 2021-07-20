@@ -677,6 +677,7 @@ impl<'a> UvfitsWriter<'a> {
         Ok(())
     }
 
+    /// TODO: doc
     // TODO: handle averaging
     pub fn write_baseline_imgset_flagmasks(
         &mut self,
@@ -756,14 +757,12 @@ impl<'a> UvfitsWriter<'a> {
                         pol_order
                             .iter()
                             .flat_map(|img_pol_idx| {
-                                // Grab the real component
                                 let img_buffer_re: &[f32] = imgset.ImageBuffer(img_pol_idx * 2);
-                                let vis_re =
-                                    img_buffer_re[img_timestep_idx * img_stride + chan_idx];
-                                // Grab the imaginary component
                                 let img_buffer_im: &[f32] = imgset.ImageBuffer(img_pol_idx * 2 + 1);
+                                let vis_re =
+                                    img_buffer_re[chan_idx * img_stride + img_timestep_idx];
                                 let vis_im =
-                                    img_buffer_im[img_timestep_idx * img_stride + chan_idx];
+                                    img_buffer_im[chan_idx * img_stride + img_timestep_idx];
                                 // TODO: weight
                                 let weight = weight_factor as f32;
                                 vec![vis_re, vis_im, weight]
@@ -780,7 +779,7 @@ impl<'a> UvfitsWriter<'a> {
 
                 // dbg!(&uvw, &ant1_idx, &ant2_idx, &epoch, &vis);
 
-                // TODO: calculate weights, vis
+                // TODO: calculate weights
                 let result = self.write_vis(uvfits, &uvw, ant1_idx, ant2_idx, &epoch, &vis.clone());
                 if let Err(err) = result {
                     return Err(err);
@@ -1306,9 +1305,14 @@ mod tests {
         let mut right_group_params: Vec<f32> = vec![0.0; pcount];
         let mut left_vis: Vec<f32> = vec![0.0; num_fine_freq_chans * num_pols * floats_per_pol];
         let mut right_vis: Vec<f32> = vec![0.0; num_fine_freq_chans * num_pols * floats_per_pol];
+        let mut status = 0;
+
+        let baseline_col_num = column_info
+            .iter()
+            .position(|name| name == &String::from("BASELINE"))
+            .unwrap();
 
         for row_idx in 0..group_len {
-            let mut status = 0;
             unsafe {
                 // ffggpe = fits_read_grppar_flt
                 fitsio_sys::ffggpe(
@@ -1350,6 +1354,12 @@ mod tests {
                 );
             }
 
+            // Don't compare autocorrelations because they're broken.
+            let (ant1, ant2) = decode_uvfits_baseline(left_group_params[baseline_col_num] as usize);
+            if ant1 == ant2 {
+                continue;
+            }
+
             unsafe {
                 // ffgpve = fits_read_img_flt
                 fitsio_sys::ffgpve(
@@ -1378,11 +1388,6 @@ mod tests {
                 fits_check_status(status).unwrap();
             }
 
-            // println!(
-            //     "row {}\n{:?}\n{:?}",
-            //     row_idx, &left_vis, &right_vis
-            // );
-
             // for (vis_idx, (left_val, right_val)) in izip!(&left_vis, &right_vis).enumerate() {
             //     assert!(
             //         approx_eq!(f32, *left_val, *right_val, F32Margin::default()),
@@ -1394,7 +1399,6 @@ mod tests {
             //     );
             // }
         }
-        // assert!(false);
     }
 
     fn assert_uvfits_ant_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
@@ -1474,7 +1478,8 @@ mod tests {
 
         drop(f);
 
-        let cotter_uvfits_path = Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
+        let cotter_uvfits_path =
+            Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
 
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
         let mut cotter_fptr = fits_open!(&cotter_uvfits_path).unwrap();
@@ -1489,14 +1494,13 @@ mod tests {
         let obsid = context.metafits_context.obs_id;
         let start_epoch = Epoch::from_tai_seconds(obsid as f64 + 19.0 + HIFITIME_GPS_FACTOR);
 
-        // let tmp_uvfits_file = NamedTempFile::new().unwrap();
-        let tmp_uvfits_file = Path::new("tests/data/test_ants2.uvfits");
+        let tmp_uvfits_file = NamedTempFile::new().unwrap();
 
         let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
         let img_coarse_chan_idxs = context.common_coarse_chan_indices.clone();
 
         let mut u = UvfitsWriter::from_mwalib(
-            tmp_uvfits_file,
+            tmp_uvfits_file.path(),
             &context,
             &img_timestep_idxs,
             &img_coarse_chan_idxs,
@@ -1551,9 +1555,10 @@ mod tests {
 
         drop(f);
 
-        let cotter_uvfits_path = Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
+        let cotter_uvfits_path =
+            Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
 
-        let mut birli_fptr = fits_open!(&tmp_uvfits_file).unwrap();
+        let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
         let mut cotter_fptr = fits_open!(&cotter_uvfits_path).unwrap();
 
         assert_uvfits_primary_header_eq(&mut birli_fptr, &mut cotter_fptr);

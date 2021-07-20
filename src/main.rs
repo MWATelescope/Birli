@@ -1,12 +1,14 @@
 use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg, SubCommand};
-use log::{debug, info};
+use log::{debug, info, trace};
 // use log::{log_enabled, Level};
 use std::{env, ffi::OsString, fmt::Debug, path::Path};
 
 use birli::{
     context_to_baseline_imgsets, correct_cable_lengths, cxx_aoflagger_new, flag_imgsets_existing,
     get_antenna_flags, get_aoflagger_version_string, get_flaggable_timesteps,
-    init_baseline_flagmasks, io::uvfits, write_flags, UvfitsWriter,
+    init_baseline_flagmasks,
+    io::write_uvfits,
+    write_flags,
 };
 // use birli::util::{dump_flagmask, dump_imgset};
 use mwalib::CorrelatorContext;
@@ -159,36 +161,16 @@ where
         }
 
         if let Some(uvfits_out) = uvfits_out {
-            let mut uvfits_writer = UvfitsWriter::from_mwalib(
+            let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+            write_uvfits(
                 Path::new(uvfits_out),
                 &context,
+                &baseline_idxs,
+                &baseline_imgsets,
+                &baseline_flagmasks,
                 &img_timestep_idxs,
                 &img_coarse_chan_idxs,
-            )
-            .unwrap();
-
-            let mut fits_file = uvfits_writer.open().unwrap();
-
-            let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-
-            uvfits_writer
-                .write_baseline_imgset_flagmasks(
-                    &mut fits_file,
-                    &context,
-                    &baseline_idxs,
-                    &baseline_imgsets,
-                    &baseline_flagmasks,
-                    &img_timestep_idxs,
-                    &img_coarse_chan_idxs,
-                )
-                .unwrap();
-
-            uvfits_writer
-                .write_ants_from_mwalib(
-                    &context.metafits_context,
-                    None,
-                )
-                .unwrap();
+            ).unwrap();
         }
     }
 }
