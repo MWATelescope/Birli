@@ -53,7 +53,6 @@ where
                 .long("no-cable-delay")
                 .takes_value(false)
                 .required(false)
-                .number_of_values(0)
                 .help("Do not perform cable length corrections.")
         )
         // TODO: implement specify flag strategy
@@ -83,17 +82,36 @@ where
         };
         debug!("mwalib correlator context:\n{}", &context);
         let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        trace!("img_coarse_chan_idxs: {:?}", img_coarse_chan_idxs);
         let img_timestep_idxs = match get_flaggable_timesteps(&context) {
             Ok(timestep_idxs) => timestep_idxs,
             Err(err) => panic!("unable to determine flaggable timesteps: {}", err),
         };
+        trace!("img_timestep_idxs: {:?}", img_timestep_idxs);
+
+        let antenna_flags = get_antenna_flags(&context);
+        // trace!("antenna_flags: {:?}", antenna_flags);
+        trace!(
+            "antenna_flags: {:?}",
+            antenna_flags
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, &flag)| {
+                    if flag {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        );
 
         let mut baseline_flagmasks = init_baseline_flagmasks(
             &aoflagger,
             &context,
             &img_coarse_chan_idxs,
             &img_timestep_idxs,
-            Some(get_antenna_flags(&context)),
+            Some(antenna_flags),
         );
 
         let mut baseline_imgsets = context_to_baseline_imgsets(
@@ -108,11 +126,20 @@ where
         let no_cable_delays = aoflagger_matches.is_present("no-cable-delay");
         let cable_delays_applied = context.metafits_context.cable_delays_applied;
         if !cable_delays_applied && !no_cable_delays {
+            debug!(
+                "Applying cable delays. applied: {}, desired: {}",
+                cable_delays_applied, !no_cable_delays
+            );
             correct_cable_lengths(&context, &mut baseline_imgsets, img_coarse_chan_idxs);
+        } else {
+            debug!(
+                "Skipping cable delays. applied: {}, desired: {}",
+                cable_delays_applied, !no_cable_delays
+            );
         }
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
-
+        debug!("flagging with strategy {}", strategy_filename);
         flag_imgsets_existing(
             &aoflagger,
             &strategy_filename,
@@ -122,17 +149,10 @@ where
         );
 
         if let Some(flag_template) = flag_template {
-            let gpubox_ids: Vec<usize> = context
-                .common_coarse_chan_indices
-                .iter()
-                .map(|&chan| context.coarse_chans[chan].gpubox_number)
-                .collect();
-
             write_flags(
                 &context,
                 &baseline_flagmasks,
                 flag_template,
-                &gpubox_ids,
                 &img_coarse_chan_idxs,
             )
             .unwrap();

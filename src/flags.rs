@@ -467,19 +467,11 @@ pub fn flag_imgsets_existing(
 /// // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
 /// let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
 ///
-/// // Get a list of all gpubox IDs
-/// let gpubox_ids: Vec<usize> = context
-///     .common_coarse_chan_indices
-///     .iter()
-///     .map(|&chan| context.coarse_chans[chan].gpubox_number)
-///     .collect();
-///
 /// // write the flags to disk as .mwaf
 /// write_flags(
 ///     &context, 
 ///     &baseline_flagmasks, 
 ///     flag_template.to_str().unwrap(), 
-///     &gpubox_ids, 
 ///     img_coarse_chan_idxs
 /// );
 /// ```
@@ -487,12 +479,16 @@ pub fn write_flags(
     context: &CorrelatorContext,
     baseline_flagmasks: &[UniquePtr<CxxFlagMask>],
     filename_template: &str,
-    gpubox_ids: &[usize],
     img_coarse_chan_idxs: &[usize],
 ) -> Result<(), IOError> {
     trace!("start write_flags");
 
-    // TODO: error handling instead of unwrap.
+    let gpubox_ids: Vec<usize> = img_coarse_chan_idxs
+        .iter()
+        .map(|&chan| context.coarse_chans[chan].gpubox_number)
+        .collect();
+
+    trace!("writing flags to template: {}, gpubox ids: {:?}", filename_template, gpubox_ids);
 
     let mut flag_file_set = FlagFileSet::new(filename_template, &gpubox_ids, context.mwa_version)?;
     flag_file_set.write_baseline_flagmasks(&context, baseline_flagmasks, img_coarse_chan_idxs)?;
@@ -771,7 +767,7 @@ mod tests {
         let context = get_mwax_context();
 
         let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices[..1].to_vec();
 
         let width = img_timestep_idxs.len();
         let height =
@@ -807,7 +803,6 @@ mod tests {
             &context,
             &baseline_flagmasks,
             filename_template.to_str().unwrap(),
-            &selected_gpuboxes,
             &img_coarse_chan_idxs,
         )
         .unwrap();

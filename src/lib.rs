@@ -74,15 +74,8 @@
 //!     true
 //! );
 //!
-//! // Get a list of all gpubox IDs
-//! let gpubox_ids: Vec<usize> = context
-//!     .common_coarse_chan_indices
-//!     .iter()
-//!     .map(|&chan| context.coarse_chans[chan].gpubox_number)
-//!     .collect();
-//!
 //! // write the flags to disk as .mwaf
-//! write_flags(&context, &baseline_flagmasks, flag_template.to_str().unwrap(), &gpubox_ids, img_coarse_chan_idxs);
+//! write_flags(&context, &baseline_flagmasks, flag_template.to_str().unwrap(), img_coarse_chan_idxs);
 //! ```
 //!
 //! # Details
