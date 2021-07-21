@@ -7,37 +7,18 @@ name: Generate Coverage report
 jobs:
   coverage:
     runs-on: ubuntu-latest
-    container: mwatelescope/aoflagger:3.0_portable
+    container: mwatelescope/birli:latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
-      - name: install cfitsio
-        run: |
-          apt-get update \
-          && apt-get install -y wget \
-          && cd / \
-          && wget http://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz \
-          && tar -zxvf cfitsio-3.49.tar.gz \
-          && cd cfitsio-3.49/ \
-          && chmod a+rwx . \
-          && CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2 \
-          && make -j \
-          && make install
-
-      - name: Install erfa
-        run: |
-          apt-get install -y liberfa-dev
-
       - name: Install nightly toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly-2021-05-09
-          override: true
-          components: llvm-tools-preview
+        run: |
+          rustup set profile minimal
+          rustup toolchain install nightly-2021-05-09 --component llvm-tools-preview
+          rustup default nightly-2021-05-09
 
       - name: Install Cargo Packages
         run: |

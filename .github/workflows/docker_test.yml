@@ -1,5 +1,3 @@
-# Based on https://github.com/actions-rs/meta/blob/master/recipes/quickstart.md
-
 on: [push, pull_request]
 
 name: Docker Tests
@@ -8,29 +6,18 @@ jobs:
   test:
     name: Docker Tests
     runs-on: ubuntu-latest
-    container: mwatelescope/aoflagger:3.0_portable
+    container: mwatelescope/birli:latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
-      - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt, clippy
-
-      - name: Install Dependencies
+      - name: Install Stable toolchain
         run: |
-          apt-get update \
-          && apt-get install -y wget unzip libssl-dev \
-          && cargo install --force cargo-make \
-          && cargo make install_deps
+          rustup set profile default
+          rustup toolchain install stable --component rustfmt,clippy
+          rustup default stable
 
       - name: Cargo Make CI
         run: cargo make ci
-        env:
-          LD_LIBRARY_PATH: /usr/local/lib/:/usr/lib/x86_64-linux-gnu/
