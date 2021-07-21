@@ -47,7 +47,8 @@ jobs:
           && cargo install --force cargo-make cargo-binutils
 
       - name: Generate test lcov coverage into coverage/ dir
-        env:
+        env:  
+          LD_LIBRARY_PATH: /usr/local/lib/:/usr/lib/x86_64-linux-gnu/
           RUSTFLAGS: -Zinstrument-coverage
           LLVM_PROFILE_FILE: json5format-%m.profraw
         run: |
