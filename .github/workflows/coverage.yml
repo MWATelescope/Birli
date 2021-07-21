@@ -27,6 +27,10 @@ jobs:
           && make -j \
           && make install
 
+      - name: Install erfa
+        run: |
+          apt-get install -y liberfa-dev
+
       - name: Install nightly toolchain
         uses: actions-rs/toolchain@v1
         with:
