@@ -157,7 +157,7 @@ pub fn correct_cable_lengths(
 
         // TODO: skip if baseline.ant1_index == baseline.ant2_index ?
 
-        let pol_lengths = vec![
+        let pol_lengths = [
             ant2.rfinput_x.electrical_length_m - ant1.rfinput_x.electrical_length_m,
             ant2.rfinput_y.electrical_length_m - ant1.rfinput_x.electrical_length_m,
             ant2.rfinput_x.electrical_length_m - ant1.rfinput_y.electrical_length_m,
