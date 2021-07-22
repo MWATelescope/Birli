@@ -26,28 +26,96 @@ descriptor for the speed which this library intends to deliver.
 
 ### Prerequisites
 
-- A Rust compiler with a version >= 1.51.0 - <https://www.rust-lang.org/tools/install>
-- [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0
-- [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49
+- A Rust compiler with a version >= 1.51.0 - <https://www.rust-lang.org/tools/install> 
+  (note: the Ubuntu 20.04 and earlier package for this is out of date.)
+- [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0 
+  (note: the Ubuntu 20.04 and earlier package for this is out of date.)
+- [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49 
+  (note: the Ubuntu 20.04 and earlier package for this is out of date.)
+- [LibERFA](https://github.com/liberfa/erfa)
 
-for OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) and [macOS](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/macos_test.yml) CI Scripts, as these are tested regularly.
+for OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) and [macOS](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/macos_test.yml) CI Scripts; the [Makefile.toml](https://github.com/MWATelescope/Birli/blob/main/Makefile.toml); and the [Dockerfile](https://github.com/MWATelescope/Birli/blob/main/Dockerfile) as these are tested regularly. The instructions below may be updated less frequently, but are better documented.
 
-### Linux Setup
+### (Debian/Ubuntu) Linux Setup
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-sudo apt install -y gcc libssl-dev pkg-config
-export MAKEFLAGS="-j $MAKEFLAGS"
+# Prerequisites for rustup, cargo and cargo-make
+sudo apt install -y gcc libssl-dev pkg-config curl unzip wget 
+# Run the Rustup install script, profile=default, toolchain=stable
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -sSf | sh -s -- -y
+# Cargo make uses Makefile.toml to automate development tasks
 cargo install --force cargo-make
-export LD_LIBRARY_PATH="/usr/local/lib/"
-cargo make ci
+# Use multiple cores when compiling C/C++ libraries
+export MAKEFLAGS="-j $MAKEFLAGS"
+# Install prerequisite C/C++ libraries
+cargo make install_deps
+# Ensure that rust can find the C/C++ libraries.
+# AOFlagger and CFitsIO default to /usr/local/lib,
+# however packages installed with apt (LibERFA) end up in /usr/lib/x86_64-linux-gnu/,
+# so we need both.
+export LD_LIBRARY_PATH="/usr/local/lib/:/usr/lib/x86_64-linux-gnu/"
 ```
+
+### MacOS Setup
+
+```bash
+# Install homebrew
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+# Run the Rustup install script, profile=default, toolchain=stable
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -sSf | sh -s -- -y
+```
+
+### Windows Setup
+
+Unfortunately most of the prerequisites aren't available on Windows. However, WSL is great, and there is a docker image! You could use VSCode remote for WSL or Docker. Your best best is Ubuntu LTS
 
 ### Installing the binary
 
 ```bash
 cargo install --path .
 ```
+
+This creates a `birli` binary in `$HOME/.cargo/bin`
+
+## Troubleshooting
+
+Having issues with Birli? run the test suite to narrow down your issue.
+
+```bash
+cargo test
+```
+
+Experiencing segfaults? I can guarantee it's because of one of the C library dependencies.
+Make sure you have the right versions of all the libraries. These are specified in [Prerequisites](#Prerequisites).
+
+Get library versions with:
+
+```bash
+apt show liberfa-dev
+aoflagger --version
+# cfitsio: ???
+```
+
+Include these 
+
+### Docker
+
+Couldn't get it working on your environment? You can always run Birli in Docker
+
+```bash
+docker run mwatelescope/birli:latest -h
+```
+
+Want to open a shell within a fully provisioned Birli development environment? Easy!
+
+```bash
+docker run -it --entrypoint /bin/bash --volume $PWD:/app mwatelescope/birli:latest
+```
+
+Note: This mounts the current directory to `/app` in the Docker image, meaning both of these systems share the same
+`target` folder. so if your host system is a different
+architecture than Docker, you may need to `cargo clean` each time you switch between these environments. You
+may also want to temporarily disable any linters or language servers that use 
 
 ## Usage
 
@@ -69,20 +137,25 @@ SUBCOMMANDS:
 `birli aoflagger -h`
 
 ```txt
-    birli aoflagger <fits-files>... -f <flag-template> -m <metafits>
+flag visibilities with aoFlagger
+
+USAGE:
+    birli aoflagger [FLAGS] [OPTIONS] <fits-files>... -m <metafits>
 
 FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
+    -h, --help              Prints help information
+        --no-cable-delay    Do not perform cable length corrections.
+    -V, --version           Prints version information
 
 OPTIONS:
     -f <flag-template>        Sets the template used to name flag files. Percents are substituted for the zero-prefixed
                               GPUBox ID, which can be up to 3 characters log. Similar to -o in Cotter. Example:
                               FlagFile%%%.mwaf
     -m <metafits>             Sets the metafits file.
+    -u <uvfits-out>           Filename for uvfits output. Similar to -o in Cotter. Example: 1196175296.uvfits
 
 ARGS:
-    <fits-files>...
+    <fits-files>...  
 ```
 
 ### Examples
@@ -117,7 +190,12 @@ cotter \
   tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits
 ```
 
+## Contributing
 
+Pull requests are welcome! Please do your best to ensure that the high standards 
+of test coverage are maintained.
+
+Before each commit, use `cargo make ci` to ensure your code is formatted correctly.
 
 ## Acknowledgement
 
