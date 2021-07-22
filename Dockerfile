@@ -37,7 +37,7 @@ RUN cd /tmp \
     && tar -zxvf cfitsio-3.49.tar.gz \
     && cd cfitsio-3.49/ \
     && CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2 \
-    && make -j \
+    && make \
     && make install
 
 # Install AOFlagger
@@ -49,7 +49,7 @@ RUN cd /tmp \
     && mkdir build \
     && cd build \
     && cmake .. \
-    && make -j \
+    && make \
     && make install
 
 # Get Rust

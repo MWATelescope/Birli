@@ -26,13 +26,13 @@ descriptor for the speed which this library intends to deliver.
 
 ### Prerequisites
 
-- A Rust compiler with a version >= 1.51.0 - <https://www.rust-lang.org/tools/install> 
-  (note: the Ubuntu 20.04 and earlier package for this is out of date.)
+- A Rust compiler with a version >= 1.51.0 - <https://www.rust-lang.org/tools/install>
 - [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0 
-  (note: the Ubuntu 20.04 and earlier package for this is out of date.)
+  (Ubuntu > 21.04: apt install aoflagger-dev)
 - [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49 
-  (note: the Ubuntu 20.04 and earlier package for this is out of date.)
-- [LibERFA](https://github.com/liberfa/erfa)
+  (Ubuntu > 20.10: apt install libcfitsio-dev)
+- [LibERFA](https://github.com/liberfa/erfa) >= 1.7.1 
+  (Ubuntu > 20.04: apt install liberfa-dev)
 
 for OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) and [macOS](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/macos_test.yml) CI Scripts; the [Makefile.toml](https://github.com/MWATelescope/Birli/blob/main/Makefile.toml); and the [Dockerfile](https://github.com/MWATelescope/Birli/blob/main/Dockerfile) as these are tested regularly. The instructions below may be updated less frequently, but are better documented.
 
