@@ -1,5 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.1.6 (2021-07-22)
+
+- basically just testing that release automation is working
+- update all dependencies
+- more optimized docker image
+
 # Version 0.1.5 (2021-07-22)
 
 - [EOR-3] generate uvfits file:
@@ -7,7 +13,7 @@
   - weights aren't yet affected by averaging
 - Added Docker image
 
-# Version 0.1.4 (2021-07-09)
+ # Version 0.1.4 (2021-07-09)
 
 - [EOR-22] correct_cable_lengths
 - [EOR-18] Implement updated mwalib timestep / coarse channel interface
