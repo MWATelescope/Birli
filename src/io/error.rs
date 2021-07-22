@@ -73,3 +73,42 @@ pub enum IOError {
         found: String,
     },
 }
+
+///
+/// Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
+#[derive(Error, Debug)]
+pub enum UvfitsWriteError {
+    /// An error when trying to write to an unexpected row.
+    #[error("Tried to write to row number {row_num}, but only {num_rows} rows are expected")]
+    BadRowNum {
+        /// The row number (0-indexed)
+        row_num: usize,
+        /// Total number of rows expected.
+        num_rows: usize,
+    },
+
+    /// An error when less rows were written to an HDU than expected.
+    #[error("Expected {total} uvfits rows to be written, but only {current} were written")]
+    NotEnoughRowsWritten {
+        /// Number of rows written
+        current: usize,
+        /// Total number of rows expected.
+        total: usize,
+    },
+
+    /// An error associated with ERFA.
+    #[error("{0}")]
+    Erfa(#[from] crate::pos::xyz::ErfaError),
+
+    /// An error associated with fitsio.
+    #[error("{0}")]
+    Fitsio(#[from] fitsio::errors::Error),
+
+    /// An error when converting a Rust string to a C string.
+    #[error("{0}")]
+    BadString(#[from] std::ffi::NulError),
+
+    /// An IO error.
+    #[error("{0}")]
+    IO(#[from] std::io::Error),
+}

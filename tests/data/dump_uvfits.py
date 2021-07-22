@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from copy import copy
 from os.path import abspath, exists, dirname
 from os.path import join as path_join, exists as path_exists
 from os import makedirs
@@ -13,10 +14,13 @@ import math
 import re
 import itertools
 import sys
+from sys import stdout
 from argparse import ArgumentParser
 import pyuvdata
 from pyuvdata import UVData
 from tabulate import tabulate
+
+from common import eprint
 
 
 def parse_args(argv):
@@ -28,46 +32,145 @@ def parse_args(argv):
     parser.add_argument(
         "--timestep-limit",
         type=int,
-        default=0
+        default=None
     )
     parser.add_argument(
         "--baseline-limit",
         type=int,
-        default=0
+        default=None
+    )
+    parser.add_argument(
+        "--chan-limit",
+        type=int,
+        default=None
     )
     parser.add_argument(
         "--antenna-limit",
         type=int,
-        default=0
+        default=None
+    )
+    parser.add_argument(
+        "--dump-csv",
+        type=str,
+        default=None
+    )
+    parser.add_argument(
+        "--dump-vis",
+        default=False,
+        action="store_true"
+    )
+    parser.add_argument(
+        "--dump-weights",
+        default=False,
+        action="store_true"
+    )
+    parser.add_argument(
+        "--dump-mode",
+        choices=["vis-weight", "vis-only", "weight-only"],
+        default="vis-weight"
     )
     return parser.parse_args(argv)
+
+
+def dump_uvfits_data_to_csv(hdus, ts_limit=None, bl_limit=None, chan_limit=None, dump_mode="vis-weight", file=None):
+    if file is None:
+        file = stdout
+    else:
+        file = open(file, "w")
+    timestep_baselines_seen = {}
+
+    # Analyse row 0
+
+    row_0_shape = hdus[0].data[0].data.shape
+
+    num_chans = row_0_shape[2]
+    num_pols = row_0_shape[3]
+    assert num_pols == 4
+    pol_names = ["xx", "yy", "xy", "yx"]
+    if dump_mode == 'weight-only':
+        pol_names = ["xx"]
+
+    _chan_limit = num_chans
+    if chan_limit is not None:
+        _chan_limit = min(chan_limit, num_chans)
+
+    header = [
+        "timestep", 
+        "baseline", 
+        "pol",
+    ]
+
+    if dump_mode == 'vis-weight':
+        header.extend(["type"])
+
+    header.extend(map(str, range(_chan_limit)))
+
+    print(", ".join(header), file=file)
+
+    for row in hdus[0].data:
+
+        timestep = row['DATE']
+        if timestep not in timestep_baselines_seen:
+            if ts_limit is not None and len(timestep_baselines_seen) >= ts_limit:
+                break
+            timestep_baselines_seen[timestep] = set()
+
+        baselines_seen = timestep_baselines_seen[timestep]
+        baseline = row['BASELINE']
+        if baseline not in baselines_seen:
+            if bl_limit is not None and len(baselines_seen) >= bl_limit:
+                continue
+            baselines_seen.add(baseline)
+
+        # eprint(f"timestep: {timestep}, baseline: {baseline}")
+
+        # eprint(f"timestep_baselines_seen ({len(timestep_baselines_seen)}): {timestep_baselines_seen}")
+
+        row_data = row.data
+
+        row_out = [
+            timestep, 
+            baseline, 
+        ]
+            
+        for pol_idx, pol_name in enumerate(pol_names):
+            _row_out = copy(row_out)
+            _row_out.extend(map(str, [pol_name]))
+
+
+            if dump_mode in ['vis-weight', 'vis-only']:
+                row_real_data = row_data[:, :, :, pol_idx, 0].reshape((num_chans, ))
+                row_imag_data = row_data[:, :, :, pol_idx, 1].reshape((num_chans, ))
+                row_vis_data = row_real_data - 1j * row_imag_data
+
+                _row_out_vis = copy(_row_out)
+                if dump_mode == 'vis-weight':
+                    _row_out_vis.extend(["vis"])
+                _row_out_vis.extend(row_vis_data[:_chan_limit])
+
+                print(", ".join(map(str, _row_out_vis)), file=file)
+
+            if dump_mode in ['vis-weight', 'weight-only']:
+                row_flag_data = row_data[:, :, :, pol_idx, 2].reshape((num_chans, ))
+                _row_out_weight = copy(_row_out)
+                if dump_mode == 'vis-weight':
+                    _row_out_weight.extend(["weight"])
+                _row_out_weight.extend(row_flag_data[:_chan_limit])
+
+                print(", ".join(map(str, _row_out_weight)), file=file)
+
+        else:
+            for chan_idx in range(_chan_limit):
+
+                row_out = copy(row_out)
+
 
 def main(argv):
     args = parse_args(argv)
 
-    # pyuv = UVData()
-    # pyuv.read_uvfits(args.uvfile)
-
-    # antpairpols = pyuv.get_antpairpols()
-    # for key in ['Nants_data', 'Nants_telescope', 'Nbls', 'Nfreqs', 'Npols', 'Ntimes']:
-    #     print(f"-> {key}: {pyuv.__getattribute__(key)}")
-    
-
-    # for key, data in pyuv.antpairpol_iter():
-    #     (ant1, ant2, pol) = key
-    #     if args.antenna_limit:
-    #         if ant1 >= args.antenna_limit or ant2 >= args.antenna_limit:
-    #             continue
-    #     print(f"-> ant1 {ant1}, ant2 {ant2}, pol {pol}")
-    #     print(f" --> data \n{pd.DataFrame(data)}")
-    #     flags = pyuv.get_flags(key)
-    #     print(f" --> flags \n{pd.DataFrame(flags)}")
-
-
-    hdus = fits.open(args.uvfile)
+    hdus = fits.open(args.uvfile, memmap=True)
     print(f"-> hdus.info():")
     hdus.info()
-
 
     print("")
     print("VISIBILITIES")
@@ -77,82 +180,22 @@ def main(argv):
 
     print(f"-> data.shape {hdus[0].data.shape}")
 
-    baselines = np.unique(hdus[0].data.par("BASELINE"))
-    num_baselines = len(baselines)
-    # assert(pyuv.Nbls == num_baselines)
-    baseline_limit = num_baselines
-    if args.baseline_limit:
-        if args.baseline_limit < baseline_limit:
-            baseline_limit = args.baseline_limit
-            show_baseline_ellipses = True
-    timesteps = np.unique(hdus[0].data.par("DATE"))
-    num_timesteps = len(timesteps)
-    timestep_limit = num_timesteps
-    if args.timestep_limit:
-        if args.timestep_limit < timestep_limit:
-            timestep_limit = args.timestep_limit
-            show_timestep_ellipses = True
-
-    # assert(pyuv.Ntimes == num_timesteps)
-    assert(hdus[0].data.shape[0] == num_baselines * num_timesteps)
-    # blt_data = np.reshape(np.array(hdus[0].data), (num_baselines, num_timesteps))
-    # for bl in baselines[:baseline_limit]:
-    #     for ts in timestep[:timestep_limit]:
-    blt_data = hdus[0].data[::num_baselines]
-    for bl_idx in range(baseline_limit):
-        print(bl_idx)
-        print(f"baseline idx {bl_idx}")
-        bl_data = hdus[0].data[bl_idx::num_baselines]
-        # vis_data = bl_data[:, :, :, :, :, 0] - 1j * bl_data[:, :, :, :, :, 1]
-        # print(f"--> vis_data ({vis_data.shape}):")
-        # print(vis_data)
-
-        # flag_data = row_data[:, :, :, :, :, 2]
-        # print(f"--> flag_data ({flag_data.shape}):")
-        # print(flag_data)
-        # pass
-        vis_data = None
-        flag_data = None
-        for row in blt_data[:timestep_limit]:
-            row_data = row['data']
-            print(f"--> row_data {(row_data)}")
-
-            # assert(pyuv.Nfreqs == row_data.shape[2])
-            # assert(pyuv.Npols == row_data.shape[3])
-
-            row_real_data = row_data[:, :, :, :, 0].reshape((row_data.shape[2], row_data.shape[3]))
-            row_imag_data = row_data[:, :, :, :, 1].reshape((row_data.shape[2], row_data.shape[3]))
-            row_flag_data = row_data[:, :, :, :, 2].reshape((row_data.shape[2], row_data.shape[3]))
-            row_vis_data = row_real_data - 1j *  row_imag_data
-            
-            if vis_data is None:
-                print(f"--> baseline {row['BASELINE']}")
-                print(f"--> uvw {row[0:3]}")
-                print(f"--> row_data shape {row_data.shape}")
-                print(f"--> row_vis_data shape {row_vis_data.shape}")
-                vis_data = row_vis_data.reshape(row_vis_data.shape + (1, ))
-                flag_data = row_flag_data.reshape(row_flag_data.shape + (1,))
-            else:
-                vis_data = np.append(vis_data, row_vis_data.reshape(row_vis_data.shape + (1, )), axis=2)
-                flag_data = np.append(flag_data, row_flag_data.reshape(row_flag_data.shape + (1,)), axis=2)
-
-            
-        for pol in range(vis_data.shape[1]):
-            print(f"--> pol {pol}")
-            print(f"---> vis_data ({vis_data.shape}):")
-            print(pd.DataFrame(vis_data[:, pol, :].reshape(vis_data.shape[0], vis_data.shape[2]).transpose()))
-
-            print(f"---> flag_data ({flag_data.shape}):")
-            print(pd.DataFrame(flag_data[:, pol, :].reshape(flag_data.shape[0], flag_data.shape[2]).transpose()))
-    if show_baseline_ellipses:
-        print("...")
-
+    dump_uvfits_data_to_csv(
+        hdus, 
+        ts_limit=args.timestep_limit, 
+        bl_limit=args.baseline_limit, 
+        chan_limit=args.chan_limit,
+        dump_mode=args.dump_mode,
+        file=args.dump_csv
+    )
 
     # Antenna info
     print("")
     print("ANTENNA INFO")
     print("")
-    
+    if len(hdus) < 2:
+        print("no antenna hdu")
+        exit()
     print(repr(hdus[1].header))
 
     print(f"-> data ({hdus[1].data.shape})")

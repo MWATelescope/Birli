@@ -25,7 +25,7 @@ jobs:
         run: cargo bench
         env:
           LD_LIBRARY_PATH: /usr/local/lib/
-          BIRLI_TEST_DIR: /data
+          BIRLI_TEST_DIR: /mnt/data
 
       - name: install zip
         run: |

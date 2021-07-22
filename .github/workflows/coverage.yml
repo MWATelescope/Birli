@@ -7,46 +7,37 @@ name: Generate Coverage report
 jobs:
   coverage:
     runs-on: ubuntu-latest
-    container: mwatelescope/aoflagger:3.0_portable
+    container: mwatelescope/birli:latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
-      - name: install cfitsio
-        run: |
-          apt-get update \
-          && apt-get install -y wget \
-          && cd / \
-          && wget http://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz \
-          && tar -zxvf cfitsio-3.49.tar.gz \
-          && cd cfitsio-3.49/ \
-          && chmod a+rwx . \
-          && CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2 \
-          && make -j \
-          && make install
-
       - name: Install nightly toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly-2021-05-09
-          override: true
-          components: llvm-tools-preview
+        run: |
+          curl https://sh.rustup.rs -sSf | sh -s -- -y
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          rustup set profile minimal
+          rustup toolchain install nightly-2021-05-09 --component llvm-tools-preview
+          rustup default nightly-2021-05-09
 
       - name: Install Cargo Packages
         run: |
-          export DEBIAN_FRONTEND=noninteractive \
-          && apt-get update \
-          && apt-get install -y unzip libssl-dev jq \
-          && cargo install --force cargo-make cargo-binutils
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          apt-get update
+          apt-get install -y unzip libssl-dev jq
+          cargo install --force cargo-make cargo-binutils
+        env:
+          DEBIAN_FRONTEND: noninteractive
 
       - name: Generate test lcov coverage into coverage/ dir
         env:
+          LD_LIBRARY_PATH: /usr/local/lib/:/usr/lib/x86_64-linux-gnu/
           RUSTFLAGS: -Zinstrument-coverage
           LLVM_PROFILE_FILE: json5format-%m.profraw
         run: |
+          export PATH="${HOME}/.cargo/bin:${PATH}"
           mkdir -p coverage
           cargo test --tests
           cargo profdata -- \

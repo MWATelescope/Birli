@@ -20,19 +20,26 @@ crossbeam-channel = "0.5.*"
 crossbeam-utils = "0.8.*"
 cxx = "1.0.32"
 env_logger = "0.8.3"
+erfa-sys = "0.1.*"
 fitsio = "0.17.*"
 fitsio-sys = "^0" # fitsio also uses fitsio-sys so ensure we both use the same
 float-cmp = "0.8.*"
-indicatif = "0.16.0"
+hifitime = "2.2.*"
+indicatif = { version = "0.16.*", features = ["rayon"] }
 itertools = "0.10.0"
 libc = "0.2.86"
 log = "0.4"
-mwalib = "0.8.3"
+mwalib = "0.8.4"
+ndarray = { version = "0.15.*", features = ["rayon"] }
+num = "0.4.*"
 rayon = "1.5.*"
 regex = "1.4.*"
+serde = { version = "1.0.*", features = ["derive"] }
+serde_json = "1.0.64"
 thiserror = "1.0.*"
 
 [dev-dependencies]
+approx = { version = "0.5.*", features = ["num-complex"] }
 assert_cli = "0.6.1"
 criterion = "0.3"
 glob = "0.3.0"
