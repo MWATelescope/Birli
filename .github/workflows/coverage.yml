@@ -8,6 +8,8 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     container: mwatelescope/birli:latest
+    environment: CI
+
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
