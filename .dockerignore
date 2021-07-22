@@ -1,0 +1,10 @@
+.git
+.github
+.vscode
+benches
+coverage
+doc
+img
+scripts
+target
+tests

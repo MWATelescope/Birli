@@ -4,11 +4,25 @@
 <div class="bg-gray-dark" align="center" style="background-color:#24292e">
 <img src="img/birli.png" height="200px" alt="Birli logo">
 <br/>
-<a href="https://github.com/MWATelescope/Birli/actions/workflows/linux_test.yml"><img src="https://github.com/MWATelescope/Birli/actions/workflows/linux_test.yml/badge.svg" alt="Cross-Platform Tests"></a>
-<a href="https://github.com/MWATelescope/Birli/actions/workflows/macos_test.yml"><img src="https://github.com/MWATelescope/Birli/actions/workflows/macos_test.yml/badge.svg" alt="Cross-Platform Tests"></a>
-<a href="https://crates.io/birli"><img alt="Crates.io" src="https://img.shields.io/crates/d/birli?label=crates.io%20%E2%AC%87%EF%B8%8F"></a>
-<a href="https://docs.rs/crate/birli/"><img src="https://docs.rs/birli/badge.svg" alt="codecov"></a>
-<a href="https://codecov.io/gh/MWATelescope/Birli"><img src="https://codecov.io/gh/MWATelescope/Birli/branch/main/graph/badge.svg?token=PK2KYEZOW9" alt="codecov"></a>
+<a href="https://github.com/MWATelescope/Birli/actions/workflows/linux_test.yml">
+  <img src="https://github.com/MWATelescope/Birli/actions/workflows/linux_test.yml/badge.svg" alt="MacOS Tests"></a>
+<a href="https://github.com/MWATelescope/Birli/actions/workflows/macos_test.yml">
+  <img src="https://github.com/MWATelescope/Birli/actions/workflows/macos_test.yml/badge.svg" alt="Linix Tests"></a>
+<a href="https://crates.io/birli">
+  <img alt="Crates.io" src="https://img.shields.io/crates/d/birli?label=crates.io%20%E2%AC%87%EF%B8%8F"></a>
+<a href="https://docs.rs/crate/birli/">
+  <img src="https://docs.rs/birli/badge.svg" alt="codecov"></a>
+<a href="https://codecov.io/gh/MWATelescope/Birli"> 
+  <img src="https://codecov.io/gh/MWATelescope/Birli/branch/main/graph/badge.svg?token=PK2KYEZOW9" alt="codecov"></a>
+<a href="https://rust-reportcard.xuri.me/report/github.com/mwatelescope/birli">
+  <img src="https://rust-reportcard.xuri.me/badge/github.com/mwatelescope/birli" alt="rust-reportcard"></a>
+<a href="https://github.com/MWATelescope/Birli/blob/main/LICENSE">
+  <img alt="Crates.io" src="https://img.shields.io/crates/l/birli"></a>
+<a href="https://deps.rs/crate/birli/">
+  <img alt="Libraries.io dependency status for GitHub repo" src="https://img.shields.io/librariesio/github/mwatelescope/birli"></a>
+<a href="">
+  <img alt="Lines of code" src="https://img.shields.io/tokei/lines/github/mwatelescope/birli"></a>
+
 </div>
 
 A Rust library for common preprocessing tasks performed in the data pipeline of the Murchison
@@ -63,6 +77,12 @@ export LD_LIBRARY_PATH="/usr/local/lib/:/usr/lib/x86_64-linux-gnu/"
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 # Run the Rustup install script, profile=default, toolchain=stable
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -sSf | sh -s -- -y
+# Cargo make uses Makefile.toml to automate development tasks
+cargo install --force cargo-make
+# Add the MWATelescope homebrew tap
+brew tap mwaTelescope/tap
+# Install prerequisite libraries
+brew cask install casacore-data casacore aoflagger erfa
 ```
 
 ### Windows Setup
