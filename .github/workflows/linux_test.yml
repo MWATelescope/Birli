@@ -9,12 +9,42 @@ jobs:
     strategy:
       matrix:
         os: ["ubuntu-18.04", "ubuntu-20.04"]
-    runs-on: ${{ matrix.os }}
+    runs-on: "${{ matrix.os }}"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
+
+      - name: install apt dependencies
+        run: |
+          sudo apt-get update \
+          && sudo apt-get install -y \
+            build-essential \
+            casacore-data \
+            casacore-dev \
+            cmake \
+            curl \
+            git \
+            libblas-dev \
+            libboost-date-time-dev \
+            libboost-filesystem-dev \
+            libboost-system-dev \
+            libboost-test-dev \
+            libfftw3-dev \
+            libgsl-dev \
+            libgtkmm-3.0-dev \
+            liblapack-dev \
+            liblua5.3-dev \
+            libpng-dev \
+            libpython3-dev \
+            libssl-dev \
+            libxml2-dev \
+            pkg-config \
+            python3 \
+            unzip \
+            wget \
+            zip
 
       - name: Install stable Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -33,4 +63,4 @@ jobs:
       - name: Cargo Make CI
         run: cargo make ci
         env:
-          LD_LIBRARY_PATH: /usr/local/lib/
+          LD_LIBRARY_PATH: /usr/local/lib/:/usr/lib/x86_64-linux-gnu/

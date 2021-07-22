@@ -335,8 +335,6 @@ mod tests {
         );
     }
 
-    // TODO: test uvfits output with / without cable-delay
-
     #[test]
     fn aoflagger_outputs_uvfits() {
         let tmp_dir = tempdir().unwrap();
@@ -353,6 +351,7 @@ mod tests {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-cable-delay",
         ];
         args.extend_from_slice(&gpufits_paths);
         dbg!(&args);

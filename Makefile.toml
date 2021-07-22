@@ -1,31 +1,40 @@
 [tasks.linux_apt_get_update]
 script = """
-[ $(id -u) != 0 ] && SUDO="sudo" || SUDO=""
+[ $(id -u) != 0 ] && export SUDO="sudo" || export SUDO=""
 $SUDO apt-get update
 """
 
-[tasks.linux_install_cfitsio]
+[tasks.linux_apt_get_essentials]
 script = """
-[ $(id -u) != 0 ] && SUDO="sudo" || SUDO=""
+[ $(id -u) != 0 ] && export SUDO="sudo" || export SUDO=""
 $SUDO apt-get install -y \
+    autoconf \
     build-essential \
     cmake \
     git  \
+    libtool \
     pkg-config \
     unzip \
-&& cd /tmp \
-&& wget http://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz \
-&& tar -zxvf cfitsio-3.49.tar.gz \
-&& cd cfitsio-3.49/ \
-&& CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2 \
-&& make -j \
-&& $SUDO make install
+    zip
 """
 dependencies = ["linux_apt_get_update"]
 
+[tasks.linux_install_cfitsio]
+script = """
+[ $(id -u) != 0 ] && export SUDO="sudo" || export SUDO=""
+cd /tmp
+wget http://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz
+tar -zxvf cfitsio-3.49.tar.gz
+cd cfitsio-3.49/
+CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2
+make -j
+$SUDO make install
+"""
+dependencies = ["linux_apt_get_essentials"]
+
 [tasks.linux_install_aoflagger]
 script = """
-[ $(id -u) != 0 ] && SUDO="sudo" || SUDO=""
+[ $(id -u) != 0 ] && export SUDO="sudo" || export SUDO=""
 $SUDO apt-get install -y \
     build-essential \
     casacore-data \
@@ -48,25 +57,40 @@ $SUDO apt-get install -y \
     libxml2-dev \
     pkg-config \
     python3 \
-    unzip \
-&& cd /tmp \
-&& git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git --branch v3.1.0 \
-&& cd aoflagger \
-&& chmod a+rwx . \
-&& mkdir build \
-&& cd build \
-&& cmake .. \
-&& make \
-&& $SUDO make install \
+    unzip
+cd /tmp
+[ -d "aoflagger" ] && rm -rf aoflagger
+git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git --branch v3.1.0
+cd aoflagger
+chmod a+rwx .
+mkdir build
+cd build
+cmake ..
+make
+$SUDO make install
 """
 dependencies = ["linux_install_cfitsio"]
 
-[tasks.linux_install_deps]
+[tasks.linux_install_erfa]
 script = """
-[ $(id -u) != 0 ] && SUDO="sudo" || SUDO=""
-$SUDO apt-get install -y zip liberfa-dev
+[ $(id -u) != 0 ] && export SUDO="sudo" || export SUDO=""
+cd /tmp
+[ -d "erfa" ] && rm -rf erfa
+git clone --recurse-submodules https://github.com/liberfa/erfa.git --branch v1.7.1
+cd erfa
+libtoolize
+./bootstrap.sh
+./configure
+make
+$SUDO make install
 """
-dependencies = ["linux_install_aoflagger"]
+dependencies = ["linux_apt_get_essentials"]
+
+[tasks.linux_install_deps]
+dependencies = [
+  "linux_install_aoflagger",
+  "linux_install_erfa"
+]
 
 [tasks.mac_install_deps]
 script = """

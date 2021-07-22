@@ -52,32 +52,12 @@ impl AzEl {
 
     /// Convert the horizon coordinates to equatorial coordinates (Hour Angle
     /// and Declination) for the MWA's location.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use birli::pos::AzEl;
-    ///
-    /// let ae = AzEl::new_degrees(45.0, 30.0);
-    /// let hd = ae.to_hadec_mwa();
-    /// println!("{}", hd);
-    /// ```
     pub fn to_hadec_mwa(&self) -> HADec {
         Self::to_hadec(&self, MWA_LATITUDE_RADIANS)
     }
 }
 
 impl std::fmt::Display for AzEl {
-    /// Display an AzEl
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use birli::pos::AzEl;
-    ///
-    /// let ae = AzEl::new_degrees(45.0, 30.0);
-    /// println!("{}", ae);
-    /// ```
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
@@ -114,5 +94,15 @@ mod tests {
         let ae = AzEl::new(0.261700, 0.785400);
         let za = ae.za();
         assert_abs_diff_eq!(za, 0.7853963268, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_to_hadec_mwa() {
+        let ae = AzEl::new(0.5, 0.5);
+        let hd_mwa = ae.to_hadec_mwa();
+        let hd = ae.to_hadec(mwalib::MWA_LATITUDE_RADIANS);
+        assert_eq!(format!("{}", &hd_mwa), format!("{}", &hd));
+        assert_abs_diff_eq!(hd.ha, hd_mwa.ha, epsilon = 1e-10);
+        assert_abs_diff_eq!(hd.dec, hd_mwa.dec, epsilon = 1e-10);
     }
 }

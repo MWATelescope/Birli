@@ -86,7 +86,7 @@ cargo test
 ```
 
 Experiencing segfaults? I can guarantee it's because of one of the C library dependencies.
-Make sure you have the right versions of all the libraries. These are specified in [Prerequisites](#Prerequisites).
+Make sure you have the right versions of all the libraries. These are specified in [Prerequisites](#Prerequisites). 
 
 Get library versions with:
 
@@ -96,8 +96,10 @@ aoflagger --version
 # cfitsio: ???
 ```
 
-Include these 
 
+If you have something like CASA installed from apt, it's going to put an 
+ancient cfitsio library version in `/usr/lib/x86_64-linux-gnu/`, to get around
+this, you must export `LD_LIBRARY_PATH=/usr/local/lib/:/usr/lib/x86_64-linux-gnu/` in the shell so that Birli can find the correct library version.
 ### Docker
 
 Couldn't get it working on your environment? You can always run Birli in Docker
