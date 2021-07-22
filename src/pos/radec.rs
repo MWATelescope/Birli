@@ -114,13 +114,6 @@ impl RADec {
             // User is misusing the code!
             (false, false, false) => return None,
 
-            // Easy ones.
-            (true, false, false) => 0.0,
-            (false, true, false) => 0.0,
-            (false, false, true) => 0.0,
-            (false, true, true) => 0.0,
-            (true, true, false) => 0.0,
-
             // Surrounding 0 or 360.
             (true, false, true) => PI,
 
@@ -129,6 +122,9 @@ impl RADec {
                 warn!("Attempting to find the average RADec over a collection of coordinates that span many RAs!");
                 0.0
             }
+
+            // Easy ones.
+            (_, _, _) => 0.0,
         };
 
         let mut ra_sum = 0.0;

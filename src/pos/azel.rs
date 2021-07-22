@@ -52,12 +52,32 @@ impl AzEl {
 
     /// Convert the horizon coordinates to equatorial coordinates (Hour Angle
     /// and Declination) for the MWA's location.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use birli::pos::AzEl;
+    ///
+    /// let ae = AzEl::new_degrees(45.0, 30.0);
+    /// let hd = ae.to_hadec_mwa();
+    /// println!("{}", hd);
+    /// ```
     pub fn to_hadec_mwa(&self) -> HADec {
         Self::to_hadec(&self, MWA_LATITUDE_RADIANS)
     }
 }
 
 impl std::fmt::Display for AzEl {
+    /// Display an AzEl
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use birli::pos::AzEl;
+    ///
+    /// let ae = AzEl::new_degrees(45.0, 30.0);
+    /// println!("{}", ae);
+    /// ```
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,

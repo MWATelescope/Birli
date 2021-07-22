@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn aoflagger_outputs_flags() {
         let tmp_dir = tempdir().unwrap();
-        let filename_template = tmp_dir.path().join("Flagfile%%.mwaf");
+        let mwaf_path_template = tmp_dir.path().join("Flagfile%%.mwaf");
 
         let metafits_path = "tests/data/1247842824_flags/1247842824.metafits";
         let gpufits_paths =
@@ -296,7 +296,7 @@ mod tests {
             "-m",
             metafits_path,
             "-f",
-            filename_template.to_str().unwrap(),
+            mwaf_path_template.to_str().unwrap(),
         ];
         args.extend_from_slice(&gpufits_paths);
         dbg!(&args);
@@ -314,7 +314,7 @@ mod tests {
         assert!(!gpubox_ids.is_empty());
 
         let mut birli_flag_file_set = FlagFileSet::open(
-            filename_template.to_str().unwrap(),
+            mwaf_path_template.to_str().unwrap(),
             &gpubox_ids,
             context.mwa_version,
         )
@@ -336,4 +336,31 @@ mod tests {
     }
 
     // TODO: test uvfits output with / without cable-delay
+
+    #[test]
+    fn aoflagger_outputs_uvfits() {
+        let tmp_dir = tempdir().unwrap();
+        let uvfits_path = tmp_dir.path().join("1247842824.uvfits");
+
+        let metafits_path = "tests/data/1247842824_flags/1247842824.metafits";
+        let gpufits_paths =
+            vec!["tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits"];
+
+        let mut args = vec![
+            "birli",
+            "aoflagger",
+            "-m",
+            metafits_path,
+            "-u",
+            uvfits_path.to_str().unwrap(),
+        ];
+        args.extend_from_slice(&gpufits_paths);
+        dbg!(&args);
+
+        main_with_args(&args);
+
+        assert!(uvfits_path.exists());
+
+        assert!(uvfits_path.metadata().unwrap().len() > 0);
+    }
 }

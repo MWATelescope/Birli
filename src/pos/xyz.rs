@@ -16,10 +16,10 @@
 //! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
 use mwalib::{MetafitsContext, MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS, MWA_LONGITUDE_RADIANS};
-use rayon::prelude::*;
+// use rayon::prelude::*;
 use thiserror::Error;
 
-use super::{HADec, ENH, UVW};
+use super::ENH;
 
 /// The geodetic (x,y,z) coordinates of an antenna (a.k.a. tile or station). All
 /// units are in metres.
@@ -152,39 +152,39 @@ impl XyzGeodetic {
 
 /// Convert [XyzGeodetic] coordinates to [UVW]s without having to form
 /// [XyzBaseline]s first.
-pub fn xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
-    let (s_ha, c_ha) = phase_centre.ha.sin_cos();
-    let (s_dec, c_dec) = phase_centre.dec.sin_cos();
-    // Get a UVW for each tile.
-    let tile_uvws: Vec<UVW> = xyzs
-        .iter()
-        .map(|xyz| {
-            let bl = XyzBaseline {
-                x: xyz.x,
-                y: xyz.y,
-                z: xyz.z,
-            };
-            UVW::from_xyz_inner(&bl, s_ha, c_ha, s_dec, c_dec)
-        })
-        .collect();
-    // Take the difference of every pair of UVWs.
-    let num_tiles = xyzs.len();
-    let num_baselines = (num_tiles * (num_tiles - 1)) / 2;
-    let mut bl_uvws = Vec::with_capacity(num_baselines);
-    for i in 0..num_tiles {
-        for j in i + 1..num_tiles {
-            let tile_1 = tile_uvws[i];
-            let tile_2 = tile_uvws[j];
-            let uvw_bl = UVW {
-                u: tile_1.u - tile_2.u,
-                v: tile_1.v - tile_2.v,
-                w: tile_1.w - tile_2.w,
-            };
-            bl_uvws.push(uvw_bl);
-        }
-    }
-    bl_uvws
-}
+// pub fn xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
+//     let (s_ha, c_ha) = phase_centre.ha.sin_cos();
+//     let (s_dec, c_dec) = phase_centre.dec.sin_cos();
+//     // Get a UVW for each tile.
+//     let tile_uvws: Vec<UVW> = xyzs
+//         .iter()
+//         .map(|xyz| {
+//             let bl = XyzBaseline {
+//                 x: xyz.x,
+//                 y: xyz.y,
+//                 z: xyz.z,
+//             };
+//             UVW::from_xyz_inner(&bl, s_ha, c_ha, s_dec, c_dec)
+//         })
+//         .collect();
+//     // Take the difference of every pair of UVWs.
+//     let num_tiles = xyzs.len();
+//     let num_baselines = (num_tiles * (num_tiles - 1)) / 2;
+//     let mut bl_uvws = Vec::with_capacity(num_baselines);
+//     for i in 0..num_tiles {
+//         for j in i + 1..num_tiles {
+//             let tile_1 = tile_uvws[i];
+//             let tile_2 = tile_uvws[j];
+//             let uvw_bl = UVW {
+//                 u: tile_1.u - tile_2.u,
+//                 v: tile_1.v - tile_2.v,
+//                 w: tile_1.w - tile_2.w,
+//             };
+//             bl_uvws.push(uvw_bl);
+//         }
+//     }
+//     bl_uvws
+// }
 
 /// Convert many [XyzGeodetic] coordinates to [XyzGeocentric].
 pub fn geodetic_to_geocentric(
@@ -391,25 +391,25 @@ pub fn geocentric_to_geodetic_mwa(
     )
 }
 
-/// Convert many [XyzGeocentric] coordinates to [XyzGeodetic]. The calculations
-/// are done in parallel.
-pub fn geocentric_to_geodetic_parallel(
-    geocentrics: &[XyzGeocentric],
-    longitude_rad: f64,
-    latitude_rad: f64,
-    height_metres: f64,
-) -> Result<Vec<XyzGeodetic>, ErfaError> {
-    let geocentric_vector =
-        XyzGeocentric::get_geocentric_vector(longitude_rad, latitude_rad, height_metres)?;
-    let (sin_longitude, cos_longitude) = (-longitude_rad).sin_cos();
-    let geodetics = geocentrics
-        .par_iter()
-        .map(|gc| {
-            XyzGeocentric::to_geodetic_inner(gc, &geocentric_vector, sin_longitude, cos_longitude)
-        })
-        .collect();
-    Ok(geodetics)
-}
+// /// Convert many [XyzGeocentric] coordinates to [XyzGeodetic]. The calculations
+// /// are done in parallel.
+// pub fn geocentric_to_geodetic_parallel(
+//     geocentrics: &[XyzGeocentric],
+//     longitude_rad: f64,
+//     latitude_rad: f64,
+//     height_metres: f64,
+// ) -> Result<Vec<XyzGeodetic>, ErfaError> {
+//     let geocentric_vector =
+//         XyzGeocentric::get_geocentric_vector(longitude_rad, latitude_rad, height_metres)?;
+//     let (sin_longitude, cos_longitude) = (-longitude_rad).sin_cos();
+//     let geodetics = geocentrics
+//         .par_iter()
+//         .map(|gc| {
+//             XyzGeocentric::to_geodetic_inner(gc, &geocentric_vector, sin_longitude, cos_longitude)
+//         })
+//         .collect();
+//     Ok(geodetics)
+// }
 
 #[derive(Error, Debug)]
 #[error(

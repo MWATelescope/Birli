@@ -130,4 +130,16 @@ mod tests {
         let result = hd1.separation(&hd2);
         assert_abs_diff_eq!(result, 0.0, epsilon = 1e-10);
     }
+
+    #[test]
+    fn from_to_hadec() {
+        let radec = RADec::new_degrees(10.1395, 11.967);
+        let lst_rad = 9.1395 / 60.0;
+        let hadec = HADec::from_radec(&radec, lst_rad);
+        let radec_2 = hadec.to_radec(lst_rad);
+        let radec_3 = RADec::from_hadec(&hadec, lst_rad);
+
+        assert_eq!(format!("{}", &radec), format!("{}", &radec_2));
+        assert_eq!(format!("{}", &radec), format!("{}", &radec_3));
+    }
 }
