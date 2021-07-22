@@ -43,6 +43,8 @@ jobs:
         title: $version
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    - uses: katyo/publish-crates@v1
-      with: 
-        registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    - name: Cargo publish
+      run: |
+        cargo publish --token ${CARGO_REGISTRY_TOKEN}
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
