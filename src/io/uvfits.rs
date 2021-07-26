@@ -12,6 +12,7 @@ use std::path::Path;
 use erfa_sys::ERFA_DJM0;
 use fitsio::{errors::check_status as fits_check_status, FitsFile};
 use hifitime::Epoch;
+use indicatif::ProgressStyle;
 use itertools::izip;
 use log::warn;
 // use ndarray::prelude::*;
@@ -776,6 +777,19 @@ impl<'a> UvfitsWriter<'a> {
         // Real and imaginary component offsets within image width
         // let re_im = vec![0, 1];
 
+        let num_blts = img_timestep_idxs.len() * baseline_idxs.len();
+
+        // Create a progress bar to show the writing status
+        let write_progress = indicatif::ProgressBar::new(num_blts as u64);
+        write_progress.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+                )
+                .progress_chars("=> "),
+        );
+        write_progress.set_message("write uv vis");
+
         for (img_timestep_idx, &timestep_idx) in img_timestep_idxs.iter().enumerate() {
             let gps_time_s = context.timesteps[timestep_idx].gps_time_ms as f64 / 1000.0;
             // TODO: document where this 19 comes from?
@@ -841,8 +855,12 @@ impl<'a> UvfitsWriter<'a> {
                 if let Err(err) = result {
                     return Err(err);
                 };
+
+                write_progress.inc(1);
             }
         }
+
+        write_progress.finish();
 
         Ok(())
     }

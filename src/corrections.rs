@@ -151,7 +151,7 @@ pub fn correct_cable_lengths(
     correction_progress.set_message("cable corrections");
 
     // TODO: parallelize
-    
+
     izip!(baseline_imgsets.iter_mut(), baselines).for_each(|(imgset, baseline)| {
         let imgset_stride: usize = imgset.HorizontalStride();
         let ant1 = &antennas[baseline.ant1_index];
