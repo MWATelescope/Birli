@@ -4,12 +4,12 @@ use log::{debug, info, trace};
 use std::{env, ffi::OsString, fmt::Debug, path::Path};
 
 use birli::{
-    context_to_baseline_imgsets, correct_cable_lengths, cxx_aoflagger_new, flag_imgsets_existing,
-    get_antenna_flags, get_aoflagger_version_string, get_flaggable_timesteps,
-    init_baseline_flagmasks, io::write_uvfits, write_flags,
+    context_to_baseline_imgsets, correct_cable_lengths, corrections::correct_geometry,
+    cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags, get_aoflagger_version_string,
+    get_flaggable_timesteps, init_baseline_flagmasks, io::write_uvfits, write_flags,
 };
 // use birli::util::{dump_flagmask, dump_imgset};
-use mwalib::CorrelatorContext;
+use mwalib::{CorrelatorContext, GeometricDelaysApplied};
 
 fn main_with_args<I, T>(args: I)
 where
@@ -54,6 +54,13 @@ where
                 .takes_value(false)
                 .required(false)
                 .help("Do not perform cable length corrections.")
+        )
+        .arg(
+            Arg::with_name("no-geometric-delay")
+                .long("no-geometric-delay")
+                .takes_value(false)
+                .required(false)
+                .help("Do not perform geometric length corrections.")
         )
         // TODO: implement specify flag strategy
         // .arg(
@@ -123,6 +130,7 @@ where
         );
 
         // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
+
         let no_cable_delays = aoflagger_matches.is_present("no-cable-delay");
         let cable_delays_applied = context.metafits_context.cable_delays_applied;
         if !cable_delays_applied && !no_cable_delays {
@@ -148,6 +156,28 @@ where
             true,
         );
 
+        // perform geometric delaysq if user has not disabled it, and they haven't aleady beeen applied.
+        let no_geometric_delays = aoflagger_matches.is_present("no-geometric-delay");
+        let geometric_delays_applied = context.metafits_context.geometric_delays_applied;
+
+        match (geometric_delays_applied, no_geometric_delays) {
+            (GeometricDelaysApplied::No, false) => {
+                debug!(
+                    "Applying geometric delays. applied: {:?}, desired: {}",
+                    geometric_delays_applied, !no_geometric_delays
+                );
+                correct_geometry(&context, &mut baseline_imgsets, img_coarse_chan_idxs);
+            }
+            (..) => {
+                debug!(
+                    "Skipping geometric delays. applied: {:?}, desired: {}",
+                    geometric_delays_applied, !no_geometric_delays
+                );
+            }
+        };
+
+        // output flags
+
         if let Some(flag_template) = flag_template {
             write_flags(
                 &context,
@@ -157,6 +187,8 @@ where
             )
             .unwrap();
         }
+
+        // output uvfits
 
         if let Some(uvfits_out) = uvfits_out {
             let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
@@ -352,6 +384,7 @@ mod tests {
             "-u",
             uvfits_path.to_str().unwrap(),
             "--no-cable-delay",
+            "--no-geometric-delay",
         ];
         args.extend_from_slice(&gpufits_paths);
         dbg!(&args);

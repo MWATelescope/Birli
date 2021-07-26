@@ -1,6 +1,9 @@
 //! Corrections that can be performed on visibility data
 
-use crate::cxx_aoflagger::ffi::CxxImageSet;
+use crate::{
+    cxx_aoflagger::ffi::CxxImageSet,
+    pos::{RADec, XyzGeodetic, UVW},
+};
 use cxx::UniquePtr;
 use itertools::izip;
 use log::trace;
@@ -132,21 +135,6 @@ pub fn correct_cable_lengths(
 
     let baselines = &context.metafits_context.baselines;
     let antennas = &context.metafits_context.antennas;
-    // let coarse_chans = &context.coarse_chans;
-
-    // let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-    // let fine_chan_width_hz = &context.metafits_context.corr_fine_chan_width_hz;
-
-    // A vector of all fine channel frequencies for all coarse channels in ascending order.
-    // let all_freqs_hz: Vec<u32> = coarse_chans
-    //     .iter()
-    //     .flat_map(|coarse_chan| {
-    //         let chan_start_hz = coarse_chan.chan_start_hz;
-    //         (0..fine_chans_per_coarse).map(move |fine_chan_idx| {
-    //             chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
-    //         })
-    //     })
-    //     .collect();
 
     let all_freqs_hz = _get_all_freqs_hz(&context, img_coarse_chan_idxs);
 
@@ -190,17 +178,121 @@ pub fn correct_cable_lengths(
     trace!("end correct_cable_lengths");
 }
 
+/// Perform geometric corrections, given an observation's
+/// [`mwalib::CorrelatorContext`] and a vector of [`CxxImageSet`]s for  each
+/// baseline.
+///
+/// Complex visibilities are phase-shifted by an angle determined by the length
+/// of the w-coordinate for the baseline and the channel's frequency.
+///
+/// # Examples
+///
+/// ```rust
+/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, correct_geometry};
+/// use mwalib::CorrelatorContext;
+///
+/// // define our input files
+/// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+/// let gpufits_paths = vec![
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+/// ];
+///
+/// // Create an mwalib::CorrelatorContext for accessing visibilities.
+/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+///
+/// // Determine which timesteps and coarse channels we want to use
+/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+/// let img_timestep_idxs = &context.common_timestep_indices;
+///
+/// // create a CxxAOFlagger object to perform AOFlagger operations
+/// let aoflagger = unsafe { cxx_aoflagger_new() };
+///
+/// // generate imagesets for each baseline in the format required by aoflagger
+/// let mut baseline_imgsets = context_to_baseline_imgsets(
+///     &aoflagger,
+///     &context,
+///     &img_coarse_chan_idxs,
+///     &img_timestep_idxs,
+///     None,
+/// );
+///
+/// correct_geometry(&context, &mut baseline_imgsets, &img_coarse_chan_idxs);
+/// ```
+pub fn correct_geometry(
+    context: &CorrelatorContext,
+    baseline_imgsets: &mut Vec<UniquePtr<CxxImageSet>>,
+    img_coarse_chan_idxs: &[usize],
+) {
+    trace!("start correct_geometry");
+
+    let baselines = &context.metafits_context.baselines;
+
+    let all_freqs_hz: Vec<f64> = _get_all_freqs_hz(&context, img_coarse_chan_idxs)
+        .iter()
+        .map(|&x| x as f64)
+        .collect();
+
+    let phase_center_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+    let lst_rad = context.metafits_context.lst_rad;
+    let phase_center_ha = phase_center_ra.to_hadec(lst_rad);
+    let tiles_xyz_geod = XyzGeodetic::get_tiles_mwalib(&context.metafits_context);
+
+    izip!(baseline_imgsets.iter_mut(), baselines).for_each(|(imgset, baseline)| {
+        let imgset_stride: usize = imgset.HorizontalStride();
+
+        let ant1_idx = baseline.ant1_index;
+        let ant2_idx = baseline.ant2_index;
+
+        let uvw = UVW::from_xyz(
+            &(tiles_xyz_geod[ant1_idx].clone() - &tiles_xyz_geod[ant2_idx]),
+            &phase_center_ha,
+        );
+
+        for pol_idx in 0..4 {
+            let imgset_buf_re: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx) };
+            let imgset_buf_im: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx + 1) };
+
+            izip!(
+                all_freqs_hz.iter(),
+                imgset_buf_re.chunks_mut(imgset_stride),
+                imgset_buf_im.chunks_mut(imgset_stride)
+            )
+            .for_each(|(&freq_hz, imgset_chunk_re, imgset_chunk_im)| {
+                let angle = -2.0 * PI * uvw.w * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+                let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
+                let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
+
+                izip!(imgset_chunk_re.iter_mut(), imgset_chunk_im.iter_mut()).for_each(
+                    |(re, im)| {
+                        let vis_re = *re;
+                        *re = cos_angle * vis_re - sin_angle * *im;
+                        *im = sin_angle * vis_re + cos_angle * *im;
+                    },
+                )
+            });
+        }
+    });
+
+    trace!("end correct_geometry");
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::float_cmp)]
 
-    use super::{correct_cable_lengths, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S};
+    use super::{correct_cable_lengths, correct_geometry, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S};
     use float_cmp::{approx_eq, F32Margin};
     use mwalib::CorrelatorContext;
+    use std::f64::consts::PI;
 
     use crate::{
-        context_to_baseline_imgsets, corrections::_get_all_freqs_hz, cxx_aoflagger_new,
-        get_flaggable_timesteps,
+        context_to_baseline_imgsets,
+        corrections::_get_all_freqs_hz,
+        cxx_aoflagger_new, get_flaggable_timesteps,
+        pos::{RADec, XyzGeodetic, UVW},
     };
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
@@ -315,35 +407,30 @@ mod tests {
         // baseline 1, pol XX, cc 0, fc 0
         let length_m_1_xx = length_1_2_x - length_1_1_x;
         let angle_1_xx_0: f64 =
-            -2.0 * std::f64::consts::PI * length_m_1_xx * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * length_m_1_xx * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_1_xx_0_f64, cos_1_xx_0_f64) = angle_1_xx_0.sin_cos();
         let (sin_1_xx_0, cos_1_xx_0) = (sin_1_xx_0_f64 as f32, cos_1_xx_0_f64 as f32);
         // baseline 1, pol XY, cc 0, fc 0
         let length_m_1_xy = length_1_2_y - length_1_1_x;
         let angle_1_xy_0: f64 =
-            -2.0 * std::f64::consts::PI * length_m_1_xy * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * length_m_1_xy * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_1_xy_0_f64, cos_1_xy_0_f64) = angle_1_xy_0.sin_cos();
         let (sin_1_xy_0, cos_1_xy_0) = (sin_1_xy_0_f64 as f32, cos_1_xy_0_f64 as f32);
         // baseline 1, pol YX, cc 0, fc 0
         let length_m_1_yx = length_1_2_x - length_1_1_y;
         let angle_1_yx_0: f64 =
-            -2.0 * std::f64::consts::PI * length_m_1_yx * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * length_m_1_yx * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_1_yx_0_f64, cos_1_yx_0_f64) = angle_1_yx_0.sin_cos();
         let (sin_1_yx_0, cos_1_yx_0) = (sin_1_yx_0_f64 as f32, cos_1_yx_0_f64 as f32);
         // baseline 1, pol YY, cc 0, fc 0
         let length_m_1_yy = length_1_2_y - length_1_1_y;
         let angle_1_yy_0: f64 =
-            -2.0 * std::f64::consts::PI * length_m_1_yy * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * length_m_1_yy * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_1_yy_0_f64, cos_1_yy_0_f64) = angle_1_yy_0.sin_cos();
         let (sin_1_yy_0, cos_1_yy_0) = (sin_1_yy_0_f64 as f32, cos_1_yy_0_f64 as f32);
         // baseline 1, pol YY, cc 1, fc 1
         let angle_1_yy_3: f64 =
-            -2.0 * std::f64::consts::PI * length_m_1_yy * (all_freqs_hz[3] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * length_m_1_yy * (all_freqs_hz[3] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_1_yy_3_f64, cos_1_yy_3_f64) = angle_1_yy_3.sin_cos();
         let (sin_1_yy_3, cos_1_yy_3) = (sin_1_yy_3_f64 as f32, cos_1_yy_3_f64 as f32);
 
@@ -456,35 +543,30 @@ mod tests {
         // baseline 1, pol XX, cc 0, fc 0
         let length_m_5_xx = length_5_2_x - length_5_1_x;
         let angle_5_xx_0: f64 =
-            -2.0 * std::f64::consts::PI * length_m_5_xx * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * length_m_5_xx * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_5_xx_0_f64, cos_5_xx_0_f64) = angle_5_xx_0.sin_cos();
         let (sin_5_xx_0, cos_5_xx_0) = (sin_5_xx_0_f64 as f32, cos_5_xx_0_f64 as f32);
         // baseline 1, pol XY, cc 0, fc 0
         let length_m_5_xy = length_5_2_y - length_5_1_x;
         let angle_5_xy_0: f64 =
-            -2.0 * std::f64::consts::PI * length_m_5_xy * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * length_m_5_xy * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_5_xy_0_f64, cos_5_xy_0_f64) = angle_5_xy_0.sin_cos();
         let (sin_5_xy_0, cos_5_xy_0) = (sin_5_xy_0_f64 as f32, cos_5_xy_0_f64 as f32);
         // baseline 1, pol YX, cc 0, fc 0
         let length_m_5_yx = length_5_2_x - length_5_1_y;
         let angle_5_yx_0: f64 =
-            -2.0 * std::f64::consts::PI * length_m_5_yx * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * length_m_5_yx * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_5_yx_0_f64, cos_5_yx_0_f64) = angle_5_yx_0.sin_cos();
         let (sin_5_yx_0, cos_5_yx_0) = (sin_5_yx_0_f64 as f32, cos_5_yx_0_f64 as f32);
         // baseline 1, pol YY, cc 0, fc 0
         let length_m_5_yy = length_5_2_y - length_5_1_y;
         let angle_5_yy_0: f64 =
-            -2.0 * std::f64::consts::PI * length_m_5_yy * (all_freqs_hz[0] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * length_m_5_yy * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_5_yy_0_f64, cos_5_yy_0_f64) = angle_5_yy_0.sin_cos();
         let (sin_5_yy_0, cos_5_yy_0) = (sin_5_yy_0_f64 as f32, cos_5_yy_0_f64 as f32);
         // baseline 1, pol YY, cc 1, fc 1
         let angle_5_yy_3: f64 =
-            -2.0 * std::f64::consts::PI * length_m_5_yy * (all_freqs_hz[3] as f64)
-                / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * length_m_5_yy * (all_freqs_hz[3] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let (sin_5_yy_3_f64, cos_5_yy_3_f64) = angle_5_yy_3.sin_cos();
         let (sin_5_yy_3, cos_5_yy_3) = (sin_5_yy_3_f64 as f32, cos_5_yy_3_f64 as f32);
 
@@ -520,6 +602,116 @@ mod tests {
         // baseline 1, pol yy, cc 1, fc 1, ts 1
         let rot_5_yy_3_3_re = (cos_5_yy_3 * viz_5_yy_3_3_re - sin_5_yy_3 * viz_5_yy_3_3_im) as f32;
         let rot_5_yy_3_3_im = (sin_5_yy_3 * viz_5_yy_3_3_re + cos_5_yy_3 * viz_5_yy_3_3_im) as f32;
+        test_imgset_val!(baseline_imgsets[5], 6, 3, 3, rot_5_yy_3_3_re);
+        test_imgset_val!(baseline_imgsets[5], 7, 3, 3, rot_5_yy_3_3_im);
+    }
+
+    #[test]
+    fn test_geometric_corrections_ord() {
+        let context = get_mwa_ord_context();
+
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(img_timestep_idxs.len(), 4);
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+
+        let all_freqs_hz = _get_all_freqs_hz(&context, img_coarse_chan_idxs);
+
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+
+        let width = img_timestep_idxs.len();
+        let stride = (((width - 1) / 8) + 1) * 8;
+
+        let phase_center_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+        let lst_rad = context.metafits_context.lst_rad;
+        let phase_center_ha = phase_center_ra.to_hadec(lst_rad);
+        let tiles_xyz_geod = XyzGeodetic::get_tiles_mwalib(&context.metafits_context);
+
+        let mut baseline_imgsets = context_to_baseline_imgsets(
+            &aoflagger,
+            &context,
+            &img_coarse_chan_idxs,
+            &img_timestep_idxs,
+            None,
+        );
+
+        let viz_0_xx_0_0_re = baseline_imgsets[0].ImageBuffer(0)[0];
+        let viz_0_xx_0_0_im = baseline_imgsets[0].ImageBuffer(1)[0];
+        let viz_5_xx_0_0_re = baseline_imgsets[5].ImageBuffer(0)[0];
+        let viz_5_xx_0_0_im = baseline_imgsets[5].ImageBuffer(1)[0];
+        let viz_5_xy_0_0_re = baseline_imgsets[5].ImageBuffer(2)[0];
+        let viz_5_xy_0_0_im = baseline_imgsets[5].ImageBuffer(3)[0];
+        let viz_5_yx_0_0_re = baseline_imgsets[5].ImageBuffer(4)[0];
+        let viz_5_yx_0_0_im = baseline_imgsets[5].ImageBuffer(5)[0];
+        let viz_5_yy_0_0_re = baseline_imgsets[5].ImageBuffer(6)[0];
+        let viz_5_yy_0_0_im = baseline_imgsets[5].ImageBuffer(7)[0];
+        let viz_5_yy_3_3_re = baseline_imgsets[5].ImageBuffer(6)[3 * stride + 3];
+        let viz_5_yy_3_3_im = baseline_imgsets[5].ImageBuffer(7)[3 * stride + 3];
+
+        assert_eq!(viz_0_xx_0_0_re as f32, 0x10c5be as f32);
+        assert_eq!(viz_0_xx_0_0_im as f32, -0x10c5bf as f32);
+        assert_eq!(viz_5_xx_0_0_re as f32, 0x10f1ce as f32);
+        assert_eq!(viz_5_xx_0_0_im as f32, -0x10f1cf as f32);
+        assert_eq!(viz_5_xy_0_0_re as f32, 0x10ea26 as f32);
+        assert_eq!(viz_5_xy_0_0_im as f32, -0x10ea27 as f32);
+        assert_eq!(viz_5_yx_0_0_re as f32, 0x10f1be as f32);
+        assert_eq!(viz_5_yx_0_0_im as f32, -0x10f1bf as f32);
+        assert_eq!(viz_5_yy_0_0_re as f32, 0x10ea16 as f32);
+        assert_eq!(viz_5_yy_0_0_im as f32, -0x10ea17 as f32);
+        assert_eq!(viz_5_yy_3_3_re as f32, 0x0dec16 as f32);
+        assert_eq!(viz_5_yy_3_3_im as f32, -0x0dec17 as f32);
+
+        // baseline 5
+        let bl_5 = &context.metafits_context.baselines[5];
+        let w_5 = UVW::from_xyz(
+            &(tiles_xyz_geod[bl_5.ant1_index].clone() - &tiles_xyz_geod[bl_5.ant2_index]),
+            &phase_center_ha,
+        )
+        .w;
+
+        let angle_5_0 =
+            -2.0 * PI * w_5 * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_5_3 =
+            -2.0 * PI * w_5 * (all_freqs_hz[3] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+
+        correct_geometry(&context, &mut baseline_imgsets, img_coarse_chan_idxs);
+
+        // there should be no difference in baseline 0
+        test_imgset_val!(baseline_imgsets[0], 0, 0, 0, viz_0_xx_0_0_re);
+        test_imgset_val!(baseline_imgsets[0], 1, 0, 0, viz_0_xx_0_0_im);
+
+        // baseline 1, pol xx, cc 0, fc 0, ts 0
+        let rot_5_xx_0_0_re = (angle_5_0.cos() as f32 * viz_5_xx_0_0_re
+            - angle_5_0.sin() as f32 * viz_5_xx_0_0_im) as f32;
+        let rot_5_xx_0_0_im = (angle_5_0.sin() as f32 * viz_5_xx_0_0_re
+            + angle_5_0.cos() as f32 * viz_5_xx_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[5], 0, 0, 0, rot_5_xx_0_0_re);
+        test_imgset_val!(baseline_imgsets[5], 1, 0, 0, rot_5_xx_0_0_im);
+        // baseline 1, pol xy, cc 0, fc 0, ts 0
+        let rot_5_xy_0_0_re = (angle_5_0.cos() as f32 * viz_5_xy_0_0_re
+            - angle_5_0.sin() as f32 * viz_5_xy_0_0_im) as f32;
+        let rot_5_xy_0_0_im = (angle_5_0.sin() as f32 * viz_5_xy_0_0_re
+            + angle_5_0.cos() as f32 * viz_5_xy_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[5], 2, 0, 0, rot_5_xy_0_0_re);
+        test_imgset_val!(baseline_imgsets[5], 3, 0, 0, rot_5_xy_0_0_im);
+        // baseline 1, pol yx, cc 0, fc 0, ts 0
+        let rot_5_yx_0_0_re = (angle_5_0.cos() as f32 * viz_5_yx_0_0_re
+            - angle_5_0.sin() as f32 * viz_5_yx_0_0_im) as f32;
+        let rot_5_yx_0_0_im = (angle_5_0.sin() as f32 * viz_5_yx_0_0_re
+            + angle_5_0.cos() as f32 * viz_5_yx_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[5], 4, 0, 0, rot_5_yx_0_0_re);
+        test_imgset_val!(baseline_imgsets[5], 5, 0, 0, rot_5_yx_0_0_im);
+        // baseline 1, pol yy, cc 0, fc 0, ts 0
+        let rot_5_yy_0_0_re = (angle_5_0.cos() as f32 * viz_5_yy_0_0_re
+            - angle_5_0.sin() as f32 * viz_5_yy_0_0_im) as f32;
+        let rot_5_yy_0_0_im = (angle_5_0.sin() as f32 * viz_5_yy_0_0_re
+            + angle_5_0.cos() as f32 * viz_5_yy_0_0_im) as f32;
+        test_imgset_val!(baseline_imgsets[5], 6, 0, 0, rot_5_yy_0_0_re);
+        test_imgset_val!(baseline_imgsets[5], 7, 0, 0, rot_5_yy_0_0_im);
+        // baseline 1, pol yy, cc 1, fc 1, ts 1
+        let rot_5_yy_3_3_re = (angle_5_3.cos() as f32 * viz_5_yy_3_3_re
+            - angle_5_3.sin() as f32 * viz_5_yy_3_3_im) as f32;
+        let rot_5_yy_3_3_im = (angle_5_3.sin() as f32 * viz_5_yy_3_3_re
+            + angle_5_3.cos() as f32 * viz_5_yy_3_3_im) as f32;
         test_imgset_val!(baseline_imgsets[5], 6, 3, 3, rot_5_yy_3_3_re);
         test_imgset_val!(baseline_imgsets[5], 7, 3, 3, rot_5_yy_3_3_im);
     }

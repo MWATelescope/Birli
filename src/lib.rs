@@ -113,7 +113,7 @@ pub mod io;
 pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter};
 
 pub mod corrections;
-pub use corrections::correct_cable_lengths;
+pub use corrections::{correct_cable_lengths, correct_geometry};
 
 pub mod flags;
 pub use flags::{

@@ -9,6 +9,7 @@ pub mod uvfits;
 use std::path::Path;
 
 use cxx::UniquePtr;
+use log::trace;
 use mwalib::CorrelatorContext;
 use uvfits::UvfitsWriter;
 
@@ -33,6 +34,8 @@ pub fn write_uvfits<'a>(
     img_timestep_idxs: &[usize],
     img_coarse_chan_idxs: &[usize],
 ) -> Result<(), UvfitsWriteError> {
+    trace!("start write_uvfits");
+
     let mut uvfits_writer = UvfitsWriter::from_mwalib(
         filename,
         &context,
@@ -53,6 +56,8 @@ pub fn write_uvfits<'a>(
     )?;
 
     uvfits_writer.write_ants_from_mwalib(&context.metafits_context, None)?;
+
+    trace!("end write_uvfits");
 
     Ok(())
 }
