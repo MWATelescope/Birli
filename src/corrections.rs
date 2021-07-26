@@ -5,6 +5,7 @@ use crate::{
     pos::{RADec, XyzGeodetic, UVW},
 };
 use cxx::UniquePtr;
+use indicatif::{ProgressBar, ProgressStyle};
 use itertools::izip;
 use log::trace;
 use mwalib::{CorrelatorContext, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S};
@@ -138,6 +139,19 @@ pub fn correct_cable_lengths(
 
     let all_freqs_hz = _get_all_freqs_hz(&context, img_coarse_chan_idxs);
 
+    // Create a progress bar to show the status of the correction
+    let correction_progress = ProgressBar::new(baseline_imgsets.len() as u64);
+    correction_progress.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+            )
+            .progress_chars("=> "),
+    );
+    correction_progress.set_message("cable corrections");
+
+    // TODO: parallelize
+    
     izip!(baseline_imgsets.iter_mut(), baselines).for_each(|(imgset, baseline)| {
         let imgset_stride: usize = imgset.HorizontalStride();
         let ant1 = &antennas[baseline.ant1_index];
@@ -174,7 +188,12 @@ pub fn correct_cable_lengths(
                     )
                 });
             });
+
+        correction_progress.inc(1);
     });
+
+    correction_progress.finish();
+
     trace!("end correct_cable_lengths");
 }
 
@@ -240,6 +259,19 @@ pub fn correct_geometry(
     let phase_center_ha = phase_center_ra.to_hadec(lst_rad);
     let tiles_xyz_geod = XyzGeodetic::get_tiles_mwalib(&context.metafits_context);
 
+    // Create a progress bar to show the status of the correction
+    let correction_progress = ProgressBar::new(baseline_imgsets.len() as u64);
+    correction_progress.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+            )
+            .progress_chars("=> "),
+    );
+    correction_progress.set_message("geom corrections");
+
+    // TODO: parallelize
+
     izip!(baseline_imgsets.iter_mut(), baselines).for_each(|(imgset, baseline)| {
         let imgset_stride: usize = imgset.HorizontalStride();
 
@@ -274,7 +306,11 @@ pub fn correct_geometry(
                 )
             });
         }
+
+        correction_progress.inc(1);
     });
+
+    correction_progress.finish();
 
     trace!("end correct_geometry");
 }
