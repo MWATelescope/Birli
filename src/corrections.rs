@@ -297,15 +297,8 @@ pub fn correct_geometry(
 
     let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
 
-    println!("all_freqs_hz: {:?}", all_freqs_hz);
     let phase_centre_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
-    println!("phase center ra: {:?}", phase_centre_ra);
-    let lst_rad = context.metafits_context.lst_rad;
-    println!("lst_rad: {:?}", lst_rad);
-    let phase_centre_ha = phase_centre_ra.to_hadec(lst_rad);
-    println!("phase_centre_ha: {:?}", phase_centre_ha);
     let tiles_xyz_geod = XyzGeodetic::get_tiles_mwalib(&context.metafits_context);
-    println!("tiles_xyz_geod: {:?}", tiles_xyz_geod);
 
     // Create a progress bar to show the status of the correction
     let correction_progress =
@@ -378,92 +371,6 @@ pub fn correct_geometry(
             correction_progress.inc(1);
         }
     }
-
-    // izip!(baseline_imgsets.iter_mut(), baselines).for_each(|(imgset, baseline)| {
-    //     let imgset_stride: usize = imgset.HorizontalStride();
-
-    //     let ant1_idx = baseline.ant1_index;
-    //     let ant2_idx = baseline.ant2_index;
-
-    //     let baseline_xyz = tiles_xyz_geod[ant1_idx].clone() - &tiles_xyz_geod[ant2_idx];
-
-    //     if ant1_idx == 0 && ant2_idx == 1 {
-    //         // dbg!("nothing");
-    //     }
-
-    //     for pol_idx in 0..4 {
-    //         let imgset_buf_re: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx) };
-    //         let imgset_buf_im: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx + 1) };
-
-    //         izip!(
-    //             all_freqs_hz.iter(),
-    //             imgset_buf_re.chunks_mut(imgset_stride),
-    //             imgset_buf_im.chunks_mut(imgset_stride)
-    //         )
-    //         .for_each(|(&freq_hz, imgset_chunk_re, imgset_chunk_im)| {
-    //             izip!(
-    //                 img_timestep_idxs,
-    //                 imgset_chunk_re.iter_mut(),
-    //                 imgset_chunk_im.iter_mut()
-    //             )
-    //             .for_each(|(&timestep_idx, re, im)| {
-    //                 let gps_time_s = context.timesteps[timestep_idx].gps_time_ms as f64 / 1000.0;
-    //                 let epoch = Epoch::from_tai_seconds(
-    //                     gps_time_s + 19.0 + HIFITIME_GPS_FACTOR + integration_time_s / 2.0,
-    //                 );
-
-    //                 let mjd = epoch.as_mjd_utc_days();
-    //                 // dbg!(&mjd);
-
-    //                 let prec_info = precess_time(
-    //                     &phase_centre_ra,
-    //                     &epoch,
-    //                     array_pos.longitude_rad,
-    //                     array_pos.latitude_rad,
-    //                 );
-
-    //                 let tiles_xyz_precessed = prec_info.precess_xyz_parallel(&tiles_xyz_geod);
-    //                 let baseline_xyz_precessed =
-    //                     tiles_xyz_precessed[ant1_idx].clone() - &tiles_xyz_precessed[ant2_idx];
-    //                 let baseline_xyz_precessed_fast = prec_info
-    //                     .precess_xyz(baseline_xyz.to_geodetic())
-    //                     .to_baseline();
-
-    //                 // let phase_centre_ha = phase_centre_ra.to_hadec(prec_info.lmst);
-    //                 // let uvw = UVW::from_xyz(&baseline_xyz, &phase_centre_ha);
-    //                 let phase_centre_ha_j2000 = phase_centre_ra.to_hadec(prec_info.lmst_j2000);
-    //                 let uvw = UVW::from_xyz(&baseline_xyz_precessed, &phase_centre_ha_j2000);
-
-    //                 let angle = -2.0 * PI * uvw.w * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
-    //                 let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
-    //                 let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
-
-    //                 if ant1_idx == 0 && ant2_idx == 1 {
-    //                     // DELETEME
-    //                     let origin = XyzGeodetic {
-    //                         x: 0.0,
-    //                         y: 0.0,
-    //                         z: 0.0,
-    //                     };
-    //                     let xyz1 = tiles_xyz_geod[ant1_idx].clone() - origin.clone();
-    //                     let uvw1 = UVW::from_xyz(&xyz1, &phase_centre_ha);
-    //                     let xyz2 = tiles_xyz_geod[ant2_idx].clone() - origin.clone();
-    //                     let uvw2 = UVW::from_xyz(&xyz2, &phase_centre_ha);
-
-    //                     // /DELETEME
-
-    //                     dbg!(freq_hz, uvw1, uvw2);
-    //                 }
-
-    //                 let vis_re = *re;
-    //                 *re = cos_angle * vis_re - sin_angle * *im;
-    //                 *im = sin_angle * vis_re + cos_angle * *im;
-    //             })
-    //         });
-    //     }
-
-    //     correction_progress.inc(1);
-    // });
 
     correction_progress.finish();
 
