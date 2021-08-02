@@ -98,7 +98,7 @@ pub enum UvfitsWriteError {
 
     /// An error associated with ERFA.
     #[error("{0}")]
-    Erfa(#[from] crate::pos::xyz::ErfaError),
+    Erfa(#[from] crate::pos::error::ErfaError),
 
     /// An error associated with fitsio.
     #[error("{0}")]

@@ -17,9 +17,9 @@
 
 use mwalib::{MetafitsContext, MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS, MWA_LONGITUDE_RADIANS};
 // use rayon::prelude::*;
-use thiserror::Error;
+use super::error::ErfaError;
 
-use super::ENH;
+use super::{ENH, HADec, UVW};
 
 /// The geodetic (x,y,z) coordinates of an antenna (a.k.a. tile or station). All
 /// units are in metres.
@@ -148,43 +148,52 @@ impl XyzGeodetic {
             MWA_ALTITUDE_METRES,
         )
     }
+
+    pub fn to_baseline(&self) -> XyzBaseline {
+        XyzBaseline {
+            x: self.x,
+            y: self.y,
+            z: self.z
+        }
+    }
 }
+
 
 /// Convert [XyzGeodetic] coordinates to [UVW]s without having to form
 /// [XyzBaseline]s first.
-// pub fn xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
-//     let (s_ha, c_ha) = phase_centre.ha.sin_cos();
-//     let (s_dec, c_dec) = phase_centre.dec.sin_cos();
-//     // Get a UVW for each tile.
-//     let tile_uvws: Vec<UVW> = xyzs
-//         .iter()
-//         .map(|xyz| {
-//             let bl = XyzBaseline {
-//                 x: xyz.x,
-//                 y: xyz.y,
-//                 z: xyz.z,
-//             };
-//             UVW::from_xyz_inner(&bl, s_ha, c_ha, s_dec, c_dec)
-//         })
-//         .collect();
-//     // Take the difference of every pair of UVWs.
-//     let num_tiles = xyzs.len();
-//     let num_baselines = (num_tiles * (num_tiles - 1)) / 2;
-//     let mut bl_uvws = Vec::with_capacity(num_baselines);
-//     for i in 0..num_tiles {
-//         for j in i + 1..num_tiles {
-//             let tile_1 = tile_uvws[i];
-//             let tile_2 = tile_uvws[j];
-//             let uvw_bl = UVW {
-//                 u: tile_1.u - tile_2.u,
-//                 v: tile_1.v - tile_2.v,
-//                 w: tile_1.w - tile_2.w,
-//             };
-//             bl_uvws.push(uvw_bl);
-//         }
-//     }
-//     bl_uvws
-// }
+pub fn xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
+    let (s_ha, c_ha) = phase_centre.ha.sin_cos();
+    let (s_dec, c_dec) = phase_centre.dec.sin_cos();
+    // Get a UVW for each tile.
+    let tile_uvws: Vec<UVW> = xyzs
+        .iter()
+        .map(|xyz| {
+            let bl = XyzBaseline {
+                x: xyz.x,
+                y: xyz.y,
+                z: xyz.z,
+            };
+            UVW::from_xyz_inner(&bl, s_ha, c_ha, s_dec, c_dec)
+        })
+        .collect();
+    // Take the difference of every pair of UVWs.
+    let num_tiles = xyzs.len();
+    let num_baselines = (num_tiles * (num_tiles - 1)) / 2;
+    let mut bl_uvws = Vec::with_capacity(num_baselines);
+    for i in 0..num_tiles {
+        for j in i + 0..num_tiles {
+            let tile_1 = tile_uvws[i];
+            let tile_2 = tile_uvws[j];
+            let uvw_bl = UVW {
+                u: tile_1.u - tile_2.u,
+                v: tile_1.v - tile_2.v,
+                w: tile_1.w - tile_2.w,
+            };
+            bl_uvws.push(uvw_bl);
+        }
+    }
+    bl_uvws
+}
 
 /// Convert many [XyzGeodetic] coordinates to [XyzGeocentric].
 pub fn geodetic_to_geocentric(
@@ -255,6 +264,16 @@ pub struct XyzBaseline {
     pub y: f64,
     /// z-coordinate \[meters\]
     pub z: f64,
+}
+
+impl XyzBaseline {
+    pub fn to_geodetic(&self) -> XyzGeodetic {
+        XyzGeodetic {
+            x: self.x,
+            y: self.y,
+            z: self.z
+        }
+    }
 }
 
 /// The geocentric (x,y,z) coordinates of an antenna (a.k.a. tile or station).
@@ -411,18 +430,6 @@ pub fn geocentric_to_geodetic_mwa(
 //     Ok(geodetics)
 // }
 
-#[derive(Error, Debug)]
-#[error(
-    "{source_file}:{source_line} Call to ERFA function {function} returned status code {status}"
-)]
-
-/// An error associated with ERFA.
-pub struct ErfaError {
-    source_file: &'static str,
-    source_line: u32,
-    status: i32,
-    function: &'static str,
-}
 
 #[cfg(test)]
 mod tests {

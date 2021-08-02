@@ -13,7 +13,7 @@ use log::trace;
 use mwalib::CorrelatorContext;
 use uvfits::UvfitsWriter;
 
-use crate::{CxxFlagMask, CxxImageSet};
+use crate::{CxxFlagMask, CxxImageSet, constants, pos::earth::LatLng};
 
 use self::error::UvfitsWriteError;
 
@@ -33,15 +33,19 @@ pub fn write_uvfits<'a>(
     baseline_flagmasks: &[UniquePtr<CxxFlagMask>],
     img_timestep_idxs: &[usize],
     img_coarse_chan_idxs: &[usize],
+    array_pos: Option<LatLng>
 ) -> Result<(), UvfitsWriteError> {
     trace!("start write_uvfits");
+
 
     let mut uvfits_writer = UvfitsWriter::from_mwalib(
         filename,
         &context,
         &img_timestep_idxs,
         &img_coarse_chan_idxs,
-    )?;
+        baseline_idxs,
+        array_pos
+  )?;
 
     let mut fits_file = uvfits_writer.open().unwrap();
 
@@ -55,7 +59,7 @@ pub fn write_uvfits<'a>(
         &img_coarse_chan_idxs,
     )?;
 
-    uvfits_writer.write_ants_from_mwalib(&context.metafits_context, None)?;
+    uvfits_writer.write_ants_from_mwalib(&context.metafits_context)?;
 
     trace!("end write_uvfits");
 
@@ -149,6 +153,7 @@ mod tests {
             &baseline_flagmasks,
             &img_timestep_idxs,
             &img_coarse_chan_idxs,
+            None,
         )
         .unwrap();
 

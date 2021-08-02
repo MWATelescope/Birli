@@ -1,14 +1,19 @@
 //! Corrections that can be performed on visibility data
 
 use crate::{
+    constants::HIFITIME_GPS_FACTOR,
     cxx_aoflagger::ffi::CxxImageSet,
-    pos::{RADec, XyzGeodetic, UVW},
+    pos::{earth::LatLng, precess::precess_time, RADec, XyzGeodetic, UVW},
 };
 use cxx::UniquePtr;
+use hifitime::Epoch;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::izip;
-use log::trace;
-use mwalib::{CorrelatorContext, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S};
+use log::{debug, info, trace};
+use mwalib::{
+    CorrelatorContext, MWAVersion, MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS,
+    MWA_LONGITUDE_RADIANS, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S,
+};
 use std::f64::consts::PI;
 
 fn _correct_cable_length_buffers_cotter(
@@ -30,18 +35,37 @@ fn _correct_cable_length_buffers_cotter(
 }
 
 /// A vector of all fine channel frequencies for the provided coarse channels
-/// in order of provided `coarse_chan_idxs`, and ascending fine channel index
+/// in order of provided `coarse_chan_idxs`, and ascending fine channel index.
+/// Frequencies are the center of the fine channel bandwidth.
 fn _get_all_freqs_hz(context: &CorrelatorContext, coarse_chan_idxs: &[usize]) -> Vec<u32> {
     let coarse_chans = context.coarse_chans.clone();
     let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
     let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz;
+    let scrunch_offset = match context.mwa_version {
+        MWAVersion::CorrOldLegacy | MWAVersion::CorrLegacy => {
+            // in the legacy correlator, all fine chan freqnencies
+            // are averages of the base fine chan witdh (10kHz)
+            let base_fine_chan_width_hz = 10000;
+            if fine_chan_width_hz % base_fine_chan_width_hz != 0 {
+                panic!("legacy fine channel bandwidth must be an integer mutliple of 10KHz, instead found {}", fine_chan_width_hz);
+            }
+            let scrunch_factor = fine_chan_width_hz / base_fine_chan_width_hz;
+            (scrunch_factor - 1) * base_fine_chan_width_hz / 2
+        }
+        // This is not the case for MWAX, where ultrafine channels are averaged
+        // together, resulting in zero scrunch offset.
+        MWAVersion::CorrMWAXv2 => 0,
+        _ => {
+            panic!("not sure how to handle this hey.")
+        }
+    };
     coarse_chan_idxs
         .iter()
         .flat_map(|&coarse_chan_idx| {
             let coarse_chan = &coarse_chans[coarse_chan_idx];
             let chan_start_hz = coarse_chan.chan_start_hz;
             (0..fine_chans_per_coarse).map(move |fine_chan_idx| {
-                chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz)
+                chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz) + scrunch_offset
             })
         })
         .collect()
@@ -225,6 +249,7 @@ pub fn correct_cable_lengths(
 /// // Determine which timesteps and coarse channels we want to use
 /// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
 /// let img_timestep_idxs = &context.common_timestep_indices;
+/// let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 ///
 /// // create a CxxAOFlagger object to perform AOFlagger operations
 /// let aoflagger = unsafe { cxx_aoflagger_new() };
@@ -238,29 +263,53 @@ pub fn correct_cable_lengths(
 ///     None,
 /// );
 ///
-/// correct_geometry(&context, &mut baseline_imgsets, &img_coarse_chan_idxs);
+/// correct_geometry(&context, &baseline_idxs, &mut baseline_imgsets, &img_coarse_chan_idxs, img_timestep_idxs, None);
 /// ```
 pub fn correct_geometry(
     context: &CorrelatorContext,
+    baseline_idxs: &[usize],
     baseline_imgsets: &mut Vec<UniquePtr<CxxImageSet>>,
     img_coarse_chan_idxs: &[usize],
+    img_timestep_idxs: &[usize],
+    array_pos: Option<LatLng>,
 ) {
     trace!("start correct_geometry");
 
-    let baselines = &context.metafits_context.baselines;
+    let array_pos = match array_pos {
+        Some(pos) => pos,
+        None => {
+            // The results here are slightly different to those given by cotter.
+            // This is at least partly due to different constants (the altitude is
+            // definitely slightly different), but possibly also because ERFA is
+            // more accurate than cotter's "homebrewed" Geodetic2XYZ.
+            LatLng {
+                longitude_rad: MWA_LONGITUDE_RADIANS,
+                latitude_rad: MWA_LATITUDE_RADIANS,
+                height_metres: MWA_ALTITUDE_METRES,
+            }
+        }
+    };
 
     let all_freqs_hz: Vec<f64> = _get_all_freqs_hz(&context, img_coarse_chan_idxs)
         .iter()
         .map(|&x| x as f64)
         .collect();
 
-    let phase_center_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+    let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
+
+    println!("all_freqs_hz: {:?}", all_freqs_hz);
+    let phase_centre_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+    println!("phase center ra: {:?}", phase_centre_ra);
     let lst_rad = context.metafits_context.lst_rad;
-    let phase_center_ha = phase_center_ra.to_hadec(lst_rad);
+    println!("lst_rad: {:?}", lst_rad);
+    let phase_centre_ha = phase_centre_ra.to_hadec(lst_rad);
+    println!("phase_centre_ha: {:?}", phase_centre_ha);
     let tiles_xyz_geod = XyzGeodetic::get_tiles_mwalib(&context.metafits_context);
+    println!("tiles_xyz_geod: {:?}", tiles_xyz_geod);
 
     // Create a progress bar to show the status of the correction
-    let correction_progress = ProgressBar::new(baseline_imgsets.len() as u64);
+    let correction_progress =
+        ProgressBar::new((baseline_imgsets.len() * img_timestep_idxs.len()) as u64);
     correction_progress.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -270,45 +319,151 @@ pub fn correct_geometry(
     );
     correction_progress.set_message("geom corrections");
 
-    // TODO: parallelize
+    // TODO: rewrite this whole thing, parallelize and iterate over timestep THEN baseline.
 
-    izip!(baseline_imgsets.iter_mut(), baselines).for_each(|(imgset, baseline)| {
-        let imgset_stride: usize = imgset.HorizontalStride();
-
-        let ant1_idx = baseline.ant1_index;
-        let ant2_idx = baseline.ant2_index;
-
-        let uvw = UVW::from_xyz(
-            &(tiles_xyz_geod[ant1_idx].clone() - &tiles_xyz_geod[ant2_idx]),
-            &phase_center_ha,
+    for (img_timestep_idx, &timestep_idx) in img_timestep_idxs.iter().enumerate() {
+        let gps_time_s = context.timesteps[timestep_idx].gps_time_ms as f64 / 1000.0;
+        // TODO: document where this 19 comes from?
+        let epoch = Epoch::from_tai_seconds(
+            gps_time_s + 19.0 + HIFITIME_GPS_FACTOR + integration_time_s / 2.0,
         );
 
-        for pol_idx in 0..4 {
-            let imgset_buf_re: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx) };
-            let imgset_buf_im: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx + 1) };
+        let prec_info = precess_time(
+            &phase_centre_ra,
+            &epoch,
+            array_pos.longitude_rad,
+            array_pos.latitude_rad,
+        );
 
-            izip!(
-                all_freqs_hz.iter(),
-                imgset_buf_re.chunks_mut(imgset_stride),
-                imgset_buf_im.chunks_mut(imgset_stride)
-            )
-            .for_each(|(&freq_hz, imgset_chunk_re, imgset_chunk_im)| {
-                let angle = -2.0 * PI * uvw.w * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
-                let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
-                let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
+        let tiles_xyz_precessed = prec_info.precess_xyz_parallel(&tiles_xyz_geod);
+        let phase_centre_ha_j2000 = phase_centre_ra.to_hadec(prec_info.lmst_j2000);
 
-                izip!(imgset_chunk_re.iter_mut(), imgset_chunk_im.iter_mut()).for_each(
-                    |(re, im)| {
-                        let vis_re = *re;
-                        *re = cos_angle * vis_re - sin_angle * *im;
-                        *im = sin_angle * vis_re + cos_angle * *im;
-                    },
-                )
-            });
+        for (&baseline_idx, imgset) in izip!(baseline_idxs, baseline_imgsets.iter_mut()) {
+            let imgset_stride: usize = imgset.HorizontalStride();
+            let baseline = context.metafits_context.baselines[baseline_idx].clone();
+
+            let ant1_idx = baseline.ant1_index;
+            let ant2_idx = baseline.ant2_index;
+
+            let baseline_xyz_precessed =
+                tiles_xyz_precessed[ant1_idx].clone() - &tiles_xyz_precessed[ant2_idx];
+
+            let uvw = UVW::from_xyz(&baseline_xyz_precessed, &phase_centre_ha_j2000);
+
+            for pol_idx in 0..4 {
+                let imgset_buf_re: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx) };
+                let imgset_buf_im: &mut [f32] =
+                    unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx + 1) };
+
+                let timestep_idx_range =
+                    (img_timestep_idx * imgset_stride)..((img_timestep_idx + 1) * imgset_stride);
+
+                let imgset_timestep_chunk_re = &mut imgset_buf_re[timestep_idx_range.clone()];
+                let imgset_timestep_chunk_im = &mut imgset_buf_im[timestep_idx_range.clone()];
+
+                for (freq_hz, re, im) in izip!(
+                    &all_freqs_hz,
+                    imgset_timestep_chunk_re,
+                    imgset_timestep_chunk_im
+                ) {
+                    let angle = -2.0 * PI * uvw.w * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+                    let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
+                    let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
+
+                    let vis_re = *re;
+                    *re = cos_angle * vis_re - sin_angle * *im;
+                    *im = sin_angle * vis_re + cos_angle * *im;
+                }
+            }
+            correction_progress.inc(1);
         }
+    }
 
-        correction_progress.inc(1);
-    });
+    // izip!(baseline_imgsets.iter_mut(), baselines).for_each(|(imgset, baseline)| {
+    //     let imgset_stride: usize = imgset.HorizontalStride();
+
+    //     let ant1_idx = baseline.ant1_index;
+    //     let ant2_idx = baseline.ant2_index;
+
+    //     let baseline_xyz = tiles_xyz_geod[ant1_idx].clone() - &tiles_xyz_geod[ant2_idx];
+
+    //     if ant1_idx == 0 && ant2_idx == 1 {
+    //         // dbg!("nothing");
+    //     }
+
+    //     for pol_idx in 0..4 {
+    //         let imgset_buf_re: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx) };
+    //         let imgset_buf_im: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx + 1) };
+
+    //         izip!(
+    //             all_freqs_hz.iter(),
+    //             imgset_buf_re.chunks_mut(imgset_stride),
+    //             imgset_buf_im.chunks_mut(imgset_stride)
+    //         )
+    //         .for_each(|(&freq_hz, imgset_chunk_re, imgset_chunk_im)| {
+    //             izip!(
+    //                 img_timestep_idxs,
+    //                 imgset_chunk_re.iter_mut(),
+    //                 imgset_chunk_im.iter_mut()
+    //             )
+    //             .for_each(|(&timestep_idx, re, im)| {
+    //                 let gps_time_s = context.timesteps[timestep_idx].gps_time_ms as f64 / 1000.0;
+    //                 let epoch = Epoch::from_tai_seconds(
+    //                     gps_time_s + 19.0 + HIFITIME_GPS_FACTOR + integration_time_s / 2.0,
+    //                 );
+
+    //                 let mjd = epoch.as_mjd_utc_days();
+    //                 // dbg!(&mjd);
+
+    //                 let prec_info = precess_time(
+    //                     &phase_centre_ra,
+    //                     &epoch,
+    //                     array_pos.longitude_rad,
+    //                     array_pos.latitude_rad,
+    //                 );
+
+    //                 let tiles_xyz_precessed = prec_info.precess_xyz_parallel(&tiles_xyz_geod);
+    //                 let baseline_xyz_precessed =
+    //                     tiles_xyz_precessed[ant1_idx].clone() - &tiles_xyz_precessed[ant2_idx];
+    //                 let baseline_xyz_precessed_fast = prec_info
+    //                     .precess_xyz(baseline_xyz.to_geodetic())
+    //                     .to_baseline();
+
+    //                 // let phase_centre_ha = phase_centre_ra.to_hadec(prec_info.lmst);
+    //                 // let uvw = UVW::from_xyz(&baseline_xyz, &phase_centre_ha);
+    //                 let phase_centre_ha_j2000 = phase_centre_ra.to_hadec(prec_info.lmst_j2000);
+    //                 let uvw = UVW::from_xyz(&baseline_xyz_precessed, &phase_centre_ha_j2000);
+
+    //                 let angle = -2.0 * PI * uvw.w * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+    //                 let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
+    //                 let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
+
+    //                 if ant1_idx == 0 && ant2_idx == 1 {
+    //                     // DELETEME
+    //                     let origin = XyzGeodetic {
+    //                         x: 0.0,
+    //                         y: 0.0,
+    //                         z: 0.0,
+    //                     };
+    //                     let xyz1 = tiles_xyz_geod[ant1_idx].clone() - origin.clone();
+    //                     let uvw1 = UVW::from_xyz(&xyz1, &phase_centre_ha);
+    //                     let xyz2 = tiles_xyz_geod[ant2_idx].clone() - origin.clone();
+    //                     let uvw2 = UVW::from_xyz(&xyz2, &phase_centre_ha);
+
+    //                     // /DELETEME
+
+    //                     dbg!(freq_hz, uvw1, uvw2);
+    //                 }
+
+    //                 let vis_re = *re;
+    //                 *re = cos_angle * vis_re - sin_angle * *im;
+    //                 *im = sin_angle * vis_re + cos_angle * *im;
+    //             })
+    //         });
+    //     }
+
+    //     correction_progress.inc(1);
+    // });
 
     correction_progress.finish();
 
@@ -321,14 +476,18 @@ mod tests {
 
     use super::{correct_cable_lengths, correct_geometry, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S};
     use float_cmp::{approx_eq, F32Margin};
-    use mwalib::CorrelatorContext;
+    use hifitime::Epoch;
+    use mwalib::{
+        CorrelatorContext, MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS, MWA_LONGITUDE_RADIANS,
+    };
     use std::f64::consts::PI;
 
     use crate::{
+        constants::HIFITIME_GPS_FACTOR,
         context_to_baseline_imgsets,
         corrections::_get_all_freqs_hz,
         cxx_aoflagger_new, get_flaggable_timesteps,
-        pos::{RADec, XyzGeodetic, UVW},
+        pos::{earth::LatLng, precess::precess_time, RADec, XyzGeodetic, UVW},
     };
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
@@ -650,6 +809,8 @@ mod tests {
         assert_eq!(img_timestep_idxs.len(), 4);
         let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
 
+        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();    
+
         let all_freqs_hz = _get_all_freqs_hz(&context, img_coarse_chan_idxs);
 
         let aoflagger = unsafe { cxx_aoflagger_new() };
@@ -657,9 +818,15 @@ mod tests {
         let width = img_timestep_idxs.len();
         let stride = (((width - 1) / 8) + 1) * 8;
 
-        let phase_center_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
-        let lst_rad = context.metafits_context.lst_rad;
-        let phase_center_ha = phase_center_ra.to_hadec(lst_rad);
+        let array_pos = LatLng {
+            latitude_rad: MWA_LATITUDE_RADIANS,
+            longitude_rad: MWA_LONGITUDE_RADIANS,
+            height_metres: MWA_ALTITUDE_METRES,
+        };
+
+        let phase_centre_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+        // let lst_rad = context.metafits_context.lst_rad;
+        // let phase_centre_ha = phase_centre_ra.to_hadec(lst_rad);
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwalib(&context.metafits_context);
 
         let mut baseline_imgsets = context_to_baseline_imgsets(
@@ -696,20 +863,66 @@ mod tests {
         assert_eq!(viz_5_yy_3_3_re as f32, 0x0dec16 as f32);
         assert_eq!(viz_5_yy_3_3_im as f32, -0x0dec17 as f32);
 
+        let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
+
+        // timestep 0
+        let timestep_0 = &context.timesteps[img_timestep_idxs[0]];
+        let epoch_0 = Epoch::from_tai_seconds(
+            (timestep_0.gps_time_ms as f64 / 1000.0)
+                + 19.0
+                + HIFITIME_GPS_FACTOR
+                + integration_time_s / 2.0,
+        );
+        let prec_info_0 = precess_time(
+            &phase_centre_ra,
+            &epoch_0,
+            array_pos.longitude_rad,
+            array_pos.latitude_rad,
+        );
+        let phase_centre_ha_j2000_0 = phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
+        let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
+        // timestep 3
+        let timestep_3 = &context.timesteps[img_timestep_idxs[3]];
+        let epoch_3 = Epoch::from_tai_seconds(
+            (timestep_3.gps_time_ms as f64 / 1000.0)
+                + 19.0
+                + HIFITIME_GPS_FACTOR
+                + integration_time_s / 2.0,
+        );
+        let prec_info_3 = precess_time(
+            &phase_centre_ra,
+            &epoch_3,
+            array_pos.longitude_rad,
+            array_pos.latitude_rad,
+        );
+        let phase_centre_ha_j2000_3 = phase_centre_ra.to_hadec(prec_info_3.lmst_j2000);
+        let tiles_xyz_precessed_3 = prec_info_3.precess_xyz_parallel(&tiles_xyz_geod);
+
         // baseline 5
         let bl_5 = &context.metafits_context.baselines[5];
-        let w_5 = UVW::from_xyz(
-            &(tiles_xyz_geod[bl_5.ant1_index].clone() - &tiles_xyz_geod[bl_5.ant2_index]),
-            &phase_center_ha,
-        )
-        .w;
+
+        // baseline 5, timestep 0
+        let xyz_5_0 = tiles_xyz_precessed_0[bl_5.ant1_index].clone()
+            - &tiles_xyz_precessed_0[bl_5.ant2_index];
+        let w_5_0 = UVW::from_xyz(&xyz_5_0, &phase_centre_ha_j2000_0).w;
+        // baseline 5, timestep 3
+        let xyz_5_3 = tiles_xyz_precessed_3[bl_5.ant1_index].clone()
+            - &tiles_xyz_precessed_3[bl_5.ant2_index];
+        let w_5_3 = UVW::from_xyz(&xyz_5_3, &phase_centre_ha_j2000_3).w;
 
         let angle_5_0 =
-            -2.0 * PI * w_5 * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * w_5_0 * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
         let angle_5_3 =
-            -2.0 * PI * w_5 * (all_freqs_hz[3] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+            -2.0 * PI * w_5_3 * (all_freqs_hz[3] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
 
-        correct_geometry(&context, &mut baseline_imgsets, img_coarse_chan_idxs);
+        correct_geometry(
+            &context,
+            &baseline_idxs,
+            &mut baseline_imgsets,
+            img_coarse_chan_idxs,
+            &img_timestep_idxs,
+            None,
+        );
 
         // there should be no difference in baseline 0
         test_imgset_val!(baseline_imgsets[0], 0, 0, 0, viz_0_xx_0_0_re);

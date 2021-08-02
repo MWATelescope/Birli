@@ -4,9 +4,16 @@ use log::{debug, info, trace};
 use std::{env, ffi::OsString, fmt::Debug, path::Path};
 
 use birli::{
-    context_to_baseline_imgsets, correct_cable_lengths, corrections::correct_geometry,
+    constants::{
+        COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
+    },
+    context_to_baseline_imgsets, correct_cable_lengths,
+    corrections::correct_geometry,
     cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags, get_aoflagger_version_string,
-    get_flaggable_timesteps, init_baseline_flagmasks, io::write_uvfits, write_flags,
+    get_flaggable_timesteps, init_baseline_flagmasks,
+    io::write_uvfits,
+    pos::earth::LatLng,
+    write_flags,
 };
 // use birli::util::{dump_flagmask, dump_imgset};
 use mwalib::{CorrelatorContext, GeometricDelaysApplied};
@@ -62,6 +69,13 @@ where
                 .required(false)
                 .help("Do not perform geometric length corrections.")
         )
+        .arg(
+            Arg::with_name("emulate-cotter")
+                .long("emulate-cotter")
+                .takes_value(false)
+                .required(false)
+                .help("Use Cotter's value for array position instead of MWAlib for direct comparison with Cotter.")
+        )
         // TODO: implement specify flag strategy
         // .arg(
         //     Arg::with_name("flag-strategy")
@@ -95,7 +109,8 @@ where
             Err(err) => panic!("unable to determine flaggable timesteps: {}", err),
         };
         trace!("img_timestep_idxs: {:?}", img_timestep_idxs);
-
+        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+            
         let antenna_flags = get_antenna_flags(&context);
         // trace!("antenna_flags: {:?}", antenna_flags);
         trace!(
@@ -156,6 +171,16 @@ where
             true,
         );
 
+        let array_pos = if aoflagger_matches.is_present("emulate-cotter") {
+            Some(LatLng {
+                longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
+                latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
+                height_metres: COTTER_MWA_HEIGHT_METRES,
+            })
+        } else {
+            None
+        };
+
         // perform geometric delaysq if user has not disabled it, and they haven't aleady beeen applied.
         let no_geometric_delays = aoflagger_matches.is_present("no-geometric-delay");
         let geometric_delays_applied = context.metafits_context.geometric_delays_applied;
@@ -166,7 +191,14 @@ where
                     "Applying geometric delays. applied: {:?}, desired: {}",
                     geometric_delays_applied, !no_geometric_delays
                 );
-                correct_geometry(&context, &mut baseline_imgsets, img_coarse_chan_idxs);
+                correct_geometry(
+                    &context,
+                    &baseline_idxs,
+                    &mut baseline_imgsets,
+                    img_coarse_chan_idxs,
+                    &img_timestep_idxs,
+                    array_pos.clone(),
+                );
             }
             (..) => {
                 debug!(
@@ -191,7 +223,6 @@ where
         // output uvfits
 
         if let Some(uvfits_out) = uvfits_out {
-            let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
             write_uvfits(
                 Path::new(uvfits_out),
                 &context,
@@ -200,6 +231,7 @@ where
                 &baseline_flagmasks,
                 &img_timestep_idxs,
                 &img_coarse_chan_idxs,
+                array_pos.clone(),
             )
             .unwrap();
         }

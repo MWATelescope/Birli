@@ -17,7 +17,7 @@ use super::lmn::LMN;
 
 /// A struct containing a Right Ascension and Declination. All units are in
 /// radians.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Copy)]
 #[allow(clippy::upper_case_acronyms)]
 pub struct RADec {
     /// Right ascension \[radians\]

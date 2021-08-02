@@ -13,6 +13,10 @@ pub mod lmn;
 pub mod radec;
 pub mod uvw;
 pub mod xyz;
+pub mod pal;
+pub mod precess;
+pub mod earth;
+pub mod error;
 
 // Re-exports.
 pub use azel::AzEl;

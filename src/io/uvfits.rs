@@ -18,16 +18,9 @@ use log::warn;
 // use ndarray::prelude::*;
 
 use super::error::UvfitsWriteError;
-use crate::{
-    constants::HIFITIME_GPS_FACTOR,
-    cxx_aoflagger::ffi::{CxxFlagMask, CxxImageSet},
-    pos::{RADec, XyzGeocentric, XyzGeodetic, ENH, UVW},
-};
+use crate::{constants::HIFITIME_GPS_FACTOR, cxx_aoflagger::ffi::{CxxFlagMask, CxxImageSet}, pos::{ENH, RADec, UVW, XyzGeocentric, XyzGeodetic, earth::LatLng, precess::precess_time, xyz}};
 use cxx::UniquePtr;
-use mwalib::{
-    fitsio, fitsio_sys, Baseline, CorrelatorContext, MetafitsContext,
-    SPEED_OF_LIGHT_IN_VACUUM_M_PER_S,
-};
+use mwalib::{Baseline, CorrelatorContext, MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS, MWA_LONGITUDE_RADIANS, MetafitsContext, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S, fitsio, fitsio_sys};
 
 /// From a `hifitime` [Epoch], get a formatted date string with the hours,
 /// minutes and seconds set to 0.
@@ -95,12 +88,18 @@ pub struct UvfitsWriter<'a> {
     /// The number of uvfits rows that have currently been written.
     current_num_rows: usize,
 
-    /// The frequency at the centre of the bandwidth \[Hz\].
+    /// The center frequency of the center fine channel \[Hz\].
     centre_freq: f64,
 
     /// A `hifitime` [Epoch] struct associated with the first timestep of the
     /// data.
     start_epoch: Epoch,
+
+    /// The RA/Dec where this observation is phased to
+    phase_centre: RADec,
+
+    /// Array Position, geocentric
+    array_pos: LatLng
 }
 
 impl<'a> UvfitsWriter<'a> {
@@ -147,8 +146,9 @@ impl<'a> UvfitsWriter<'a> {
         fine_chan_width_hz: f64,
         centre_freq_hz: f64,
         centre_freq_chan: usize,
-        phase_centre: &RADec,
+        phase_centre: RADec,
         obs_name: Option<&str>,
+        array_pos: Option<LatLng>,
     ) -> Result<Self, UvfitsWriteError> {
         // Delete any file that already exists.
         if filename.exists() {
@@ -288,12 +288,30 @@ impl<'a> UvfitsWriter<'a> {
             format!("v{}", env!("CARGO_PKG_VERSION")),
         )?;
 
+        let array_pos = match array_pos {
+            Some(pos) => pos,
+            None => {
+                warn!("we are using MWA lat / lng / height from mwalib for array position");
+                // The results here are slightly different to those given by cotter. 
+                // This is at least partly due to different constants (the altitude is
+                // definitely slightly different), but possibly also because ERFA is
+                // more accurate than cotter's "homebrewed" Geodetic2XYZ.
+                LatLng {
+                    longitude_rad: MWA_LONGITUDE_RADIANS,
+                    latitude_rad: MWA_LATITUDE_RADIANS,
+                    height_metres: MWA_ALTITUDE_METRES,
+                }
+            }
+        };
+
         Ok(Self {
             path: filename,
             total_num_rows,
             current_num_rows: 0,
             centre_freq: centre_freq_hz,
             start_epoch,
+            phase_centre,
+            array_pos
         })
     }
 
@@ -310,6 +328,8 @@ impl<'a> UvfitsWriter<'a> {
         context: &CorrelatorContext,
         img_timestep_idxs: &[usize],
         img_coarse_chan_idxs: &[usize],
+        img_baseline_idxs: &[usize],
+        array_pos: Option<LatLng>,
     ) -> Result<Self, UvfitsWriteError> {
         let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
         let num_img_coarse_chans = img_coarse_chan_idxs.len();
@@ -321,14 +341,15 @@ impl<'a> UvfitsWriter<'a> {
         Self::new(
             filename,
             img_timestep_idxs.len(),
-            context.metafits_context.num_baselines,
+            img_baseline_idxs.len(),
             num_img_chans,
             start_epoch,
             context.metafits_context.corr_fine_chan_width_hz as f64,
             context.metafits_context.centre_freq_hz as f64,
             centre_freq_chan,
-            &phase_centre,
+            phase_centre,
             Some(&context.metafits_context.obs_name.as_str()),
+            array_pos,
         )
     }
 
@@ -367,7 +388,6 @@ impl<'a> UvfitsWriter<'a> {
         self,
         antenna_names: &[T],
         positions: &[XyzGeodetic],
-        array_xyz_geoc: Option<XyzGeocentric>,
     ) -> Result<(), UvfitsWriteError> {
         if self.current_num_rows != self.total_num_rows {
             return Err(UvfitsWriteError::NotEnoughRowsWritten {
@@ -416,33 +436,11 @@ impl<'a> UvfitsWriter<'a> {
         // Open the newly-created HDU.
         let hdu = uvfits.hdu(1)?;
 
-        let array_xyz_geoc = match array_xyz_geoc {
-            Some(xyz) => xyz,
-            None => {
-                warn!("we are using MWA lat / lng / height from mwalib for array xyz");
-                // If no Geocentric array position provided,
-                // Set ARRAYX, Y and Z to the MWA's coordinates in XYZ (geocentric). The
-                // results here are slightly different to those given by cotter. This is
-                // at least partly due to different constants (the altitude is
-                // definitely slightly different), but possibly also because ERFA is
-                // more accurate than cotter's "homebrewed" Geodetic2XYZ.
+        let array_xyz = self.array_pos.to_geocentric_wgs84()?;
 
-                match XyzGeocentric::get_geocentric_vector(
-                    mwalib::MWA_LONGITUDE_RADIANS,
-                    mwalib::MWA_LATITUDE_RADIANS,
-                    mwalib::MWA_ALTITUDE_METRES,
-                ) {
-                    Ok(xyz) => xyz,
-                    Err(err) => {
-                        return Err(UvfitsWriteError::from(err));
-                    }
-                }
-            }
-        };
-
-        hdu.write_key(&mut uvfits, "ARRAYX", array_xyz_geoc.x)?;
-        hdu.write_key(&mut uvfits, "ARRAYY", array_xyz_geoc.y)?;
-        hdu.write_key(&mut uvfits, "ARRAYZ", array_xyz_geoc.z)?;
+        hdu.write_key(&mut uvfits, "ARRAYX", array_xyz.x)?;
+        hdu.write_key(&mut uvfits, "ARRAYY", array_xyz.y)?;
+        hdu.write_key(&mut uvfits, "ARRAYZ", array_xyz.z)?;
 
         hdu.write_key(&mut uvfits, "FREQ", self.centre_freq)?;
 
@@ -619,9 +617,6 @@ impl<'a> UvfitsWriter<'a> {
     pub fn write_ants_from_mwalib(
         self,
         context: &MetafitsContext,
-        latitude_rad: Option<f64>,
-        // longitude_rad: Option<f64>,
-        // height_meters: Option<f64>
     ) -> Result<(), UvfitsWriteError> {
         let (antenna_names, positions): (Vec<String>, Vec<XyzGeodetic>) = context
             .antennas
@@ -632,14 +627,11 @@ impl<'a> UvfitsWriter<'a> {
                     n: antenna.north_m,
                     h: antenna.height_m,
                 };
-                let position = match latitude_rad {
-                    Some(rad) => position_enh.to_xyz(rad),
-                    None => position_enh.to_xyz_mwa(),
-                };
+                let position = position_enh.to_xyz(self.array_pos.latitude_rad);
                 (antenna.tile_name.to_owned(), position)
             })
             .unzip();
-        self.write_uvfits_antenna_table(&antenna_names, &positions, None)
+        self.write_uvfits_antenna_table(&antenna_names, &positions)
     }
 
     /// Write a visibility row into the uvfits file.
@@ -754,14 +746,14 @@ impl<'a> UvfitsWriter<'a> {
         assert_eq!(num_baselines, baseline_imgsets.len());
         assert_eq!(num_baselines, baseline_flagmasks.len());
 
-        let phase_center_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
-        let lst_rad = context.metafits_context.lst_rad;
-        let phase_center_ha = phase_center_ra.to_hadec(lst_rad);
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwalib(&context.metafits_context);
 
         let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
         let num_img_coarse_chans = img_coarse_chan_idxs.len();
         let num_img_chans = num_fine_chans_per_coarse * num_img_coarse_chans;
+
+        let num_img_timesteps = img_timestep_idxs.len();
+        assert_eq!(self.total_num_rows, num_img_timesteps * num_baselines);
 
         // Weights are normalized so that default res of 10 kHz, 1s has weight of "1" per sample
 
@@ -796,6 +788,18 @@ impl<'a> UvfitsWriter<'a> {
             let epoch = Epoch::from_tai_seconds(
                 gps_time_s + 19.0 + HIFITIME_GPS_FACTOR + integration_time_s / 2.0,
             );
+
+            let prec_info = precess_time(
+                &self.phase_centre,
+                &epoch,
+                self.array_pos.longitude_rad,
+                self.array_pos.latitude_rad,
+            );
+
+            let tiles_xyz_precessed = prec_info.precess_xyz_parallel(&tiles_xyz_geod);
+
+            let phase_centre_ha_j2000 = self.phase_centre.to_hadec(prec_info.lmst_j2000);
+
             for (&baseline_idx, imgset, flagmask) in
                 izip!(baseline_idxs, baseline_imgsets, baseline_flagmasks)
             {
@@ -819,6 +823,9 @@ impl<'a> UvfitsWriter<'a> {
 
                 let ant1_idx = baseline.ant1_index;
                 let ant2_idx = baseline.ant2_index;
+
+                let baseline_xyz_precessed = tiles_xyz_precessed[ant1_idx].clone() - &tiles_xyz_precessed[ant2_idx];
+                let uvw = UVW::from_xyz(&baseline_xyz_precessed, &phase_centre_ha_j2000);
 
                 // TODO: this is extremely inefficient.
 
@@ -844,11 +851,6 @@ impl<'a> UvfitsWriter<'a> {
                             .collect::<Vec<_>>()
                     })
                     .collect();
-
-                let uvw = UVW::from_xyz(
-                    &(tiles_xyz_geod[ant1_idx].clone() - &tiles_xyz_geod[ant2_idx]),
-                    &phase_center_ha,
-                );
 
                 // TODO: calculate weights
                 let result = self.write_vis(uvfits, &uvw, ant1_idx, ant2_idx, &epoch, &vis.clone());
@@ -878,11 +880,7 @@ mod tests {
 
     use float_cmp::{approx_eq, F32Margin, F64Margin};
 
-    use crate::{
-        constants::{COTTER_MWA_LATITUDE_RADIANS, HIFITIME_GPS_FACTOR},
-        context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags,
-        get_flaggable_timesteps, init_baseline_flagmasks,
-    };
+    use crate::{constants::{COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS, HIFITIME_GPS_FACTOR}, context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags, get_flaggable_timesteps, init_baseline_flagmasks};
 
     use fitsio::{
         errors::check_status as fits_check_status,
@@ -909,8 +907,9 @@ mod tests {
             40e3,
             170e6,
             3,
-            &RADec::new_degrees(0.0, 60.0),
+            RADec::new_degrees(0.0, 60.0),
             Some("test"),
+            None
         )
         .unwrap();
 
@@ -949,7 +948,7 @@ mod tests {
                 z: i as f64 * 3.0,
             })
             .collect();
-        u.write_uvfits_antenna_table(&names, &positions, None)
+        u.write_uvfits_antenna_table(&names, &positions)
             .unwrap();
     }
 
@@ -1469,11 +1468,21 @@ mod tests {
         let timestep_idxs = get_flaggable_timesteps(&context).unwrap();
         let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
 
+        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+
+        let array_pos = Some(LatLng {
+            longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
+            latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
+            height_metres: COTTER_MWA_HEIGHT_METRES,
+        });
+
         let u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
             &context,
             &timestep_idxs,
             &coarse_chan_idxs,
+            &baseline_idxs,
+            array_pos
         )
         .unwrap();
 
@@ -1498,11 +1507,22 @@ mod tests {
         let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
         let img_coarse_chan_idxs = context.common_coarse_chan_indices.clone();
 
+        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+
+        let array_pos = Some(LatLng {
+            longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
+            latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
+            height_metres: COTTER_MWA_HEIGHT_METRES,
+        });
+
         let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
             &context,
             &img_timestep_idxs,
             &img_coarse_chan_idxs,
+            &baseline_idxs,
+            array_pos
+
         )
         .unwrap();
 
@@ -1536,8 +1556,6 @@ mod tests {
             true,
         );
 
-        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-
         u.write_baseline_imgset_flagmasks(
             &mut f,
             &context,
@@ -1549,7 +1567,7 @@ mod tests {
         )
         .unwrap();
 
-        u.write_ants_from_mwalib(&context.metafits_context, Some(COTTER_MWA_LATITUDE_RADIANS))
+        u.write_ants_from_mwalib(&context.metafits_context)
             .unwrap();
 
         drop(f);
