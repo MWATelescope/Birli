@@ -19,3 +19,5 @@ Cargo.lock
 tags
 *.log
 /.history/
+tests/data/__pycache__/common.cpython-38.pyc
+.vscode/*
