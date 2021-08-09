@@ -3,13 +3,13 @@
 use crate::{
     constants::HIFITIME_GPS_FACTOR,
     cxx_aoflagger::ffi::CxxImageSet,
-    pos::{earth::LatLng, precess::precess_time, RADec, XyzGeodetic, UVW},
+    pos::{earth::LatLngHeight, precess::precess_time, RADec, XyzGeodetic, UVW},
 };
 use cxx::UniquePtr;
 use hifitime::Epoch;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::izip;
-use log::{debug, info, trace};
+use log::trace;
 use mwalib::{
     CorrelatorContext, MWAVersion, MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS,
     MWA_LONGITUDE_RADIANS, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S,
@@ -271,7 +271,7 @@ pub fn correct_geometry(
     baseline_imgsets: &mut Vec<UniquePtr<CxxImageSet>>,
     img_coarse_chan_idxs: &[usize],
     img_timestep_idxs: &[usize],
-    array_pos: Option<LatLng>,
+    array_pos: Option<LatLngHeight>,
 ) {
     trace!("start correct_geometry");
 
@@ -282,7 +282,7 @@ pub fn correct_geometry(
             // This is at least partly due to different constants (the altitude is
             // definitely slightly different), but possibly also because ERFA is
             // more accurate than cotter's "homebrewed" Geodetic2XYZ.
-            LatLng {
+            LatLngHeight {
                 longitude_rad: MWA_LONGITUDE_RADIANS,
                 latitude_rad: MWA_LATITUDE_RADIANS,
                 height_metres: MWA_ALTITUDE_METRES,
@@ -298,7 +298,7 @@ pub fn correct_geometry(
     let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
 
     let phase_centre_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
-    let tiles_xyz_geod = XyzGeodetic::get_tiles_mwalib(&context.metafits_context);
+    let tiles_xyz_geod = XyzGeodetic::get_tiles(&context.metafits_context, array_pos.latitude_rad);
 
     // Create a progress bar to show the status of the correction
     let correction_progress =
@@ -398,7 +398,7 @@ mod tests {
         context_to_baseline_imgsets,
         corrections::_get_all_freqs_hz,
         cxx_aoflagger_new, get_flaggable_timesteps,
-        pos::{earth::LatLng, precess::precess_time, RADec, XyzGeodetic, UVW},
+        pos::{earth::LatLngHeight, precess::precess_time, RADec, XyzGeodetic, UVW},
     };
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
@@ -720,7 +720,7 @@ mod tests {
         assert_eq!(img_timestep_idxs.len(), 4);
         let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
 
-        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();    
+        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 
         let all_freqs_hz = _get_all_freqs_hz(&context, img_coarse_chan_idxs);
 
@@ -729,7 +729,7 @@ mod tests {
         let width = img_timestep_idxs.len();
         let stride = (((width - 1) / 8) + 1) * 8;
 
-        let array_pos = LatLng {
+        let array_pos = LatLngHeight {
             latitude_rad: MWA_LATITUDE_RADIANS,
             longitude_rad: MWA_LONGITUDE_RADIANS,
             height_metres: MWA_ALTITUDE_METRES,
@@ -790,7 +790,7 @@ mod tests {
             array_pos.longitude_rad,
             array_pos.latitude_rad,
         );
-        let phase_centre_ha_j2000_0 = phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
+        let phase_centre_ha_j2000_0 = prec_info_0.hadec_j2000.clone(); // phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
         let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
         // timestep 3
         let timestep_3 = &context.timesteps[img_timestep_idxs[3]];
@@ -806,7 +806,7 @@ mod tests {
             array_pos.longitude_rad,
             array_pos.latitude_rad,
         );
-        let phase_centre_ha_j2000_3 = phase_centre_ra.to_hadec(prec_info_3.lmst_j2000);
+        let phase_centre_ha_j2000_3 = prec_info_3.hadec_j2000.clone(); // phase_centre_ra.to_hadec(prec_info_3.lmst_j2000);
         let tiles_xyz_precessed_3 = prec_info_3.precess_xyz_parallel(&tiles_xyz_geod);
 
         // baseline 5

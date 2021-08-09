@@ -81,6 +81,18 @@ impl UVW {
     }
 }
 
+impl std::ops::Sub<UVW> for UVW {
+    type Output = Self;
+
+    fn sub(self, rhs: UVW) -> Self {
+        UVW {
+            u: self.u - rhs.u,
+            v: self.v - rhs.v,
+            w: self.w - rhs.w,
+        }
+    }
+}
+
 impl std::ops::Mul<f64> for UVW {
     type Output = Self;
 

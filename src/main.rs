@@ -12,7 +12,7 @@ use birli::{
     cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags, get_aoflagger_version_string,
     get_flaggable_timesteps, init_baseline_flagmasks,
     io::write_uvfits,
-    pos::earth::LatLng,
+    pos::earth::LatLngHeight,
     write_flags,
 };
 // use birli::util::{dump_flagmask, dump_imgset};
@@ -172,7 +172,7 @@ where
         );
 
         let array_pos = if aoflagger_matches.is_present("emulate-cotter") {
-            Some(LatLng {
+            Some(LatLngHeight {
                 longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
                 latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
                 height_metres: COTTER_MWA_HEIGHT_METRES,
@@ -231,7 +231,7 @@ where
                 &baseline_flagmasks,
                 &img_timestep_idxs,
                 &img_coarse_chan_idxs,
-                array_pos.clone(),
+                array_pos,
             )
             .unwrap();
         }
@@ -249,10 +249,22 @@ fn main() {
 mod tests {
     use super::main_with_args;
     use birli::{get_aoflagger_version_string, io::mwaf::FlagFileSet};
+    use fitsio::errors::check_status as fits_check_status;
+    use float_cmp::{approx_eq, F32Margin, F64Margin};
     use itertools::izip;
-    use mwalib::CorrelatorContext;
-    use std::env;
+    use mwalib::{
+        CorrelatorContext, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
+        get_required_fits_key,
+    };
+    use regex::Regex;
+    use std::{
+        collections::{BTreeMap, HashSet},
+        env,
+        path::PathBuf,
+    };
     use tempfile::tempdir;
+
+    use lexical::parse;
 
     #[test]
     fn main_with_version_doesnt_crash() {
@@ -363,7 +375,6 @@ mod tests {
             mwaf_path_template.to_str().unwrap(),
         ];
         args.extend_from_slice(&gpufits_paths);
-        dbg!(&args);
 
         main_with_args(&args);
 
@@ -419,7 +430,6 @@ mod tests {
             "--no-geometric-delay",
         ];
         args.extend_from_slice(&gpufits_paths);
-        dbg!(&args);
 
         main_with_args(&args);
 

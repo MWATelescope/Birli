@@ -7,16 +7,16 @@
 //! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
 pub mod azel;
+pub mod earth;
 pub mod enh;
+pub mod error;
 pub mod hadec;
 pub mod lmn;
+pub mod pal;
+pub mod precess;
 pub mod radec;
 pub mod uvw;
 pub mod xyz;
-pub mod pal;
-pub mod precess;
-pub mod earth;
-pub mod error;
 
 // Re-exports.
 pub use azel::AzEl;

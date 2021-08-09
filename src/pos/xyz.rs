@@ -19,7 +19,7 @@ use mwalib::{MetafitsContext, MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS, MWA_LON
 // use rayon::prelude::*;
 use super::error::ErfaError;
 
-use super::{ENH, HADec, UVW};
+use super::{HADec, ENH, UVW};
 
 /// The geodetic (x,y,z) coordinates of an antenna (a.k.a. tile or station). All
 /// units are in metres.
@@ -70,6 +70,32 @@ impl XyzGeodetic {
 
     /// For each tile listed in an mwalib context, calculate a [XyzGeodetic]
     /// coordinate.
+    ///
+    /// Note that the RF inputs are ordered by antenna number, **not** the
+    /// "input"; e.g. in the metafits file, Tile104 is often the first tile
+    /// listed ("input" 0), Tile103 second ("input" 2), so the first baseline
+    /// would naively be between Tile104 and Tile103.
+    pub fn get_tiles(context: &MetafitsContext, latitude_rad: f64) -> Vec<Self> {
+        context
+            .rf_inputs
+            .iter()
+            // There is an RF input for both tile polarisations. The ENH
+            // coordinates are the same for both polarisations of a tile; ignore
+            // the RF input if it's associated with Y.
+            .filter(|rf| matches!(rf.pol, mwalib::Pol::Y))
+            .map(|rf| {
+                ENH {
+                    e: rf.east_m,
+                    n: rf.north_m,
+                    h: rf.height_m,
+                }
+                .to_xyz(latitude_rad)
+            })
+            .collect()
+    }
+
+    /// For each tile listed in an mwalib context, calculate a [XyzGeodetic]
+    /// coordinate. Use default MWALib's MWA position to translate to xyz.
     ///
     /// Note that the RF inputs are ordered by antenna number, **not** the
     /// "input"; e.g. in the metafits file, Tile104 is often the first tile
@@ -149,24 +175,24 @@ impl XyzGeodetic {
         )
     }
 
+    /// Convert to an [`XyzBaseline`]
+    ///
     pub fn to_baseline(&self) -> XyzBaseline {
         XyzBaseline {
             x: self.x,
             y: self.y,
-            z: self.z
+            z: self.z,
         }
     }
 }
 
-
 /// Convert [XyzGeodetic] coordinates to [UVW]s without having to form
 /// [XyzBaseline]s first.
-pub fn xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
+pub fn tile_xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
     let (s_ha, c_ha) = phase_centre.ha.sin_cos();
     let (s_dec, c_dec) = phase_centre.dec.sin_cos();
     // Get a UVW for each tile.
-    let tile_uvws: Vec<UVW> = xyzs
-        .iter()
+    xyzs.iter()
         .map(|xyz| {
             let bl = XyzBaseline {
                 x: xyz.x,
@@ -175,13 +201,20 @@ pub fn xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
             };
             UVW::from_xyz_inner(&bl, s_ha, c_ha, s_dec, c_dec)
         })
-        .collect();
+        .collect()
+}
+
+/// Convert [XyzGeodetic] coordinates to [UVW]s without having to form
+/// [XyzBaseline]s first.
+pub fn xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
+    // Get a UVW for each tile.
+    let tile_uvws: Vec<UVW> = tile_xyzs_to_uvws(xyzs, phase_centre);
     // Take the difference of every pair of UVWs.
     let num_tiles = xyzs.len();
     let num_baselines = (num_tiles * (num_tiles - 1)) / 2;
     let mut bl_uvws = Vec::with_capacity(num_baselines);
     for i in 0..num_tiles {
-        for j in i + 0..num_tiles {
+        for j in i..num_tiles {
             let tile_1 = tile_uvws[i];
             let tile_2 = tile_uvws[j];
             let uvw_bl = UVW {
@@ -267,11 +300,12 @@ pub struct XyzBaseline {
 }
 
 impl XyzBaseline {
+    /// Convert to an [`XyzGeodetic`]
     pub fn to_geodetic(&self) -> XyzGeodetic {
         XyzGeodetic {
             x: self.x,
             y: self.y,
-            z: self.z
+            z: self.z,
         }
     }
 }
@@ -429,7 +463,6 @@ pub fn geocentric_to_geodetic_mwa(
 //         .collect();
 //     Ok(geodetics)
 // }
-
 
 #[cfg(test)]
 mod tests {

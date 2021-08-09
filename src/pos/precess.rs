@@ -8,9 +8,9 @@
 
 use std::f64::consts::TAU;
 
+use super::{pal, HADec, RADec, XyzGeodetic};
 use hifitime::Epoch;
 use rayon::prelude::*;
-use super::{HADec, RADec, XyzGeodetic, pal};
 
 #[derive(Debug)]
 pub(crate) struct PrecessionInfo {
@@ -31,7 +31,14 @@ pub(crate) struct PrecessionInfo {
 }
 
 impl PrecessionInfo {
-    fn _precess_xyz(&self, xyz: XyzGeodetic, sep: f64, cep: f64, s2000: f64, c2000: f64) -> XyzGeodetic {
+    fn _precess_xyz(
+        &self,
+        xyz: XyzGeodetic,
+        sep: f64,
+        cep: f64,
+        s2000: f64,
+        c2000: f64,
+    ) -> XyzGeodetic {
         // rotate to frame with x axis at zero RA
         let xpr = cep * xyz.x - sep * xyz.y;
         let ypr = sep * xyz.x + cep * xyz.y;
@@ -49,11 +56,12 @@ impl PrecessionInfo {
             z: zpr2,
         }
     }
-    pub(crate) fn precess_xyz(&self, xyz: XyzGeodetic) -> XyzGeodetic {
-        let (sep, cep) = self.lmst.sin_cos();
-        let (s2000, c2000) = self.lmst_j2000.sin_cos();
-        self._precess_xyz(xyz, sep, cep, s2000, c2000)
-    }
+
+    // pub(crate) fn precess_xyz(&self, xyz: XyzGeodetic) -> XyzGeodetic {
+    //     let (sep, cep) = self.lmst.sin_cos();
+    //     let (s2000, c2000) = self.lmst_j2000.sin_cos();
+    //     self._precess_xyz(xyz, sep, cep, s2000, c2000)
+    // }
 
     // Blatently stolen from cotter.
     pub(crate) fn precess_xyz_parallel(&self, xyzs: &[XyzGeodetic]) -> Vec<XyzGeodetic> {
@@ -69,7 +77,8 @@ impl PrecessionInfo {
 }
 
 pub(crate) fn get_lmst(time: &Epoch, array_longitude_rad: f64) -> f64 {
-    let gmst = pal::palGmst(time.as_mjd_utc_days());
+    let mjd = time.as_mjd_utc_days();
+    let gmst = pal::palGmst(mjd);
     (gmst + array_longitude_rad) % TAU
 }
 
@@ -89,7 +98,7 @@ pub(crate) fn precess_time(
     let j2000 = 2000.0;
     let radec_aber = aber_radec_rad(j2000, mjd, phase_centre);
     let mut rotation_matrix = [[0.0; 3]; 3];
-    pal::palPrenut(j2000, mjd, rotation_matrix.as_mut_ptr());
+    unsafe { pal::palPrenut(j2000, mjd, rotation_matrix.as_mut_ptr()) };
 
     // Transpose the rotation matrix.
     let mut rotation_matrix = {
@@ -119,11 +128,11 @@ fn aber_radec_rad(eq: f64, mjd: f64, radec: &RADec) -> RADec {
     let mut v1 = [0.0; 3];
     let mut v2 = [0.0; 3];
 
-    pal::palDcs2c(radec.ra, radec.dec, v1.as_mut_ptr());
+    unsafe { pal::palDcs2c(radec.ra, radec.dec, v1.as_mut_ptr()) };
     stelaber(eq, mjd, &mut v1, &mut v2);
     let mut ra2 = 0.0;
     let mut dec2 = 0.0;
-    pal::palDcc2s(v2.as_mut_ptr(), &mut ra2, &mut dec2);
+    unsafe { pal::palDcc2s(v2.as_mut_ptr(), &mut ra2, &mut dec2) };
     ra2 = pal::palDranrm(ra2);
 
     RADec::new(ra2, dec2)
@@ -136,7 +145,7 @@ fn stelaber(eq: f64, mjd: f64, v1: &mut [f64; 3], v2: &mut [f64; 3]) {
     let mut v2un = [0.0; 3];
     let mut abv = [0.0; 3];
 
-    pal::palMappa(eq, mjd, amprms.as_mut_ptr());
+    unsafe { pal::palMappa(eq, mjd, amprms.as_mut_ptr()) };
 
     /* Unpack scalar and vector parameters */
     let ab1 = &amprms[11];
@@ -145,17 +154,17 @@ fn stelaber(eq: f64, mjd: f64, v1: &mut [f64; 3], v2: &mut [f64; 3]) {
     abv[2] = amprms[10];
 
     let mut w = 0.0;
-    pal::palDvn(v1.as_mut_ptr(), v1n.as_mut_ptr(), &mut w);
+    unsafe { pal::palDvn(v1.as_mut_ptr(), v1n.as_mut_ptr(), &mut w) };
 
     /* Aberration (normalization omitted) */
-    let p1dv = pal::palDvdv(v1n.as_mut_ptr(), abv.as_mut_ptr());
+    let p1dv = unsafe { pal::palDvdv(v1n.as_mut_ptr(), abv.as_mut_ptr()) };
     w = 1.0 + p1dv / (ab1 + 1.0);
     v2un[0] = ab1 * v1n[0] + w * abv[0];
     v2un[1] = ab1 * v1n[1] + w * abv[1];
     v2un[2] = ab1 * v1n[2] + w * abv[2];
 
     /* Normalize */
-    pal::palDvn(v2un.as_mut_ptr(), v2.as_mut_ptr(), &mut w);
+    unsafe { pal::palDvn(v2un.as_mut_ptr(), v2.as_mut_ptr(), &mut w) };
 }
 
 /// The return type of `hadec_j2000`. All values are in radians.
@@ -184,15 +193,19 @@ fn rotate_radec(rotation_matrix: &mut [[f64; 3]; 3], ra: f64, dec: f64) -> (f64,
     let mut v1 = [0.0; 3];
     let mut v2 = [0.0; 3];
 
-    pal::palDcs2c(ra, dec, v1.as_mut_ptr());
-    pal::palDmxv(
-        rotation_matrix.as_mut_ptr(),
-        v1.as_mut_ptr(),
-        v2.as_mut_ptr(),
-    );
+    unsafe {
+        pal::palDcs2c(ra, dec, v1.as_mut_ptr());
+        pal::palDmxv(
+            rotation_matrix.as_mut_ptr(),
+            v1.as_mut_ptr(),
+            v2.as_mut_ptr(),
+        )
+    };
     let mut ra2 = 0.0;
     let mut dec2 = 0.0;
-    pal::palDcc2s(v2.as_mut_ptr(), &mut ra2, &mut dec2);
+    unsafe {
+        pal::palDcc2s(v2.as_mut_ptr(), &mut ra2, &mut dec2);
+    }
     ra2 = pal::palDranrm(ra2);
 
     (ra2, dec2)
