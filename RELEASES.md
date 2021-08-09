@@ -1,5 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.1.7 (2021-08-09)
+
+- Bug fixes for uvfits output and geometric correction
+- Cotter emulation for validation of uvfits against cotter output
+
 # Version 0.1.6 (2021-07-22)
 
 - basically just testing that release automation is working

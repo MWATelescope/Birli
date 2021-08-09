@@ -754,7 +754,6 @@ mod tests {
 
         args.extend_from_slice(&gpufits_paths);
 
-        // TODO: actually call main
         main_with_args(&args);
         // let uvfits_path = PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.none.uvfits");
         compare_uvfits_with_csv(uvfits_path, expected_csv_path, F32Margin::default());
@@ -783,7 +782,6 @@ mod tests {
 
         args.extend_from_slice(&gpufits_paths);
 
-        // TODO: actually call main
         main_with_args(&args);
         // let uvfits_path = PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.cable.uvfits");
         compare_uvfits_with_csv(
@@ -816,7 +814,6 @@ mod tests {
 
         args.extend_from_slice(&gpufits_paths);
 
-        // TODO: actually call main
         main_with_args(&args);
         // let uvfits_path = PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.geom.uvfits");
         compare_uvfits_with_csv(
@@ -848,7 +845,6 @@ mod tests {
 
         args.extend_from_slice(&gpufits_paths);
 
-        // TODO: actually call main
         main_with_args(&args);
         // let uvfits_path =
         //     PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.corrected.uvfits");
