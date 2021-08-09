@@ -321,6 +321,9 @@ pub fn correct_geometry(
             gps_time_s + 19.0 + HIFITIME_GPS_FACTOR + integration_time_s / 2.0,
         );
 
+        // let date_mjd_utc = epoch.as_mjd_utc_days();
+        // let date_mjd_tai = epoch.as_mjd_tai_days();
+
         let prec_info = precess_time(
             &phase_centre_ra,
             &epoch,
@@ -329,7 +332,6 @@ pub fn correct_geometry(
         );
 
         let tiles_xyz_precessed = prec_info.precess_xyz_parallel(&tiles_xyz_geod);
-        let phase_centre_ha_j2000 = phase_centre_ra.to_hadec(prec_info.lmst_j2000);
 
         for (&baseline_idx, imgset) in izip!(baseline_idxs, baseline_imgsets.iter_mut()) {
             let imgset_stride: usize = imgset.HorizontalStride();
@@ -340,19 +342,21 @@ pub fn correct_geometry(
 
             let baseline_xyz_precessed =
                 tiles_xyz_precessed[ant1_idx].clone() - &tiles_xyz_precessed[ant2_idx];
-
-            let uvw = UVW::from_xyz(&baseline_xyz_precessed, &phase_centre_ha_j2000);
+            let uvw = UVW::from_xyz(&baseline_xyz_precessed, &prec_info.hadec_j2000);
 
             for pol_idx in 0..4 {
                 let imgset_buf_re: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx) };
                 let imgset_buf_im: &mut [f32] =
                     unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx + 1) };
 
-                let timestep_idx_range =
-                    (img_timestep_idx * imgset_stride)..((img_timestep_idx + 1) * imgset_stride);
-
-                let imgset_timestep_chunk_re = &mut imgset_buf_re[timestep_idx_range.clone()];
-                let imgset_timestep_chunk_im = &mut imgset_buf_im[timestep_idx_range.clone()];
+                let imgset_timestep_chunk_re = &mut imgset_buf_re
+                    .iter_mut()
+                    .skip(img_timestep_idx)
+                    .step_by(imgset_stride);
+                let imgset_timestep_chunk_im = &mut imgset_buf_im
+                    .iter_mut()
+                    .skip(img_timestep_idx)
+                    .step_by(imgset_stride);
 
                 for (freq_hz, re, im) in izip!(
                     &all_freqs_hz,
@@ -360,12 +364,12 @@ pub fn correct_geometry(
                     imgset_timestep_chunk_im
                 ) {
                     let angle = -2.0 * PI * uvw.w * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
-                    let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
-                    let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
+                    let (sin_angle, cos_angle) = angle.sin_cos();
 
-                    let vis_re = *re;
-                    *re = cos_angle * vis_re - sin_angle * *im;
-                    *im = sin_angle * vis_re + cos_angle * *im;
+                    let vis_re = *re as f64;
+                    let vis_im = *im as f64;
+                    *re = (cos_angle * vis_re - sin_angle * vis_im) as f32;
+                    *im = (sin_angle * vis_re + cos_angle * vis_im) as f32;
                 }
             }
             correction_progress.inc(1);
