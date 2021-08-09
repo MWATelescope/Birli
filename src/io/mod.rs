@@ -39,9 +39,9 @@ pub fn write_uvfits<'a>(
 
     let mut uvfits_writer = UvfitsWriter::from_mwalib(
         filename,
-        &context,
-        &img_timestep_idxs,
-        &img_coarse_chan_idxs,
+        context,
+        img_timestep_idxs,
+        img_coarse_chan_idxs,
         baseline_idxs,
         array_pos,
     )?;
@@ -50,12 +50,12 @@ pub fn write_uvfits<'a>(
 
     uvfits_writer.write_baseline_imgset_flagmasks(
         &mut fits_file,
-        &context,
-        &baseline_idxs,
-        &baseline_imgsets,
-        &baseline_flagmasks,
-        &img_timestep_idxs,
-        &img_coarse_chan_idxs,
+        context,
+        baseline_idxs,
+        baseline_imgsets,
+        baseline_flagmasks,
+        img_timestep_idxs,
+        img_coarse_chan_idxs,
     )?;
 
     uvfits_writer.write_ants_from_mwalib(&context.metafits_context)?;
@@ -115,7 +115,7 @@ mod tests {
         let mut baseline_flagmasks = init_baseline_flagmasks(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             Some(get_antenna_flags(&context)),
         );
@@ -124,7 +124,7 @@ mod tests {
         let baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             Some(&mut baseline_flagmasks),
         );
@@ -135,7 +135,7 @@ mod tests {
         // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
         flag_imgsets_existing(
             &aoflagger,
-            &strategy_filename,
+            strategy_filename,
             &baseline_imgsets,
             &mut baseline_flagmasks,
             true,
@@ -151,7 +151,7 @@ mod tests {
             &baseline_imgsets,
             &baseline_flagmasks,
             &img_timestep_idxs,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             None,
         )
         .unwrap();

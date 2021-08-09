@@ -303,7 +303,7 @@ mod tests {
         let baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             None,
         );
@@ -322,12 +322,12 @@ mod tests {
         let baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             None,
         );
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
-        let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
+        let baseline_flagmasks = flag_imgsets(&aoflagger, strategy_filename, baseline_imgsets);
 
         dump_baseline_flagmasks(&baseline_flagmasks, Some(2), Some(2), Some(16));
     }

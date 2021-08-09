@@ -47,13 +47,13 @@ impl AzEl {
         let mut ha = 0.0;
         let mut dec = 0.0;
         unsafe { erfa_sys::eraAe2hd(self.az, self.el, latitude_rad, &mut ha, &mut dec) }
-        HADec::new(ha, dec)
+        HADec { ha, dec }
     }
 
     /// Convert the horizon coordinates to equatorial coordinates (Hour Angle
     /// and Declination) for the MWA's location.
     pub fn to_hadec_mwa(&self) -> HADec {
-        Self::to_hadec(&self, MWA_LATITUDE_RADIANS)
+        Self::to_hadec(self, MWA_LATITUDE_RADIANS)
     }
 }
 

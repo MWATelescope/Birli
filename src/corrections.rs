@@ -109,12 +109,12 @@ fn _get_all_freqs_hz(context: &CorrelatorContext, coarse_chan_idxs: &[usize]) ->
 /// let mut baseline_imgsets = context_to_baseline_imgsets(
 ///     &aoflagger,
 ///     &context,
-///     &img_coarse_chan_idxs,
+///     img_coarse_chan_idxs,
 ///     &img_timestep_idxs,
 ///     None,
 /// );
 ///
-/// correct_cable_lengths(&context, &mut baseline_imgsets, &img_coarse_chan_idxs);
+/// correct_cable_lengths(&context, &mut baseline_imgsets, img_coarse_chan_idxs);
 /// ```
 ///
 /// # Accuracy
@@ -161,7 +161,7 @@ pub fn correct_cable_lengths(
     let baselines = &context.metafits_context.baselines;
     let antennas = &context.metafits_context.antennas;
 
-    let all_freqs_hz = _get_all_freqs_hz(&context, img_coarse_chan_idxs);
+    let all_freqs_hz = _get_all_freqs_hz(context, img_coarse_chan_idxs);
 
     // Create a progress bar to show the status of the correction
     let correction_progress = ProgressBar::new(baseline_imgsets.len() as u64);
@@ -258,12 +258,12 @@ pub fn correct_cable_lengths(
 /// let mut baseline_imgsets = context_to_baseline_imgsets(
 ///     &aoflagger,
 ///     &context,
-///     &img_coarse_chan_idxs,
+///     img_coarse_chan_idxs,
 ///     &img_timestep_idxs,
 ///     None,
 /// );
 ///
-/// correct_geometry(&context, &baseline_idxs, &mut baseline_imgsets, &img_coarse_chan_idxs, img_timestep_idxs, None);
+/// correct_geometry(&context, &baseline_idxs, &mut baseline_imgsets, img_coarse_chan_idxs, img_timestep_idxs, None);
 /// ```
 pub fn correct_geometry(
     context: &CorrelatorContext,
@@ -290,7 +290,7 @@ pub fn correct_geometry(
         }
     };
 
-    let all_freqs_hz: Vec<f64> = _get_all_freqs_hz(&context, img_coarse_chan_idxs)
+    let all_freqs_hz: Vec<f64> = _get_all_freqs_hz(context, img_coarse_chan_idxs)
         .iter()
         .map(|&x| x as f64)
         .collect();
@@ -458,7 +458,7 @@ mod tests {
         let mut baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             None,
         );
@@ -594,7 +594,7 @@ mod tests {
         let mut baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             None,
         );
@@ -743,7 +743,7 @@ mod tests {
         let mut baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             None,
         );

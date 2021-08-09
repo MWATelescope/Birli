@@ -170,7 +170,7 @@ pub fn init_baseline_flagmasks(
             .collect(),
     };
 
-    get_baseline_flags(&context, antenna_flags)
+    get_baseline_flags(context, antenna_flags)
         .iter()
         .map(|&baseline_flag| {
             if baseline_flag {
@@ -225,7 +225,7 @@ pub fn init_baseline_flagmasks(
 /// let strategy_filename = &aoflagger.FindStrategyFileMWA();
 ///
 /// // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
-/// let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
+/// let baseline_flagmasks = flag_imgsets(&aoflagger, strategy_filename, baseline_imgsets);
 /// ```
 pub fn flag_imgsets(
     aoflagger: &CxxAOFlagger,
@@ -249,7 +249,7 @@ pub fn flag_imgsets(
         .map(|imgset| {
             let flagmask = aoflagger
                 .LoadStrategyFile(&strategy_filename.to_string())
-                .Run(&imgset);
+                .Run(imgset);
             flag_progress.inc(1);
             flagmask
         })
@@ -344,7 +344,7 @@ pub fn flagmask_set(
 /// let mut baseline_flagmasks = init_baseline_flagmasks(
 ///     &aoflagger,
 ///     &context,
-///     &img_coarse_chan_idxs,
+///     img_coarse_chan_idxs,
 ///     &img_timestep_idxs,
 ///     Some(get_antenna_flags(&context)),
 /// );
@@ -353,7 +353,7 @@ pub fn flagmask_set(
 /// let baseline_imgsets = context_to_baseline_imgsets(
 ///     &aoflagger,
 ///     &context,
-///     &img_coarse_chan_idxs,
+///     img_coarse_chan_idxs,
 ///     &img_timestep_idxs,
 ///     None,
 /// );
@@ -364,7 +364,7 @@ pub fn flagmask_set(
 /// // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
 /// let baseline_flagmasks = flag_imgsets_existing(
 ///     &aoflagger,
-///     &strategy_filename,
+///     strategy_filename,
 ///     &baseline_imgsets,
 ///     &mut baseline_flagmasks,
 ///     true
@@ -397,7 +397,7 @@ pub fn flag_imgsets_existing(
         .for_each(|(flagmask, imgset)| {
             let new_flagmask = aoflagger
                 .LoadStrategyFile(&strategy_filename.to_string())
-                .RunExisting(&imgset, &flagmask);
+                .RunExisting(imgset, flagmask);
             if re_apply_existing {
                 flagmask_or(flagmask, &new_flagmask);
             } else {
@@ -456,7 +456,7 @@ pub fn flag_imgsets_existing(
 /// let baseline_imgsets = context_to_baseline_imgsets(
 ///     &aoflagger,
 ///     &context,
-///     &img_coarse_chan_idxs,
+///     img_coarse_chan_idxs,
 ///     &img_timestep_idxs,
 ///     None,
 /// );
@@ -465,7 +465,7 @@ pub fn flag_imgsets_existing(
 /// let strategy_filename = &aoflagger.FindStrategyFileMWA();
 ///
 /// // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
-/// let baseline_flagmasks = flag_imgsets(&aoflagger, &strategy_filename, baseline_imgsets);
+/// let baseline_flagmasks = flag_imgsets(&aoflagger, strategy_filename, baseline_imgsets);
 ///
 /// // write the flags to disk as .mwaf
 /// write_flags(
@@ -501,7 +501,7 @@ pub fn write_flags(
     );
 
     let mut flag_file_set = FlagFileSet::new(filename_template, &gpubox_ids, context.mwa_version)?;
-    flag_file_set.write_baseline_flagmasks(&context, baseline_flagmasks, img_coarse_chan_idxs)?;
+    flag_file_set.write_baseline_flagmasks(context, baseline_flagmasks, img_coarse_chan_idxs)?;
 
     trace!("end write_flags");
     Ok(())
@@ -736,7 +736,7 @@ mod tests {
         let baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             None,
         );
@@ -745,14 +745,14 @@ mod tests {
         let mut baseline_flagmasks = init_baseline_flagmasks(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             Some(get_antenna_flags(&context)),
         );
 
         flag_imgsets_existing(
             &aoflagger,
-            &strategy_filename,
+            strategy_filename,
             &baseline_imgsets,
             &mut baseline_flagmasks,
             true,
@@ -813,11 +813,11 @@ mod tests {
             &context,
             &baseline_flagmasks,
             filename_template.to_str().unwrap(),
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
         )
         .unwrap();
 
-        let flag_files = glob(&tmp_dir.path().join("Flagfile*.mwaf").to_str().unwrap()).unwrap();
+        let flag_files = glob(tmp_dir.path().join("Flagfile*.mwaf").to_str().unwrap()).unwrap();
 
         assert_eq!(flag_files.count(), selected_gpuboxes.len());
 

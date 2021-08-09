@@ -17,9 +17,7 @@
 
 use mwalib::{MetafitsContext, MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS, MWA_LONGITUDE_RADIANS};
 // use rayon::prelude::*;
-use super::error::ErfaError;
-
-use super::{HADec, ENH, UVW};
+use super::{error::ErfaError, ENH};
 
 /// The geodetic (x,y,z) coordinates of an antenna (a.k.a. tile or station). All
 /// units are in metres.
@@ -48,11 +46,11 @@ impl XyzGeodetic {
         }
     }
 
-    /// Convert [XyzGeodetic] coordinates at the MWA's latitude to [ENH]
-    /// coordinates.
-    pub fn to_enh_mwa(&self) -> ENH {
-        self.to_enh(MWA_LATITUDE_RADIANS)
-    }
+    // /// Convert [XyzGeodetic] coordinates at the MWA's latitude to [ENH]
+    // /// coordinates.
+    // pub fn to_enh_mwa(&self) -> ENH {
+    //     self.to_enh(MWA_LATITUDE_RADIANS)
+    // }
 
     /// For each [XyzGeodetic] pair, calculate an [XyzBaseline].
     pub fn get_baselines(xyz: &[Self]) -> Vec<XyzBaseline> {
@@ -120,15 +118,15 @@ impl XyzGeodetic {
             .collect()
     }
 
-    /// For each tile listed in an mwalib context, calculate an [XyzBaseline].
-    ///
-    /// Note that the RF inputs are ordered by antenna number, **not** the
-    /// "input"; e.g. in the metafits file, Tile104 is often the first tile
-    /// listed ("input" 0), Tile103 second ("input" 2), so the first baseline
-    /// would naively be between Tile104 and Tile103.
-    pub fn get_baselines_mwalib(context: &MetafitsContext) -> Vec<XyzBaseline> {
-        Self::get_baselines(&Self::get_tiles_mwalib(context))
-    }
+    // /// For each tile listed in an mwalib context, calculate an [XyzBaseline].
+    // ///
+    // /// Note that the RF inputs are ordered by antenna number, **not** the
+    // /// "input"; e.g. in the metafits file, Tile104 is often the first tile
+    // /// listed ("input" 0), Tile103 second ("input" 2), so the first baseline
+    // /// would naively be between Tile104 and Tile103.
+    // pub fn get_baselines_mwalib(context: &MetafitsContext) -> Vec<XyzBaseline> {
+    //     Self::get_baselines(&Self::get_tiles_mwalib(context))
+    // }
 
     fn to_geocentric_inner(
         &self,
@@ -175,58 +173,58 @@ impl XyzGeodetic {
         )
     }
 
-    /// Convert to an [`XyzBaseline`]
-    ///
-    pub fn to_baseline(&self) -> XyzBaseline {
-        XyzBaseline {
-            x: self.x,
-            y: self.y,
-            z: self.z,
-        }
-    }
+    // /// Convert to an [`XyzBaseline`]
+    // ///
+    // pub fn to_baseline(&self) -> XyzBaseline {
+    //     XyzBaseline {
+    //         x: self.x,
+    //         y: self.y,
+    //         z: self.z,
+    //     }
+    // }
 }
 
-/// Convert [XyzGeodetic] coordinates to [UVW]s without having to form
-/// [XyzBaseline]s first.
-pub fn tile_xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
-    let (s_ha, c_ha) = phase_centre.ha.sin_cos();
-    let (s_dec, c_dec) = phase_centre.dec.sin_cos();
-    // Get a UVW for each tile.
-    xyzs.iter()
-        .map(|xyz| {
-            let bl = XyzBaseline {
-                x: xyz.x,
-                y: xyz.y,
-                z: xyz.z,
-            };
-            UVW::from_xyz_inner(&bl, s_ha, c_ha, s_dec, c_dec)
-        })
-        .collect()
-}
+// /// Convert [XyzGeodetic] coordinates to [UVW]s without having to form
+// /// [XyzBaseline]s first.
+// pub fn tile_xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
+//     let (s_ha, c_ha) = phase_centre.ha.sin_cos();
+//     let (s_dec, c_dec) = phase_centre.dec.sin_cos();
+//     // Get a UVW for each tile.
+//     xyzs.iter()
+//         .map(|xyz| {
+//             let bl = XyzBaseline {
+//                 x: xyz.x,
+//                 y: xyz.y,
+//                 z: xyz.z,
+//             };
+//             UVW::from_xyz_inner(&bl, s_ha, c_ha, s_dec, c_dec)
+//         })
+//         .collect()
+// }
 
-/// Convert [XyzGeodetic] coordinates to [UVW]s without having to form
-/// [XyzBaseline]s first.
-pub fn xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
-    // Get a UVW for each tile.
-    let tile_uvws: Vec<UVW> = tile_xyzs_to_uvws(xyzs, phase_centre);
-    // Take the difference of every pair of UVWs.
-    let num_tiles = xyzs.len();
-    let num_baselines = (num_tiles * (num_tiles - 1)) / 2;
-    let mut bl_uvws = Vec::with_capacity(num_baselines);
-    for i in 0..num_tiles {
-        for j in i..num_tiles {
-            let tile_1 = tile_uvws[i];
-            let tile_2 = tile_uvws[j];
-            let uvw_bl = UVW {
-                u: tile_1.u - tile_2.u,
-                v: tile_1.v - tile_2.v,
-                w: tile_1.w - tile_2.w,
-            };
-            bl_uvws.push(uvw_bl);
-        }
-    }
-    bl_uvws
-}
+// /// Convert [XyzGeodetic] coordinates to [UVW]s without having to form
+// /// [XyzBaseline]s first.
+// pub fn xyzs_to_uvws(xyzs: &[XyzGeodetic], phase_centre: &HADec) -> Vec<UVW> {
+//     // Get a UVW for each tile.
+//     let tile_uvws: Vec<UVW> = tile_xyzs_to_uvws(xyzs, phase_centre);
+//     // Take the difference of every pair of UVWs.
+//     let num_tiles = xyzs.len();
+//     let num_baselines = (num_tiles * (num_tiles - 1)) / 2;
+//     let mut bl_uvws = Vec::with_capacity(num_baselines);
+//     for i in 0..num_tiles {
+//         for j in i..num_tiles {
+//             let tile_1 = tile_uvws[i];
+//             let tile_2 = tile_uvws[j];
+//             let uvw_bl = UVW {
+//                 u: tile_1.u - tile_2.u,
+//                 v: tile_1.v - tile_2.v,
+//                 w: tile_1.w - tile_2.w,
+//             };
+//             bl_uvws.push(uvw_bl);
+//         }
+//     }
+//     bl_uvws
+// }
 
 /// Convert many [XyzGeodetic] coordinates to [XyzGeocentric].
 pub fn geodetic_to_geocentric(
@@ -258,17 +256,17 @@ pub fn geodetic_to_geocentric_mwa(
     )
 }
 
-impl std::ops::Sub<XyzGeodetic> for XyzGeodetic {
-    type Output = XyzBaseline;
+// impl std::ops::Sub<XyzGeodetic> for XyzGeodetic {
+//     type Output = XyzBaseline;
 
-    fn sub(self, rhs: Self) -> XyzBaseline {
-        XyzBaseline {
-            x: self.x - rhs.x,
-            y: self.y - rhs.y,
-            z: self.z - rhs.z,
-        }
-    }
-}
+//     fn sub(self, rhs: Self) -> XyzBaseline {
+//         XyzBaseline {
+//             x: self.x - rhs.x,
+//             y: self.y - rhs.y,
+//             z: self.z - rhs.z,
+//         }
+//     }
+// }
 
 impl std::ops::Sub<&XyzGeodetic> for XyzGeodetic {
     type Output = XyzBaseline;
@@ -299,16 +297,16 @@ pub struct XyzBaseline {
     pub z: f64,
 }
 
-impl XyzBaseline {
-    /// Convert to an [`XyzGeodetic`]
-    pub fn to_geodetic(&self) -> XyzGeodetic {
-        XyzGeodetic {
-            x: self.x,
-            y: self.y,
-            z: self.z,
-        }
-    }
-}
+// impl XyzBaseline {
+//     /// Convert to an [`XyzGeodetic`]
+//     pub fn to_geodetic(&self) -> XyzGeodetic {
+//         XyzGeodetic {
+//             x: self.x,
+//             y: self.y,
+//             z: self.z,
+//         }
+//     }
+// }
 
 /// The geocentric (x,y,z) coordinates of an antenna (a.k.a. tile or station).
 /// All units are in metres.
@@ -395,7 +393,7 @@ impl XyzGeocentric {
             XyzGeocentric::get_geocentric_vector(longitude_rad, latitude_rad, height_metres)?;
         let (sin_longitude, cos_longitude) = (-longitude_rad).sin_cos();
         let geodetic = XyzGeocentric::to_geodetic_inner(
-            &self,
+            self,
             &geocentric_vector,
             sin_longitude,
             cos_longitude,

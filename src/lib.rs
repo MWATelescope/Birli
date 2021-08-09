@@ -48,7 +48,7 @@
 //! let mut baseline_flagmasks = init_baseline_flagmasks(
 //!     &aoflagger,
 //!     &context,
-//!     &img_coarse_chan_idxs,
+//!     img_coarse_chan_idxs,
 //!     &img_timestep_idxs,
 //!     Some(get_antenna_flags(&context)),
 //! );
@@ -57,7 +57,7 @@
 //! let baseline_imgsets = context_to_baseline_imgsets(
 //!     &aoflagger,
 //!     &context,
-//!     &img_coarse_chan_idxs,
+//!     img_coarse_chan_idxs,
 //!     &img_timestep_idxs,
 //!     Some(&mut baseline_flagmasks),
 //! );
@@ -268,7 +268,7 @@ pub fn init_baseline_imgsets(
 /// let baseline_imgsets = context_to_baseline_imgsets(
 ///     &aoflagger,
 ///     &context,
-///     &img_coarse_chan_idxs,
+///     img_coarse_chan_idxs,
 ///     &context.common_timestep_indices.clone(),
 ///     None,
 /// );
@@ -278,7 +278,7 @@ pub fn init_baseline_imgsets(
 /// let baseline_imgsets_good = context_to_baseline_imgsets(
 ///     &aoflagger,
 ///     &context,
-///     &img_coarse_chan_idxs,
+///     img_coarse_chan_idxs,
 ///     &context.common_good_timestep_indices.clone(),
 ///     None,
 /// );
@@ -308,7 +308,7 @@ pub fn context_to_baseline_imgsets(
     let num_img_timesteps = img_timestep_idxs.len();
 
     let mut baseline_imgsets = init_baseline_imgsets(
-        &aoflagger,
+        aoflagger,
         context.metafits_context.num_baselines,
         num_img_timesteps,
         num_img_coarse_chans * fine_chans_per_coarse,
@@ -612,7 +612,7 @@ mod tests {
         let mut baseline_flagmasks = init_baseline_flagmasks(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             None,
         );
@@ -620,7 +620,7 @@ mod tests {
         let baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             Some(&mut baseline_flagmasks),
         );
@@ -746,7 +746,7 @@ mod tests {
         let baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             None,
         );
@@ -809,7 +809,7 @@ mod tests {
         let baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             None,
         );

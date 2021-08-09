@@ -355,7 +355,7 @@ impl<'a> UvfitsWriter<'a> {
             context.metafits_context.centre_freq_hz as f64,
             centre_freq_chan,
             phase_centre,
-            Some(&context.metafits_context.obs_name.as_str()),
+            Some(context.metafits_context.obs_name.as_str()),
             array_pos,
         )
     }
@@ -1244,11 +1244,11 @@ mod tests {
         fptr: &mut FitsFile,
         hdu: &FitsHdu,
     ) -> Result<Vec<String>, mwalib::FitsError> {
-        let pcount: usize = get_required_fits_key!(fptr, &hdu, "PCOUNT")?;
+        let pcount: usize = get_required_fits_key!(fptr, hdu, "PCOUNT")?;
         let mut result = Vec::with_capacity(pcount);
         for p in 0..pcount {
             let ptype: String =
-                get_required_fits_key!(fptr, &hdu, format!("PTYPE{}", p + 1).as_str())?;
+                get_required_fits_key!(fptr, hdu, format!("PTYPE{}", p + 1).as_str())?;
             result.push(ptype);
         }
         Ok(result)
@@ -1548,7 +1548,7 @@ mod tests {
 
         flag_imgsets_existing(
             &aoflagger,
-            &strategy_filename,
+            strategy_filename,
             &baseline_imgsets,
             &mut baseline_flagmasks,
             true,

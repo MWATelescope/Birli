@@ -131,7 +131,7 @@ where
         let mut baseline_flagmasks = init_baseline_flagmasks(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             Some(antenna_flags),
         );
@@ -139,7 +139,7 @@ where
         let mut baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
             &context,
-            &img_coarse_chan_idxs,
+            img_coarse_chan_idxs,
             &img_timestep_idxs,
             Some(&mut baseline_flagmasks),
         );
@@ -165,7 +165,7 @@ where
         debug!("flagging with strategy {}", strategy_filename);
         flag_imgsets_existing(
             &aoflagger,
-            &strategy_filename,
+            strategy_filename,
             &baseline_imgsets,
             &mut baseline_flagmasks,
             true,
@@ -215,7 +215,7 @@ where
                 &context,
                 &baseline_flagmasks,
                 flag_template,
-                &img_coarse_chan_idxs,
+                img_coarse_chan_idxs,
             )
             .unwrap();
         }
@@ -230,7 +230,7 @@ where
                 &baseline_imgsets,
                 &baseline_flagmasks,
                 &img_timestep_idxs,
-                &img_coarse_chan_idxs,
+                img_coarse_chan_idxs,
                 array_pos,
             )
             .unwrap();
@@ -527,7 +527,7 @@ mod tests {
         let pcount: usize = get_required_fits_key!(&mut fptr, &vis_hdu, "PCOUNT").unwrap();
         let pzeros: Vec<f64> = (0..5)
             .map(|p_idx| {
-                get_required_fits_key!(&mut fptr, &vis_hdu, &format!("PZERO{}", p_idx + 1).as_str())
+                get_required_fits_key!(&mut fptr, &vis_hdu, format!("PZERO{}", p_idx + 1).as_str())
                     .unwrap()
             })
             .collect();

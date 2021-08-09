@@ -875,7 +875,7 @@ mod tests {
         )
         .unwrap();
         flag_file_set
-            .write_baseline_flagmasks(&context, &baseline_flagmasks, &img_coarse_chan_idxs)
+            .write_baseline_flagmasks(&context, &baseline_flagmasks, img_coarse_chan_idxs)
             .unwrap();
         drop(flag_file_set);
 

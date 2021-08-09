@@ -61,7 +61,7 @@ impl HADec {
     /// Convert the equatorial coordinates to horizon coordinates (azimuth and
     /// elevation) for the MWA's location.
     pub fn to_azel_mwa(&self) -> AzEl {
-        Self::to_azel(&self, MWA_LATITUDE_RADIANS)
+        Self::to_azel(self, MWA_LATITUDE_RADIANS)
     }
 
     /// Calculate the distance between two sets of coordinates.

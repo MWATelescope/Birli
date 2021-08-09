@@ -91,7 +91,7 @@ fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
     let mut baseline_imgsets = context_to_baseline_imgsets(
         &aoflagger,
         &context,
-        &img_coarse_chan_idxs,
+        img_coarse_chan_idxs,
         &context.common_timestep_indices.clone(),
         None,
     );
@@ -113,7 +113,7 @@ fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
     let mut baseline_imgsets = context_to_baseline_imgsets(
         &aoflagger,
         &context,
-        &img_coarse_chan_idxs,
+        img_coarse_chan_idxs,
         &context.common_timestep_indices.clone(),
         None,
     );
