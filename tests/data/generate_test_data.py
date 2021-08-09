@@ -418,19 +418,19 @@ def generate(args):
 
 
         # now write cotter-friendly
+        if args['corr_type'] == "MWA_ORD":
+            print(f" -> num_coarse_chans: {num_coarse_chans} num_fine_chans: {num_fine_chans}")
+            total_chan_bandwidth_hz = coarse_chan_bandwidth_hz * num_coarse_chans
+            print(f" -> total_chan_bandwidth (Hz, limited): {total_chan_bandwidth_hz}")
+            assert total_chan_bandwidth_hz / num_coarse_chans / fine_chan_bandwidth_hz == num_fine_chans
+            primary_hdu.header['FINECHAN'] = fine_chan_bandwidth_hz / 1_000
+            primary_hdu.header['BANDWDTH'] = total_chan_bandwidth_hz / 1_000_000
+            num_chans = num_coarse_chans * num_fine_chans
+            primary_hdu.header['NCHANS'] = num_chans
 
-        print(f" -> num_coarse_chans: {num_coarse_chans} num_fine_chans: {num_fine_chans}")
-        total_chan_bandwidth_hz = coarse_chan_bandwidth_hz * num_coarse_chans
-        print(f" -> total_chan_bandwidth (Hz, limited): {total_chan_bandwidth_hz}")
-        assert total_chan_bandwidth_hz / num_coarse_chans / fine_chan_bandwidth_hz == num_fine_chans
-        primary_hdu.header['FINECHAN'] = fine_chan_bandwidth_hz / 1_000
-        primary_hdu.header['BANDWDTH'] = total_chan_bandwidth_hz / 1_000_000
-        num_chans = num_coarse_chans * num_fine_chans
-        primary_hdu.header['NCHANS'] = num_chans
+            assert total_chan_bandwidth_hz / num_chans == fine_chan_bandwidth_hz
 
-        assert total_chan_bandwidth_hz / num_chans == fine_chan_bandwidth_hz
-
-        meta_fits.writeto(dst_metafits_path.replace(".metafits", ".cotter.metafits"), overwrite=True)
+            meta_fits.writeto(dst_metafits_path.replace(".metafits", ".cotter.metafits"), overwrite=True)
 
 
     ####
