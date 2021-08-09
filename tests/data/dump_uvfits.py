@@ -55,16 +55,6 @@ def parse_args(argv):
         default=None
     )
     parser.add_argument(
-        "--dump-vis",
-        default=False,
-        action="store_true"
-    )
-    parser.add_argument(
-        "--dump-weights",
-        default=False,
-        action="store_true"
-    )
-    parser.add_argument(
         "--dump-mode",
         choices=["vis-weight", "vis-only", "weight-only"],
         default="vis-weight"
@@ -97,6 +87,9 @@ def dump_uvfits_data_to_csv(hdus, ts_limit=None, bl_limit=None, chan_limit=None,
     header = [
         "timestep", 
         "baseline", 
+        "u",
+        "v",
+        "w",
         "pol",
     ]
 
@@ -131,12 +124,14 @@ def dump_uvfits_data_to_csv(hdus, ts_limit=None, bl_limit=None, chan_limit=None,
         row_out = [
             timestep, 
             baseline, 
+            row['UU'],
+            row['VV'],
+            row['WW'],
         ]
             
         for pol_idx, pol_name in enumerate(pol_names):
             _row_out = copy(row_out)
             _row_out.extend(map(str, [pol_name]))
-
 
             if dump_mode in ['vis-weight', 'vis-only']:
                 row_real_data = row_data[:, :, :, pol_idx, 0].reshape((num_chans, ))
