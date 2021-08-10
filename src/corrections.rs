@@ -17,13 +17,13 @@ use mwalib::{
 use std::f64::consts::PI;
 
 fn _correct_cable_length_buffers_cotter(
-    freq_hz: &u32,
+    freq_hz: f64,
     electrical_length_m: &f64,
     buf_re: &mut [f32],
     buf_im: &mut [f32],
 ) {
     let angle: f64 =
-        -2.0 * PI * electrical_length_m * (*freq_hz as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        -2.0 * PI * electrical_length_m * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
     let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
     let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
 
@@ -205,7 +205,7 @@ pub fn correct_cable_lengths(
                 .for_each(|(freq_hz, imgset_chunk_re, imgset_chunk_im)| {
                     // _correct_cable_length_buffers_precise(
                     _correct_cable_length_buffers_cotter(
-                        freq_hz,
+                        *freq_hz as f64,
                         electrical_length_m,
                         imgset_chunk_re,
                         imgset_chunk_im,
