@@ -8,7 +8,7 @@
   <img src="https://github.com/MWATelescope/Birli/actions/workflows/linux_test.yml/badge.svg" alt="MacOS Tests"></a>
 <a href="https://github.com/MWATelescope/Birli/actions/workflows/macos_test.yml">
   <img src="https://github.com/MWATelescope/Birli/actions/workflows/macos_test.yml/badge.svg" alt="Linix Tests"></a>
-<a href="https://crates.io/birli">
+<a href="https://crates.io/crates/birli">
   <img alt="Crates.io" src="https://img.shields.io/crates/d/birli?label=crates.io%20%E2%AC%87%EF%B8%8F"></a>
 <a href="https://docs.rs/crate/birli/">
   <img src="https://docs.rs/birli/badge.svg" alt="codecov"></a>
@@ -41,11 +41,11 @@ descriptor for the speed which this library intends to deliver.
 ### Prerequisites
 
 - A Rust compiler with a version >= 1.51.0 - <https://www.rust-lang.org/tools/install>
-- [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0 
+- [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0
   (Ubuntu > 21.04: apt install aoflagger-dev)
-- [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49 
+- [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49
   (Ubuntu > 20.10: apt install libcfitsio-dev)
-- [LibERFA](https://github.com/liberfa/erfa) >= 1.7.1 
+- [LibERFA](https://github.com/liberfa/erfa) >= 1.7.1
   (Ubuntu > 20.04: apt install liberfa-dev)
 
 for OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) and [macOS](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/macos_test.yml) CI Scripts; the [Makefile.toml](https://github.com/MWATelescope/Birli/blob/main/Makefile.toml); and the [Dockerfile](https://github.com/MWATelescope/Birli/blob/main/Dockerfile) as these are tested regularly. The instructions below may be updated less frequently, but are better documented.
@@ -54,7 +54,7 @@ for OS-specific instructions, check out the [linux](https://github.com/MWATelesc
 
 ```bash
 # Prerequisites for rustup, cargo and cargo-make
-sudo apt install -y gcc libssl-dev pkg-config curl unzip wget 
+sudo apt install -y gcc libssl-dev pkg-config curl unzip wget
 # Run the Rustup install script, profile=default, toolchain=stable
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -sSf | sh -s -- -y
 # Cargo make uses Makefile.toml to automate development tasks
@@ -99,14 +99,18 @@ This creates a `birli` binary in `$HOME/.cargo/bin`
 
 ## Troubleshooting
 
+### Test suite
+
 Having issues with Birli? run the test suite to narrow down your issue.
 
 ```bash
 cargo test
 ```
 
+### Dependencies
+
 Experiencing segfaults? I can guarantee it's because of one of the C library dependencies.
-Make sure you have the right versions of all the libraries. These are specified in [Prerequisites](#Prerequisites). 
+Make sure you have the right versions of all the libraries. These are specified in [Prerequisites](#Prerequisites).
 
 Get library versions with:
 
@@ -116,10 +120,24 @@ aoflagger --version
 # cfitsio: ???
 ```
 
-
-If you have something like CASA installed from apt, it's going to put an 
+If you have something like CASA installed from apt, it's going to put an
 ancient cfitsio library version in `/usr/lib/x86_64-linux-gnu/`, to get around
 this, you must export `LD_LIBRARY_PATH=/usr/local/lib/:/usr/lib/x86_64-linux-gnu/` in the shell so that Birli can find the correct library version.
+
+### Logging
+
+You can enable additional logging on individual Rust modules by setting the `RUST_LOG` environment variable. For example:
+
+```bash
+RUST_LOG=trace birli ... # set log level to trace for all module (including dependencies)
+RUST_LOG=birli=debug birli ... # set log level to debug for birli only
+RUST_LOG=birli::io=error birli ... # only show warnings for birli's io module
+```
+
+For more examples, see the [env_logger docs](https://docs.rs/env_logger/latest/env_logger/)
+
+The default log level in `info`
+
 ### Docker
 
 Couldn't get it working on your environment? You can always run Birli in Docker
@@ -136,8 +154,7 @@ docker run -it --entrypoint /bin/bash --volume $PWD:/app mwatelescope/birli:late
 
 Note: This mounts the current directory to `/app` in the Docker image, meaning both of these systems share the same
 `target` folder. so if your host system is a different
-architecture than Docker, you may need to `cargo clean` each time you switch between these environments. You
-may also want to temporarily disable any linters or language servers that use 
+architecture than Docker, you may need to `cargo clean` each time you switch between these environments. You may also want to temporarily disable any linters or language servers that use
 
 ## Usage
 
@@ -165,9 +182,12 @@ USAGE:
     birli aoflagger [FLAGS] [OPTIONS] <fits-files>... -m <metafits>
 
 FLAGS:
-    -h, --help              Prints help information
-        --no-cable-delay    Do not perform cable length corrections.
-    -V, --version           Prints version information
+        --emulate-cotter        Use Cotter's value for array position instead of MWAlib for direct comparison with
+                                Cotter.
+    -h, --help                  Prints help information
+        --no-cable-delay        Do not perform cable length corrections.
+        --no-geometric-delay    Do not perform geometric length corrections.
+    -V, --version               Prints version information
 
 OPTIONS:
     -f <flag-template>        Sets the template used to name flag files. Percents are substituted for the zero-prefixed
@@ -177,44 +197,102 @@ OPTIONS:
     -u <uvfits-out>           Filename for uvfits output. Similar to -o in Cotter. Example: 1196175296.uvfits
 
 ARGS:
-    <fits-files>...  
+    <fits-files>...
 ```
 
-### Examples
+### Cable Delay Corrections
 
-A direct comparison between Birli and Cotter might look like this.
+Cable delay correction involves adjusting visibility phases to correct for the differences in electrical length of the cable between each tile and it's receiver.
+
+Legacy MWA correlator observations do not typically have cable delays applied, however MWAX observations can. The [`CABLEDEL`](https://wiki.mwatelescope.org/display/MP/MWAX+Metafits+Changes) key in the metafits describes what geometric delays have been applied.
+
+By default, Birli will apply cable length corrections. You can use `--no-cable-delay` to disable this.
+
+A baseline's cable lengths are determined by the difference between a baseline's rfInput electrical lengths, as specified the the `TILEDATA` HDU of the metafits. Complex visibilities are phase-shifted by an angle determined by the electrical length, and the channel's frequency.
+
+```rust
+let angle = -2.0 * PI * electrical_length_m * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+```
+
+### Geometric Delay Corrections (AKA Phase Tracking)
+
+Geometric correction involves adjusting visibility phases to correct for the differences in distance that light from the phase center has to travel to reach each tile.
+
+Legacy MWA correlator observations are not typically phase tracked, however MWAX observations can have phase tracking applied. The [`GEODEL`](https://wiki.mwatelescope.org/display/MP/MWAX+Metafits+Changes) card in the metafits describes what geometric delays have been applied.
+
+By default, Birli will apply geometric corrections at the phase center if they have not already been applied. It determines the observations phase center from the [`RAPHASE` and `DECPHASE`](https://wiki.mwatelescope.org/display/MP/Metafits+files) cards in the metafits. If these are not available, the pointing center cards ([`RA` and `DEC`](https://wiki.mwatelescope.org/display/MP/Metafits+files)) from the metafits are used. You can use `--no-geometric-delay` to disable this.
+
+A baseline's geometric length is determined by the w component of it's UVW fourier-space vector, after applying precession and nutation to it's tiles' positions and the phase center to the J2000 epoch, accounting for stellar aberration. Complex visibilities are phase-shifted by an angle determined by the w-component, and the channel's frequency.
+
+```rust
+let angle = -2.0 * PI * uvw.w * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+```
+
+### Cotter Emulation
+
+The `--emulate-cotter` flag ensures that outputs match Cotter as much as possible. You should only use this flag if you need to perform a direct comparison with Cotter.
+
+By default, Birli will use the MWA array position from MWALib in order to calculate UVWs and geometric corrections. This is more accurate than the one that Cotter uses, and is the main source of error when doing direct comparisons.
+
+This flag is used as part of the tests in `src/main.rs` to validate that Birli's output matches that of Cotter to within an acceptable margin.
+
+### Example: RFI Flagging, corrections and UVFits/mwaf output
+
+In this example, we use the aoflagger subcommand to:
+
+- Perform RFI flagging using the MWA-default flagging strategy
+- Perform geometric and cable length corrections
+- Output flags to .mwaf (`-f`)
+- Output visibilities to .uvfits (`-u`)
 
 ```bash
 birli aoflagger \
-  -m tests/data/1247842824_flags/1247842824.metafits \
-  -f "tests/data/1247842824_flags/flags_birli/FlagfileBirliMWA%%.mwaf" \
-  tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits
+  -m tests/data/1254670392_avg/1254670392.metafits \
+  -u "tests/data/1254670392_avg/Flagfile.Birli.MWA.%%.mwaf" \
+  -f "tests/data/1254670392_avg/1254670392.birli.uvfits" \
+  tests/data/1254670392_avg/1254670392_20191009153257_gpubox*.fits
 ```
 
+Since Cotter can't output flags and uvfits at the same time, the equivalent Cotter commands would be:
+
 ```bash
+# output flags
 cotter \
-  -m tests/data/1247842824_flags/1247842824cotter-friendly.metafits \
+  -m tests/data/1254670392_avg/1254670392.metafits \
   -o "tests/data/1247842824_flags/FlagfileCotterMWA%%.mwaf" \
   -allowmissing \
   -edgewidth 0 \
   -endflag 0 \
   -initflag 0 \
   -noantennapruning \
-  -nocablelength \
   -noflagautos \
   -noflagdcchannels \
-  -nogeom \
+  -nosbgains \
   -sbpassband tests/data/subband-passband-128ch-unitary.txt \
   -nostats \
-  -sbcount 1 \
-  -sbstart 1 \
   -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
-  tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits
+  tests/data/1254670392_avg/1254670392_20191009153257_gpubox*.fits
+# output uvfits
+cotter \
+  -m tests/data/1254670392_avg/1254670392.metafits \
+  -o "tests/data/1254670392_avg/1254670392.cotter.uvfits" \
+  -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
+  -noantennapruning \
+  -noflagautos \
+  -noflagdcchannels \
+  -nosbgains \
+  -sbpassband tests/data/subband-passband-128ch-unitary.txt \
+  -nostats \
+  -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
+  tests/data/1254670392_avg/1254670392_20191009153257_gpubox*.fits
 ```
 
 ## Contributing
 
-Pull requests are welcome! Please do your best to ensure that the high standards 
+Pull requests are welcome! Please do your best to ensure that the high standards
 of test coverage are maintained.
 
 Before each commit, use `cargo make ci` to ensure your code is formatted correctly.

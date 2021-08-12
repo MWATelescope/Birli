@@ -22,8 +22,7 @@ fn _correct_cable_length_buffers_cotter(
     buf_re: &mut [f32],
     buf_im: &mut [f32],
 ) {
-    let angle: f64 =
-        -2.0 * PI * electrical_length_m * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+    let angle: f64 = -2.0 * PI * electrical_length_m * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
     let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
     let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
 
