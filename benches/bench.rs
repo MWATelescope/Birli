@@ -233,7 +233,7 @@ fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
         None,
     );
 
-    crt.bench_function("correct_geometry - ord_half_1196175296", |bch| {
+    crt.bench_function("uvfits_output - 1254670392_avg", |bch| {
         bch.iter(|| {
             write_uvfits(
                 black_box(uvfits_path.as_path()),
@@ -244,7 +244,8 @@ fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
                 black_box(&img_timestep_idxs),
                 black_box(img_coarse_chan_idxs),
                 None,
-            ).unwrap();
+            )
+            .unwrap();
         });
     });
 }
