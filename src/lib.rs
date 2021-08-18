@@ -96,7 +96,7 @@ pub use cxx_aoflagger::ffi::{
 use error::BirliError;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
-use ndarray::{Array3, Axis};
+use ndarray::{parallel::prelude::*, Array3, Axis};
 use num::Complex;
 use std::{ops::Range, os::raw::c_short};
 
@@ -131,7 +131,7 @@ use log::{trace, warn};
 
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use crossbeam_utils::thread;
-use rayon::prelude::*;
+// use rayon::prelude::*;
 
 pub mod jones;
 pub use jones::Jones;
@@ -533,6 +533,9 @@ pub fn context_to_baseline_imgsets(
 ///  - channel
 ///  - baseline
 ///
+/// # Errors
+///
+/// Will raise [`mwalib::GpuboxError`] if the timestep x coarse channel range includes missing HDUs
 pub fn context_to_jones_tensor(
     context: &CorrelatorContext,
     mwalib_timestep_range: &Range<usize>,
@@ -620,12 +623,22 @@ pub fn context_to_jones_tensor(
             multi_progress.join().unwrap();
         });
 
-        for (coarse_chan_idx, (mwalib_coarse_chan_idx, mut coarse_chan_view)) in izip!(
+        // result
+        //     .axis_chunks_iter(Axis(1), fine_chans_per_coarse)
+        //     .into_par_iter()
+        //     .zip(mwalib_coarse_chan_range.clone())
+        //     .zip(read_progress)
+        //     .for_each(|((mut coarse_chan_view, mwalib_coarse_chan_idx), progress)| {
+        // Zip::from(result.axis_chunks_iter(Axis(1), fine_chans_per_coarse))
+        //     .and(mwalib_coarse_chan_range.clone())
+        //     .and(read_progress)
+        //     .par_for_each(|(mut coarse_chan_view, mwalib_coarse_chan_idx, progress)| {
+
+        for (mwalib_coarse_chan_idx, mut coarse_chan_view, progress) in izip!(
             mwalib_coarse_chan_range.clone(),
-            result.axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
-        )
-        .enumerate()
-        {
+            result.axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse),
+            read_progress
+        ) {
             // coarse_chan_view is [timestep][chan][baseline] for all chans in the coarse channel
             for (mwalib_timestep_idx, mut hdu_view) in izip!(
                 mwalib_timestep_range.clone(),
@@ -652,7 +665,7 @@ pub fn context_to_jones_tensor(
                         hdu_baseline_view.outer_iter_mut(),
                         hdu_baseline_chunk.chunks(floats_per_chan)
                     ) {
-                        assert_eq!(hdu_chan_view.dim(), ());
+                        assert_eq!(hdu_chan_view.ndim(), 0);
                         hdu_chan_view.fill(Jones::from([
                             Complex::new(hdu_chan_chunk[0], hdu_chan_chunk[1]),
                             Complex::new(hdu_chan_chunk[2], hdu_chan_chunk[3]),
@@ -661,9 +674,9 @@ pub fn context_to_jones_tensor(
                         ]));
                     }
                 }
-                read_progress[coarse_chan_idx].inc(1);
+                progress.inc(1);
             }
-            read_progress[coarse_chan_idx].finish();
+            progress.finish();
         }
     })
     .unwrap();

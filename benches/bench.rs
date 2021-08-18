@@ -1,6 +1,6 @@
 use birli::{
-    context_to_baseline_imgsets, correct_cable_lengths, correct_geometry, cxx_aoflagger_new,
-    init_baseline_flagmasks, io::write_uvfits,
+    context_to_baseline_imgsets, context_to_jones_tensor, correct_cable_lengths, correct_geometry,
+    cxx_aoflagger_new, init_baseline_flagmasks, io::write_uvfits,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use glob::glob;
@@ -9,8 +9,12 @@ use std::env;
 use std::path::Path;
 use tempfile::tempdir;
 
+fn get_test_dir() -> String {
+    env::var("BIRLI_TEST_DIR").unwrap_or_else(|_| String::from("/mnt/data"))
+}
+
 fn get_context_mwax_half_1247842824() -> CorrelatorContext {
-    let test_dir = env::var("BIRLI_TEST_DIR").unwrap();
+    let test_dir = get_test_dir();
     let test_path = Path::new(&test_dir);
     let vis_path = test_path.join("1247842824_vis");
     let metafits_path = vis_path
@@ -32,7 +36,7 @@ fn get_context_mwax_half_1247842824() -> CorrelatorContext {
 }
 
 fn get_context_ord_half_1196175296() -> CorrelatorContext {
-    let test_dir = env::var("BIRLI_TEST_DIR").unwrap();
+    let test_dir = get_test_dir();
     let test_path = Path::new(&test_dir);
     let vis_path = test_path.join("1196175296_vis");
     let metafits_path = vis_path
@@ -54,7 +58,7 @@ fn get_context_ord_half_1196175296() -> CorrelatorContext {
 }
 
 fn get_context_1254670392_avg() -> CorrelatorContext {
-    let test_dir = env::var("BIRLI_TEST_DIR").unwrap();
+    let test_dir = get_test_dir();
     let test_path = Path::new(&test_dir);
     let vis_path = test_path.join("1254670392_vis");
     let metafits_path = vis_path
@@ -105,6 +109,44 @@ fn bench_context_to_baseline_imgsets_ord_half_1196175296(crt: &mut Criterion) {
                 &context.common_coarse_chan_indices.clone(),
                 &context.common_timestep_indices.clone(),
                 None,
+            )
+        })
+    });
+}
+
+fn bench_context_to_jones_tensor_mwax_half_1247842824(crt: &mut Criterion) {
+    let context = get_context_mwax_half_1247842824();
+    let timestep_idxs = context.common_timestep_indices.clone();
+    let timestep_range = timestep_idxs[0]..timestep_idxs[timestep_idxs.len() - 1] + 1;
+    let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
+    let coarse_chan_range = coarse_chan_idxs[0]..coarse_chan_idxs[coarse_chan_idxs.len() - 1] + 1;
+    let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+    crt.bench_function("context_to_jones_tensor - mwax_half_1247842824", |bch| {
+        bch.iter(|| {
+            context_to_jones_tensor(
+                black_box(&context),
+                black_box(&timestep_range),
+                black_box(&coarse_chan_range),
+                black_box(img_baseline_idxs.as_slice()),
+            )
+        })
+    });
+}
+
+fn bench_context_to_jones_tensor_ord_half_1196175296(crt: &mut Criterion) {
+    let context = get_context_ord_half_1196175296();
+    let timestep_idxs = context.common_timestep_indices.clone();
+    let timestep_range = timestep_idxs[0]..timestep_idxs[timestep_idxs.len() - 1] + 1;
+    let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
+    let coarse_chan_range = coarse_chan_idxs[0]..coarse_chan_idxs[coarse_chan_idxs.len() - 1] + 1;
+    let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+    crt.bench_function("context_to_jones_tensor - ord_half_1196175296", |bch| {
+        bch.iter(|| {
+            context_to_jones_tensor(
+                black_box(&context),
+                black_box(&timestep_range),
+                black_box(&coarse_chan_range),
+                black_box(img_baseline_idxs.as_slice()),
             )
         })
     });
@@ -229,7 +271,7 @@ fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
         &aoflagger,
         &context,
         img_coarse_chan_idxs,
-        &img_timestep_idxs,
+        img_timestep_idxs,
         None,
     );
 
@@ -241,7 +283,7 @@ fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
                 black_box(&baseline_idxs),
                 black_box(&baseline_imgsets),
                 black_box(&baseline_flagmasks),
-                black_box(&img_timestep_idxs),
+                black_box(img_timestep_idxs),
                 black_box(img_coarse_chan_idxs),
                 None,
             )
@@ -256,6 +298,8 @@ criterion_group!(
     targets =
         bench_context_to_baseline_imgsets_mwax_half_1247842824,
         bench_context_to_baseline_imgsets_ord_half_1196175296,
+        bench_context_to_jones_tensor_mwax_half_1247842824,
+        bench_context_to_jones_tensor_ord_half_1196175296,
         bench_correct_cable_lengths_mwax_half_1247842824,
         bench_correct_cable_lengths_ord_half_1196175296,
         bench_correct_geometry_mwax_half_1247842824,

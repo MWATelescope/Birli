@@ -15,6 +15,7 @@ exclude = ["tests/*", ".vscode/*", ".github/*", ".talismanrc"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+approx = { version = "0.5", features = ["num-complex"] }
 clap = "2.33"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
@@ -39,7 +40,6 @@ serde_json = "1.0"
 thiserror = "1.0"
 
 [dev-dependencies]
-approx = { version = "0.5", features = ["num-complex"] }
 assert_cli = "0.6"
 criterion = "0.3"
 glob = "0.3"

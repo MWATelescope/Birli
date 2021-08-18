@@ -11,9 +11,8 @@
 //! Parts of the code are derived from Torrance Hodgson's MWAjl:
 //! https://github.com/torrance/MWAjl/blob/master/src/matrix2x2.jl
 
-#[cfg(feature = "beam")]
-pub mod cache;
-
+// #[cfg(feature = "beam")]
+// pub mod cache;
 use std::ops::{Add, AddAssign, Deref, DerefMut, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
 use num::{
@@ -94,10 +93,12 @@ impl<F: Float> Jones<F> {
         ]
     }
 
+    /// return clone of a times b
     pub fn axb(a: &Self, b: &Self) -> Self {
         a.clone() * b
     }
 
+    /// return clone of a times Hermitian conjugate of b
     pub fn axbh(a: &Self, b: &Self) -> Self {
         a.clone() * b.h()
     }
@@ -112,6 +113,7 @@ impl<F: Float + FloatCore> Jones<F> {
 }
 
 impl<F: Float + NumAssign> Jones<F> {
+    /// add a * b to c
     pub fn plus_axb(c: &mut Self, a: &Self, b: &Self) {
         c[0] += a[0] * b[0] + a[1] * b[2];
         c[1] += a[0] * b[1] + a[1] * b[3];
@@ -119,6 +121,7 @@ impl<F: Float + NumAssign> Jones<F> {
         c[3] += a[2] * b[1] + a[3] * b[3];
     }
 
+    /// add the Hermitian conjugate of a * b to c
     pub fn plus_ahxb(c: &mut Self, a: &Self, b: &Self) {
         c[0] += a[0].conj() * b[0] + a[2].conj() * b[2];
         c[1] += a[0].conj() * b[1] + a[2].conj() * b[3];
