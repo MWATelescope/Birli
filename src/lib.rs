@@ -93,8 +93,12 @@ use cxx::UniquePtr;
 pub use cxx_aoflagger::ffi::{
     cxx_aoflagger_new, CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy,
 };
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use std::os::raw::c_short;
+use error::BirliError;
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use itertools::izip;
+use ndarray::{Array3, Axis};
+use num::Complex;
+use std::{ops::Range, os::raw::c_short};
 
 use mwalib::CorrelatorContext;
 // use std::collections::BTreeMap;
@@ -128,6 +132,9 @@ use log::{trace, warn};
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use crossbeam_utils::thread;
 use rayon::prelude::*;
+
+pub mod jones;
+pub use jones::Jones;
 
 /// Get the version of the AOFlagger library from the library itself.
 ///
@@ -518,15 +525,170 @@ pub fn context_to_baseline_imgsets(
     baseline_imgsets
 }
 
+/// generate a 3 dimensional array of Jones matrices from a MWALib context,
+/// over a given range of mwalib timestep, coarse channel and baseline indices.
+///
+/// The dimensions of the array are:
+///  - timestep
+///  - channel
+///  - baseline
+///
+pub fn context_to_jones_tensor(
+    context: &CorrelatorContext,
+    mwalib_timestep_range: &Range<usize>,
+    mwalib_coarse_chan_range: &Range<usize>,
+    mwalib_baseline_indices: &[usize],
+) -> Result<Array3<Jones<f32>>, BirliError> {
+    trace!("start context_to_jones_tensor");
+
+    // allocate our result
+
+    let num_timesteps = mwalib_timestep_range.len();
+    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+    let num_coarse_chans = mwalib_coarse_chan_range.len();
+    let num_chans = num_coarse_chans * fine_chans_per_coarse;
+    let num_baselines = mwalib_baseline_indices.len();
+
+    let shape = (num_timesteps, num_chans, num_baselines);
+
+    let mut result: Array3<Jones<f32>> = Array3::from_elem(shape, Jones::default());
+
+    // since we are using read_by_by basline into buffer, the visibilities are read in order:
+    // baseline,frequency,pol,r,i
+
+    let floats_per_chan = context.metafits_context.num_visibility_pols * 2;
+    let floats_per_baseline = floats_per_chan * fine_chans_per_coarse;
+    let floats_per_hdu = floats_per_baseline * num_baselines;
+
+    let mut hdu_buffer: Vec<f32> = vec![0.0; floats_per_hdu];
+
+    // ###
+    // parallel stuff
+    // ###
+
+    // let num_coarse_chan_chunks = 1;
+    // let coarse_chan_chunks = mwalib_coarse_chan_range.into_iter().chunks(num_coarse_chans/num_coarse_chan_chunks);
+
+    // ###
+    // progress bar stuff
+    // ###
+
+    // a progress bar containing the progress bars associated with loading the
+    // observation's HDUs
+    let multi_progress = MultiProgress::with_draw_target(ProgressDrawTarget::stderr());
+    // a vector of progress bars for the visibility reading progress of each
+    // channel.
+    let read_progress: Vec<ProgressBar> = mwalib_coarse_chan_range
+        .clone()
+        .map(|mwalib_coarse_chan_idx| {
+            multi_progress.add(
+                ProgressBar::new(num_timesteps as _)
+                    .with_style(
+                        ProgressStyle::default_bar()
+                            .template("{msg:16}: [{wide_bar:.blue}] {pos:4}/{len:4}")
+                            .progress_chars("=> "),
+                    )
+                    .with_position(0)
+                    .with_message(format!("coarse_chan {:03}", mwalib_coarse_chan_idx)),
+            )
+        })
+        .collect();
+    // A progress bar for the total progress of visibility loading, with time
+    // elapsed, percentage and ETA.
+    // let total_progress = multi_progress.add(
+    //     ProgressBar::new((num_timesteps * num_coarse_chans) as _)
+    //         .with_style(
+    //             ProgressStyle::default_bar()
+    //                 .template(
+    //                     "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+    //                 )
+    //                 .progress_chars("=> "),
+    //         )
+    //         .with_position(0)
+    //         .with_message("loading hdus"),
+    // );
+
+    // These [`std::sync::Arc`]s provide concurrent access to the inner values.
+    // let read_progress_arc = Arc::new(read_progress);
+    // let write_progress_arc = Arc::new(write_progress);
+    // let total_progress_arc = Arc::new(total_progress);
+
+    // start the reading
+    thread::scope(|scope| {
+        // Spawn a thread to draw the progress bars.
+        scope.spawn(|_| {
+            multi_progress.join().unwrap();
+        });
+
+        for (coarse_chan_idx, (mwalib_coarse_chan_idx, mut coarse_chan_view)) in izip!(
+            mwalib_coarse_chan_range.clone(),
+            result.axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
+        )
+        .enumerate()
+        {
+            // coarse_chan_view is [timestep][chan][baseline] for all chans in the coarse channel
+            for (mwalib_timestep_idx, mut hdu_view) in izip!(
+                mwalib_timestep_range.clone(),
+                coarse_chan_view.outer_iter_mut()
+            ) {
+                // TODO: handle errors
+                context
+                    .read_by_baseline_into_buffer(
+                        mwalib_timestep_idx,
+                        mwalib_coarse_chan_idx,
+                        hdu_buffer.as_mut_slice(),
+                    )
+                    .unwrap();
+
+                // hdu_view is [chan][baseline] for the coarse channel and timestep (HDU)
+                // hdu_buffer is [baseline][chan][pol][complex] for the coarse channel and timestep (HDU)
+                for (mut hdu_baseline_view, hdu_baseline_chunk) in izip!(
+                    hdu_view.axis_iter_mut(Axis(1)),
+                    hdu_buffer.chunks(floats_per_baseline)
+                ) {
+                    // hdu_baseline_view is [chan] for the given baseline in the hdu
+                    // hdu_baseline_chunk is [chan][pol][complex]
+                    for (mut hdu_chan_view, hdu_chan_chunk) in izip!(
+                        hdu_baseline_view.outer_iter_mut(),
+                        hdu_baseline_chunk.chunks(floats_per_chan)
+                    ) {
+                        assert_eq!(hdu_chan_view.dim(), ());
+                        hdu_chan_view.fill(Jones::from([
+                            Complex::new(hdu_chan_chunk[0], hdu_chan_chunk[1]),
+                            Complex::new(hdu_chan_chunk[2], hdu_chan_chunk[3]),
+                            Complex::new(hdu_chan_chunk[4], hdu_chan_chunk[5]),
+                            Complex::new(hdu_chan_chunk[6], hdu_chan_chunk[7]),
+                        ]));
+                    }
+                }
+                read_progress[coarse_chan_idx].inc(1);
+            }
+            read_progress[coarse_chan_idx].finish();
+        }
+    })
+    .unwrap();
+
+    trace!("end context_to_jones_tensor");
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     #![allow(clippy::float_cmp)]
 
-    use super::{context_to_baseline_imgsets, get_flaggable_timesteps, init_baseline_flagmasks};
-    use crate::cxx_aoflagger::ffi::cxx_aoflagger_new;
+    // use core::slice::SlicePattern;
+
+    use super::{
+        context_to_baseline_imgsets, context_to_jones_tensor, get_flaggable_timesteps,
+        init_baseline_flagmasks,
+    };
+    use crate::{cxx_aoflagger::ffi::cxx_aoflagger_new, Jones};
+    use approx::assert_abs_diff_eq;
     use float_cmp::{approx_eq, F32Margin};
     use mwalib::CorrelatorContext;
+    use num::complex::Complex32;
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -570,18 +732,31 @@ mod tests {
         CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
     }
 
+    macro_rules! test_visibility {
+        ($left:expr, $right:expr) => {
+            assert!(
+                approx_eq!(f32, $left, $right as f32, F32Margin::default()),
+                "{} (0x{:08x}) != {} (0x{:08x})",
+                $left,
+                $left as i32,
+                $right as f32,
+                $right as i32
+            )
+        };
+    }
+
     macro_rules! test_imgset_val {
         ($imgset:expr, $imgset_idx:expr, $fr:expr, $ts:expr, $val:expr) => {
             let left = $imgset.ImageBuffer($imgset_idx)[$fr * $imgset.HorizontalStride() + $ts];
-            let right = $val as f32;
-            assert!(
-                approx_eq!(f32, left, right, F32Margin::default()),
-                "{} (0x{:08x}) != {} (0x{:08x})",
-                left,
-                left as i32,
-                right,
-                right as i32
-            )
+            test_visibility!(left, $val as f32);
+            // assert!(
+            //     approx_eq!(f32, left, right, F32Margin::default()),
+            //     "{} (0x{:08x}) != {} (0x{:08x})",
+            //     left,
+            //     left as i32,
+            //     right,
+            //     right as i32
+            // )
         };
     }
 
@@ -902,5 +1077,163 @@ mod tests {
         test_imgset_val!(baseline_imgsets[0], 0, 2, 1, 0x04c5be);
         test_imgset_val!(baseline_imgsets[0], 0, 2, 2, 0x08c5be);
         test_imgset_val!(baseline_imgsets[0], 0, 2, 3, 0x0cc5be);
+    }
+
+    #[test]
+    fn test_context_to_jones_tensor_mwa_ord() {
+        let context = get_mwa_ord_context();
+
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(img_timestep_idxs.len(), 4);
+        let img_timestep_range =
+            img_timestep_idxs[0]..img_timestep_idxs[img_timestep_idxs.len() - 1] + 1;
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let img_coarse_chan_range =
+            img_coarse_chan_idxs[0]..img_coarse_chan_idxs[img_coarse_chan_idxs.len() - 1] + 1;
+
+        let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+
+        let jones_tensor = context_to_jones_tensor(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            img_baseline_idxs.as_slice(),
+        )
+        .unwrap();
+
+        // ts 0, chan 0, baseline 0
+        let jones_0_0_0 = jones_tensor.get((0, 0, 0)).unwrap();
+        assert_abs_diff_eq!(
+            jones_0_0_0,
+            &Jones::from([
+                Complex32::new(0x10c5be as f32, -0x10c5bf as f32),
+                Complex32::new(0x10c5ae as f32, 0x10c5af as f32),
+                Complex32::new(0x10c5ae as f32, -0x10c5af as f32),
+                Complex32::new(0x10bec6 as f32, -0x10bec7 as f32),
+            ])
+        );
+        // ts 1, chan 0, baseline 0
+        let jones_1_0_0 = jones_tensor.get((1, 0, 0)).unwrap();
+        assert_abs_diff_eq!(
+            jones_1_0_0,
+            &Jones::from([
+                Complex32::new(0x14c5be as f32, -0x14c5bf as f32),
+                Complex32::new(0x14c5ae as f32, 0x14c5af as f32),
+                Complex32::new(0x14c5ae as f32, -0x14c5af as f32),
+                Complex32::new(0x14bec6 as f32, -0x14bec7 as f32),
+            ])
+        );
+        // ts 2, chan 0, baseline 0
+        let jones_2_0_0 = jones_tensor.get((2, 0, 0)).unwrap();
+        assert_abs_diff_eq!(
+            jones_2_0_0,
+            &Jones::from([
+                Complex32::new(0x18c5be as f32, -0x18c5bf as f32),
+                Complex32::new(0x18c5ae as f32, 0x18c5af as f32),
+                Complex32::new(0x18c5ae as f32, -0x18c5af as f32),
+                Complex32::new(0x18bec6 as f32, -0x18bec7 as f32),
+            ])
+        );
+        // ts 3, chan 0, baseline 0
+        let jones_3_0_0 = jones_tensor.get((3, 0, 0)).unwrap();
+        assert_abs_diff_eq!(
+            jones_3_0_0,
+            &Jones::from([
+                Complex32::new(0x1cc5be as f32, -0x1cc5bf as f32),
+                Complex32::new(0x1cc5ae as f32, 0x1cc5af as f32),
+                Complex32::new(0x1cc5ae as f32, -0x1cc5af as f32),
+                Complex32::new(0x1cbec6 as f32, -0x1cbec7 as f32),
+            ])
+        );
+
+        // ts 0, chan 0, baseline 5
+        let jones_0_0_5 = jones_tensor.get((0, 0, 5)).unwrap();
+        assert_abs_diff_eq!(
+            jones_0_0_5,
+            &Jones::from([
+                Complex32::new(0x10f1ce as f32, -0x10f1cf as f32),
+                Complex32::new(0x10ea26 as f32, -0x10ea27 as f32),
+                Complex32::new(0x10f1be as f32, -0x10f1bf as f32),
+                Complex32::new(0x10ea16 as f32, -0x10ea17 as f32),
+            ])
+        );
+        // ts 1, chan 0, baseline 5
+        let jones_1_0_5 = jones_tensor.get((1, 0, 5)).unwrap();
+        assert_abs_diff_eq!(
+            jones_1_0_5,
+            &Jones::from([
+                Complex32::new(0x14f1ce as f32, -0x14f1cf as f32),
+                Complex32::new(0x14ea26 as f32, -0x14ea27 as f32),
+                Complex32::new(0x14f1be as f32, -0x14f1bf as f32),
+                Complex32::new(0x14ea16 as f32, -0x14ea17 as f32),
+            ])
+        );
+        // ts 2, chan 0, baseline 5
+        let jones_2_0_5 = jones_tensor.get((2, 0, 5)).unwrap();
+        assert_abs_diff_eq!(
+            jones_2_0_5,
+            &Jones::from([
+                Complex32::new(0x18f1ce as f32, -0x18f1cf as f32),
+                Complex32::new(0x18ea26 as f32, -0x18ea27 as f32),
+                Complex32::new(0x18f1be as f32, -0x18f1bf as f32),
+                Complex32::new(0x18ea16 as f32, -0x18ea17 as f32),
+            ])
+        );
+        // ts 3, chan 0, baseline 5
+        let jones_3_0_5 = jones_tensor.get((3, 0, 5)).unwrap();
+        assert_abs_diff_eq!(
+            jones_3_0_5,
+            &Jones::from([
+                Complex32::new(0x1cf1ce as f32, -0x1cf1cf as f32),
+                Complex32::new(0x1cea26 as f32, -0x1cea27 as f32),
+                Complex32::new(0x1cf1be as f32, -0x1cf1bf as f32),
+                Complex32::new(0x1cea16 as f32, -0x1cea17 as f32),
+            ])
+        );
+
+        // ts 0, chan 2, baseline 0
+        let jones_0_2_0 = jones_tensor.get((0, 2, 0)).unwrap();
+        assert_abs_diff_eq!(
+            jones_0_2_0,
+            &Jones::from([
+                Complex32::new(0x00c5be as f32, -0x00c5bf as f32),
+                Complex32::new(0x00c5ae as f32, 0x00c5af as f32),
+                Complex32::new(0x00c5ae as f32, -0x00c5af as f32),
+                Complex32::new(0x00bec6 as f32, -0x00bec7 as f32),
+            ])
+        );
+        // ts 1, chan 2, baseline 0
+        let jones_1_2_0 = jones_tensor.get((1, 2, 0)).unwrap();
+        assert_abs_diff_eq!(
+            jones_1_2_0,
+            &Jones::from([
+                Complex32::new(0x04c5be as f32, -0x04c5bf as f32),
+                Complex32::new(0x04c5ae as f32, 0x04c5af as f32),
+                Complex32::new(0x04c5ae as f32, -0x04c5af as f32),
+                Complex32::new(0x04bec6 as f32, -0x04bec7 as f32),
+            ])
+        );
+        // ts 2, chan 2, baseline 0
+        let jones_2_2_0 = jones_tensor.get((2, 2, 0)).unwrap();
+        assert_abs_diff_eq!(
+            jones_2_2_0,
+            &Jones::from([
+                Complex32::new(0x08c5be as f32, -0x08c5bf as f32),
+                Complex32::new(0x08c5ae as f32, 0x08c5af as f32),
+                Complex32::new(0x08c5ae as f32, -0x08c5af as f32),
+                Complex32::new(0x08bec6 as f32, -0x08bec7 as f32),
+            ])
+        );
+        // ts 3, chan 2, baseline 0
+        let jones_3_2_0 = jones_tensor.get((3, 2, 0)).unwrap();
+        assert_abs_diff_eq!(
+            jones_3_2_0,
+            &Jones::from([
+                Complex32::new(0x0cc5be as f32, -0x0cc5bf as f32),
+                Complex32::new(0x0cc5ae as f32, 0x0cc5af as f32),
+                Complex32::new(0x0cc5ae as f32, -0x0cc5af as f32),
+                Complex32::new(0x0cbec6 as f32, -0x0cbec7 as f32),
+            ])
+        );
     }
 }
