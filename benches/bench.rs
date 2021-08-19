@@ -1,5 +1,5 @@
 use birli::{
-    context_to_baseline_imgsets, context_to_jones_tensor, correct_cable_lengths, correct_geometry,
+    context_to_baseline_imgsets, context_to_jones_array, correct_cable_lengths, correct_geometry,
     cxx_aoflagger_new, init_baseline_flagmasks, io::write_uvfits,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -114,16 +114,16 @@ fn bench_context_to_baseline_imgsets_ord_half_1196175296(crt: &mut Criterion) {
     });
 }
 
-fn bench_context_to_jones_tensor_mwax_half_1247842824(crt: &mut Criterion) {
+fn bench_context_to_jones_array_mwax_half_1247842824(crt: &mut Criterion) {
     let context = get_context_mwax_half_1247842824();
     let timestep_idxs = context.common_timestep_indices.clone();
     let timestep_range = timestep_idxs[0]..timestep_idxs[timestep_idxs.len() - 1] + 1;
     let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
     let coarse_chan_range = coarse_chan_idxs[0]..coarse_chan_idxs[coarse_chan_idxs.len() - 1] + 1;
     let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
-    crt.bench_function("context_to_jones_tensor - mwax_half_1247842824", |bch| {
+    crt.bench_function("context_to_jones_array - mwax_half_1247842824", |bch| {
         bch.iter(|| {
-            context_to_jones_tensor(
+            context_to_jones_array(
                 black_box(&context),
                 black_box(&timestep_range),
                 black_box(&coarse_chan_range),
@@ -133,16 +133,16 @@ fn bench_context_to_jones_tensor_mwax_half_1247842824(crt: &mut Criterion) {
     });
 }
 
-fn bench_context_to_jones_tensor_ord_half_1196175296(crt: &mut Criterion) {
+fn bench_context_to_jones_array_ord_half_1196175296(crt: &mut Criterion) {
     let context = get_context_ord_half_1196175296();
     let timestep_idxs = context.common_timestep_indices.clone();
     let timestep_range = timestep_idxs[0]..timestep_idxs[timestep_idxs.len() - 1] + 1;
     let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
     let coarse_chan_range = coarse_chan_idxs[0]..coarse_chan_idxs[coarse_chan_idxs.len() - 1] + 1;
     let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
-    crt.bench_function("context_to_jones_tensor - ord_half_1196175296", |bch| {
+    crt.bench_function("context_to_jones_array - ord_half_1196175296", |bch| {
         bch.iter(|| {
-            context_to_jones_tensor(
+            context_to_jones_array(
                 black_box(&context),
                 black_box(&timestep_range),
                 black_box(&coarse_chan_range),
@@ -298,8 +298,8 @@ criterion_group!(
     targets =
         bench_context_to_baseline_imgsets_mwax_half_1247842824,
         bench_context_to_baseline_imgsets_ord_half_1196175296,
-        bench_context_to_jones_tensor_mwax_half_1247842824,
-        bench_context_to_jones_tensor_ord_half_1196175296,
+        bench_context_to_jones_array_mwax_half_1247842824,
+        bench_context_to_jones_array_ord_half_1196175296,
         bench_correct_cable_lengths_mwax_half_1247842824,
         bench_correct_cable_lengths_ord_half_1196175296,
         bench_correct_geometry_mwax_half_1247842824,

@@ -536,13 +536,13 @@ pub fn context_to_baseline_imgsets(
 /// # Errors
 ///
 /// Will raise [`mwalib::GpuboxError`] if the timestep x coarse channel range includes missing HDUs
-pub fn context_to_jones_tensor(
+pub fn context_to_jones_array(
     context: &CorrelatorContext,
     mwalib_timestep_range: &Range<usize>,
     mwalib_coarse_chan_range: &Range<usize>,
     mwalib_baseline_indices: &[usize],
 ) -> Result<Array3<Jones<f32>>, BirliError> {
-    trace!("start context_to_jones_tensor");
+    trace!("start context_to_jones_array");
 
     // allocate our result
 
@@ -562,8 +562,6 @@ pub fn context_to_jones_tensor(
     let floats_per_chan = context.metafits_context.num_visibility_pols * 2;
     let floats_per_baseline = floats_per_chan * fine_chans_per_coarse;
     let floats_per_hdu = floats_per_baseline * num_baselines;
-
-    let mut hdu_buffer: Vec<f32> = vec![0.0; floats_per_hdu];
 
     // ###
     // parallel stuff
@@ -596,25 +594,19 @@ pub fn context_to_jones_tensor(
             )
         })
         .collect();
-    // A progress bar for the total progress of visibility loading, with time
-    // elapsed, percentage and ETA.
-    // let total_progress = multi_progress.add(
-    //     ProgressBar::new((num_timesteps * num_coarse_chans) as _)
-    //         .with_style(
-    //             ProgressStyle::default_bar()
-    //                 .template(
-    //                     "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
-    //                 )
-    //                 .progress_chars("=> "),
-    //         )
-    //         .with_position(0)
-    //         .with_message("loading hdus"),
-    // );
 
-    // These [`std::sync::Arc`]s provide concurrent access to the inner values.
-    // let read_progress_arc = Arc::new(read_progress);
-    // let write_progress_arc = Arc::new(write_progress);
-    // let total_progress_arc = Arc::new(total_progress);
+    let total_progress = multi_progress.add(
+        ProgressBar::new((num_timesteps * num_coarse_chans) as _)
+            .with_style(
+                ProgressStyle::default_bar()
+                    .template(
+                        "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+                    )
+                    .progress_chars("=> "),
+            )
+            .with_position(0)
+            .with_message("loading hdus"),
+    );
 
     // start the reading
     thread::scope(|scope| {
@@ -623,65 +615,66 @@ pub fn context_to_jones_tensor(
             multi_progress.join().unwrap();
         });
 
-        // result
-        //     .axis_chunks_iter(Axis(1), fine_chans_per_coarse)
-        //     .into_par_iter()
-        //     .zip(mwalib_coarse_chan_range.clone())
-        //     .zip(read_progress)
-        //     .for_each(|((mut coarse_chan_view, mwalib_coarse_chan_idx), progress)| {
-        // Zip::from(result.axis_chunks_iter(Axis(1), fine_chans_per_coarse))
-        //     .and(mwalib_coarse_chan_range.clone())
-        //     .and(read_progress)
-        //     .par_for_each(|(mut coarse_chan_view, mwalib_coarse_chan_idx, progress)| {
+        total_progress.set_position(0);
 
-        for (mwalib_coarse_chan_idx, mut coarse_chan_view, progress) in izip!(
-            mwalib_coarse_chan_range.clone(),
-            result.axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse),
-            read_progress
-        ) {
-            // coarse_chan_view is [timestep][chan][baseline] for all chans in the coarse channel
-            for (mwalib_timestep_idx, mut hdu_view) in izip!(
-                mwalib_timestep_range.clone(),
-                coarse_chan_view.outer_iter_mut()
-            ) {
-                // TODO: handle errors
-                context
-                    .read_by_baseline_into_buffer(
-                        mwalib_timestep_idx,
-                        mwalib_coarse_chan_idx,
-                        hdu_buffer.as_mut_slice(),
-                    )
-                    .unwrap();
+        // Load HDUs
+        result
+            .axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
+            .into_par_iter()
+            .zip(mwalib_coarse_chan_range.clone())
+            .zip(read_progress)
+            .for_each(|((mut coarse_chan_view, mwalib_coarse_chan_idx), progress)| {
+                progress.set_position(0);
 
-                // hdu_view is [chan][baseline] for the coarse channel and timestep (HDU)
-                // hdu_buffer is [baseline][chan][pol][complex] for the coarse channel and timestep (HDU)
-                for (mut hdu_baseline_view, hdu_baseline_chunk) in izip!(
-                    hdu_view.axis_iter_mut(Axis(1)),
-                    hdu_buffer.chunks(floats_per_baseline)
+                let mut hdu_buffer: Vec<f32> = vec![0.0; floats_per_hdu];
+
+                // coarse_chan_view is [timestep][chan][baseline] for all chans in the coarse channel
+                for (mwalib_timestep_idx, mut hdu_view) in izip!(
+                    mwalib_timestep_range.clone(),
+                    coarse_chan_view.outer_iter_mut()
                 ) {
-                    // hdu_baseline_view is [chan] for the given baseline in the hdu
-                    // hdu_baseline_chunk is [chan][pol][complex]
-                    for (mut hdu_chan_view, hdu_chan_chunk) in izip!(
-                        hdu_baseline_view.outer_iter_mut(),
-                        hdu_baseline_chunk.chunks(floats_per_chan)
+                    // TODO: handle errors
+                    context
+                        .read_by_baseline_into_buffer(
+                            mwalib_timestep_idx,
+                            mwalib_coarse_chan_idx,
+                            hdu_buffer.as_mut_slice(),
+                        )
+                        .unwrap();
+
+                    // hdu_view is [chan][baseline] for the coarse channel and timestep (HDU)
+                    // hdu_buffer is [baseline][chan][pol][complex] for the coarse channel and timestep (HDU)
+                    for (mut hdu_baseline_view, hdu_baseline_chunk) in izip!(
+                        hdu_view.axis_iter_mut(Axis(1)),
+                        hdu_buffer.chunks(floats_per_baseline)
                     ) {
-                        assert_eq!(hdu_chan_view.ndim(), 0);
-                        hdu_chan_view.fill(Jones::from([
-                            Complex::new(hdu_chan_chunk[0], hdu_chan_chunk[1]),
-                            Complex::new(hdu_chan_chunk[2], hdu_chan_chunk[3]),
-                            Complex::new(hdu_chan_chunk[4], hdu_chan_chunk[5]),
-                            Complex::new(hdu_chan_chunk[6], hdu_chan_chunk[7]),
-                        ]));
+                        // hdu_baseline_view is [chan] for the given baseline in the hdu
+                        // hdu_baseline_chunk is [chan][pol][complex]
+                        for (mut hdu_chan_view, hdu_chan_chunk) in izip!(
+                            hdu_baseline_view.outer_iter_mut(),
+                            hdu_baseline_chunk.chunks(floats_per_chan)
+                        ) {
+                            // Sanity check that our ndarray view is a single cell.
+                            assert_eq!(hdu_chan_view.ndim(), 0);
+                            let jones = Jones::from([
+                                Complex::new(hdu_chan_chunk[0], hdu_chan_chunk[1]),
+                                Complex::new(hdu_chan_chunk[2], hdu_chan_chunk[3]),
+                                Complex::new(hdu_chan_chunk[4], hdu_chan_chunk[5]),
+                                Complex::new(hdu_chan_chunk[6], hdu_chan_chunk[7]),
+                            ]);
+                            hdu_chan_view.fill(jones);
+                        }
                     }
+                    progress.inc(1);
+                    total_progress.inc(1);
                 }
-                progress.inc(1);
-            }
-            progress.finish();
-        }
+                progress.finish();
+        });
+        total_progress.finish();
     })
     .unwrap();
 
-    trace!("end context_to_jones_tensor");
+    trace!("end context_to_jones_array");
 
     Ok(result)
 }
@@ -694,7 +687,7 @@ mod tests {
     // use core::slice::SlicePattern;
 
     use super::{
-        context_to_baseline_imgsets, context_to_jones_tensor, get_flaggable_timesteps,
+        context_to_baseline_imgsets, context_to_jones_array, get_flaggable_timesteps,
         init_baseline_flagmasks,
     };
     use crate::{cxx_aoflagger::ffi::cxx_aoflagger_new, Jones};
@@ -1093,7 +1086,7 @@ mod tests {
     }
 
     #[test]
-    fn test_context_to_jones_tensor_mwa_ord() {
+    fn test_context_to_jones_array_mwa_ord() {
         let context = get_mwa_ord_context();
 
         let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
@@ -1106,7 +1099,7 @@ mod tests {
 
         let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-        let jones_tensor = context_to_jones_tensor(
+        let jones_array = context_to_jones_array(
             &context,
             &img_timestep_range,
             &img_coarse_chan_range,
@@ -1115,7 +1108,7 @@ mod tests {
         .unwrap();
 
         // ts 0, chan 0, baseline 0
-        let jones_0_0_0 = jones_tensor.get((0, 0, 0)).unwrap();
+        let jones_0_0_0 = jones_array.get((0, 0, 0)).unwrap();
         assert_abs_diff_eq!(
             jones_0_0_0,
             &Jones::from([
@@ -1126,7 +1119,7 @@ mod tests {
             ])
         );
         // ts 1, chan 0, baseline 0
-        let jones_1_0_0 = jones_tensor.get((1, 0, 0)).unwrap();
+        let jones_1_0_0 = jones_array.get((1, 0, 0)).unwrap();
         assert_abs_diff_eq!(
             jones_1_0_0,
             &Jones::from([
@@ -1137,7 +1130,7 @@ mod tests {
             ])
         );
         // ts 2, chan 0, baseline 0
-        let jones_2_0_0 = jones_tensor.get((2, 0, 0)).unwrap();
+        let jones_2_0_0 = jones_array.get((2, 0, 0)).unwrap();
         assert_abs_diff_eq!(
             jones_2_0_0,
             &Jones::from([
@@ -1148,7 +1141,7 @@ mod tests {
             ])
         );
         // ts 3, chan 0, baseline 0
-        let jones_3_0_0 = jones_tensor.get((3, 0, 0)).unwrap();
+        let jones_3_0_0 = jones_array.get((3, 0, 0)).unwrap();
         assert_abs_diff_eq!(
             jones_3_0_0,
             &Jones::from([
@@ -1160,7 +1153,7 @@ mod tests {
         );
 
         // ts 0, chan 0, baseline 5
-        let jones_0_0_5 = jones_tensor.get((0, 0, 5)).unwrap();
+        let jones_0_0_5 = jones_array.get((0, 0, 5)).unwrap();
         assert_abs_diff_eq!(
             jones_0_0_5,
             &Jones::from([
@@ -1171,7 +1164,7 @@ mod tests {
             ])
         );
         // ts 1, chan 0, baseline 5
-        let jones_1_0_5 = jones_tensor.get((1, 0, 5)).unwrap();
+        let jones_1_0_5 = jones_array.get((1, 0, 5)).unwrap();
         assert_abs_diff_eq!(
             jones_1_0_5,
             &Jones::from([
@@ -1182,7 +1175,7 @@ mod tests {
             ])
         );
         // ts 2, chan 0, baseline 5
-        let jones_2_0_5 = jones_tensor.get((2, 0, 5)).unwrap();
+        let jones_2_0_5 = jones_array.get((2, 0, 5)).unwrap();
         assert_abs_diff_eq!(
             jones_2_0_5,
             &Jones::from([
@@ -1193,7 +1186,7 @@ mod tests {
             ])
         );
         // ts 3, chan 0, baseline 5
-        let jones_3_0_5 = jones_tensor.get((3, 0, 5)).unwrap();
+        let jones_3_0_5 = jones_array.get((3, 0, 5)).unwrap();
         assert_abs_diff_eq!(
             jones_3_0_5,
             &Jones::from([
@@ -1205,7 +1198,7 @@ mod tests {
         );
 
         // ts 0, chan 2, baseline 0
-        let jones_0_2_0 = jones_tensor.get((0, 2, 0)).unwrap();
+        let jones_0_2_0 = jones_array.get((0, 2, 0)).unwrap();
         assert_abs_diff_eq!(
             jones_0_2_0,
             &Jones::from([
@@ -1216,7 +1209,7 @@ mod tests {
             ])
         );
         // ts 1, chan 2, baseline 0
-        let jones_1_2_0 = jones_tensor.get((1, 2, 0)).unwrap();
+        let jones_1_2_0 = jones_array.get((1, 2, 0)).unwrap();
         assert_abs_diff_eq!(
             jones_1_2_0,
             &Jones::from([
@@ -1227,7 +1220,7 @@ mod tests {
             ])
         );
         // ts 2, chan 2, baseline 0
-        let jones_2_2_0 = jones_tensor.get((2, 2, 0)).unwrap();
+        let jones_2_2_0 = jones_array.get((2, 2, 0)).unwrap();
         assert_abs_diff_eq!(
             jones_2_2_0,
             &Jones::from([
@@ -1238,7 +1231,7 @@ mod tests {
             ])
         );
         // ts 3, chan 2, baseline 0
-        let jones_3_2_0 = jones_tensor.get((3, 2, 0)).unwrap();
+        let jones_3_2_0 = jones_array.get((3, 2, 0)).unwrap();
         assert_abs_diff_eq!(
             jones_3_2_0,
             &Jones::from([
