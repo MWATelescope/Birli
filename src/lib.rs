@@ -116,7 +116,7 @@ pub use corrections::{correct_cable_lengths, correct_geometry};
 
 pub mod flags;
 pub use flags::{
-    flag_imgsets, flag_imgsets_existing, get_antenna_flags, get_flaggable_timesteps,
+    flag_imgsets, flag_imgsets_existing, flagmask_or, get_antenna_flags, get_flaggable_timesteps,
     init_baseline_flagmasks, write_flags,
 };
 
@@ -290,6 +290,9 @@ pub fn init_baseline_imgsets(
 ///
 /// assert_ne!(width_common, width_common_good);
 /// ```
+///
+/// # Assumptions
+/// - img_coarse_chan_idxs and img_timestep_idxs are contiguous
 pub fn context_to_baseline_imgsets(
     aoflagger: &CxxAOFlagger,
     context: &CorrelatorContext,
@@ -299,222 +302,42 @@ pub fn context_to_baseline_imgsets(
 ) -> Vec<UniquePtr<CxxImageSet>> {
     trace!("start context_to_baseline_imgsets");
 
-    // TODO: although collect::Vec<_> is more readable, it uses the stack less
-    // efficiently than Vec
-    // TODO: error handling instead of unwrap.
+    warn!("context_to_baseline_imgsets is deprecated, use context_to_jones_array instead");
 
-    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-    let floats_per_finechan = context.metafits_context.num_visibility_pols * 2;
-    let floats_per_baseline = fine_chans_per_coarse * floats_per_finechan;
+    let img_coarse_chan_range =
+        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+    let img_timestep_range =
+        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+    let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-    let num_img_coarse_chans = img_coarse_chan_idxs.len();
-    let num_img_timesteps = img_timestep_idxs.len();
-
-    let mut baseline_imgsets = init_baseline_imgsets(
-        aoflagger,
-        context.metafits_context.num_baselines,
-        num_img_timesteps,
-        num_img_coarse_chans * fine_chans_per_coarse,
-    );
-    let baseline_imgsets_arc = Arc::new(&mut baseline_imgsets);
-
-    // TODO: this sucks.
-    let default_baseline_flagmasks: &mut Vec<UniquePtr<CxxFlagMask>> = &mut vec![];
-    let baseline_flagmasks = baseline_flagmasks.unwrap_or(default_baseline_flagmasks);
-    // let baseline_flagmasks_arc = Arc::new();
-
-    let num_producers = num_img_coarse_chans;
-    let num_pols_complex = context.metafits_context.num_visibility_pols * 2;
-
-    // A queue of common coarse channel indices for the producers to work through
-    let (tx_img_coarse_chan_idx, rx_img_coarse_chan_idx) = unbounded();
-    // a queue of raw gpufits visibility image buffers for each complex polarization.
-    let pol_img_queues: Vec<(Sender<_>, Receiver<_>)> = (0..num_pols_complex)
-        .map(|_| bounded(num_producers))
-        .collect();
-
-    let (tx_error, rx_error) = unbounded();
-
-    // a progress bar containing the progress bars associated with loading the
-    // observation's HDUs
-    let multi_progress = MultiProgress::new();
-    // a vector of progress bars for the visibility reading progress of each
-    // channel.
-    let read_progress: Vec<ProgressBar> = (0..num_img_coarse_chans)
-        .map(|img_coarse_chan_idx| {
-            multi_progress.add(
-                ProgressBar::new(num_img_timesteps as _)
-                    .with_style(
-                        ProgressStyle::default_bar()
-                            .template("{msg:16}: [{wide_bar}] {pos:4}/{len:4}")
-                            .progress_chars("=> "),
-                    )
-                    .with_position(0)
-                    .with_message(format!(
-                        "coarse chan {:3}",
-                        img_coarse_chan_idxs[img_coarse_chan_idx]
-                    )),
-            )
-        })
-        .collect();
-    // a vector of progress bars for the visibility writing progress of each
-    // complex polarization,
-    let write_progress: Vec<ProgressBar> = (0..num_pols_complex)
-        .map(|pol_idx| {
-            multi_progress.add(
-                ProgressBar::new((num_img_timesteps * num_img_coarse_chans) as _)
-                    .with_style(
-                        ProgressStyle::default_bar()
-                            .template("{msg:16}: [{wide_bar}] {pos:4}/{len:4}")
-                            .progress_chars("=> "),
-                    )
-                    .with_position(0)
-                    .with_message(format!("pol {:3}", pol_idx)),
-            )
-        })
-        .collect();
-    // A progress bar for the total progress of visibility loading, with time
-    // elapsed, percentage and ETA.
-    let total_progress = multi_progress.add(
-        ProgressBar::new((num_img_timesteps * num_img_coarse_chans * num_pols_complex) as _)
-            .with_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
-                    )
-                    .progress_chars("=> "),
-            )
-            .with_position(0)
-            .with_message("loading hdus"),
-    );
-    // These [`std::sync::Arc`]s provide concurrent access to the inner values.
-    let read_progress_arc = Arc::new(read_progress);
-    let write_progress_arc = Arc::new(write_progress);
-    let total_progress_arc = Arc::new(total_progress);
-
-    thread::scope(|scope| {
-        // Spawn a thread to deal with the progress bar
-        scope.spawn(|_| {
-            multi_progress.join().unwrap();
-        });
-
-        // Queue up coarse channels to do
-        (0..num_img_coarse_chans).for_each(|img_coarse_chan_idx| {
-            tx_img_coarse_chan_idx.send(img_coarse_chan_idx).unwrap();
-        });
-        // This indicates the the producer threads that there are no more coarse
-        // channels to process.
-        drop(tx_img_coarse_chan_idx);
-
-        // Create multiple producer threads
-        for _ in 0..num_producers {
-            let rx_img_coarse_chan_idx_worker = rx_img_coarse_chan_idx.clone();
-            let pol_img_queues_worker = pol_img_queues.clone();
-            let read_progress_worker = read_progress_arc.clone();
-            let tx_error_worker = tx_error.clone();
-            scope.spawn(move |_| {
-                // Each producer thread consumes the HDUs from one coarse
-                // channel at a time.
-                for img_coarse_chan_idx in rx_img_coarse_chan_idx_worker.iter() {
-                    let coarse_chan_idx = img_coarse_chan_idxs[img_coarse_chan_idx];
-                    (0..num_img_timesteps).for_each(|img_timestep_idx| {
-                        let timestep_idx = img_timestep_idxs[img_timestep_idx];
-                        match context.read_by_baseline(timestep_idx, coarse_chan_idx) {
-                            Ok(img_buf) => {
-                                let img_buf_arc = Arc::new(img_buf);
-                                // Producer sends the visibility buffer to a separate
-                                // queue for each complex polarization.
-                                pol_img_queues_worker.iter().for_each(|(tx_img, _)| {
-                                    tx_img
-                                        .send((
-                                            img_coarse_chan_idx,
-                                            img_timestep_idx,
-                                            img_buf_arc.clone(),
-                                        ))
-                                        .unwrap();
-                                });
-                            }
-                            Err(err) => {
-                                tx_error_worker
-                                    .send((img_coarse_chan_idx, img_timestep_idx, err))
-                                    .unwrap();
-                            }
-                        }
-                        read_progress_worker[img_coarse_chan_idx].inc(1);
-                    });
-                    read_progress_worker[img_coarse_chan_idx].finish_and_clear();
-                }
-                pol_img_queues_worker.into_iter().for_each(|(tx_img, _)| {
-                    drop(tx_img);
-                });
-                drop(tx_error_worker);
-            });
-        }
-        drop(tx_error);
-
-        // If an error message comes in on this channel, print it and flag if flagmasks provided.
-        scope.spawn(move |_| {
-            // let mut baseline_flagmasks = baseline_flagmasks_arc.clone();
-            for (img_coarse_chan_idx, img_timestep_idx, err) in rx_error.iter() {
-                warn!("could not read hdu {:?}", err);
-
-                baseline_flagmasks.iter_mut().for_each(|flagmask| {
-                    let flag_stride = flagmask.HorizontalStride();
-                    let flag_buf: &mut [bool] = flagmask.pin_mut().BufferMut();
-                    let freq_low = fine_chans_per_coarse * img_coarse_chan_idx;
-                    for fine_chan in 0..fine_chans_per_coarse {
-                        let freq_idx = freq_low + fine_chan;
-                        flag_buf[freq_idx * flag_stride + img_timestep_idx] = true;
-                    }
-                });
-            }
-        });
-
-        // create a consumer thread for each complex polarization
-        for (pol_idx, (tx_img, rx_img)) in pol_img_queues.into_iter().enumerate() {
-            // This ensures that
-            drop(tx_img);
-            let rx_img_worker = rx_img.clone();
-            let baseline_imgsets_worker = baseline_imgsets_arc.clone();
-            let write_progress_worker = write_progress_arc.clone();
-            let total_progess_worker = total_progress_arc.clone();
-            scope.spawn(move |_| {
-                // The thread consumes an image from it's img queue
-                for (img_coarse_chan_idx, img_timestep_idx, img_buf) in rx_img_worker.iter() {
-                    img_buf
-                        .chunks_exact(floats_per_baseline)
-                        .zip(Arc::as_ref(&baseline_imgsets_worker).iter())
-                        .for_each(|(baseline_chunk, imgset)| {
-                            // The thread writes visibilities from each baseline
-                            // into the image buffer from that baseline's
-                            // imageset corresponding to this thread's
-                            // complex polarization. This ensures that no two
-                            // threads access the same image buffer at the same
-                            // time.
-                            let img_stride = imgset.HorizontalStride();
-                            let imgset_buf = unsafe { imgset.ImageBufferMutUnsafe(pol_idx) };
-                            baseline_chunk
-                                .chunks_exact(floats_per_finechan)
-                                .enumerate()
-                                .for_each(|(fine_chan_idx, fine_chan_chunk)| {
-                                    let img_x = img_timestep_idx;
-                                    let img_y =
-                                        fine_chans_per_coarse * img_coarse_chan_idx + fine_chan_idx;
-                                    unsafe {
-                                        *imgset_buf.get_unchecked_mut(img_y * img_stride + img_x) =
-                                            *fine_chan_chunk.get_unchecked(pol_idx)
-                                    };
-                                });
-                        });
-                    write_progress_worker[pol_idx].inc(1);
-                    total_progess_worker.inc(1);
-                }
-                write_progress_worker[pol_idx].finish_and_clear();
-            });
-        }
-        total_progress_arc.finish();
-    })
+    let (jones_array, flag_array) = context_to_jones_array(
+        &context,
+        &img_timestep_range,
+        &img_coarse_chan_range,
+        img_baseline_idxs.as_slice(),
+    )
     .unwrap();
+
+    let baseline_imgsets = jones_array
+        .axis_iter(Axis(2))
+        .into_par_iter()
+        .map(|baseline_jones_view| {
+            jones_baseline_view_to_imageset(aoflagger, &baseline_jones_view).unwrap()
+        })
+        .collect();
+
+    match baseline_flagmasks {
+        Some(baseline_flagmasks_) => izip!(
+            flag_array.axis_iter(Axis(2)),
+            baseline_flagmasks_.iter_mut()
+        )
+        .for_each(|(baseline_flag_view, existing_flagmask)| {
+            let new_flagmask =
+                flag_baseline_view_to_flagmask(aoflagger, &baseline_flag_view).unwrap();
+            flagmask_or(existing_flagmask, &new_flagmask);
+        }),
+        _ => (),
+    }
 
     trace!("end context_to_baseline_imgsets");
 
@@ -661,6 +484,7 @@ pub fn context_to_jones_array(
                 assert!(mwalib_coarse_chan_range.contains(&mwalib_coarse_chan_idx));
                 let img_coarse_chan_idx = mwalib_coarse_chan_idx - mwalib_coarse_chan_range.start;
 
+                // TODO: there's probably a better way of doing this.
                 for mut coarse_chan_flags_view in flag_array
                     .axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
                     .skip(img_coarse_chan_idx)
@@ -742,6 +566,83 @@ pub fn context_to_jones_array(
     trace!("end context_to_jones_array");
 
     Ok((jones_array, flag_array))
+}
+
+/// Create an aoflagger [`CxxImageSet`] for a particular baseline from the given jones array
+///
+/// # Assumptions
+///
+/// - jones array view is [timestep][channel] for one baseline
+/// - imageset is timesteps wide, and channels high
+/// - jones matrics are always XX, YY, XY, YX
+pub fn jones_baseline_view_to_imageset(
+    aoflagger: &CxxAOFlagger,
+    // jones_array: &Array3<Jones<f32>>,
+    baseline_jones_view: &ArrayBase<ViewRepr<&Jones<f32>>, Dim<[usize; 2]>>,
+    // img_baseline_idx: usize,
+) -> Result<UniquePtr<CxxImageSet>, BirliError> {
+    let array_dims = baseline_jones_view.dim();
+    let img_count = 8;
+    let imgset = unsafe {
+        aoflagger.MakeImageSet(
+            array_dims.0,
+            array_dims.1,
+            img_count,
+            0 as f32,
+            array_dims.0,
+        )
+    };
+    let img_stride = imgset.HorizontalStride();
+    let mut img_bufs: Vec<&mut [f32]> = (0..img_count)
+        .map(|img_idx| unsafe { imgset.ImageBufferMutUnsafe(img_idx) })
+        .collect();
+
+    // TODO: there's probably a more elegant way of doing this.
+    // let baseline_jones_view = jones_array
+    //     .axis_iter(Axis(2))
+    //     .skip(img_baseline_idx)
+    //     .next()
+    //     .unwrap();
+
+    for (img_timestep_idx, timestep_jones_view) in baseline_jones_view.outer_iter().enumerate() {
+        for (img_chan_idx, singular_jones_view) in timestep_jones_view.outer_iter().enumerate() {
+            let jones = singular_jones_view.get(()).unwrap();
+            for (img_idx, img_buf) in img_bufs.iter_mut().enumerate() {
+                let pol_idx = img_idx / 2;
+                img_buf[img_chan_idx * img_stride + img_timestep_idx] = if img_idx % 2 == 0 {
+                    jones[pol_idx].re
+                } else {
+                    jones[pol_idx].im
+                };
+            }
+        }
+    }
+
+    Ok(imgset)
+}
+
+/// Create an aoflagger [`CxxFlagMask`] for a from the given flag array view
+///
+/// # Assumptions
+///
+/// - flag array view is [timestep][channel] for one baseline
+/// - flagmask is timesteps wide, and channels high
+pub fn flag_baseline_view_to_flagmask(
+    aoflagger: &CxxAOFlagger,
+    baseline_flag_view: &ArrayBase<ViewRepr<&bool>, Dim<[usize; 2]>>,
+) -> Result<UniquePtr<CxxFlagMask>, BirliError> {
+    let array_dims = baseline_flag_view.dim();
+    let mut flag_mask = unsafe { aoflagger.MakeFlagMask(array_dims.0, array_dims.1, false) };
+    let stride = flag_mask.HorizontalStride();
+    let flag_buf = flag_mask.pin_mut().BufferMut();
+
+    for (img_timestep_idx, timestep_flag_view) in baseline_flag_view.outer_iter().enumerate() {
+        for (img_chan_idx, singular_flag_view) in timestep_flag_view.outer_iter().enumerate() {
+            flag_buf[img_chan_idx * stride + img_timestep_idx] =
+                *singular_flag_view.get(()).unwrap();
+        }
+    }
+    Ok(flag_mask)
 }
 
 #[cfg(test)]
