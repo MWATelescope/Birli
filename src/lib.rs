@@ -96,7 +96,7 @@ pub use cxx_aoflagger::ffi::{
 use error::BirliError;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
-use ndarray::{parallel::prelude::*, Array3, Axis};
+use ndarray::{parallel::prelude::*, Array3, ArrayBase, Axis, Dim, ViewRepr};
 use num::Complex;
 use std::{ops::Range, os::raw::c_short};
 
@@ -525,6 +525,38 @@ pub fn context_to_baseline_imgsets(
     baseline_imgsets
 }
 
+/// Given a buffer from mwalib::CorrelatorContext.read_by_baseline, which is in the order
+/// [baseline][chan][pol][complex]
+/// Write these visibilities to a jones matrix array view for a given timestep, coarse channel
+/// [chan][baseline]
+macro_rules! _write_hdu_buffer_to_jones_view {
+    ($hdu_buffer:expr, $jones_hdu_view:expr, $floats_per_baseline:expr, $floats_per_chan:expr) => {
+        // jones_hdu_view is [chan][baseline] for the coarse channel and timestep (HDU)
+        // hdu_buffer is [baseline][chan][pol][complex] for the coarse channel and timestep (HDU)
+        for (mut jones_baseline_view, hdu_baseline_chunk) in izip!(
+            $jones_hdu_view.axis_iter_mut(Axis(1)),
+            $hdu_buffer.chunks($floats_per_baseline)
+        ) {
+            // jones_baseline_view is [chan] for the given baseline in the hdu
+            // hdu_baseline_chunk is [chan][pol][complex]
+            for (mut jones_chan_view, hdu_chan_chunk) in izip!(
+                jones_baseline_view.outer_iter_mut(),
+                hdu_baseline_chunk.chunks($floats_per_chan)
+            ) {
+                // Sanity check that our ndarray view is a single cell.
+                assert_eq!(jones_chan_view.ndim(), 0);
+                let jones = Jones::from([
+                    Complex::new(hdu_chan_chunk[0], hdu_chan_chunk[1]),
+                    Complex::new(hdu_chan_chunk[2], hdu_chan_chunk[3]),
+                    Complex::new(hdu_chan_chunk[4], hdu_chan_chunk[5]),
+                    Complex::new(hdu_chan_chunk[6], hdu_chan_chunk[7]),
+                ]);
+                jones_chan_view.fill(jones);
+            }
+        }
+    };
+}
+
 /// generate a 3 dimensional array of Jones matrices from a MWALib context,
 /// over a given range of mwalib timestep, coarse channel and baseline indices.
 ///
@@ -533,15 +565,13 @@ pub fn context_to_baseline_imgsets(
 ///  - channel
 ///  - baseline
 ///
-/// # Errors
-///
-/// Will raise [`mwalib::GpuboxError`] if the timestep x coarse channel range includes missing HDUs
+/// An equally sized flag array is also returned when reading via mwalib causes a GPUBoxError
 pub fn context_to_jones_array(
     context: &CorrelatorContext,
     mwalib_timestep_range: &Range<usize>,
     mwalib_coarse_chan_range: &Range<usize>,
     mwalib_baseline_indices: &[usize],
-) -> Result<Array3<Jones<f32>>, BirliError> {
+) -> Result<(Array3<Jones<f32>>, Array3<bool>), BirliError> {
     trace!("start context_to_jones_array");
 
     // allocate our result
@@ -554,7 +584,8 @@ pub fn context_to_jones_array(
 
     let shape = (num_timesteps, num_chans, num_baselines);
 
-    let mut result: Array3<Jones<f32>> = Array3::from_elem(shape, Jones::default());
+    let mut jones_array: Array3<Jones<f32>> = Array3::from_elem(shape, Jones::default());
+    let mut flag_array: Array3<bool> = Array3::from_elem(shape, false);
 
     // since we are using read_by_by basline into buffer, the visibilities are read in order:
     // baseline,frequency,pol,r,i
@@ -563,26 +594,24 @@ pub fn context_to_jones_array(
     let floats_per_baseline = floats_per_chan * fine_chans_per_coarse;
     let floats_per_hdu = floats_per_baseline * num_baselines;
 
-    // ###
-    // parallel stuff
-    // ###
+    //////
+    // Queue stuff
+    //////
 
-    // let num_coarse_chan_chunks = 1;
-    // let coarse_chan_chunks = mwalib_coarse_chan_range.into_iter().chunks(num_coarse_chans/num_coarse_chan_chunks);
+    // A queue of errors
+    let (tx_error, rx_error) = unbounded();
 
-    // ###
+    //////
     // progress bar stuff
-    // ###
+    //////
 
-    // a progress bar containing the progress bars associated with loading the
-    // observation's HDUs
+    // a progress bar containing the progress bars associated with loading the observation's HDUs
     let multi_progress = MultiProgress::with_draw_target(ProgressDrawTarget::stderr());
-    // a vector of progress bars for the visibility reading progress of each
-    // channel.
+    // a vector of progress bars for the visibility reading progress of each channel.
     let read_progress: Vec<ProgressBar> = mwalib_coarse_chan_range
         .clone()
         .map(|mwalib_coarse_chan_idx| {
-            multi_progress.add(
+            let channel_progress = multi_progress.add(
                 ProgressBar::new(num_timesteps as _)
                     .with_style(
                         ProgressStyle::default_bar()
@@ -591,10 +620,13 @@ pub fn context_to_jones_array(
                     )
                     .with_position(0)
                     .with_message(format!("coarse_chan {:03}", mwalib_coarse_chan_idx)),
-            )
+            );
+            channel_progress.set_position(0);
+            channel_progress
         })
         .collect();
 
+    // The total reading progress.
     let total_progress = multi_progress.add(
         ProgressBar::new((num_timesteps * num_coarse_chans) as _)
             .with_style(
@@ -617,66 +649,99 @@ pub fn context_to_jones_array(
 
         total_progress.set_position(0);
 
-        // Load HDUs
-        result
+        scope.spawn(|_| {
+            for (mwalib_timestep_idx, mwalib_coarse_chan_idx, err) in rx_error {
+                warn!(
+                    "could not read hdu ts={}, cc={} {:?}",
+                    mwalib_timestep_idx, mwalib_coarse_chan_idx, err
+                );
+
+                assert!(mwalib_timestep_range.contains(&mwalib_timestep_idx));
+                let img_timestep_idx = mwalib_timestep_idx - mwalib_timestep_range.start;
+                assert!(mwalib_coarse_chan_range.contains(&mwalib_coarse_chan_idx));
+                let img_coarse_chan_idx = mwalib_coarse_chan_idx - mwalib_coarse_chan_range.start;
+
+                for mut coarse_chan_flags_view in flag_array
+                    .axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
+                    .skip(img_coarse_chan_idx)
+                    .take(1)
+                {
+                    for mut hdu_flags_view in coarse_chan_flags_view
+                        .outer_iter_mut()
+                        .skip(img_timestep_idx)
+                        .take(1)
+                    {
+                        hdu_flags_view.fill(true);
+                    }
+                }
+
+                // TODO: this
+                // baseline_flagmasks.iter_mut().for_each(|flagmask| {
+                //     let flag_stride = flagmask.HorizontalStride();
+                //     let flag_buf: &mut [bool] = flagmask.pin_mut().BufferMut();
+                //     let freq_low = fine_chans_per_coarse * img_coarse_chan_idx;
+                //     for fine_chan in 0..fine_chans_per_coarse {
+                //         let freq_idx = freq_low + fine_chan;
+                //         flag_buf[freq_idx * flag_stride + img_timestep_idx] = true;
+                //     }
+                // });
+            }
+        });
+
+        // Load HDUs from each coarse channel in parallel.
+        jones_array
             .axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
             .into_par_iter()
             .zip(mwalib_coarse_chan_range.clone())
             .zip(read_progress)
-            .for_each(|((mut coarse_chan_view, mwalib_coarse_chan_idx), progress)| {
-                progress.set_position(0);
+            .for_each(
+                |((mut jones_coarse_chan_view, mwalib_coarse_chan_idx), progress)| {
+                    progress.set_position(0);
 
-                let mut hdu_buffer: Vec<f32> = vec![0.0; floats_per_hdu];
+                    let mut hdu_buffer: Vec<f32> = vec![0.0; floats_per_hdu];
 
-                // coarse_chan_view is [timestep][chan][baseline] for all chans in the coarse channel
-                for (mwalib_timestep_idx, mut hdu_view) in izip!(
-                    mwalib_timestep_range.clone(),
-                    coarse_chan_view.outer_iter_mut()
-                ) {
-                    // TODO: handle errors
-                    context
-                        .read_by_baseline_into_buffer(
+                    // jones_coarse_chan_view is [timestep][chan][baseline] for all chans in the coarse channel
+                    for (mwalib_timestep_idx, mut jones_hdu_view) in izip!(
+                        mwalib_timestep_range.clone(),
+                        jones_coarse_chan_view.outer_iter_mut()
+                    ) {
+                        match context.read_by_baseline_into_buffer(
                             mwalib_timestep_idx,
                             mwalib_coarse_chan_idx,
                             hdu_buffer.as_mut_slice(),
-                        )
-                        .unwrap();
-
-                    // hdu_view is [chan][baseline] for the coarse channel and timestep (HDU)
-                    // hdu_buffer is [baseline][chan][pol][complex] for the coarse channel and timestep (HDU)
-                    for (mut hdu_baseline_view, hdu_baseline_chunk) in izip!(
-                        hdu_view.axis_iter_mut(Axis(1)),
-                        hdu_buffer.chunks(floats_per_baseline)
-                    ) {
-                        // hdu_baseline_view is [chan] for the given baseline in the hdu
-                        // hdu_baseline_chunk is [chan][pol][complex]
-                        for (mut hdu_chan_view, hdu_chan_chunk) in izip!(
-                            hdu_baseline_view.outer_iter_mut(),
-                            hdu_baseline_chunk.chunks(floats_per_chan)
                         ) {
-                            // Sanity check that our ndarray view is a single cell.
-                            assert_eq!(hdu_chan_view.ndim(), 0);
-                            let jones = Jones::from([
-                                Complex::new(hdu_chan_chunk[0], hdu_chan_chunk[1]),
-                                Complex::new(hdu_chan_chunk[2], hdu_chan_chunk[3]),
-                                Complex::new(hdu_chan_chunk[4], hdu_chan_chunk[5]),
-                                Complex::new(hdu_chan_chunk[6], hdu_chan_chunk[7]),
-                            ]);
-                            hdu_chan_view.fill(jones);
+                            Ok(()) => {
+                                _write_hdu_buffer_to_jones_view!(
+                                    hdu_buffer,
+                                    jones_hdu_view,
+                                    floats_per_baseline,
+                                    floats_per_chan
+                                );
+                            }
+                            Err(err) => {
+                                tx_error
+                                    .send((mwalib_timestep_idx, mwalib_coarse_chan_idx, err))
+                                    .unwrap();
+                            }
                         }
+
+                        progress.inc(1);
+                        total_progress.inc(1);
                     }
-                    progress.inc(1);
-                    total_progress.inc(1);
-                }
-                progress.finish();
-        });
+                    progress.finish();
+                },
+            );
+
+        drop(tx_error);
+
+        // We're done!
         total_progress.finish();
     })
     .unwrap();
 
     trace!("end context_to_jones_array");
 
-    Ok(result)
+    Ok((jones_array, flag_array))
 }
 
 #[cfg(test)]
@@ -1086,20 +1151,22 @@ mod tests {
     }
 
     #[test]
-    fn test_context_to_jones_array_mwa_ord() {
-        let context = get_mwa_ord_context();
+    /// We expect coarse channel 0 ( fine channels 0,1 ) to be the same as in get_mwa_ord_context,
+    /// but coarse channel 0 (fine channels 2, 3 ) should be shifted.
+    fn test_context_to_jones_array_mwax_flags_missing_hdus() {
+        let context = get_mwa_ord_dodgy_context();
 
         let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
         assert_eq!(img_timestep_idxs.len(), 4);
         let img_timestep_range =
-            img_timestep_idxs[0]..img_timestep_idxs[img_timestep_idxs.len() - 1] + 1;
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
         let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
         let img_coarse_chan_range =
-            img_coarse_chan_idxs[0]..img_coarse_chan_idxs[img_coarse_chan_idxs.len() - 1] + 1;
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
         let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-        let jones_array = context_to_jones_array(
+        let (jones_array, flags_array) = context_to_jones_array(
             &context,
             &img_timestep_range,
             &img_coarse_chan_range,
@@ -1108,9 +1175,8 @@ mod tests {
         .unwrap();
 
         // ts 0, chan 0, baseline 0
-        let jones_0_0_0 = jones_array.get((0, 0, 0)).unwrap();
         assert_abs_diff_eq!(
-            jones_0_0_0,
+            jones_array.get((0, 0, 0)).unwrap(),
             &Jones::from([
                 Complex32::new(0x10c5be as f32, -0x10c5bf as f32),
                 Complex32::new(0x10c5ae as f32, 0x10c5af as f32),
@@ -1119,9 +1185,8 @@ mod tests {
             ])
         );
         // ts 1, chan 0, baseline 0
-        let jones_1_0_0 = jones_array.get((1, 0, 0)).unwrap();
         assert_abs_diff_eq!(
-            jones_1_0_0,
+            jones_array.get((1, 0, 0)).unwrap(),
             &Jones::from([
                 Complex32::new(0x14c5be as f32, -0x14c5bf as f32),
                 Complex32::new(0x14c5ae as f32, 0x14c5af as f32),
@@ -1130,9 +1195,8 @@ mod tests {
             ])
         );
         // ts 2, chan 0, baseline 0
-        let jones_2_0_0 = jones_array.get((2, 0, 0)).unwrap();
         assert_abs_diff_eq!(
-            jones_2_0_0,
+            jones_array.get((2, 0, 0)).unwrap(),
             &Jones::from([
                 Complex32::new(0x18c5be as f32, -0x18c5bf as f32),
                 Complex32::new(0x18c5ae as f32, 0x18c5af as f32),
@@ -1141,9 +1205,204 @@ mod tests {
             ])
         );
         // ts 3, chan 0, baseline 0
-        let jones_3_0_0 = jones_array.get((3, 0, 0)).unwrap();
         assert_abs_diff_eq!(
-            jones_3_0_0,
+            jones_array.get((3, 0, 0)).unwrap(),
+            &Jones::from([
+                Complex32::new(0x1cc5be as f32, -0x1cc5bf as f32),
+                Complex32::new(0x1cc5ae as f32, 0x1cc5af as f32),
+                Complex32::new(0x1cc5ae as f32, -0x1cc5af as f32),
+                Complex32::new(0x1cbec6 as f32, -0x1cbec7 as f32),
+            ])
+        );
+
+        // Fine channel 2 is in the modified coarse channel, so should have drifted
+
+        // ts 0, chan 2, baseline 0
+        assert_abs_diff_eq!(
+            jones_array.get((0, 2, 0)).unwrap(),
+            // Normally this would be:
+            // &Jones::from([
+            //     Complex32::new(0x00c5be as f32, -0x00c5bf as f32),
+            //     Complex32::new(0x00c5ae as f32, 0x00c5af as f32),
+            //     Complex32::new(0x00c5ae as f32, -0x00c5af as f32),
+            //     Complex32::new(0x00bec6 as f32, -0x00bec7 as f32),
+            // ])
+            &Jones::from([
+                Complex32::new(0x04c5be as f32, -0x04c5bf as f32),
+                Complex32::new(0x04c5ae as f32, 0x04c5af as f32),
+                Complex32::new(0x04c5ae as f32, -0x04c5af as f32),
+                Complex32::new(0x04bec6 as f32, -0x04bec7 as f32),
+            ])
+        );
+        assert!(!flags_array.get((0, 2, 0)).unwrap());
+        // ts 1, chan 2, baseline 0
+        assert_abs_diff_eq!(
+            jones_array.get((1, 2, 0)).unwrap(),
+            &Jones::from([
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+            ])
+        );
+        assert!(flags_array.get((1, 2, 0)).unwrap());
+        // ts 2, chan 2, baseline 0 - unchanged
+        assert_abs_diff_eq!(
+            jones_array.get((2, 2, 0)).unwrap(),
+            &Jones::from([
+                Complex32::new(0x08c5be as f32, -0x08c5bf as f32),
+                Complex32::new(0x08c5ae as f32, 0x08c5af as f32),
+                Complex32::new(0x08c5ae as f32, -0x08c5af as f32),
+                Complex32::new(0x08bec6 as f32, -0x08bec7 as f32),
+            ])
+        );
+        assert!(!flags_array.get((2, 2, 0)).unwrap());
+        // ts 3, chan 2, baseline 0
+        assert_abs_diff_eq!(
+            jones_array.get((3, 2, 0)).unwrap(),
+            &Jones::from([
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+            ])
+        );
+        assert!(flags_array.get((3, 2, 0)).unwrap());
+    }
+
+    #[test]
+    fn test_context_to_jones_array_mwax() {
+        let context = get_mwax_context();
+
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(img_timestep_idxs.len(), 4);
+        let img_timestep_range =
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let img_coarse_chan_range =
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+        let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+
+        let (jones_array, _) = context_to_jones_array(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            img_baseline_idxs.as_slice(),
+        )
+        .unwrap();
+
+        // ts 0, chan 0, baseline 0
+        assert_abs_diff_eq!(
+            jones_array.get((0, 0, 0)).unwrap(),
+            &Jones::from([
+                Complex32::new(0x410000 as f32, 0x410001 as f32),
+                Complex32::new(0x410002 as f32, 0x410003 as f32),
+                Complex32::new(0x410004 as f32, 0x410005 as f32),
+                Complex32::new(0x410006 as f32, 0x410007 as f32),
+            ])
+        );
+
+        // ts 1, chan 0, baseline 0
+        assert_abs_diff_eq!(
+            jones_array.get((1, 0, 0)).unwrap(),
+            &Jones::from([
+                Complex32::new(0x410100 as f32, 0x410101 as f32),
+                Complex32::new(0x410102 as f32, 0x410103 as f32),
+                Complex32::new(0x410104 as f32, 0x410105 as f32),
+                Complex32::new(0x410106 as f32, 0x410107 as f32),
+            ])
+        );
+
+        // ts 2, chan 0, baseline 0
+        assert_abs_diff_eq!(
+            jones_array.get((2, 0, 0)).unwrap(),
+            &Jones::from([
+                Complex32::new(0x410200 as f32, 0x410201 as f32),
+                Complex32::new(0x410202 as f32, 0x410203 as f32),
+                Complex32::new(0x410204 as f32, 0x410205 as f32),
+                Complex32::new(0x410206 as f32, 0x410207 as f32),
+            ])
+        );
+
+        // ts 0, chan 0, baseline 2
+        assert_abs_diff_eq!(
+            jones_array.get((0, 0, 2)).unwrap(),
+            &Jones::from([
+                Complex32::new(0x410020 as f32, 0x410021 as f32),
+                Complex32::new(0x410022 as f32, 0x410023 as f32),
+                Complex32::new(0x410024 as f32, 0x410025 as f32),
+                Complex32::new(0x410026 as f32, 0x410027 as f32),
+            ])
+        );
+
+        // ts 0, chan 1, baseline 2
+        assert_abs_diff_eq!(
+            jones_array.get((0, 1, 2)).unwrap(),
+            &Jones::from([
+                Complex32::new(0x410028 as f32, 0x410029 as f32),
+                Complex32::new(0x41002a as f32, 0x41002b as f32),
+                Complex32::new(0x41002c as f32, 0x41002d as f32),
+                Complex32::new(0x41002e as f32, 0x41002f as f32),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_context_to_jones_array_mwa_ord() {
+        let context = get_mwa_ord_context();
+
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(img_timestep_idxs.len(), 4);
+        let img_timestep_range =
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let img_coarse_chan_range =
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+        let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+
+        let (jones_array, _) = context_to_jones_array(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            img_baseline_idxs.as_slice(),
+        )
+        .unwrap();
+
+        // ts 0, chan 0, baseline 0
+        assert_abs_diff_eq!(
+            jones_array.get((0, 0, 0)).unwrap(),
+            &Jones::from([
+                Complex32::new(0x10c5be as f32, -0x10c5bf as f32),
+                Complex32::new(0x10c5ae as f32, 0x10c5af as f32),
+                Complex32::new(0x10c5ae as f32, -0x10c5af as f32),
+                Complex32::new(0x10bec6 as f32, -0x10bec7 as f32),
+            ])
+        );
+        // ts 1, chan 0, baseline 0
+        assert_abs_diff_eq!(
+            jones_array.get((1, 0, 0)).unwrap(),
+            &Jones::from([
+                Complex32::new(0x14c5be as f32, -0x14c5bf as f32),
+                Complex32::new(0x14c5ae as f32, 0x14c5af as f32),
+                Complex32::new(0x14c5ae as f32, -0x14c5af as f32),
+                Complex32::new(0x14bec6 as f32, -0x14bec7 as f32),
+            ])
+        );
+        // ts 2, chan 0, baseline 0
+        assert_abs_diff_eq!(
+            jones_array.get((2, 0, 0)).unwrap(),
+            &Jones::from([
+                Complex32::new(0x18c5be as f32, -0x18c5bf as f32),
+                Complex32::new(0x18c5ae as f32, 0x18c5af as f32),
+                Complex32::new(0x18c5ae as f32, -0x18c5af as f32),
+                Complex32::new(0x18bec6 as f32, -0x18bec7 as f32),
+            ])
+        );
+        // ts 3, chan 0, baseline 0
+        assert_abs_diff_eq!(
+            jones_array.get((3, 0, 0)).unwrap(),
             &Jones::from([
                 Complex32::new(0x1cc5be as f32, -0x1cc5bf as f32),
                 Complex32::new(0x1cc5ae as f32, 0x1cc5af as f32),
@@ -1153,9 +1412,8 @@ mod tests {
         );
 
         // ts 0, chan 0, baseline 5
-        let jones_0_0_5 = jones_array.get((0, 0, 5)).unwrap();
         assert_abs_diff_eq!(
-            jones_0_0_5,
+            jones_array.get((0, 0, 5)).unwrap(),
             &Jones::from([
                 Complex32::new(0x10f1ce as f32, -0x10f1cf as f32),
                 Complex32::new(0x10ea26 as f32, -0x10ea27 as f32),
@@ -1164,9 +1422,8 @@ mod tests {
             ])
         );
         // ts 1, chan 0, baseline 5
-        let jones_1_0_5 = jones_array.get((1, 0, 5)).unwrap();
         assert_abs_diff_eq!(
-            jones_1_0_5,
+            jones_array.get((1, 0, 5)).unwrap(),
             &Jones::from([
                 Complex32::new(0x14f1ce as f32, -0x14f1cf as f32),
                 Complex32::new(0x14ea26 as f32, -0x14ea27 as f32),
@@ -1175,9 +1432,8 @@ mod tests {
             ])
         );
         // ts 2, chan 0, baseline 5
-        let jones_2_0_5 = jones_array.get((2, 0, 5)).unwrap();
         assert_abs_diff_eq!(
-            jones_2_0_5,
+            jones_array.get((2, 0, 5)).unwrap(),
             &Jones::from([
                 Complex32::new(0x18f1ce as f32, -0x18f1cf as f32),
                 Complex32::new(0x18ea26 as f32, -0x18ea27 as f32),
@@ -1186,9 +1442,8 @@ mod tests {
             ])
         );
         // ts 3, chan 0, baseline 5
-        let jones_3_0_5 = jones_array.get((3, 0, 5)).unwrap();
         assert_abs_diff_eq!(
-            jones_3_0_5,
+            jones_array.get((3, 0, 5)).unwrap(),
             &Jones::from([
                 Complex32::new(0x1cf1ce as f32, -0x1cf1cf as f32),
                 Complex32::new(0x1cea26 as f32, -0x1cea27 as f32),
@@ -1198,9 +1453,8 @@ mod tests {
         );
 
         // ts 0, chan 2, baseline 0
-        let jones_0_2_0 = jones_array.get((0, 2, 0)).unwrap();
         assert_abs_diff_eq!(
-            jones_0_2_0,
+            jones_array.get((0, 2, 0)).unwrap(),
             &Jones::from([
                 Complex32::new(0x00c5be as f32, -0x00c5bf as f32),
                 Complex32::new(0x00c5ae as f32, 0x00c5af as f32),
@@ -1209,9 +1463,8 @@ mod tests {
             ])
         );
         // ts 1, chan 2, baseline 0
-        let jones_1_2_0 = jones_array.get((1, 2, 0)).unwrap();
         assert_abs_diff_eq!(
-            jones_1_2_0,
+            jones_array.get((1, 2, 0)).unwrap(),
             &Jones::from([
                 Complex32::new(0x04c5be as f32, -0x04c5bf as f32),
                 Complex32::new(0x04c5ae as f32, 0x04c5af as f32),
@@ -1220,9 +1473,8 @@ mod tests {
             ])
         );
         // ts 2, chan 2, baseline 0
-        let jones_2_2_0 = jones_array.get((2, 2, 0)).unwrap();
         assert_abs_diff_eq!(
-            jones_2_2_0,
+            jones_array.get((2, 2, 0)).unwrap(),
             &Jones::from([
                 Complex32::new(0x08c5be as f32, -0x08c5bf as f32),
                 Complex32::new(0x08c5ae as f32, 0x08c5af as f32),
@@ -1231,9 +1483,8 @@ mod tests {
             ])
         );
         // ts 3, chan 2, baseline 0
-        let jones_3_2_0 = jones_array.get((3, 2, 0)).unwrap();
         assert_abs_diff_eq!(
-            jones_3_2_0,
+            jones_array.get((3, 2, 0)).unwrap(),
             &Jones::from([
                 Complex32::new(0x0cc5be as f32, -0x0cc5bf as f32),
                 Complex32::new(0x0cc5ae as f32, 0x0cc5af as f32),
