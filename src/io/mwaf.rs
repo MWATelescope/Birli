@@ -16,9 +16,10 @@ use crate::cxx_aoflagger::ffi::CxxFlagMask;
 use crate::error::BirliError;
 use clap::crate_version;
 use cxx::UniquePtr;
+use fitsio::hdu::FitsHdu;
 use fitsio::tables::{ColumnDataDescription, ColumnDataType, ConcreteColumnDescription};
 use fitsio::FitsFile;
-use fitsio::{self, hdu::FitsHdu};
+use mwa_rust_core::{fitsio, fitsio_sys, mwalib};
 use mwalib::{
     CorrelatorContext, MWAVersion, _get_required_fits_key, _open_hdu, fits_open_hdu,
     get_required_fits_key,
@@ -503,6 +504,7 @@ mod tests {
     use crate::io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate};
     use cxx::UniquePtr;
     use fitsio::FitsFile;
+    use mwa_rust_core::{fitsio, mwalib};
     use mwalib::{
         CorrelatorContext, _get_optional_fits_key, _open_hdu, fits_open_hdu, get_optional_fits_key,
         MWAVersion,

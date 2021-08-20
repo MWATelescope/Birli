@@ -4,15 +4,17 @@ use log::{debug, info, trace};
 use std::{env, ffi::OsString, fmt::Debug, path::Path};
 
 use birli::{
-    constants::{
-        COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
-    },
     context_to_baseline_imgsets, correct_cable_lengths,
     corrections::correct_geometry,
     cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags, get_aoflagger_version_string,
     get_flaggable_timesteps, init_baseline_flagmasks,
     io::write_uvfits,
-    pos::earth::LatLngHeight,
+    mwa_rust_core::{
+        constants::{
+            COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
+        },
+        mwalib, LatLngHeight,
+    },
     write_flags,
 };
 // use birli::util::{dump_flagmask, dump_imgset};
@@ -252,6 +254,7 @@ mod tests {
     use fitsio::errors::check_status as fits_check_status;
     use float_cmp::{approx_eq, F32Margin, F64Margin};
     use itertools::izip;
+    use mwa_rust_core::{fitsio, fitsio_sys, mwalib};
     use mwalib::{
         CorrelatorContext, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
         get_required_fits_key,

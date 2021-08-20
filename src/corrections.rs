@@ -1,19 +1,14 @@
 //! Corrections that can be performed on visibility data
 
-use crate::{
-    constants::HIFITIME_GPS_FACTOR,
-    cxx_aoflagger::ffi::CxxImageSet,
-    pos::{earth::LatLngHeight, precess::precess_time, RADec, XyzGeodetic, UVW},
-};
+use crate::cxx_aoflagger::ffi::CxxImageSet;
 use cxx::UniquePtr;
-use hifitime::Epoch;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::izip;
 use log::trace;
-use mwalib::{
-    CorrelatorContext, MWAVersion, MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS,
-    MWA_LONGITUDE_RADIANS, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S,
+use mwa_rust_core::{
+    constants::VEL_C, mwalib, precession::precess_time, time, LatLngHeight, RADec, XyzGeodetic, UVW,
 };
+use mwalib::{CorrelatorContext, MWAVersion};
 use std::f64::consts::PI;
 
 fn _correct_cable_length_buffers_cotter(
@@ -22,7 +17,7 @@ fn _correct_cable_length_buffers_cotter(
     buf_re: &mut [f32],
     buf_im: &mut [f32],
 ) {
-    let angle: f64 = -2.0 * PI * electrical_length_m * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+    let angle: f64 = -2.0 * PI * electrical_length_m * freq_hz / VEL_C;
     let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
     let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
 
@@ -82,7 +77,7 @@ fn _get_all_freqs_hz(context: &CorrelatorContext, coarse_chan_idxs: &[usize]) ->
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, correct_cable_lengths};
+/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, correct_cable_lengths, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -132,7 +127,7 @@ fn _get_all_freqs_hz(context: &CorrelatorContext, coarse_chan_idxs: &[usize]) ->
 /// use itertools::izip;
 /// use std::f64::consts::PI;
 ///
-/// const SPEED_OF_LIGHT_IN_VACUUM_M_PER_S: f64 = 299792458.0; // speed of light in m/s
+/// const VEL_C: f64 = 299792458.0; // speed of light in m/s
 ///
 /// fn _correct_cable_length_buffers_precise(
 ///     freq_hz: &u32,
@@ -140,7 +135,7 @@ fn _get_all_freqs_hz(context: &CorrelatorContext, coarse_chan_idxs: &[usize]) ->
 ///     buf_re: &mut [f32],
 ///     buf_im: &mut [f32],
 /// ) {
-///     let angle: f64 = -2.0 * PI * electrical_length_m * (*freq_hz as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+///     let angle: f64 = -2.0 * PI * electrical_length_m * (*freq_hz as f64) / VEL_C;
 ///     let (sin_angle, cos_angle) = angle.sin_cos();
 ///     izip!(buf_re.iter_mut(), buf_im.iter_mut()).for_each(|(re, im)| {
 ///         let vis_re = *re as f64;
@@ -230,7 +225,7 @@ pub fn correct_cable_lengths(
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, correct_geometry};
+/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, correct_geometry, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -281,11 +276,7 @@ pub fn correct_geometry(
             // This is at least partly due to different constants (the altitude is
             // definitely slightly different), but possibly also because ERFA is
             // more accurate than cotter's "homebrewed" Geodetic2XYZ.
-            LatLngHeight {
-                longitude_rad: MWA_LONGITUDE_RADIANS,
-                latitude_rad: MWA_LATITUDE_RADIANS,
-                height_metres: MWA_ALTITUDE_METRES,
-            }
+            LatLngHeight::new_mwa()
         }
     };
 
@@ -314,18 +305,16 @@ pub fn correct_geometry(
     // TODO: rewrite this whole thing, parallelize and iterate over timestep THEN baseline.
 
     for (img_timestep_idx, &timestep_idx) in img_timestep_idxs.iter().enumerate() {
-        let gps_time_s = context.timesteps[timestep_idx].gps_time_ms as f64 / 1000.0;
-        // TODO: document where this 19 comes from?
-        let epoch = Epoch::from_tai_seconds(
-            gps_time_s + 19.0 + HIFITIME_GPS_FACTOR + integration_time_s / 2.0,
+        let epoch = time::gps_to_epoch(
+            context.timesteps[timestep_idx].gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
         );
 
         // let date_mjd_utc = epoch.as_mjd_utc_days();
         // let date_mjd_tai = epoch.as_mjd_tai_days();
 
         let prec_info = precess_time(
-            &phase_centre_ra,
-            &epoch,
+            phase_centre_ra,
+            epoch,
             array_pos.longitude_rad,
             array_pos.latitude_rad,
         );
@@ -340,8 +329,8 @@ pub fn correct_geometry(
             let ant2_idx = baseline.ant2_index;
 
             let baseline_xyz_precessed =
-                tiles_xyz_precessed[ant1_idx].clone() - &tiles_xyz_precessed[ant2_idx];
-            let uvw = UVW::from_xyz(&baseline_xyz_precessed, &prec_info.hadec_j2000);
+                tiles_xyz_precessed[ant1_idx] - tiles_xyz_precessed[ant2_idx];
+            let uvw = UVW::from_xyz(baseline_xyz_precessed, prec_info.hadec_j2000);
 
             for pol_idx in 0..4 {
                 let imgset_buf_re: &mut [f32] = unsafe { imgset.ImageBufferMutUnsafe(2 * pol_idx) };
@@ -362,7 +351,7 @@ pub fn correct_geometry(
                     imgset_timestep_chunk_re,
                     imgset_timestep_chunk_im
                 ) {
-                    let angle = -2.0 * PI * uvw.w * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+                    let angle = -2.0 * PI * uvw.w * freq_hz / VEL_C;
                     let (sin_angle, cos_angle) = angle.sin_cos();
 
                     let vis_re = *re as f64;
@@ -384,20 +373,17 @@ pub fn correct_geometry(
 mod tests {
     #![allow(clippy::float_cmp)]
 
-    use super::{correct_cable_lengths, correct_geometry, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S};
+    use super::{correct_cable_lengths, correct_geometry, VEL_C};
     use float_cmp::{approx_eq, F32Margin};
-    use hifitime::Epoch;
-    use mwalib::{
-        CorrelatorContext, MWA_ALTITUDE_METRES, MWA_LATITUDE_RADIANS, MWA_LONGITUDE_RADIANS,
+    use mwa_rust_core::{
+        mwalib, precession::precess_time, time, LatLngHeight, RADec, XyzGeodetic, UVW,
     };
+    use mwalib::CorrelatorContext;
     use std::f64::consts::PI;
 
     use crate::{
-        constants::HIFITIME_GPS_FACTOR,
-        context_to_baseline_imgsets,
-        corrections::_get_all_freqs_hz,
-        cxx_aoflagger_new, get_flaggable_timesteps,
-        pos::{earth::LatLngHeight, precess::precess_time, RADec, XyzGeodetic, UVW},
+        context_to_baseline_imgsets, corrections::_get_all_freqs_hz, cxx_aoflagger_new,
+        get_flaggable_timesteps,
     };
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
@@ -511,31 +497,26 @@ mod tests {
 
         // baseline 1, pol XX, cc 0, fc 0
         let length_m_1_xx = length_1_2_x - length_1_1_x;
-        let angle_1_xx_0: f64 =
-            -2.0 * PI * length_m_1_xx * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_1_xx_0: f64 = -2.0 * PI * length_m_1_xx * (all_freqs_hz[0] as f64) / VEL_C;
         let (sin_1_xx_0_f64, cos_1_xx_0_f64) = angle_1_xx_0.sin_cos();
         let (sin_1_xx_0, cos_1_xx_0) = (sin_1_xx_0_f64 as f32, cos_1_xx_0_f64 as f32);
         // baseline 1, pol XY, cc 0, fc 0
         let length_m_1_xy = length_1_2_y - length_1_1_x;
-        let angle_1_xy_0: f64 =
-            -2.0 * PI * length_m_1_xy * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_1_xy_0: f64 = -2.0 * PI * length_m_1_xy * (all_freqs_hz[0] as f64) / VEL_C;
         let (sin_1_xy_0_f64, cos_1_xy_0_f64) = angle_1_xy_0.sin_cos();
         let (sin_1_xy_0, cos_1_xy_0) = (sin_1_xy_0_f64 as f32, cos_1_xy_0_f64 as f32);
         // baseline 1, pol YX, cc 0, fc 0
         let length_m_1_yx = length_1_2_x - length_1_1_y;
-        let angle_1_yx_0: f64 =
-            -2.0 * PI * length_m_1_yx * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_1_yx_0: f64 = -2.0 * PI * length_m_1_yx * (all_freqs_hz[0] as f64) / VEL_C;
         let (sin_1_yx_0_f64, cos_1_yx_0_f64) = angle_1_yx_0.sin_cos();
         let (sin_1_yx_0, cos_1_yx_0) = (sin_1_yx_0_f64 as f32, cos_1_yx_0_f64 as f32);
         // baseline 1, pol YY, cc 0, fc 0
         let length_m_1_yy = length_1_2_y - length_1_1_y;
-        let angle_1_yy_0: f64 =
-            -2.0 * PI * length_m_1_yy * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_1_yy_0: f64 = -2.0 * PI * length_m_1_yy * (all_freqs_hz[0] as f64) / VEL_C;
         let (sin_1_yy_0_f64, cos_1_yy_0_f64) = angle_1_yy_0.sin_cos();
         let (sin_1_yy_0, cos_1_yy_0) = (sin_1_yy_0_f64 as f32, cos_1_yy_0_f64 as f32);
         // baseline 1, pol YY, cc 1, fc 1
-        let angle_1_yy_3: f64 =
-            -2.0 * PI * length_m_1_yy * (all_freqs_hz[3] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_1_yy_3: f64 = -2.0 * PI * length_m_1_yy * (all_freqs_hz[3] as f64) / VEL_C;
         let (sin_1_yy_3_f64, cos_1_yy_3_f64) = angle_1_yy_3.sin_cos();
         let (sin_1_yy_3, cos_1_yy_3) = (sin_1_yy_3_f64 as f32, cos_1_yy_3_f64 as f32);
 
@@ -647,31 +628,26 @@ mod tests {
 
         // baseline 1, pol XX, cc 0, fc 0
         let length_m_5_xx = length_5_2_x - length_5_1_x;
-        let angle_5_xx_0: f64 =
-            -2.0 * PI * length_m_5_xx * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_5_xx_0: f64 = -2.0 * PI * length_m_5_xx * (all_freqs_hz[0] as f64) / VEL_C;
         let (sin_5_xx_0_f64, cos_5_xx_0_f64) = angle_5_xx_0.sin_cos();
         let (sin_5_xx_0, cos_5_xx_0) = (sin_5_xx_0_f64 as f32, cos_5_xx_0_f64 as f32);
         // baseline 1, pol XY, cc 0, fc 0
         let length_m_5_xy = length_5_2_y - length_5_1_x;
-        let angle_5_xy_0: f64 =
-            -2.0 * PI * length_m_5_xy * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_5_xy_0: f64 = -2.0 * PI * length_m_5_xy * (all_freqs_hz[0] as f64) / VEL_C;
         let (sin_5_xy_0_f64, cos_5_xy_0_f64) = angle_5_xy_0.sin_cos();
         let (sin_5_xy_0, cos_5_xy_0) = (sin_5_xy_0_f64 as f32, cos_5_xy_0_f64 as f32);
         // baseline 1, pol YX, cc 0, fc 0
         let length_m_5_yx = length_5_2_x - length_5_1_y;
-        let angle_5_yx_0: f64 =
-            -2.0 * PI * length_m_5_yx * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_5_yx_0: f64 = -2.0 * PI * length_m_5_yx * (all_freqs_hz[0] as f64) / VEL_C;
         let (sin_5_yx_0_f64, cos_5_yx_0_f64) = angle_5_yx_0.sin_cos();
         let (sin_5_yx_0, cos_5_yx_0) = (sin_5_yx_0_f64 as f32, cos_5_yx_0_f64 as f32);
         // baseline 1, pol YY, cc 0, fc 0
         let length_m_5_yy = length_5_2_y - length_5_1_y;
-        let angle_5_yy_0: f64 =
-            -2.0 * PI * length_m_5_yy * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_5_yy_0: f64 = -2.0 * PI * length_m_5_yy * (all_freqs_hz[0] as f64) / VEL_C;
         let (sin_5_yy_0_f64, cos_5_yy_0_f64) = angle_5_yy_0.sin_cos();
         let (sin_5_yy_0, cos_5_yy_0) = (sin_5_yy_0_f64 as f32, cos_5_yy_0_f64 as f32);
         // baseline 1, pol YY, cc 1, fc 1
-        let angle_5_yy_3: f64 =
-            -2.0 * PI * length_m_5_yy * (all_freqs_hz[3] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_5_yy_3: f64 = -2.0 * PI * length_m_5_yy * (all_freqs_hz[3] as f64) / VEL_C;
         let (sin_5_yy_3_f64, cos_5_yy_3_f64) = angle_5_yy_3.sin_cos();
         let (sin_5_yy_3, cos_5_yy_3) = (sin_5_yy_3_f64 as f32, cos_5_yy_3_f64 as f32);
 
@@ -728,16 +704,12 @@ mod tests {
         let width = img_timestep_idxs.len();
         let stride = (((width - 1) / 8) + 1) * 8;
 
-        let array_pos = LatLngHeight {
-            latitude_rad: MWA_LATITUDE_RADIANS,
-            longitude_rad: MWA_LONGITUDE_RADIANS,
-            height_metres: MWA_ALTITUDE_METRES,
-        };
+        let array_pos = LatLngHeight::new_mwa();
 
         let phase_centre_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
         // let lst_rad = context.metafits_context.lst_rad;
         // let phase_centre_ha = phase_centre_ra.to_hadec(lst_rad);
-        let tiles_xyz_geod = XyzGeodetic::get_tiles_mwalib(&context.metafits_context);
+        let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
         let mut baseline_imgsets = context_to_baseline_imgsets(
             &aoflagger,
@@ -777,15 +749,11 @@ mod tests {
 
         // timestep 0
         let timestep_0 = &context.timesteps[img_timestep_idxs[0]];
-        let epoch_0 = Epoch::from_tai_seconds(
-            (timestep_0.gps_time_ms as f64 / 1000.0)
-                + 19.0
-                + HIFITIME_GPS_FACTOR
-                + integration_time_s / 2.0,
-        );
+        let epoch_0 =
+            time::gps_to_epoch(timestep_0.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0);
         let prec_info_0 = precess_time(
-            &phase_centre_ra,
-            &epoch_0,
+            phase_centre_ra,
+            epoch_0,
             array_pos.longitude_rad,
             array_pos.latitude_rad,
         );
@@ -793,15 +761,11 @@ mod tests {
         let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
         // timestep 3
         let timestep_3 = &context.timesteps[img_timestep_idxs[3]];
-        let epoch_3 = Epoch::from_tai_seconds(
-            (timestep_3.gps_time_ms as f64 / 1000.0)
-                + 19.0
-                + HIFITIME_GPS_FACTOR
-                + integration_time_s / 2.0,
-        );
+        let epoch_3 =
+            time::gps_to_epoch(timestep_3.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0);
         let prec_info_3 = precess_time(
-            &phase_centre_ra,
-            &epoch_3,
+            phase_centre_ra,
+            epoch_3,
             array_pos.longitude_rad,
             array_pos.latitude_rad,
         );
@@ -812,18 +776,16 @@ mod tests {
         let bl_5 = &context.metafits_context.baselines[5];
 
         // baseline 5, timestep 0
-        let xyz_5_0 = tiles_xyz_precessed_0[bl_5.ant1_index].clone()
-            - &tiles_xyz_precessed_0[bl_5.ant2_index];
-        let w_5_0 = UVW::from_xyz(&xyz_5_0, &phase_centre_ha_j2000_0).w;
+        let xyz_5_0 =
+            tiles_xyz_precessed_0[bl_5.ant1_index] - tiles_xyz_precessed_0[bl_5.ant2_index];
+        let w_5_0 = UVW::from_xyz(xyz_5_0, phase_centre_ha_j2000_0).w;
         // baseline 5, timestep 3
-        let xyz_5_3 = tiles_xyz_precessed_3[bl_5.ant1_index].clone()
-            - &tiles_xyz_precessed_3[bl_5.ant2_index];
-        let w_5_3 = UVW::from_xyz(&xyz_5_3, &phase_centre_ha_j2000_3).w;
+        let xyz_5_3 =
+            tiles_xyz_precessed_3[bl_5.ant1_index] - tiles_xyz_precessed_3[bl_5.ant2_index];
+        let w_5_3 = UVW::from_xyz(xyz_5_3, phase_centre_ha_j2000_3).w;
 
-        let angle_5_0 =
-            -2.0 * PI * w_5_0 * (all_freqs_hz[0] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
-        let angle_5_3 =
-            -2.0 * PI * w_5_3 * (all_freqs_hz[3] as f64) / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
+        let angle_5_0 = -2.0 * PI * w_5_0 * (all_freqs_hz[0] as f64) / VEL_C;
+        let angle_5_3 = -2.0 * PI * w_5_3 * (all_freqs_hz[3] as f64) / VEL_C;
 
         correct_geometry(
             &context,

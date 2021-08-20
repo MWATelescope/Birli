@@ -14,7 +14,7 @@
 //! use birli::{
 //!     context_to_baseline_imgsets, flag_imgsets_existing, write_flags,
 //!     cxx_aoflagger_new, get_flaggable_timesteps, init_baseline_flagmasks,
-//!     get_antenna_flags
+//!     get_antenna_flags, mwalib,
 //! };
 //! use mwalib::CorrelatorContext;
 //! use tempfile::tempdir;
@@ -96,22 +96,18 @@ pub use cxx_aoflagger::ffi::{
 use error::BirliError;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
-use ndarray::{parallel::prelude::*, Array3, ArrayBase, Axis, Dim, ViewRepr};
-use num::Complex;
+use ndarray::{parallel::prelude::*, Array3, Axis};
+use num_complex::Complex;
 use std::{ops::Range, os::raw::c_short};
 
 use mwalib::CorrelatorContext;
 // use std::collections::BTreeMap;
-
-pub mod constants;
 
 use std::sync::Arc;
 
 pub mod error;
 
 // pub mod math;
-
-pub mod pos;
 
 pub mod io;
 pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter};
@@ -133,8 +129,9 @@ use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use crossbeam_utils::thread;
 // use rayon::prelude::*;
 
-pub mod jones;
-pub use jones::Jones;
+pub use mwa_rust_core;
+pub use mwa_rust_core::{mwalib, Jones};
+pub use mwalib::{fitsio, fitsio_sys};
 
 /// Get the version of the AOFlagger library from the library itself.
 ///
@@ -168,7 +165,7 @@ pub fn get_aoflagger_version_string() -> String {
 /// # Examples
 ///
 /// ```rust
-/// use birli::{init_baseline_imgsets, cxx_aoflagger_new};
+/// use birli::{init_baseline_imgsets, cxx_aoflagger_new, mwalib};
 /// use mwalib::CorrelatorContext;
 /// use tempfile::tempdir;
 ///
@@ -253,7 +250,7 @@ pub fn init_baseline_imgsets(
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new};
+/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -758,8 +755,9 @@ mod tests {
     use crate::{cxx_aoflagger::ffi::cxx_aoflagger_new, Jones};
     use approx::assert_abs_diff_eq;
     use float_cmp::{approx_eq, F32Margin};
+    use mwa_rust_core::mwalib;
     use mwalib::CorrelatorContext;
-    use num::complex::Complex32;
+    use num_complex::Complex32;
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";

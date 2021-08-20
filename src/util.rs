@@ -9,7 +9,7 @@ use std::{cmp::min, fmt::Write};
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, util::dump_baseline_imgsets};
+/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, util::dump_baseline_imgsets, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -62,7 +62,7 @@ pub fn dump_baseline_imgsets(
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, util::dump_imgset};
+/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, util::dump_imgset, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -144,7 +144,7 @@ pub fn dump_imgset(
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets, util::dump_baseline_flagmasks};
+/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets, util::dump_baseline_flagmasks, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -198,7 +198,7 @@ pub fn dump_baseline_flagmasks(
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets, util::dump_flagmask};
+/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets, util::dump_flagmask, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -267,6 +267,7 @@ mod tests {
     use crate::{
         context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets, get_flaggable_timesteps,
     };
+    use mwa_rust_core::mwalib;
     use mwalib::CorrelatorContext;
 
     // TODO: deduplicate this from lib.rs

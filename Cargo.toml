@@ -15,24 +15,19 @@ exclude = ["tests/*", ".vscode/*", ".github/*", ".talismanrc"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-approx = { version = "0.5", features = ["num-complex"] }
 clap = "2.33"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
 cxx = "1.0"
 env_logger = "0.9"
-erfa-sys = "0.1"
-fitsio = "0.17"
-fitsio-sys = "^0" # fitsio also uses fitsio-sys so ensure we both use the same
 float-cmp = "0.9"
-hifitime = "2.2"
 indicatif = { version = "0.16", features = ["rayon"] }
 itertools = "0.10"
 libc = "0.2"
 log = "0.4"
-mwalib = "0.8.4"
-ndarray = { version = "0.15", features = ["rayon"] }
-num = "0.4"
+mwa_rust_core = ">=0.1.1"
+ndarray = { version = ">=0.14,<0.16", features = ["rayon"] }
+num-complex = ">=0.3,<0.5"
 rayon = "1.5"
 regex = "1.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -47,6 +42,13 @@ rustfmt = "0.10"
 tempfile = "3.2"
 csv = "1.1"
 lexical = "5.2"
+
+# ndarray 0.14.* depends on approx 0.4.0, which in turn uses num-complex 0.3.0.
+# Forcing the versions here means that ndarrays of complex numbers can be
+# tested!
+approx = { version = "0.4.0", features = ["num-complex"] }
+ndarray = { version = "0.14.*", features = ["approx"] }
+num-complex = "0.3.0"
 
 [build-dependencies]
 bindgen = "0.59"
