@@ -562,6 +562,10 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 ///  - baseline
 ///
 /// An equally sized flag array is also returned when reading via mwalib causes a GPUBoxError
+///
+/// # Errors
+///
+/// Will throw [`BirliError`] if there was an error reading context.
 pub fn context_to_jones_array(
     context: &CorrelatorContext,
     mwalib_timestep_range: &Range<usize>,
