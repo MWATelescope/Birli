@@ -22,7 +22,11 @@ jobs:
           override: true
 
       - name: Cargo Bench
-        run: cargo bench
+        run: |
+          cargo update
+          cargo update -p approx:0.5.0 --precise 0.4.0
+          # TODO: fix the hack above
+          cargo bench
         env:
           LD_LIBRARY_PATH: /usr/local/lib/
           BIRLI_TEST_DIR: /mnt/data

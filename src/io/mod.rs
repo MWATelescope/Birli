@@ -10,10 +10,11 @@ use std::path::Path;
 
 use cxx::UniquePtr;
 use log::trace;
+use mwa_rust_core::{mwalib, LatLngHeight};
 use mwalib::CorrelatorContext;
 use uvfits::UvfitsWriter;
 
-use crate::{pos::earth::LatLngHeight, CxxFlagMask, CxxImageSet};
+use crate::{CxxFlagMask, CxxImageSet};
 
 use self::error::UvfitsWriteError;
 
@@ -71,6 +72,7 @@ mod tests {
     use fitsio::errors::check_status as fits_check_status;
     use float_cmp::{approx_eq, F32Margin};
     use itertools::izip;
+    use mwa_rust_core::{fitsio, fitsio_sys, mwalib};
     use mwalib::{
         CorrelatorContext, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
         get_required_fits_key,

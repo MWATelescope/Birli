@@ -2,6 +2,8 @@
 
 use thiserror::Error;
 
+use mwa_rust_core::{fitsio, mwalib};
+
 #[derive(Error, Debug)]
 #[allow(clippy::upper_case_acronyms)]
 /// All the errors that can occur in file io operations
@@ -98,7 +100,7 @@ pub enum UvfitsWriteError {
 
     /// An error associated with ERFA.
     #[error("{0}")]
-    Erfa(#[from] crate::pos::error::ErfaError),
+    Erfa(#[from] mwa_rust_core::pos::ErfaError),
 
     /// An error associated with fitsio.
     #[error("{0}")]

@@ -9,29 +9,24 @@
 use std::ffi::CString;
 use std::path::Path;
 
-use erfa_sys::ERFA_DJM0;
 use fitsio::{errors::check_status as fits_check_status, FitsFile};
-use hifitime::Epoch;
 use indicatif::ProgressStyle;
 use itertools::izip;
 use log::warn;
+use mwa_rust_core::{
+    constants::VEL_C, erfa_sys, erfa_sys::ERFA_DJM0, fitsio, fitsio_sys, hifitime::Epoch, mwalib,
+    precession::*, time, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
+};
 // use ndarray::prelude::*;
 
 use super::error::UvfitsWriteError;
-use crate::{
-    constants::HIFITIME_GPS_FACTOR,
-    cxx_aoflagger::ffi::{CxxFlagMask, CxxImageSet},
-    pos::{earth::LatLngHeight, precess::precess_time, RADec, XyzGeodetic, ENH, UVW},
-};
+use crate::cxx_aoflagger::ffi::{CxxFlagMask, CxxImageSet};
 use cxx::UniquePtr;
-use mwalib::{
-    fitsio, fitsio_sys, Baseline, CorrelatorContext, MetafitsContext, MWA_ALTITUDE_METRES,
-    MWA_LATITUDE_RADIANS, MWA_LONGITUDE_RADIANS, SPEED_OF_LIGHT_IN_VACUUM_M_PER_S,
-};
+use mwalib::{Baseline, CorrelatorContext, MetafitsContext};
 
 /// From a `hifitime` [Epoch], get a formatted date string with the hours,
 /// minutes and seconds set to 0.
-fn get_truncated_date_string(epoch: &Epoch) -> String {
+fn get_truncated_date_string(epoch: Epoch) -> String {
     let (year, month, day, _, _, _, _) = epoch.as_gregorian_utc();
     format!(
         "{year}-{month:02}-{day:02}T00:00:00.0",
@@ -120,8 +115,9 @@ impl<'a> UvfitsWriter<'a> {
     /// `start_epoch` can be calculated from GPS Time using the hifitime library, e.g.
     ///
     /// ```rust
+    /// use mwa_rust_core::time;
     /// let first_gps_time = 1196175296.0;
-    /// let start_epoch = hifitime::Epoch::from_tai_seconds(first_gps_time + 19.0 + birli::constants::HIFITIME_GPS_FACTOR);
+    /// let start_epoch = time::gps_to_epoch(first_gps_time);
     /// ```
     ///
     /// `centre_freq_hz` is the centre frequency of the coarse band that this
@@ -222,7 +218,7 @@ impl<'a> UvfitsWriter<'a> {
                 )?;
             }
         }
-        hdu.write_key(&mut u, "DATE-OBS", get_truncated_date_string(&start_epoch))?;
+        hdu.write_key(&mut u, "DATE-OBS", get_truncated_date_string(start_epoch))?;
 
         // Dimensions.
         hdu.write_key(&mut u, "CTYPE2", "COMPLEX")?;
@@ -303,11 +299,7 @@ impl<'a> UvfitsWriter<'a> {
                 // This is at least partly due to different constants (the altitude is
                 // definitely slightly different), but possibly also because ERFA is
                 // more accurate than cotter's "homebrewed" Geodetic2XYZ.
-                LatLngHeight {
-                    longitude_rad: MWA_LONGITUDE_RADIANS,
-                    latitude_rad: MWA_LATITUDE_RADIANS,
-                    height_metres: MWA_ALTITUDE_METRES,
-                }
+                LatLngHeight::new_mwa()
             }
         };
 
@@ -342,7 +334,7 @@ impl<'a> UvfitsWriter<'a> {
         let num_img_coarse_chans = img_coarse_chan_idxs.len();
         let num_img_chans = num_fine_chans_per_coarse * num_img_coarse_chans;
         let first_gps_time = context.timesteps[img_timestep_idxs[0]].gps_time_ms as f64 / 1000.0;
-        let start_epoch = Epoch::from_tai_seconds(first_gps_time + 19.0 + HIFITIME_GPS_FACTOR);
+        let start_epoch = time::gps_to_epoch(first_gps_time);
         let phase_centre = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
         let centre_freq_chan = num_img_chans / 2;
         Self::new(
@@ -458,7 +450,7 @@ impl<'a> UvfitsWriter<'a> {
         hdu.write_key(&mut uvfits, "GSTIA0", gst)?;
         hdu.write_key(&mut uvfits, "DEGPDY", 3.60985e2)?; // Earth's rotation rate
 
-        let date_truncated = get_truncated_date_string(&self.start_epoch);
+        let date_truncated = get_truncated_date_string(self.start_epoch);
         hdu.write_key(&mut uvfits, "RDATE", date_truncated)?;
 
         hdu.write_key(&mut uvfits, "POLARX", 0.0)?;
@@ -662,10 +654,10 @@ impl<'a> UvfitsWriter<'a> {
     pub fn write_vis(
         &mut self,
         uvfits: &mut FitsFile,
-        uvw: &UVW,
+        uvw: UVW,
         tile_index1: usize,
         tile_index2: usize,
-        epoch: &Epoch,
+        epoch: Epoch,
         vis: &[f32],
     ) -> Result<(), UvfitsWriteError> {
         if self.current_num_rows + 1 > self.total_num_rows {
@@ -676,9 +668,9 @@ impl<'a> UvfitsWriter<'a> {
         }
 
         let mut row = Vec::with_capacity(5 + vis.len());
-        row.push((uvw.u / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S) as f32);
-        row.push((uvw.v / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S) as f32);
-        row.push((uvw.w / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S) as f32);
+        row.push((uvw.u / VEL_C) as f32);
+        row.push((uvw.v / VEL_C) as f32);
+        row.push((uvw.w / VEL_C) as f32);
         row.push(encode_uvfits_baseline(tile_index1 + 1, tile_index2 + 1) as f32);
         let jd_trunc = self.start_epoch.as_jde_utc_days().floor() + 0.5;
         let jd_frac = epoch.as_jde_utc_days() - jd_trunc;
@@ -750,7 +742,7 @@ impl<'a> UvfitsWriter<'a> {
         assert_eq!(num_baselines, baseline_imgsets.len());
         assert_eq!(num_baselines, baseline_flagmasks.len());
 
-        let tiles_xyz_geod = XyzGeodetic::get_tiles_mwalib(&context.metafits_context);
+        let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
         let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
         let num_img_coarse_chans = img_coarse_chan_idxs.len();
@@ -788,14 +780,11 @@ impl<'a> UvfitsWriter<'a> {
 
         for (img_timestep_idx, &timestep_idx) in img_timestep_idxs.iter().enumerate() {
             let gps_time_s = context.timesteps[timestep_idx].gps_time_ms as f64 / 1000.0;
-            // TODO: document where this 19 comes from?
-            let epoch = Epoch::from_tai_seconds(
-                gps_time_s + 19.0 + HIFITIME_GPS_FACTOR + integration_time_s / 2.0,
-            );
+            let epoch = time::gps_to_epoch(gps_time_s + integration_time_s / 2.0);
 
             let prec_info = precess_time(
-                &self.phase_centre,
-                &epoch,
+                self.phase_centre,
+                epoch,
                 self.array_pos.longitude_rad,
                 self.array_pos.latitude_rad,
             );
@@ -817,8 +806,8 @@ impl<'a> UvfitsWriter<'a> {
                 let ant2_idx = baseline.ant2_index;
 
                 let baseline_xyz_precessed =
-                    tiles_xyz_precessed[ant1_idx].clone() - &tiles_xyz_precessed[ant2_idx];
-                let uvw = UVW::from_xyz(&baseline_xyz_precessed, &prec_info.hadec_j2000);
+                    tiles_xyz_precessed[ant1_idx] - tiles_xyz_precessed[ant2_idx];
+                let uvw = UVW::from_xyz(baseline_xyz_precessed, prec_info.hadec_j2000);
 
                 // TODO: this is extremely inefficient.
 
@@ -846,7 +835,7 @@ impl<'a> UvfitsWriter<'a> {
                     .collect();
 
                 // TODO: calculate weights
-                let result = self.write_vis(uvfits, &uvw, ant1_idx, ant2_idx, &epoch, &vis.clone());
+                let result = self.write_vis(uvfits, uvw, ant1_idx, ant2_idx, epoch, &vis.clone());
                 if let Err(err) = result {
                     return Err(err);
                 };
@@ -865,6 +854,12 @@ impl<'a> UvfitsWriter<'a> {
 mod tests {
 
     use super::*;
+    use mwa_rust_core::{
+        constants::{
+            COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
+        },
+        mwalib, time,
+    };
     use mwalib::{
         _get_fits_col, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
         get_fits_col, get_required_fits_key,
@@ -874,10 +869,6 @@ mod tests {
     use float_cmp::{approx_eq, F32Margin, F64Margin};
 
     use crate::{
-        constants::{
-            COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
-            HIFITIME_GPS_FACTOR,
-        },
         context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags,
         get_flaggable_timesteps, init_baseline_flagmasks,
     };
@@ -896,7 +887,7 @@ mod tests {
         let num_baselines = 3;
         let num_chans = 2;
         let obsid = 1065880128;
-        let start_epoch = Epoch::from_tai_seconds(obsid as f64 + 19.0 + HIFITIME_GPS_FACTOR);
+        let start_epoch = time::gps_to_epoch(obsid as f64);
 
         let mut u = UvfitsWriter::new(
             tmp_uvfits_file.path(),
@@ -925,10 +916,10 @@ mod tests {
 
                 u.write_vis(
                     &mut f,
-                    &UVW::default(),
+                    UVW::default(),
                     tile1,
                     tile2,
-                    &start_epoch,
+                    start_epoch,
                     (baseline_index..baseline_index + num_chans)
                         .into_iter()
                         .map(|int| int as f32)
@@ -1243,7 +1234,7 @@ mod tests {
     pub fn get_group_column_description(
         fptr: &mut FitsFile,
         hdu: &FitsHdu,
-    ) -> Result<Vec<String>, mwalib::FitsError> {
+    ) -> Result<Vec<String>, crate::mwalib::FitsError> {
         let pcount: usize = get_required_fits_key!(fptr, hdu, "PCOUNT")?;
         let mut result = Vec::with_capacity(pcount);
         for p in 0..pcount {

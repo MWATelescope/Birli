@@ -11,7 +11,7 @@ use crate::{
 use cxx::UniquePtr;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::trace;
-use mwalib::CorrelatorContext;
+use mwa_rust_core::mwalib::CorrelatorContext;
 
 use rayon::prelude::*;
 
@@ -33,7 +33,7 @@ use rayon::prelude::*;
 /// # Examples
 ///
 /// ```rust
-/// use birli::{get_flaggable_timesteps};
+/// use birli::{get_flaggable_timesteps, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -84,7 +84,7 @@ pub fn get_flaggable_timesteps(context: &CorrelatorContext) -> Result<Vec<usize>
 /// # Examples
 ///
 /// ```rust
-/// use birli::{get_antenna_flags, cxx_aoflagger_new};
+/// use birli::{get_antenna_flags, cxx_aoflagger_new, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -193,7 +193,7 @@ pub fn init_baseline_flagmasks(
 /// # Examples
 ///
 /// ```
-/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new};
+/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new, mwalib};
 /// use mwalib::CorrelatorContext;
 /// use tempfile::tempdir;
 ///
@@ -318,7 +318,7 @@ pub fn flagmask_set(
 /// ```
 /// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags,
 ///     cxx_aoflagger_new, flag_imgsets_existing, init_baseline_flagmasks,
-///     get_antenna_flags, get_flaggable_timesteps};
+///     get_antenna_flags, get_flaggable_timesteps, mwalib};
 /// use mwalib::CorrelatorContext;
 /// use tempfile::tempdir;
 ///
@@ -423,7 +423,7 @@ pub fn flag_imgsets_existing(
 /// Here's an example of how to flag some visibility files
 ///
 /// ```rust
-/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new};
+/// use birli::{context_to_baseline_imgsets, flag_imgsets, write_flags, cxx_aoflagger_new, mwalib};
 /// use mwalib::CorrelatorContext;
 /// use tempfile::tempdir;
 ///
@@ -517,7 +517,7 @@ mod tests {
     };
     use cxx::UniquePtr;
     use glob::glob;
-    use mwalib::CorrelatorContext;
+    use mwa_rust_core::mwalib::CorrelatorContext;
     use tempfile::tempdir;
 
     use crate::{

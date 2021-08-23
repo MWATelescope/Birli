@@ -14,7 +14,7 @@
 //! use birli::{
 //!     context_to_baseline_imgsets, flag_imgsets_existing, write_flags,
 //!     cxx_aoflagger_new, get_flaggable_timesteps, init_baseline_flagmasks,
-//!     get_antenna_flags
+//!     get_antenna_flags, mwalib,
 //! };
 //! use mwalib::CorrelatorContext;
 //! use tempfile::tempdir;
@@ -96,22 +96,17 @@ pub use cxx_aoflagger::ffi::{
 use error::BirliError;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
-use ndarray::{parallel::prelude::*, Array3, ArrayBase, Axis, Dim, ViewRepr};
-use num::Complex;
+use ndarray::{parallel::prelude::*, Array3, Axis};
 use std::{ops::Range, os::raw::c_short};
 
 use mwalib::CorrelatorContext;
 // use std::collections::BTreeMap;
-
-pub mod constants;
 
 use std::sync::Arc;
 
 pub mod error;
 
 // pub mod math;
-
-pub mod pos;
 
 pub mod io;
 pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter};
@@ -133,8 +128,9 @@ use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use crossbeam_utils::thread;
 // use rayon::prelude::*;
 
-pub mod jones;
-pub use jones::Jones;
+pub use mwa_rust_core;
+pub use mwa_rust_core::{c32, mwalib, Jones};
+pub use mwalib::{fitsio, fitsio_sys};
 
 /// Get the version of the AOFlagger library from the library itself.
 ///
@@ -168,7 +164,7 @@ pub fn get_aoflagger_version_string() -> String {
 /// # Examples
 ///
 /// ```rust
-/// use birli::{init_baseline_imgsets, cxx_aoflagger_new};
+/// use birli::{init_baseline_imgsets, cxx_aoflagger_new, mwalib};
 /// use mwalib::CorrelatorContext;
 /// use tempfile::tempdir;
 ///
@@ -253,7 +249,7 @@ pub fn init_baseline_imgsets(
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new};
+/// use birli::{context_to_baseline_imgsets, cxx_aoflagger_new, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -546,10 +542,10 @@ macro_rules! _write_hdu_buffer_to_jones_view {
                 // Sanity check that our ndarray view is a single cell.
                 assert_eq!(jones_chan_view.ndim(), 0);
                 let jones = Jones::from([
-                    Complex::new(hdu_chan_chunk[0], hdu_chan_chunk[1]),
-                    Complex::new(hdu_chan_chunk[2], hdu_chan_chunk[3]),
-                    Complex::new(hdu_chan_chunk[4], hdu_chan_chunk[5]),
-                    Complex::new(hdu_chan_chunk[6], hdu_chan_chunk[7]),
+                    c32::new(hdu_chan_chunk[0], hdu_chan_chunk[1]),
+                    c32::new(hdu_chan_chunk[2], hdu_chan_chunk[3]),
+                    c32::new(hdu_chan_chunk[4], hdu_chan_chunk[5]),
+                    c32::new(hdu_chan_chunk[6], hdu_chan_chunk[7]),
                 ]);
                 jones_chan_view.fill(jones);
             }
@@ -566,6 +562,10 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 ///  - baseline
 ///
 /// An equally sized flag array is also returned when reading via mwalib causes a GPUBoxError
+///
+/// # Errors
+///
+/// Will throw [`BirliError`] if there was an error reading context.
 pub fn context_to_jones_array(
     context: &CorrelatorContext,
     mwalib_timestep_range: &Range<usize>,
@@ -758,8 +758,9 @@ mod tests {
     use crate::{cxx_aoflagger::ffi::cxx_aoflagger_new, Jones};
     use approx::assert_abs_diff_eq;
     use float_cmp::{approx_eq, F32Margin};
+    use mwa_rust_core::{c32, mwalib};
     use mwalib::CorrelatorContext;
-    use num::complex::Complex32;
+    // use num_complex::c32;
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -1178,40 +1179,40 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x10c5be as f32, -0x10c5bf as f32),
-                Complex32::new(0x10c5ae as f32, 0x10c5af as f32),
-                Complex32::new(0x10c5ae as f32, -0x10c5af as f32),
-                Complex32::new(0x10bec6 as f32, -0x10bec7 as f32),
+                c32::new(0x10c5be as f32, -0x10c5bf as f32),
+                c32::new(0x10c5ae as f32, 0x10c5af as f32),
+                c32::new(0x10c5ae as f32, -0x10c5af as f32),
+                c32::new(0x10bec6 as f32, -0x10bec7 as f32),
             ])
         );
         // ts 1, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x14c5be as f32, -0x14c5bf as f32),
-                Complex32::new(0x14c5ae as f32, 0x14c5af as f32),
-                Complex32::new(0x14c5ae as f32, -0x14c5af as f32),
-                Complex32::new(0x14bec6 as f32, -0x14bec7 as f32),
+                c32::new(0x14c5be as f32, -0x14c5bf as f32),
+                c32::new(0x14c5ae as f32, 0x14c5af as f32),
+                c32::new(0x14c5ae as f32, -0x14c5af as f32),
+                c32::new(0x14bec6 as f32, -0x14bec7 as f32),
             ])
         );
         // ts 2, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x18c5be as f32, -0x18c5bf as f32),
-                Complex32::new(0x18c5ae as f32, 0x18c5af as f32),
-                Complex32::new(0x18c5ae as f32, -0x18c5af as f32),
-                Complex32::new(0x18bec6 as f32, -0x18bec7 as f32),
+                c32::new(0x18c5be as f32, -0x18c5bf as f32),
+                c32::new(0x18c5ae as f32, 0x18c5af as f32),
+                c32::new(0x18c5ae as f32, -0x18c5af as f32),
+                c32::new(0x18bec6 as f32, -0x18bec7 as f32),
             ])
         );
         // ts 3, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((3, 0, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x1cc5be as f32, -0x1cc5bf as f32),
-                Complex32::new(0x1cc5ae as f32, 0x1cc5af as f32),
-                Complex32::new(0x1cc5ae as f32, -0x1cc5af as f32),
-                Complex32::new(0x1cbec6 as f32, -0x1cbec7 as f32),
+                c32::new(0x1cc5be as f32, -0x1cc5bf as f32),
+                c32::new(0x1cc5ae as f32, 0x1cc5af as f32),
+                c32::new(0x1cc5ae as f32, -0x1cc5af as f32),
+                c32::new(0x1cbec6 as f32, -0x1cbec7 as f32),
             ])
         );
 
@@ -1222,16 +1223,16 @@ mod tests {
             jones_array.get((0, 2, 0)).unwrap(),
             // Normally this would be:
             // &Jones::from([
-            //     Complex32::new(0x00c5be as f32, -0x00c5bf as f32),
-            //     Complex32::new(0x00c5ae as f32, 0x00c5af as f32),
-            //     Complex32::new(0x00c5ae as f32, -0x00c5af as f32),
-            //     Complex32::new(0x00bec6 as f32, -0x00bec7 as f32),
+            //     c32::new(0x00c5be as f32, -0x00c5bf as f32),
+            //     c32::new(0x00c5ae as f32, 0x00c5af as f32),
+            //     c32::new(0x00c5ae as f32, -0x00c5af as f32),
+            //     c32::new(0x00bec6 as f32, -0x00bec7 as f32),
             // ])
             &Jones::from([
-                Complex32::new(0x04c5be as f32, -0x04c5bf as f32),
-                Complex32::new(0x04c5ae as f32, 0x04c5af as f32),
-                Complex32::new(0x04c5ae as f32, -0x04c5af as f32),
-                Complex32::new(0x04bec6 as f32, -0x04bec7 as f32),
+                c32::new(0x04c5be as f32, -0x04c5bf as f32),
+                c32::new(0x04c5ae as f32, 0x04c5af as f32),
+                c32::new(0x04c5ae as f32, -0x04c5af as f32),
+                c32::new(0x04bec6 as f32, -0x04bec7 as f32),
             ])
         );
         assert!(!flags_array.get((0, 2, 0)).unwrap());
@@ -1239,10 +1240,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((1, 2, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0.0, 0.0),
-                Complex32::new(0.0, 0.0),
-                Complex32::new(0.0, 0.0),
-                Complex32::new(0.0, 0.0),
+                c32::new(0.0, 0.0),
+                c32::new(0.0, 0.0),
+                c32::new(0.0, 0.0),
+                c32::new(0.0, 0.0),
             ])
         );
         assert!(flags_array.get((1, 2, 0)).unwrap());
@@ -1250,10 +1251,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((2, 2, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x08c5be as f32, -0x08c5bf as f32),
-                Complex32::new(0x08c5ae as f32, 0x08c5af as f32),
-                Complex32::new(0x08c5ae as f32, -0x08c5af as f32),
-                Complex32::new(0x08bec6 as f32, -0x08bec7 as f32),
+                c32::new(0x08c5be as f32, -0x08c5bf as f32),
+                c32::new(0x08c5ae as f32, 0x08c5af as f32),
+                c32::new(0x08c5ae as f32, -0x08c5af as f32),
+                c32::new(0x08bec6 as f32, -0x08bec7 as f32),
             ])
         );
         assert!(!flags_array.get((2, 2, 0)).unwrap());
@@ -1261,10 +1262,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((3, 2, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0.0, 0.0),
-                Complex32::new(0.0, 0.0),
-                Complex32::new(0.0, 0.0),
-                Complex32::new(0.0, 0.0),
+                c32::new(0.0, 0.0),
+                c32::new(0.0, 0.0),
+                c32::new(0.0, 0.0),
+                c32::new(0.0, 0.0),
             ])
         );
         assert!(flags_array.get((3, 2, 0)).unwrap());
@@ -1296,10 +1297,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x410000 as f32, 0x410001 as f32),
-                Complex32::new(0x410002 as f32, 0x410003 as f32),
-                Complex32::new(0x410004 as f32, 0x410005 as f32),
-                Complex32::new(0x410006 as f32, 0x410007 as f32),
+                c32::new(0x410000 as f32, 0x410001 as f32),
+                c32::new(0x410002 as f32, 0x410003 as f32),
+                c32::new(0x410004 as f32, 0x410005 as f32),
+                c32::new(0x410006 as f32, 0x410007 as f32),
             ])
         );
 
@@ -1307,10 +1308,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x410100 as f32, 0x410101 as f32),
-                Complex32::new(0x410102 as f32, 0x410103 as f32),
-                Complex32::new(0x410104 as f32, 0x410105 as f32),
-                Complex32::new(0x410106 as f32, 0x410107 as f32),
+                c32::new(0x410100 as f32, 0x410101 as f32),
+                c32::new(0x410102 as f32, 0x410103 as f32),
+                c32::new(0x410104 as f32, 0x410105 as f32),
+                c32::new(0x410106 as f32, 0x410107 as f32),
             ])
         );
 
@@ -1318,10 +1319,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x410200 as f32, 0x410201 as f32),
-                Complex32::new(0x410202 as f32, 0x410203 as f32),
-                Complex32::new(0x410204 as f32, 0x410205 as f32),
-                Complex32::new(0x410206 as f32, 0x410207 as f32),
+                c32::new(0x410200 as f32, 0x410201 as f32),
+                c32::new(0x410202 as f32, 0x410203 as f32),
+                c32::new(0x410204 as f32, 0x410205 as f32),
+                c32::new(0x410206 as f32, 0x410207 as f32),
             ])
         );
 
@@ -1329,10 +1330,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 2)).unwrap(),
             &Jones::from([
-                Complex32::new(0x410020 as f32, 0x410021 as f32),
-                Complex32::new(0x410022 as f32, 0x410023 as f32),
-                Complex32::new(0x410024 as f32, 0x410025 as f32),
-                Complex32::new(0x410026 as f32, 0x410027 as f32),
+                c32::new(0x410020 as f32, 0x410021 as f32),
+                c32::new(0x410022 as f32, 0x410023 as f32),
+                c32::new(0x410024 as f32, 0x410025 as f32),
+                c32::new(0x410026 as f32, 0x410027 as f32),
             ])
         );
 
@@ -1340,10 +1341,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 1, 2)).unwrap(),
             &Jones::from([
-                Complex32::new(0x410028 as f32, 0x410029 as f32),
-                Complex32::new(0x41002a as f32, 0x41002b as f32),
-                Complex32::new(0x41002c as f32, 0x41002d as f32),
-                Complex32::new(0x41002e as f32, 0x41002f as f32),
+                c32::new(0x410028 as f32, 0x410029 as f32),
+                c32::new(0x41002a as f32, 0x41002b as f32),
+                c32::new(0x41002c as f32, 0x41002d as f32),
+                c32::new(0x41002e as f32, 0x41002f as f32),
             ])
         );
     }
@@ -1374,40 +1375,40 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x10c5be as f32, -0x10c5bf as f32),
-                Complex32::new(0x10c5ae as f32, 0x10c5af as f32),
-                Complex32::new(0x10c5ae as f32, -0x10c5af as f32),
-                Complex32::new(0x10bec6 as f32, -0x10bec7 as f32),
+                c32::new(0x10c5be as f32, -0x10c5bf as f32),
+                c32::new(0x10c5ae as f32, 0x10c5af as f32),
+                c32::new(0x10c5ae as f32, -0x10c5af as f32),
+                c32::new(0x10bec6 as f32, -0x10bec7 as f32),
             ])
         );
         // ts 1, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x14c5be as f32, -0x14c5bf as f32),
-                Complex32::new(0x14c5ae as f32, 0x14c5af as f32),
-                Complex32::new(0x14c5ae as f32, -0x14c5af as f32),
-                Complex32::new(0x14bec6 as f32, -0x14bec7 as f32),
+                c32::new(0x14c5be as f32, -0x14c5bf as f32),
+                c32::new(0x14c5ae as f32, 0x14c5af as f32),
+                c32::new(0x14c5ae as f32, -0x14c5af as f32),
+                c32::new(0x14bec6 as f32, -0x14bec7 as f32),
             ])
         );
         // ts 2, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x18c5be as f32, -0x18c5bf as f32),
-                Complex32::new(0x18c5ae as f32, 0x18c5af as f32),
-                Complex32::new(0x18c5ae as f32, -0x18c5af as f32),
-                Complex32::new(0x18bec6 as f32, -0x18bec7 as f32),
+                c32::new(0x18c5be as f32, -0x18c5bf as f32),
+                c32::new(0x18c5ae as f32, 0x18c5af as f32),
+                c32::new(0x18c5ae as f32, -0x18c5af as f32),
+                c32::new(0x18bec6 as f32, -0x18bec7 as f32),
             ])
         );
         // ts 3, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((3, 0, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x1cc5be as f32, -0x1cc5bf as f32),
-                Complex32::new(0x1cc5ae as f32, 0x1cc5af as f32),
-                Complex32::new(0x1cc5ae as f32, -0x1cc5af as f32),
-                Complex32::new(0x1cbec6 as f32, -0x1cbec7 as f32),
+                c32::new(0x1cc5be as f32, -0x1cc5bf as f32),
+                c32::new(0x1cc5ae as f32, 0x1cc5af as f32),
+                c32::new(0x1cc5ae as f32, -0x1cc5af as f32),
+                c32::new(0x1cbec6 as f32, -0x1cbec7 as f32),
             ])
         );
 
@@ -1415,40 +1416,40 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 5)).unwrap(),
             &Jones::from([
-                Complex32::new(0x10f1ce as f32, -0x10f1cf as f32),
-                Complex32::new(0x10ea26 as f32, -0x10ea27 as f32),
-                Complex32::new(0x10f1be as f32, -0x10f1bf as f32),
-                Complex32::new(0x10ea16 as f32, -0x10ea17 as f32),
+                c32::new(0x10f1ce as f32, -0x10f1cf as f32),
+                c32::new(0x10ea26 as f32, -0x10ea27 as f32),
+                c32::new(0x10f1be as f32, -0x10f1bf as f32),
+                c32::new(0x10ea16 as f32, -0x10ea17 as f32),
             ])
         );
         // ts 1, chan 0, baseline 5
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 5)).unwrap(),
             &Jones::from([
-                Complex32::new(0x14f1ce as f32, -0x14f1cf as f32),
-                Complex32::new(0x14ea26 as f32, -0x14ea27 as f32),
-                Complex32::new(0x14f1be as f32, -0x14f1bf as f32),
-                Complex32::new(0x14ea16 as f32, -0x14ea17 as f32),
+                c32::new(0x14f1ce as f32, -0x14f1cf as f32),
+                c32::new(0x14ea26 as f32, -0x14ea27 as f32),
+                c32::new(0x14f1be as f32, -0x14f1bf as f32),
+                c32::new(0x14ea16 as f32, -0x14ea17 as f32),
             ])
         );
         // ts 2, chan 0, baseline 5
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 5)).unwrap(),
             &Jones::from([
-                Complex32::new(0x18f1ce as f32, -0x18f1cf as f32),
-                Complex32::new(0x18ea26 as f32, -0x18ea27 as f32),
-                Complex32::new(0x18f1be as f32, -0x18f1bf as f32),
-                Complex32::new(0x18ea16 as f32, -0x18ea17 as f32),
+                c32::new(0x18f1ce as f32, -0x18f1cf as f32),
+                c32::new(0x18ea26 as f32, -0x18ea27 as f32),
+                c32::new(0x18f1be as f32, -0x18f1bf as f32),
+                c32::new(0x18ea16 as f32, -0x18ea17 as f32),
             ])
         );
         // ts 3, chan 0, baseline 5
         assert_abs_diff_eq!(
             jones_array.get((3, 0, 5)).unwrap(),
             &Jones::from([
-                Complex32::new(0x1cf1ce as f32, -0x1cf1cf as f32),
-                Complex32::new(0x1cea26 as f32, -0x1cea27 as f32),
-                Complex32::new(0x1cf1be as f32, -0x1cf1bf as f32),
-                Complex32::new(0x1cea16 as f32, -0x1cea17 as f32),
+                c32::new(0x1cf1ce as f32, -0x1cf1cf as f32),
+                c32::new(0x1cea26 as f32, -0x1cea27 as f32),
+                c32::new(0x1cf1be as f32, -0x1cf1bf as f32),
+                c32::new(0x1cea16 as f32, -0x1cea17 as f32),
             ])
         );
 
@@ -1456,40 +1457,40 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 2, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x00c5be as f32, -0x00c5bf as f32),
-                Complex32::new(0x00c5ae as f32, 0x00c5af as f32),
-                Complex32::new(0x00c5ae as f32, -0x00c5af as f32),
-                Complex32::new(0x00bec6 as f32, -0x00bec7 as f32),
+                c32::new(0x00c5be as f32, -0x00c5bf as f32),
+                c32::new(0x00c5ae as f32, 0x00c5af as f32),
+                c32::new(0x00c5ae as f32, -0x00c5af as f32),
+                c32::new(0x00bec6 as f32, -0x00bec7 as f32),
             ])
         );
         // ts 1, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((1, 2, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x04c5be as f32, -0x04c5bf as f32),
-                Complex32::new(0x04c5ae as f32, 0x04c5af as f32),
-                Complex32::new(0x04c5ae as f32, -0x04c5af as f32),
-                Complex32::new(0x04bec6 as f32, -0x04bec7 as f32),
+                c32::new(0x04c5be as f32, -0x04c5bf as f32),
+                c32::new(0x04c5ae as f32, 0x04c5af as f32),
+                c32::new(0x04c5ae as f32, -0x04c5af as f32),
+                c32::new(0x04bec6 as f32, -0x04bec7 as f32),
             ])
         );
         // ts 2, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((2, 2, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x08c5be as f32, -0x08c5bf as f32),
-                Complex32::new(0x08c5ae as f32, 0x08c5af as f32),
-                Complex32::new(0x08c5ae as f32, -0x08c5af as f32),
-                Complex32::new(0x08bec6 as f32, -0x08bec7 as f32),
+                c32::new(0x08c5be as f32, -0x08c5bf as f32),
+                c32::new(0x08c5ae as f32, 0x08c5af as f32),
+                c32::new(0x08c5ae as f32, -0x08c5af as f32),
+                c32::new(0x08bec6 as f32, -0x08bec7 as f32),
             ])
         );
         // ts 3, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((3, 2, 0)).unwrap(),
             &Jones::from([
-                Complex32::new(0x0cc5be as f32, -0x0cc5bf as f32),
-                Complex32::new(0x0cc5ae as f32, 0x0cc5af as f32),
-                Complex32::new(0x0cc5ae as f32, -0x0cc5af as f32),
-                Complex32::new(0x0cbec6 as f32, -0x0cbec7 as f32),
+                c32::new(0x0cc5be as f32, -0x0cc5bf as f32),
+                c32::new(0x0cc5ae as f32, 0x0cc5af as f32),
+                c32::new(0x0cc5ae as f32, -0x0cc5af as f32),
+                c32::new(0x0cbec6 as f32, -0x0cbec7 as f32),
             ])
         );
     }
