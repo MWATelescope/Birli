@@ -97,12 +97,10 @@ use error::BirliError;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use ndarray::{parallel::prelude::*, Array3, Axis};
+use ndarray::{ArrayBase, Dim, ViewRepr};
 use std::{ops::Range, os::raw::c_short};
 
 use mwalib::CorrelatorContext;
-// use std::collections::BTreeMap;
-
-use std::sync::Arc;
 
 pub mod error;
 
@@ -124,12 +122,12 @@ pub mod util;
 
 use log::{trace, warn};
 
-use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
+use crossbeam_channel::unbounded;
 use crossbeam_utils::thread;
 // use rayon::prelude::*;
 
 pub use mwa_rust_core;
-pub use mwa_rust_core::{c32, mwalib, Jones};
+pub use mwa_rust_core::{mwalib, Complex, Jones};
 pub use mwalib::{fitsio, fitsio_sys};
 
 /// Get the version of the AOFlagger library from the library itself.
@@ -308,13 +306,13 @@ pub fn context_to_baseline_imgsets(
         *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
     let img_timestep_range =
         *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+    // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
     let (jones_array, flag_array) = context_to_jones_array(
-        &context,
+        context,
         &img_timestep_range,
         &img_coarse_chan_range,
-        img_baseline_idxs.as_slice(),
+        // img_baseline_idxs.as_slice(),
     )
     .unwrap();
 
@@ -326,8 +324,8 @@ pub fn context_to_baseline_imgsets(
         })
         .collect();
 
-    match baseline_flagmasks {
-        Some(baseline_flagmasks_) => izip!(
+    if let Some(baseline_flagmasks_) = baseline_flagmasks {
+        izip!(
             flag_array.axis_iter(Axis(2)),
             baseline_flagmasks_.iter_mut()
         )
@@ -335,8 +333,7 @@ pub fn context_to_baseline_imgsets(
             let new_flagmask =
                 flag_baseline_view_to_flagmask(aoflagger, &baseline_flag_view).unwrap();
             flagmask_or(existing_flagmask, &new_flagmask);
-        }),
-        _ => (),
+        })
     }
 
     trace!("end context_to_baseline_imgsets");
@@ -365,10 +362,10 @@ macro_rules! _write_hdu_buffer_to_jones_view {
                 // Sanity check that our ndarray view is a single cell.
                 assert_eq!(jones_chan_view.ndim(), 0);
                 let jones = Jones::from([
-                    c32::new(hdu_chan_chunk[0], hdu_chan_chunk[1]),
-                    c32::new(hdu_chan_chunk[2], hdu_chan_chunk[3]),
-                    c32::new(hdu_chan_chunk[4], hdu_chan_chunk[5]),
-                    c32::new(hdu_chan_chunk[6], hdu_chan_chunk[7]),
+                    Complex::new(hdu_chan_chunk[0], hdu_chan_chunk[1]),
+                    Complex::new(hdu_chan_chunk[2], hdu_chan_chunk[3]),
+                    Complex::new(hdu_chan_chunk[4], hdu_chan_chunk[5]),
+                    Complex::new(hdu_chan_chunk[6], hdu_chan_chunk[7]),
                 ]);
                 jones_chan_view.fill(jones);
             }
@@ -377,7 +374,8 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 }
 
 /// generate a 3 dimensional array of Jones matrices from a MWALib context,
-/// over a given range of mwalib timestep, coarse channel and baseline indices.
+/// for all baselines in the context, over a given range of mwalib timestep and
+/// coarse channel indices.
 ///
 /// The dimensions of the array are:
 ///  - timestep
@@ -388,12 +386,13 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 ///
 /// # Errors
 ///
-/// Will throw [`BirliError`] if there was an error reading context.
+/// Will throw [`BirliError`] if there was an error reading from context.
 pub fn context_to_jones_array(
     context: &CorrelatorContext,
     mwalib_timestep_range: &Range<usize>,
     mwalib_coarse_chan_range: &Range<usize>,
-    mwalib_baseline_indices: &[usize],
+    // TODO: allow subset of baselines
+    // mwalib_baseline_idxs: &[usize],
 ) -> Result<(Array3<Jones<f32>>, Array3<bool>), BirliError> {
     trace!("start context_to_jones_array");
 
@@ -403,7 +402,7 @@ pub fn context_to_jones_array(
     let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
     let num_coarse_chans = mwalib_coarse_chan_range.len();
     let num_chans = num_coarse_chans * fine_chans_per_coarse;
-    let num_baselines = mwalib_baseline_indices.len();
+    let num_baselines = context.metafits_context.num_baselines;
 
     let shape = (num_timesteps, num_chans, num_baselines);
 
@@ -575,6 +574,10 @@ pub fn context_to_jones_array(
 /// - jones array view is [timestep][channel] for one baseline
 /// - imageset is timesteps wide, and channels high
 /// - jones matrics are always XX, YY, XY, YX
+///
+/// # Errors
+///
+/// Will throw [`BirliError`] if there was an error reading from context.
 pub fn jones_baseline_view_to_imageset(
     aoflagger: &CxxAOFlagger,
     // jones_array: &Array3<Jones<f32>>,
@@ -596,13 +599,6 @@ pub fn jones_baseline_view_to_imageset(
     let mut img_bufs: Vec<&mut [f32]> = (0..img_count)
         .map(|img_idx| unsafe { imgset.ImageBufferMutUnsafe(img_idx) })
         .collect();
-
-    // TODO: there's probably a more elegant way of doing this.
-    // let baseline_jones_view = jones_array
-    //     .axis_iter(Axis(2))
-    //     .skip(img_baseline_idx)
-    //     .next()
-    //     .unwrap();
 
     for (img_timestep_idx, timestep_jones_view) in baseline_jones_view.outer_iter().enumerate() {
         for (img_chan_idx, singular_jones_view) in timestep_jones_view.outer_iter().enumerate() {
@@ -627,6 +623,10 @@ pub fn jones_baseline_view_to_imageset(
 ///
 /// - flag array view is [timestep][channel] for one baseline
 /// - flagmask is timesteps wide, and channels high
+///
+/// # Errors
+///
+/// Will throw [`BirliError`] if there was an error reading from context.
 pub fn flag_baseline_view_to_flagmask(
     aoflagger: &CxxAOFlagger,
     baseline_flag_view: &ArrayBase<ViewRepr<&bool>, Dim<[usize; 2]>>,
@@ -659,9 +659,9 @@ mod tests {
     use crate::{cxx_aoflagger::ffi::cxx_aoflagger_new, Jones};
     use approx::assert_abs_diff_eq;
     use float_cmp::{approx_eq, F32Margin};
-    use mwa_rust_core::{c32, mwalib};
+    use mwa_rust_core::{mwalib, Complex};
     use mwalib::CorrelatorContext;
-    // use num_complex::c32;
+    // use num_complex::Complex;
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -1066,13 +1066,13 @@ mod tests {
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
-        let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+        // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
         let (jones_array, flags_array) = context_to_jones_array(
             &context,
             &img_timestep_range,
             &img_coarse_chan_range,
-            img_baseline_idxs.as_slice(),
+            // img_baseline_idxs.as_slice(),
         )
         .unwrap();
 
@@ -1080,40 +1080,40 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x10c5be as f32, -0x10c5bf as f32),
-                c32::new(0x10c5ae as f32, 0x10c5af as f32),
-                c32::new(0x10c5ae as f32, -0x10c5af as f32),
-                c32::new(0x10bec6 as f32, -0x10bec7 as f32),
+                Complex::new(0x10c5be as f32, -0x10c5bf as f32),
+                Complex::new(0x10c5ae as f32, 0x10c5af as f32),
+                Complex::new(0x10c5ae as f32, -0x10c5af as f32),
+                Complex::new(0x10bec6 as f32, -0x10bec7 as f32),
             ])
         );
         // ts 1, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x14c5be as f32, -0x14c5bf as f32),
-                c32::new(0x14c5ae as f32, 0x14c5af as f32),
-                c32::new(0x14c5ae as f32, -0x14c5af as f32),
-                c32::new(0x14bec6 as f32, -0x14bec7 as f32),
+                Complex::new(0x14c5be as f32, -0x14c5bf as f32),
+                Complex::new(0x14c5ae as f32, 0x14c5af as f32),
+                Complex::new(0x14c5ae as f32, -0x14c5af as f32),
+                Complex::new(0x14bec6 as f32, -0x14bec7 as f32),
             ])
         );
         // ts 2, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x18c5be as f32, -0x18c5bf as f32),
-                c32::new(0x18c5ae as f32, 0x18c5af as f32),
-                c32::new(0x18c5ae as f32, -0x18c5af as f32),
-                c32::new(0x18bec6 as f32, -0x18bec7 as f32),
+                Complex::new(0x18c5be as f32, -0x18c5bf as f32),
+                Complex::new(0x18c5ae as f32, 0x18c5af as f32),
+                Complex::new(0x18c5ae as f32, -0x18c5af as f32),
+                Complex::new(0x18bec6 as f32, -0x18bec7 as f32),
             ])
         );
         // ts 3, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((3, 0, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x1cc5be as f32, -0x1cc5bf as f32),
-                c32::new(0x1cc5ae as f32, 0x1cc5af as f32),
-                c32::new(0x1cc5ae as f32, -0x1cc5af as f32),
-                c32::new(0x1cbec6 as f32, -0x1cbec7 as f32),
+                Complex::new(0x1cc5be as f32, -0x1cc5bf as f32),
+                Complex::new(0x1cc5ae as f32, 0x1cc5af as f32),
+                Complex::new(0x1cc5ae as f32, -0x1cc5af as f32),
+                Complex::new(0x1cbec6 as f32, -0x1cbec7 as f32),
             ])
         );
 
@@ -1124,16 +1124,16 @@ mod tests {
             jones_array.get((0, 2, 0)).unwrap(),
             // Normally this would be:
             // &Jones::from([
-            //     c32::new(0x00c5be as f32, -0x00c5bf as f32),
-            //     c32::new(0x00c5ae as f32, 0x00c5af as f32),
-            //     c32::new(0x00c5ae as f32, -0x00c5af as f32),
-            //     c32::new(0x00bec6 as f32, -0x00bec7 as f32),
+            //     Complex::new(0x00c5be as f32, -0x00c5bf as f32),
+            //     Complex::new(0x00c5ae as f32, 0x00c5af as f32),
+            //     Complex::new(0x00c5ae as f32, -0x00c5af as f32),
+            //     Complex::new(0x00bec6 as f32, -0x00bec7 as f32),
             // ])
             &Jones::from([
-                c32::new(0x04c5be as f32, -0x04c5bf as f32),
-                c32::new(0x04c5ae as f32, 0x04c5af as f32),
-                c32::new(0x04c5ae as f32, -0x04c5af as f32),
-                c32::new(0x04bec6 as f32, -0x04bec7 as f32),
+                Complex::new(0x04c5be as f32, -0x04c5bf as f32),
+                Complex::new(0x04c5ae as f32, 0x04c5af as f32),
+                Complex::new(0x04c5ae as f32, -0x04c5af as f32),
+                Complex::new(0x04bec6 as f32, -0x04bec7 as f32),
             ])
         );
         assert!(!flags_array.get((0, 2, 0)).unwrap());
@@ -1141,10 +1141,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((1, 2, 0)).unwrap(),
             &Jones::from([
-                c32::new(0.0, 0.0),
-                c32::new(0.0, 0.0),
-                c32::new(0.0, 0.0),
-                c32::new(0.0, 0.0),
+                Complex::new(0.0, 0.0),
+                Complex::new(0.0, 0.0),
+                Complex::new(0.0, 0.0),
+                Complex::new(0.0, 0.0),
             ])
         );
         assert!(flags_array.get((1, 2, 0)).unwrap());
@@ -1152,10 +1152,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((2, 2, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x08c5be as f32, -0x08c5bf as f32),
-                c32::new(0x08c5ae as f32, 0x08c5af as f32),
-                c32::new(0x08c5ae as f32, -0x08c5af as f32),
-                c32::new(0x08bec6 as f32, -0x08bec7 as f32),
+                Complex::new(0x08c5be as f32, -0x08c5bf as f32),
+                Complex::new(0x08c5ae as f32, 0x08c5af as f32),
+                Complex::new(0x08c5ae as f32, -0x08c5af as f32),
+                Complex::new(0x08bec6 as f32, -0x08bec7 as f32),
             ])
         );
         assert!(!flags_array.get((2, 2, 0)).unwrap());
@@ -1163,10 +1163,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((3, 2, 0)).unwrap(),
             &Jones::from([
-                c32::new(0.0, 0.0),
-                c32::new(0.0, 0.0),
-                c32::new(0.0, 0.0),
-                c32::new(0.0, 0.0),
+                Complex::new(0.0, 0.0),
+                Complex::new(0.0, 0.0),
+                Complex::new(0.0, 0.0),
+                Complex::new(0.0, 0.0),
             ])
         );
         assert!(flags_array.get((3, 2, 0)).unwrap());
@@ -1184,13 +1184,13 @@ mod tests {
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
-        let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+        // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
         let (jones_array, _) = context_to_jones_array(
             &context,
             &img_timestep_range,
             &img_coarse_chan_range,
-            img_baseline_idxs.as_slice(),
+            // img_baseline_idxs.as_slice(),
         )
         .unwrap();
 
@@ -1198,10 +1198,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x410000 as f32, 0x410001 as f32),
-                c32::new(0x410002 as f32, 0x410003 as f32),
-                c32::new(0x410004 as f32, 0x410005 as f32),
-                c32::new(0x410006 as f32, 0x410007 as f32),
+                Complex::new(0x410000 as f32, 0x410001 as f32),
+                Complex::new(0x410002 as f32, 0x410003 as f32),
+                Complex::new(0x410004 as f32, 0x410005 as f32),
+                Complex::new(0x410006 as f32, 0x410007 as f32),
             ])
         );
 
@@ -1209,10 +1209,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x410100 as f32, 0x410101 as f32),
-                c32::new(0x410102 as f32, 0x410103 as f32),
-                c32::new(0x410104 as f32, 0x410105 as f32),
-                c32::new(0x410106 as f32, 0x410107 as f32),
+                Complex::new(0x410100 as f32, 0x410101 as f32),
+                Complex::new(0x410102 as f32, 0x410103 as f32),
+                Complex::new(0x410104 as f32, 0x410105 as f32),
+                Complex::new(0x410106 as f32, 0x410107 as f32),
             ])
         );
 
@@ -1220,10 +1220,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x410200 as f32, 0x410201 as f32),
-                c32::new(0x410202 as f32, 0x410203 as f32),
-                c32::new(0x410204 as f32, 0x410205 as f32),
-                c32::new(0x410206 as f32, 0x410207 as f32),
+                Complex::new(0x410200 as f32, 0x410201 as f32),
+                Complex::new(0x410202 as f32, 0x410203 as f32),
+                Complex::new(0x410204 as f32, 0x410205 as f32),
+                Complex::new(0x410206 as f32, 0x410207 as f32),
             ])
         );
 
@@ -1231,10 +1231,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 2)).unwrap(),
             &Jones::from([
-                c32::new(0x410020 as f32, 0x410021 as f32),
-                c32::new(0x410022 as f32, 0x410023 as f32),
-                c32::new(0x410024 as f32, 0x410025 as f32),
-                c32::new(0x410026 as f32, 0x410027 as f32),
+                Complex::new(0x410020 as f32, 0x410021 as f32),
+                Complex::new(0x410022 as f32, 0x410023 as f32),
+                Complex::new(0x410024 as f32, 0x410025 as f32),
+                Complex::new(0x410026 as f32, 0x410027 as f32),
             ])
         );
 
@@ -1242,10 +1242,10 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 1, 2)).unwrap(),
             &Jones::from([
-                c32::new(0x410028 as f32, 0x410029 as f32),
-                c32::new(0x41002a as f32, 0x41002b as f32),
-                c32::new(0x41002c as f32, 0x41002d as f32),
-                c32::new(0x41002e as f32, 0x41002f as f32),
+                Complex::new(0x410028 as f32, 0x410029 as f32),
+                Complex::new(0x41002a as f32, 0x41002b as f32),
+                Complex::new(0x41002c as f32, 0x41002d as f32),
+                Complex::new(0x41002e as f32, 0x41002f as f32),
             ])
         );
     }
@@ -1262,13 +1262,13 @@ mod tests {
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
-        let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+        // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
         let (jones_array, _) = context_to_jones_array(
             &context,
             &img_timestep_range,
             &img_coarse_chan_range,
-            img_baseline_idxs.as_slice(),
+            // img_baseline_idxs.as_slice(),
         )
         .unwrap();
 
@@ -1276,40 +1276,40 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x10c5be as f32, -0x10c5bf as f32),
-                c32::new(0x10c5ae as f32, 0x10c5af as f32),
-                c32::new(0x10c5ae as f32, -0x10c5af as f32),
-                c32::new(0x10bec6 as f32, -0x10bec7 as f32),
+                Complex::new(0x10c5be as f32, -0x10c5bf as f32),
+                Complex::new(0x10c5ae as f32, 0x10c5af as f32),
+                Complex::new(0x10c5ae as f32, -0x10c5af as f32),
+                Complex::new(0x10bec6 as f32, -0x10bec7 as f32),
             ])
         );
         // ts 1, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x14c5be as f32, -0x14c5bf as f32),
-                c32::new(0x14c5ae as f32, 0x14c5af as f32),
-                c32::new(0x14c5ae as f32, -0x14c5af as f32),
-                c32::new(0x14bec6 as f32, -0x14bec7 as f32),
+                Complex::new(0x14c5be as f32, -0x14c5bf as f32),
+                Complex::new(0x14c5ae as f32, 0x14c5af as f32),
+                Complex::new(0x14c5ae as f32, -0x14c5af as f32),
+                Complex::new(0x14bec6 as f32, -0x14bec7 as f32),
             ])
         );
         // ts 2, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x18c5be as f32, -0x18c5bf as f32),
-                c32::new(0x18c5ae as f32, 0x18c5af as f32),
-                c32::new(0x18c5ae as f32, -0x18c5af as f32),
-                c32::new(0x18bec6 as f32, -0x18bec7 as f32),
+                Complex::new(0x18c5be as f32, -0x18c5bf as f32),
+                Complex::new(0x18c5ae as f32, 0x18c5af as f32),
+                Complex::new(0x18c5ae as f32, -0x18c5af as f32),
+                Complex::new(0x18bec6 as f32, -0x18bec7 as f32),
             ])
         );
         // ts 3, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((3, 0, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x1cc5be as f32, -0x1cc5bf as f32),
-                c32::new(0x1cc5ae as f32, 0x1cc5af as f32),
-                c32::new(0x1cc5ae as f32, -0x1cc5af as f32),
-                c32::new(0x1cbec6 as f32, -0x1cbec7 as f32),
+                Complex::new(0x1cc5be as f32, -0x1cc5bf as f32),
+                Complex::new(0x1cc5ae as f32, 0x1cc5af as f32),
+                Complex::new(0x1cc5ae as f32, -0x1cc5af as f32),
+                Complex::new(0x1cbec6 as f32, -0x1cbec7 as f32),
             ])
         );
 
@@ -1317,40 +1317,40 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 5)).unwrap(),
             &Jones::from([
-                c32::new(0x10f1ce as f32, -0x10f1cf as f32),
-                c32::new(0x10ea26 as f32, -0x10ea27 as f32),
-                c32::new(0x10f1be as f32, -0x10f1bf as f32),
-                c32::new(0x10ea16 as f32, -0x10ea17 as f32),
+                Complex::new(0x10f1ce as f32, -0x10f1cf as f32),
+                Complex::new(0x10ea26 as f32, -0x10ea27 as f32),
+                Complex::new(0x10f1be as f32, -0x10f1bf as f32),
+                Complex::new(0x10ea16 as f32, -0x10ea17 as f32),
             ])
         );
         // ts 1, chan 0, baseline 5
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 5)).unwrap(),
             &Jones::from([
-                c32::new(0x14f1ce as f32, -0x14f1cf as f32),
-                c32::new(0x14ea26 as f32, -0x14ea27 as f32),
-                c32::new(0x14f1be as f32, -0x14f1bf as f32),
-                c32::new(0x14ea16 as f32, -0x14ea17 as f32),
+                Complex::new(0x14f1ce as f32, -0x14f1cf as f32),
+                Complex::new(0x14ea26 as f32, -0x14ea27 as f32),
+                Complex::new(0x14f1be as f32, -0x14f1bf as f32),
+                Complex::new(0x14ea16 as f32, -0x14ea17 as f32),
             ])
         );
         // ts 2, chan 0, baseline 5
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 5)).unwrap(),
             &Jones::from([
-                c32::new(0x18f1ce as f32, -0x18f1cf as f32),
-                c32::new(0x18ea26 as f32, -0x18ea27 as f32),
-                c32::new(0x18f1be as f32, -0x18f1bf as f32),
-                c32::new(0x18ea16 as f32, -0x18ea17 as f32),
+                Complex::new(0x18f1ce as f32, -0x18f1cf as f32),
+                Complex::new(0x18ea26 as f32, -0x18ea27 as f32),
+                Complex::new(0x18f1be as f32, -0x18f1bf as f32),
+                Complex::new(0x18ea16 as f32, -0x18ea17 as f32),
             ])
         );
         // ts 3, chan 0, baseline 5
         assert_abs_diff_eq!(
             jones_array.get((3, 0, 5)).unwrap(),
             &Jones::from([
-                c32::new(0x1cf1ce as f32, -0x1cf1cf as f32),
-                c32::new(0x1cea26 as f32, -0x1cea27 as f32),
-                c32::new(0x1cf1be as f32, -0x1cf1bf as f32),
-                c32::new(0x1cea16 as f32, -0x1cea17 as f32),
+                Complex::new(0x1cf1ce as f32, -0x1cf1cf as f32),
+                Complex::new(0x1cea26 as f32, -0x1cea27 as f32),
+                Complex::new(0x1cf1be as f32, -0x1cf1bf as f32),
+                Complex::new(0x1cea16 as f32, -0x1cea17 as f32),
             ])
         );
 
@@ -1358,40 +1358,40 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 2, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x00c5be as f32, -0x00c5bf as f32),
-                c32::new(0x00c5ae as f32, 0x00c5af as f32),
-                c32::new(0x00c5ae as f32, -0x00c5af as f32),
-                c32::new(0x00bec6 as f32, -0x00bec7 as f32),
+                Complex::new(0x00c5be as f32, -0x00c5bf as f32),
+                Complex::new(0x00c5ae as f32, 0x00c5af as f32),
+                Complex::new(0x00c5ae as f32, -0x00c5af as f32),
+                Complex::new(0x00bec6 as f32, -0x00bec7 as f32),
             ])
         );
         // ts 1, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((1, 2, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x04c5be as f32, -0x04c5bf as f32),
-                c32::new(0x04c5ae as f32, 0x04c5af as f32),
-                c32::new(0x04c5ae as f32, -0x04c5af as f32),
-                c32::new(0x04bec6 as f32, -0x04bec7 as f32),
+                Complex::new(0x04c5be as f32, -0x04c5bf as f32),
+                Complex::new(0x04c5ae as f32, 0x04c5af as f32),
+                Complex::new(0x04c5ae as f32, -0x04c5af as f32),
+                Complex::new(0x04bec6 as f32, -0x04bec7 as f32),
             ])
         );
         // ts 2, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((2, 2, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x08c5be as f32, -0x08c5bf as f32),
-                c32::new(0x08c5ae as f32, 0x08c5af as f32),
-                c32::new(0x08c5ae as f32, -0x08c5af as f32),
-                c32::new(0x08bec6 as f32, -0x08bec7 as f32),
+                Complex::new(0x08c5be as f32, -0x08c5bf as f32),
+                Complex::new(0x08c5ae as f32, 0x08c5af as f32),
+                Complex::new(0x08c5ae as f32, -0x08c5af as f32),
+                Complex::new(0x08bec6 as f32, -0x08bec7 as f32),
             ])
         );
         // ts 3, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((3, 2, 0)).unwrap(),
             &Jones::from([
-                c32::new(0x0cc5be as f32, -0x0cc5bf as f32),
-                c32::new(0x0cc5ae as f32, 0x0cc5af as f32),
-                c32::new(0x0cc5ae as f32, -0x0cc5af as f32),
-                c32::new(0x0cbec6 as f32, -0x0cbec7 as f32),
+                Complex::new(0x0cc5be as f32, -0x0cc5bf as f32),
+                Complex::new(0x0cc5ae as f32, 0x0cc5af as f32),
+                Complex::new(0x0cc5ae as f32, -0x0cc5af as f32),
+                Complex::new(0x0cbec6 as f32, -0x0cbec7 as f32),
             ])
         );
     }

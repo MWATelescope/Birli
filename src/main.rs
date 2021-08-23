@@ -17,6 +17,9 @@ use birli::{
     },
     write_flags,
 };
+// use birli::{constants::{
+//         COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
+//     }, context_to_baseline_imgsets, context_to_jones_array, correct_cable_lengths, corrections::correct_geometry, cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags, get_aoflagger_version_string, get_flaggable_timesteps, init_baseline_flagmasks, io::write_uvfits, pos::earth::LatLngHeight, write_flags};
 // use birli::util::{dump_flagmask, dump_imgset};
 use mwalib::{CorrelatorContext, GeometricDelaysApplied};
 
@@ -99,22 +102,24 @@ where
         let flag_template = aoflagger_matches.value_of("flag-template");
         let uvfits_out = aoflagger_matches.value_of("uvfits-out");
         let fits_files: Vec<&str> = aoflagger_matches.values_of("fits-files").unwrap().collect();
-        let context = match CorrelatorContext::new(&metafits_path, &fits_files) {
-            Ok(context) => context,
-            Err(err) => panic!("unable to get mwalib context: {}", err),
-        };
+        let context = CorrelatorContext::new(&metafits_path, &fits_files)
+            .expect("unable to get mwalib context");
         debug!("mwalib correlator context:\n{}", &context);
         let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        trace!("img_coarse_chan_idxs: {:?}", img_coarse_chan_idxs);
-        let img_timestep_idxs = match get_flaggable_timesteps(&context) {
-            Ok(timestep_idxs) => timestep_idxs,
-            Err(err) => panic!("unable to determine flaggable timesteps: {}", err),
-        };
+        let img_timestep_idxs =
+            get_flaggable_timesteps(&context).expect("unable to determine flaggable timesteps");
         trace!("img_timestep_idxs: {:?}", img_timestep_idxs);
+
+        // let img_coarse_chan_range =
+        // *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        // trace!("img_coarse_chan_range: {:?}", img_coarse_chan_range);
+        // let img_timestep_range =
+        //     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+        // trace!("img_timestep_range: {:?}", img_timestep_range);
+
         let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 
         let antenna_flags = get_antenna_flags(&context);
-        // trace!("antenna_flags: {:?}", antenna_flags);
         trace!(
             "antenna_flags: {:?}",
             antenna_flags
@@ -145,6 +150,14 @@ where
             &img_timestep_idxs,
             Some(&mut baseline_flagmasks),
         );
+
+        // let (mut jones_array, mut flag_array) = context_to_jones_array(
+        //     &context,
+        //     &img_timestep_range,
+        //     &img_coarse_chan_range,
+        //     // baseline_idxs.as_slice(),
+        // )
+        // .expect("unable to produce jones or flag array");
 
         // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
 
@@ -219,7 +232,7 @@ where
                 flag_template,
                 img_coarse_chan_idxs,
             )
-            .unwrap();
+            .expect("unable to write flags");
         }
 
         // output uvfits
@@ -235,7 +248,7 @@ where
                 img_coarse_chan_idxs,
                 array_pos,
             )
-            .unwrap();
+            .expect("unable to write uvfits");
         }
     }
 }

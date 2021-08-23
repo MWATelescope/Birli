@@ -121,14 +121,14 @@ fn bench_context_to_jones_array_mwax_half_1247842824(crt: &mut Criterion) {
     let timestep_range = timestep_idxs[0]..timestep_idxs[timestep_idxs.len() - 1] + 1;
     let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
     let coarse_chan_range = coarse_chan_idxs[0]..coarse_chan_idxs[coarse_chan_idxs.len() - 1] + 1;
-    let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+    // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
     crt.bench_function("context_to_jones_array - mwax_half_1247842824", |bch| {
         bch.iter(|| {
             context_to_jones_array(
                 black_box(&context),
                 black_box(&timestep_range),
                 black_box(&coarse_chan_range),
-                black_box(img_baseline_idxs.as_slice()),
+                // black_box(img_baseline_idxs.as_slice()),
             )
         })
     });
@@ -140,14 +140,14 @@ fn bench_context_to_jones_array_ord_half_1196175296(crt: &mut Criterion) {
     let timestep_range = timestep_idxs[0]..timestep_idxs[timestep_idxs.len() - 1] + 1;
     let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
     let coarse_chan_range = coarse_chan_idxs[0]..coarse_chan_idxs[coarse_chan_idxs.len() - 1] + 1;
-    let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+    // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
     crt.bench_function("context_to_jones_array - ord_half_1196175296", |bch| {
         bch.iter(|| {
             context_to_jones_array(
                 black_box(&context),
                 black_box(&timestep_range),
                 black_box(&coarse_chan_range),
-                black_box(img_baseline_idxs.as_slice()),
+                // black_box(img_baseline_idxs.as_slice()),
             )
         })
     });
