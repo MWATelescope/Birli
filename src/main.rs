@@ -199,7 +199,7 @@ where
                     &mut baseline_imgsets,
                     img_coarse_chan_idxs,
                     &img_timestep_idxs,
-                    array_pos.clone(),
+                    array_pos,
                 );
             }
             (..) => {

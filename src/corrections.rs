@@ -757,7 +757,7 @@ mod tests {
             array_pos.longitude_rad,
             array_pos.latitude_rad,
         );
-        let phase_centre_ha_j2000_0 = prec_info_0.hadec_j2000.clone(); // phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
+        let phase_centre_ha_j2000_0 = prec_info_0.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
         let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
         // timestep 3
         let timestep_3 = &context.timesteps[img_timestep_idxs[3]];
@@ -769,7 +769,7 @@ mod tests {
             array_pos.longitude_rad,
             array_pos.latitude_rad,
         );
-        let phase_centre_ha_j2000_3 = prec_info_3.hadec_j2000.clone(); // phase_centre_ra.to_hadec(prec_info_3.lmst_j2000);
+        let phase_centre_ha_j2000_3 = prec_info_3.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_3.lmst_j2000);
         let tiles_xyz_precessed_3 = prec_info_3.precess_xyz_parallel(&tiles_xyz_geod);
 
         // baseline 5
