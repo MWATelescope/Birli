@@ -27,7 +27,6 @@ libc = "0.2"
 log = "0.4"
 mwa_rust_core = ">=0.1.1"
 ndarray = { version = ">=0.14,<0.16", features = ["rayon"] }
-num-complex = ">=0.3,<0.5"
 rayon = "1.5"
 regex = "1.4"
 serde = { version = "1.0", features = ["derive"] }
