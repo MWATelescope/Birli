@@ -4,10 +4,9 @@ use log::{debug, info, trace};
 use std::{env, ffi::OsString, fmt::Debug, path::Path};
 
 use birli::{
-    context_to_baseline_imgsets, correct_cable_lengths,
-    corrections::correct_geometry,
-    cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags, get_aoflagger_version_string,
-    get_flaggable_timesteps, init_baseline_flagmasks,
+    context_to_jones_array, correct_cable_lengths, correct_geometry, cxx_aoflagger_new,
+    flags::flag_jones_array_existing,
+    get_antenna_flags, get_aoflagger_version_string, get_flaggable_timesteps, init_flag_array,
     io::write_uvfits,
     mwa_rust_core::{
         constants::{
@@ -17,10 +16,6 @@ use birli::{
     },
     write_flags,
 };
-// use birli::{constants::{
-//         COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
-//     }, context_to_baseline_imgsets, context_to_jones_array, correct_cable_lengths, corrections::correct_geometry, cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags, get_aoflagger_version_string, get_flaggable_timesteps, init_baseline_flagmasks, io::write_uvfits, pos::earth::LatLngHeight, write_flags};
-// use birli::util::{dump_flagmask, dump_imgset};
 use mwalib::{CorrelatorContext, GeometricDelaysApplied};
 
 fn main_with_args<I, T>(args: I)
@@ -108,14 +103,13 @@ where
         let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
         let img_timestep_idxs =
             get_flaggable_timesteps(&context).expect("unable to determine flaggable timesteps");
-        trace!("img_timestep_idxs: {:?}", img_timestep_idxs);
 
-        // let img_coarse_chan_range =
-        // *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-        // trace!("img_coarse_chan_range: {:?}", img_coarse_chan_range);
-        // let img_timestep_range =
-        //     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        // trace!("img_timestep_range: {:?}", img_timestep_range);
+        let img_coarse_chan_range =
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        trace!("img_coarse_chan_range: {:?}", img_coarse_chan_range);
+        let img_timestep_range =
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+        trace!("img_timestep_range: {:?}", img_timestep_range);
 
         let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 
@@ -135,29 +129,19 @@ where
                 .collect::<Vec<_>>()
         );
 
-        let mut baseline_flagmasks = init_baseline_flagmasks(
-            &aoflagger,
+        let flag_array = init_flag_array(
             &context,
-            img_coarse_chan_idxs,
-            &img_timestep_idxs,
-            Some(antenna_flags),
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            Some(get_antenna_flags(&context)),
         );
 
-        let mut baseline_imgsets = context_to_baseline_imgsets(
-            &aoflagger,
+        let (mut jones_array, flag_array) = context_to_jones_array(
             &context,
-            img_coarse_chan_idxs,
-            &img_timestep_idxs,
-            Some(&mut baseline_flagmasks),
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            Some(flag_array),
         );
-
-        // let (mut jones_array, mut flag_array) = context_to_jones_array(
-        //     &context,
-        //     &img_timestep_range,
-        //     &img_coarse_chan_range,
-        //     // baseline_idxs.as_slice(),
-        // )
-        // .expect("unable to produce jones or flag array");
 
         // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
 
@@ -168,7 +152,7 @@ where
                 "Applying cable delays. applied: {}, desired: {}",
                 cable_delays_applied, !no_cable_delays
             );
-            correct_cable_lengths(&context, &mut baseline_imgsets, img_coarse_chan_idxs);
+            correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range);
         } else {
             debug!(
                 "Skipping cable delays. applied: {}, desired: {}",
@@ -178,11 +162,11 @@ where
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
         debug!("flagging with strategy {}", strategy_filename);
-        flag_imgsets_existing(
+        let flag_array = flag_jones_array_existing(
             &aoflagger,
             strategy_filename,
-            &baseline_imgsets,
-            &mut baseline_flagmasks,
+            &jones_array,
+            Some(flag_array),
             true,
         );
 
@@ -208,10 +192,9 @@ where
                 );
                 correct_geometry(
                     &context,
-                    &baseline_idxs,
-                    &mut baseline_imgsets,
-                    img_coarse_chan_idxs,
-                    &img_timestep_idxs,
+                    &mut jones_array,
+                    &img_timestep_range,
+                    &img_coarse_chan_range,
                     array_pos,
                 );
             }
@@ -224,15 +207,9 @@ where
         };
 
         // output flags
-
         if let Some(flag_template) = flag_template {
-            write_flags(
-                &context,
-                &baseline_flagmasks,
-                flag_template,
-                img_coarse_chan_idxs,
-            )
-            .expect("unable to write flags");
+            write_flags(&context, &flag_array, flag_template, &img_coarse_chan_range)
+                .expect("unable to write flags");
         }
 
         // output uvfits
@@ -241,11 +218,11 @@ where
             write_uvfits(
                 Path::new(uvfits_out),
                 &context,
+                &jones_array,
+                &flag_array,
+                &img_timestep_range,
+                &img_coarse_chan_range,
                 &baseline_idxs,
-                &baseline_imgsets,
-                &baseline_flagmasks,
-                &img_timestep_idxs,
-                img_coarse_chan_idxs,
                 array_pos,
             )
             .expect("unable to write uvfits");
@@ -867,7 +844,7 @@ mod tests {
         compare_uvfits_with_csv(
             uvfits_path,
             expected_csv_path,
-            F32Margin::default().epsilon(5e-5),
+            F32Margin::default().epsilon(1e-4),
         );
     }
 }

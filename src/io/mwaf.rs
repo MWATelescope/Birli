@@ -12,18 +12,20 @@ use super::error::{
     IOError,
     IOError::{FitsIO, FitsOpen, InvalidFlagFilenameTemplate, InvalidGpuBox, MwafInconsistent},
 };
-use crate::cxx_aoflagger::ffi::CxxFlagMask;
 use crate::error::BirliError;
 use clap::crate_version;
-use cxx::UniquePtr;
 use fitsio::hdu::FitsHdu;
 use fitsio::tables::{ColumnDataDescription, ColumnDataType, ConcreteColumnDescription};
 use fitsio::FitsFile;
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use itertools::izip;
 use mwa_rust_core::{fitsio, fitsio_sys, mwalib};
 use mwalib::{
     CorrelatorContext, MWAVersion, _get_required_fits_key, _open_hdu, fits_open_hdu,
     get_required_fits_key,
 };
+use ndarray::{Array3, Axis};
+// use rayon::prelude::*;
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -83,7 +85,6 @@ pub struct FlagFileSet {
     gpubox_fptrs: BTreeMap<usize, FitsFile>,
 }
 
-// TODO: can this just take metafits context instead of a full context?
 impl FlagFileSet {
     fn get_gpubox_filenames(
         mwa_version: MWAVersion,
@@ -261,8 +262,8 @@ impl FlagFileSet {
         Ok(header)
     }
 
-    /// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], and a
-    /// vector of [`CxxFlagMask`]s for each baseline in the observation.
+    /// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], and an ndarray
+    /// of boolean flags for the observation into a file for each `gpubox_id`.
     ///
     /// The filename template should contain two or 3 percentage (`%`) characters which will be replaced
     /// by the gpubox id or channel number (depending on correlator type). See [`FlagFileSet::new`]
@@ -272,121 +273,131 @@ impl FlagFileSet {
     /// Will error if the gpubox ids this flagset was initialized with is not contained in the
     /// provided [`mwalib::CorrelatorContext`].
     ///
-    pub fn write_baseline_flagmasks(
+    pub fn write_flag_array(
         &mut self,
         context: &CorrelatorContext,
-        baseline_flagmasks: &[UniquePtr<CxxFlagMask>],
-        img_coarse_chan_idxs: &[usize],
+        flag_array: &Array3<bool>,
+        gpubox_ids: &[usize],
     ) -> Result<(), IOError> {
-        // let gpubox_chan_numbers: BTreeMap<usize, usize> = context
-        //     .coarse_chans
-        //     .iter()
-        //     .map(|chan| (chan.gpubox_number, chan.corr_chan_number))
-        //     .collect();
-        let gpubox_to_chan_idx: BTreeMap<usize, usize> = context
-            .coarse_chans
+
+        let flag_dims = flag_array.dim();
+        let num_timesteps = flag_dims.0;
+        let num_baselines = flag_dims.2;
+        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+
+        // a parent progress bar containing the progress bars associated with this function
+        let multi_progress = MultiProgress::with_draw_target(ProgressDrawTarget::stderr());
+        // a vector of progress bars for the visibility reading progress of each channel.
+        let write_progress: Vec<ProgressBar> = gpubox_ids
             .iter()
-            .enumerate()
-            .map(|(chan_idx, chan)| (chan.gpubox_number, chan_idx))
+            .map(|gpubox_id| {
+                let channel_progress = multi_progress.add(
+                    ProgressBar::new((num_timesteps * num_baselines) as _)
+                        .with_style(
+                            ProgressStyle::default_bar()
+                                .template("{msg:16}: [{wide_bar:.blue}] {pos:4}/{len:4}")
+                                .progress_chars("=> "),
+                        )
+                        .with_message(format!("gpubox {:03}", gpubox_id)),
+                );
+                channel_progress.set_position(0);
+                channel_progress
+            })
             .collect();
 
-        for (&gpubox_id, fptr) in self.gpubox_fptrs.iter_mut() {
-            let primary_hdu = fits_open_hdu!(fptr, 0)?;
-            let header = FlagFileHeaders::from_gpubox_context(gpubox_id, context);
-            let num_baselines = header.num_ants * (header.num_ants + 1) / 2;
-            let num_fine_chans_per_coarse = header.num_channels;
-            FlagFileSet::write_primary_hdu(fptr, &primary_hdu, &header)?;
-            // let chan_number = match gpubox_chan_numbers.get(&gpubox_id) {
-            //     Some(chan_number) => chan_number,
-            //     None => {
-            //         return Err(InvalidGpuBox {
-            //             expected: format!("{:?}", gpubox_chan_numbers.keys()),
-            //             found: format!("{}", gpubox_id),
-            //         })
-            //     }
-            // };
-            let coarse_chan_idx = match gpubox_to_chan_idx.get(&gpubox_id) {
-                Some(chan_number) => chan_number,
+        // The total progress.
+        let total_progress = multi_progress.add(
+            ProgressBar::new((num_timesteps * num_baselines * gpubox_ids.len()) as _)
+                .with_style(
+                    ProgressStyle::default_bar()
+                        .template(
+                            "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+                        )
+                        .progress_chars("=> "),
+                )
+                .with_position(0)
+                .with_message("write flags"),
+        );
+
+        // TODO: parallelize
+        // let thread_write_info: Vec<(usize, &mut FitsFile, ArrayBase<ViewRepr<&bool>, Dim<[usize; 3]>>)> = Vec::with_capacity(gpubox_ids.len());
+        for (&gpubox_id, flag_coarse_chan_view, channel_progress) in izip!(
+            gpubox_ids,
+            flag_array.axis_chunks_iter(Axis(1), fine_chans_per_coarse),
+            write_progress
+        )
+        .into_iter()
+        {
+            match self.gpubox_fptrs.get_mut(&gpubox_id) {
                 None => {
                     return Err(InvalidGpuBox {
-                        expected: format!("{:?}", gpubox_to_chan_idx.keys()),
-                        found: format!("{}", gpubox_id),
+                        expected: format!("{:?}", self.gpubox_fptrs.keys()),
+                        found: format!("gpubox id {}", gpubox_id),
                     })
                 }
-            };
-            let img_coarse_chan_idx = match img_coarse_chan_idxs
-                .iter()
-                .position(|idx| idx == coarse_chan_idx)
-            {
-                Some(img_coarse_chan_idx) => img_coarse_chan_idx,
-                None => {
-                    return Err(InvalidGpuBox {
-                        expected: format!("{:?}", img_coarse_chan_idxs),
-                        found: format!("{}", coarse_chan_idx),
-                    })
-                }
-            };
-            let flags_colname = "FLAGS";
-            let table_hdu = fptr.create_table(
-                "EXTNAME".to_string(),
-                &[ConcreteColumnDescription {
-                    name: flags_colname.to_string(),
-                    data_type: ColumnDataDescription::vector(
-                        ColumnDataType::Bit,
-                        num_fine_chans_per_coarse,
-                    ),
-                }],
-            )?;
-            FlagFileSet::write_table_hdu(fptr, &table_hdu, &header)?;
+                Some(fptr) => {
+                    // thread_write_info.push((gpubox_id, fptr, flag_coarse_chan_view));
 
-            let mut status = 0;
-            for (baseline_idx, flagmask) in baseline_flagmasks.iter().enumerate() {
-                assert!(baseline_idx < num_baselines);
-                // Flag buffer can be thought of as a 2D buffer of bools,
-                // indexed by channel (y), then timestep (x). flag stride is the width
-                let flag_buffer = flagmask.Buffer();
-                let flag_stride = flagmask.HorizontalStride();
-                let num_timesteps = flagmask.Width();
-                let num_channels = flagmask.Height();
-                assert_eq!(
-                    num_channels,
-                    img_coarse_chan_idxs.len() * num_fine_chans_per_coarse
-                );
-                for img_timestep_idx in 0..num_timesteps {
-                    let row_idx = (img_timestep_idx * num_baselines) + baseline_idx;
-                    // All flags for img_timestep_idx
-                    let timestep_flags = flag_buffer
-                        .iter()
-                        .skip(img_timestep_idx)
-                        .step_by(flag_stride);
+                    let primary_hdu = fits_open_hdu!(fptr, 0)?;
+                    let header = FlagFileHeaders::from_gpubox_context(gpubox_id, context);
+                    let fine_chans_per_coarse = header.num_channels;
+                    FlagFileSet::write_primary_hdu(fptr, &primary_hdu, &header)?;
 
-                    // All flags for timestep_idx and img_coarse_chan_idx
-                    let mut cell: Vec<i8> = timestep_flags
-                        .skip(img_coarse_chan_idx * num_fine_chans_per_coarse)
-                        .take(num_fine_chans_per_coarse)
-                        .map(|&flag| i8::from(flag))
-                        .collect();
-                    unsafe {
-                        fitsio_sys::ffpclx(
-                            fptr.as_raw(),
-                            1,
-                            1 + row_idx as i64,
-                            1,
-                            cell.len() as i64,
-                            cell.as_mut_ptr(),
-                            &mut status,
-                        );
+                    let flags_colname = "FLAGS";
+                    let table_hdu = fptr.create_table(
+                        "EXTNAME".to_string(),
+                        &[ConcreteColumnDescription {
+                            name: flags_colname.to_string(),
+                            data_type: ColumnDataDescription::vector(
+                                ColumnDataType::Bit,
+                                fine_chans_per_coarse,
+                            ),
+                        }],
+                    )?;
+                    FlagFileSet::write_table_hdu(fptr, &table_hdu, &header)?;
+
+                    let mut status = 0;
+                    let mut row_idx = 0;
+
+                    for flag_timestep_view in flag_coarse_chan_view.outer_iter() {
+                        for flag_baseline_view in flag_timestep_view.axis_iter(Axis(1)) {
+                            let mut flag_cell = flag_baseline_view
+                                .iter()
+                                .map(|&flag| i8::from(flag))
+                                .collect::<Vec<_>>();
+                            assert_eq!(flag_cell.len(), fine_chans_per_coarse);
+
+                            unsafe {
+                                fitsio_sys::ffpclx(
+                                    fptr.as_raw(),
+                                    1,
+                                    1 + row_idx as i64,
+                                    1,
+                                    flag_cell.len() as i64,
+                                    flag_cell.as_mut_ptr(),
+                                    &mut status,
+                                );
+                            }
+
+                            fitsio::errors::check_status(status).map_err(|e| FitsIO {
+                                fits_error: e,
+                                fits_filename: String::from(&fptr.filename),
+                                hdu_num: 1,
+                                source_file: file!(),
+                                source_line: line!(),
+                            })?;
+
+                            row_idx += 1;
+                            channel_progress.inc(1);
+                            total_progress.inc(1);
+                        }
                     }
-                    fitsio::errors::check_status(status).map_err(|e| FitsIO {
-                        fits_error: e,
-                        fits_filename: String::from(&fptr.filename),
-                        hdu_num: 1,
-                        source_file: file!(),
-                        source_line: line!(),
-                    })?;
                 }
             }
+            channel_progress.finish();
         }
+        total_progress.finish();
+
         Ok(())
     }
 }
@@ -394,44 +405,6 @@ impl FlagFileSet {
 /// TODO: These are just for tests, and should be deprecated.
 /// TODO: Why doesn't #[cfg(test)] work?
 impl FlagFileSet {
-    // pub fn read_validated_header(
-    //     context: &CorrelatorContext,
-    //     fptr: &mut FitsFile,
-    // ) -> Result<FlagFileHeaders, BirliError> {
-    //     let headers = FlagFileSet::read_header(fptr)?;
-    //     let header_baselines = headers.num_ants * (headers.num_ants + 1) / 2;
-    //     if header_baselines != context.metafits_context.num_baselines {
-    //         return Err(BirliError::MwafInconsistent {
-    //             file: String::from(&fptr.filename),
-    //             expected: "NANTENNA * (NANTENNA+1) / 2 = context.metafits_context.num_baselines"
-    //                 .to_string(),
-    //             found: format!(
-    //                 "{} != {}",
-    //                 header_baselines, context.metafits_context.num_baselines
-    //             ),
-    //         });
-    //     };
-
-    //     // TODO: check NSCANS?
-    //     // if headers.num_timesteps > context.num_common_timesteps {
-    //     //     return Err(BirliError::MwafInconsistent {
-    //     //         file: String::from(&fptr.filename),
-    //     //         expected: "NSCANS <= context.num_common_timesteps".to_string(),
-    //     //         found: format!("{} > {}", headers.num_timesteps, context.num_common_timesteps),
-    //     //     });
-    //     // };
-
-    //     if headers.bytes_per_row * 8 < context.metafits_context.num_corr_fine_chans_per_coarse {
-    //         return Err(BirliError::MwafInconsistent {
-    //             file: String::from(&fptr.filename),
-    //             expected: "headers.bytes_per_row * 8 >= context.metafits_context.num_corr_fine_chans_per_coarse".to_string(),
-    //             found: format!("{} < {}", headers.bytes_per_row, context.metafits_context.num_corr_fine_chans_per_coarse),
-    //         });
-    //     }
-
-    //     Ok(headers)
-    // }
-
     fn read_flags_raw(
         fptr: &mut FitsFile,
         flags_raw: &mut [i8],
@@ -500,15 +473,15 @@ impl FlagFileSet {
 #[cfg(test)]
 mod tests {
     use super::{FlagFileHeaders, FlagFileSet};
-    use crate::cxx_aoflagger::ffi::{cxx_aoflagger_new, CxxFlagMask};
     use crate::io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate};
-    use cxx::UniquePtr;
+    use crate::{get_flaggable_timesteps, init_flag_array};
     use fitsio::FitsFile;
     use mwa_rust_core::{fitsio, mwalib};
     use mwalib::{
         CorrelatorContext, _get_optional_fits_key, _open_hdu, fits_open_hdu, get_optional_fits_key,
         MWAVersion,
     };
+    use ndarray::Axis;
     use std::collections::BTreeMap;
     use std::fs::File;
     use std::path::Path;
@@ -824,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_baseline_flagmasks() {
+    fn test_write_flag_array() {
         let context = get_mwax_context();
         let gpubox_ids: Vec<usize> = context
             .common_coarse_chan_indices
@@ -835,37 +808,45 @@ mod tests {
         let tmp_dir = tempdir().unwrap();
         let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
 
-        let mut idx = 0;
-        let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(img_timestep_idxs.len(), 4);
+        let img_timestep_range =
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
         let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let num_img_coarse_chans = img_coarse_chan_idxs.len();
+        let img_coarse_chan_range =
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
-        let width = context.num_common_timesteps;
-        let height = num_img_coarse_chans * context.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array =
+            init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
 
-        let aoflagger = unsafe { cxx_aoflagger_new() };
-        let mut baseline_flagmasks: Vec<UniquePtr<CxxFlagMask>> = context
-            .metafits_context
-            .baselines
-            .iter()
-            .map(|_| unsafe { aoflagger.MakeFlagMask(width, height, false) })
-            .collect();
+        let mut idx = 0;
 
-        for img_coarse_chan_idx in 0..num_img_coarse_chans {
-            for img_timestep_idx in 0..width {
-                for flag_mask_ptr in baseline_flagmasks.iter_mut() {
-                    let flag_stride = flag_mask_ptr.HorizontalStride();
-                    let flag_buf = flag_mask_ptr.pin_mut().BufferMut();
-                    for fine_chan_idx in 0..num_fine_chans_per_coarse {
-                        let flag_offset_y =
-                            img_coarse_chan_idx * num_fine_chans_per_coarse + fine_chan_idx;
-                        let flag_idx = flag_offset_y * flag_stride + img_timestep_idx;
-                        assert!(flag_idx < flag_stride * height);
-                        dbg!(flag_idx, fine_chan_idx, idx, 1 << fine_chan_idx & idx);
-                        flag_buf[flag_idx] = 1 << fine_chan_idx & idx != 0;
+        for (coarse_chan_idx, mut flag_coarse_chan_view) in flag_array
+            .axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
+            .enumerate()
+        {
+            for (timestep_idx, mut flag_timestep_view) in
+                flag_coarse_chan_view.outer_iter_mut().enumerate()
+            {
+                for (baseline_idx, mut flag_baseline_view) in
+                    flag_timestep_view.axis_iter_mut(Axis(1)).enumerate()
+                {
+                    for (fine_chan_idx, fine_chan_flag) in flag_baseline_view.iter_mut().enumerate()
+                    {
+                        *fine_chan_flag = 1 << fine_chan_idx & idx != 0;
+                        println!(
+                            "{} (cc {}, ts {}, bl {} fc {}) = {}",
+                            idx,
+                            coarse_chan_idx,
+                            timestep_idx,
+                            baseline_idx,
+                            fine_chan_idx,
+                            fine_chan_flag
+                        );
                     }
-                    idx = (idx + 1) % (1 << num_fine_chans_per_coarse);
+                    idx = (idx + 1) % (1 << fine_chans_per_coarse);
                 }
             }
         }
@@ -877,7 +858,7 @@ mod tests {
         )
         .unwrap();
         flag_file_set
-            .write_baseline_flagmasks(&context, &baseline_flagmasks, img_coarse_chan_idxs)
+            .write_flag_array(&context, &flag_array, &gpubox_ids)
             .unwrap();
         drop(flag_file_set);
 
@@ -897,13 +878,13 @@ mod tests {
         let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
         assert_eq!(chan1_header.num_timesteps, context.num_common_timesteps);
         assert_eq!(num_baselines, context.metafits_context.num_baselines);
-        assert_eq!(chan1_header.num_channels, num_fine_chans_per_coarse);
+        assert_eq!(chan1_header.num_channels, fine_chans_per_coarse);
         assert_eq!(
             chan1_flags_raw.len(),
             chan1_header.num_timesteps * num_baselines * chan1_header.num_channels
         );
 
-        let tests = [
+        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in [
             (0, 0, 0, i8::from(false)),
             (0, 0, 1, i8::from(false)),
             (0, 1, 0, i8::from(true)),
@@ -916,10 +897,11 @@ mod tests {
             (1, 1, 1, i8::from(false)),
             (1, 2, 0, i8::from(true)),
             (1, 2, 1, i8::from(false)),
-        ];
-        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests.iter() {
+        ]
+        .iter()
+        {
             let row_idx = timestep_idx * num_baselines + baseline_idx;
-            let offset = row_idx * num_fine_chans_per_coarse + fine_chan_idx;
+            let offset = row_idx * fine_chans_per_coarse + fine_chan_idx;
             assert_eq!(
                 &chan1_flags_raw[offset], expected_flag,
                 "with timestep {}, baseline {}, fine_chan {}, expected {} at row_idx {}, offset {}",

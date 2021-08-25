@@ -6,8 +6,8 @@
 //! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
 // use std::collections::HashSet;
-use std::ffi::CString;
 use std::path::Path;
+use std::{ffi::CString, ops::Range};
 
 use fitsio::{errors::check_status as fits_check_status, FitsFile};
 use indicatif::ProgressStyle;
@@ -15,14 +15,13 @@ use itertools::izip;
 use log::warn;
 use mwa_rust_core::{
     constants::VEL_C, erfa_sys, erfa_sys::ERFA_DJM0, fitsio, fitsio_sys, hifitime::Epoch, mwalib,
-    precession::*, time, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
+    precession::*, time, Jones, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
 };
+use ndarray::{Array3, Axis};
 // use ndarray::prelude::*;
 
 use super::error::UvfitsWriteError;
-use crate::cxx_aoflagger::ffi::{CxxFlagMask, CxxImageSet};
-use cxx::UniquePtr;
-use mwalib::{Baseline, CorrelatorContext, MetafitsContext};
+use mwalib::{CorrelatorContext, MetafitsContext};
 
 /// From a `hifitime` [Epoch], get a formatted date string with the hours,
 /// minutes and seconds set to 0.
@@ -316,8 +315,10 @@ impl<'a> UvfitsWriter<'a> {
 
     /// Create a new uvfits file at the specified filename using an [`mwalib::CorrelatorContext`]
     ///
-    /// start epoch is determined by the first time provided in `img_timestep_idxs`
-    /// which may not necessarily match the obsid.
+    /// # Details
+    /// 
+    /// start epoch is determined by `mwalib_timestep_range.start` which may not necessarily match
+    /// the obsid.
     ///
     /// # Errors
     ///
@@ -325,22 +326,23 @@ impl<'a> UvfitsWriter<'a> {
     pub fn from_mwalib(
         filename: &'a Path,
         context: &CorrelatorContext,
-        img_timestep_idxs: &[usize],
-        img_coarse_chan_idxs: &[usize],
-        img_baseline_idxs: &[usize],
+        mwalib_timestep_range: &Range<usize>,
+        mwalib_coarse_chan_range: &Range<usize>,
+        mwalib_baseline_idxs: &[usize],
         array_pos: Option<LatLngHeight>,
     ) -> Result<Self, UvfitsWriteError> {
-        let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-        let num_img_coarse_chans = img_coarse_chan_idxs.len();
-        let num_img_chans = num_fine_chans_per_coarse * num_img_coarse_chans;
-        let first_gps_time = context.timesteps[img_timestep_idxs[0]].gps_time_ms as f64 / 1000.0;
+        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+        let num_img_coarse_chans = mwalib_coarse_chan_range.len();
+        let num_img_chans = fine_chans_per_coarse * num_img_coarse_chans;
+        let first_gps_time =
+            context.timesteps[mwalib_timestep_range.start].gps_time_ms as f64 / 1000.0;
         let start_epoch = time::gps_to_epoch(first_gps_time);
         let phase_centre = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
         let centre_freq_chan = num_img_chans / 2;
         Self::new(
             filename,
-            img_timestep_idxs.len(),
-            img_baseline_idxs.len(),
+            mwalib_timestep_range.len(),
+            mwalib_baseline_idxs.len(),
             num_img_chans,
             start_epoch,
             context.metafits_context.corr_fine_chan_width_hz as f64,
@@ -695,9 +697,11 @@ impl<'a> UvfitsWriter<'a> {
         Ok(())
     }
 
-    /// Write visibilty rows into the uvfits file from the provided
+    /// Write visibilty and weight rows into the uvfits file from the provided
     /// [`mwalib::CorrelatorContext`].
     ///
+    /// # Details
+    /// 
     /// `uvfits` must have been opened in write mode and currently have HDU 0
     /// open. The [FitsFile] must be supplied to this function to force the
     /// caller to think about calling this function efficiently; opening the
@@ -707,17 +711,20 @@ impl<'a> UvfitsWriter<'a> {
     /// `baseline_idxs` the baseline indices (according to mwalib)
     /// which should be written to the file
     ///
-    /// `baseline_imgsets` a [`CxxImageSet`] for each baseline in `baseline_idxs`
+    /// `jones_array` a [`ndarray::Array3`] of [`Jones`] visibilities with dimensions 
+    /// [timestep][channel][baselines]
     ///
-    /// `baseline_flagmasks` a [`CxxFlagMask`] for each baseline in `baseline_idxs`
+    /// `flag_array` a [`ndarray::Array3`] of boolean flags with dimensions 
+    /// identical dimensions to `jones_array` 
     ///
-    /// `img_timestep_idxs` the timestep indices (according to mwalib)
-    /// which are used in all of the images in `baseline_imgsets` and all of the
-    /// flagmasks in `baseline_flagmasks`
+    /// `mwalib_timestep_range` the range of timestep indices (according to mwalib)
+    /// which are used in the visibility and flag arrays
     ///
-    /// `img_coarse_chan_idxs` the coarse channel indices (according to mwalib)
-    /// which are used in all of the images in `baseline_imgsets` and all of the
-    /// flagmasks in `baseline_flagmasks`
+    /// `mwalib_coarse_chan_range` the range of coarse channel indices (according to mwalib)
+    /// which are used in the visibility and flag arrays
+    /// 
+    /// `mwalib_baseline_idxs` the baseline indices (according to mwalib) used 
+    /// in the visibility and flag arrays
     ///
     /// TODO: handle averaging
     ///
@@ -728,28 +735,51 @@ impl<'a> UvfitsWriter<'a> {
     ///
     /// TODO: replace all these args with birli_context
     #[allow(clippy::too_many_arguments)]
-    pub fn write_baseline_imgset_flagmasks(
+    pub fn write_jones_flags(
         &mut self,
         uvfits: &mut FitsFile,
         context: &CorrelatorContext,
-        baseline_idxs: &[usize],
-        baseline_imgsets: &[UniquePtr<CxxImageSet>],
-        baseline_flagmasks: &[UniquePtr<CxxFlagMask>],
-        img_timestep_idxs: &[usize],
-        img_coarse_chan_idxs: &[usize],
+        jones_array: &Array3<Jones<f32>>,
+        flag_array: &Array3<bool>,
+        mwalib_timestep_range: &Range<usize>,
+        mwalib_coarse_chan_range: &Range<usize>,
+        mwalib_baseline_idxs: &[usize],
     ) -> Result<(), UvfitsWriteError> {
-        let num_baselines = baseline_idxs.len();
-        assert_eq!(num_baselines, baseline_imgsets.len());
-        assert_eq!(num_baselines, baseline_flagmasks.len());
+        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+
+        let jones_dims = jones_array.dim();
+        let flag_dims = flag_array.dim();
+        assert_eq!(jones_dims, flag_dims);
+
+        let num_img_timesteps = mwalib_timestep_range.len();
+        assert_eq!(num_img_timesteps, jones_dims.0);
+
+        let num_img_coarse_chans = mwalib_coarse_chan_range.len();
+        // let num_img_chans = fine_chans_per_coarse * num_img_coarse_chans;
+        assert_eq!(num_img_coarse_chans * fine_chans_per_coarse, jones_dims.1);
+
+        let num_baselines = mwalib_baseline_idxs.len();
+        assert_eq!(num_baselines, jones_dims.2);
+
+        assert_eq!(self.total_num_rows, num_img_timesteps * num_baselines);
 
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
-        let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-        let num_img_coarse_chans = img_coarse_chan_idxs.len();
-        let num_img_chans = num_fine_chans_per_coarse * num_img_coarse_chans;
-
-        let num_img_timesteps = img_timestep_idxs.len();
-        assert_eq!(self.total_num_rows, num_img_timesteps * num_baselines);
+        let img_timesteps =
+            &context.timesteps[mwalib_timestep_range.start..mwalib_timestep_range.end];
+        // let img_coarse_channels =
+        //     &context.coarse_chans[mwalib_coarse_chan_range.start..mwalib_coarse_chan_range.end];
+        let img_baselines = mwalib_baseline_idxs
+            .iter()
+            .map(|&idx| {
+                context
+                    .metafits_context
+                    .baselines
+                    .get(idx)
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
 
         // Weights are normalized so that default res of 10 kHz, 1s has weight of "1" per sample
 
@@ -765,10 +795,8 @@ impl<'a> UvfitsWriter<'a> {
         // Real and imaginary component offsets within image width
         // let re_im = vec![0, 1];
 
-        let num_blts = img_timestep_idxs.len() * baseline_idxs.len();
-
         // Create a progress bar to show the writing status
-        let write_progress = indicatif::ProgressBar::new(num_blts as u64);
+        let write_progress = indicatif::ProgressBar::new(self.total_num_rows as u64);
         write_progress.set_style(
             ProgressStyle::default_bar()
                 .template(
@@ -778,8 +806,12 @@ impl<'a> UvfitsWriter<'a> {
         );
         write_progress.set_message("write uv vis");
 
-        for (img_timestep_idx, &timestep_idx) in img_timestep_idxs.iter().enumerate() {
-            let gps_time_s = context.timesteps[timestep_idx].gps_time_ms as f64 / 1000.0;
+        for (timestep, jones_timestep_view, flag_timestep_view) in izip!(
+            img_timesteps.iter(),
+            jones_array.outer_iter(),
+            flag_array.outer_iter()
+        ) {
+            let gps_time_s = timestep.gps_time_ms as f64 / 1000.0;
             let epoch = time::gps_to_epoch(gps_time_s + integration_time_s / 2.0);
 
             let prec_info = precess_time(
@@ -791,17 +823,12 @@ impl<'a> UvfitsWriter<'a> {
 
             let tiles_xyz_precessed = prec_info.precess_xyz_parallel(&tiles_xyz_geod);
 
-            for (&baseline_idx, imgset, flagmask) in
-                izip!(baseline_idxs, baseline_imgsets, baseline_flagmasks)
-            {
-                let baseline: &Baseline = &context.metafits_context.baselines[baseline_idx];
-                let imgset: &UniquePtr<CxxImageSet> = imgset;
-                let img_stride: usize = imgset.HorizontalStride();
-
-                let flagmask: &UniquePtr<CxxFlagMask> = flagmask;
-                let flag_buffer: &[bool] = flagmask.Buffer();
-                let flag_stride: usize = flagmask.HorizontalStride();
-
+            for (baseline, jones_baseline_view, flag_baseline_view) in izip!(
+                img_baselines.iter(),
+                jones_timestep_view.axis_iter(Axis(1)),
+                flag_timestep_view.axis_iter(Axis(1))
+            ) {
+                let baseline = baseline.clone();
                 let ant1_idx = baseline.ant1_index;
                 let ant2_idx = baseline.ant2_index;
 
@@ -809,26 +836,18 @@ impl<'a> UvfitsWriter<'a> {
                     tiles_xyz_precessed[ant1_idx] - tiles_xyz_precessed[ant2_idx];
                 let uvw = UVW::from_xyz(baseline_xyz_precessed, prec_info.hadec_j2000);
 
-                // TODO: this is extremely inefficient.
-
-                let vis: Vec<f32> = (0..num_img_chans)
-                    .flat_map(|chan_idx| {
+                let vis: Vec<f32> = izip!(jones_baseline_view.iter(), flag_baseline_view.iter())
+                    .flat_map(|(jones, flag)| {
                         pol_order
                             .iter()
-                            .flat_map(|img_pol_idx| {
-                                let img_buffer_re: &[f32] = imgset.ImageBuffer(img_pol_idx * 2);
-                                let img_buffer_im: &[f32] = imgset.ImageBuffer(img_pol_idx * 2 + 1);
-                                let vis_re =
-                                    img_buffer_re[chan_idx * img_stride + img_timestep_idx];
-                                let vis_im =
-                                    img_buffer_im[chan_idx * img_stride + img_timestep_idx];
-                                let flag = flag_buffer[chan_idx * flag_stride + img_timestep_idx];
+                            .flat_map(|&img_pol_idx| {
+                                let complex = jones[img_pol_idx];
                                 // TODO: weight from flags
                                 let mut weight = weight_factor as f32;
-                                if flag {
+                                if *flag {
                                     weight *= -1.0;
                                 }
-                                vec![vis_re, vis_im, weight]
+                                vec![complex.re, complex.im, weight]
                             })
                             .collect::<Vec<_>>()
                     })
@@ -869,8 +888,8 @@ mod tests {
     use float_cmp::{approx_eq, F32Margin, F64Margin};
 
     use crate::{
-        context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags,
-        get_flaggable_timesteps, init_baseline_flagmasks,
+        context_to_jones_array, cxx_aoflagger_new, flags::flag_jones_array_existing,
+        get_antenna_flags, get_flaggable_timesteps, init_flag_array,
     };
 
     use fitsio::{
@@ -1455,10 +1474,13 @@ mod tests {
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
         // let tmp_uvfits_file = Path::new("tests/data/test_header.uvfits");
 
-        let timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
-
-        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        let img_timestep_range =
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+        let img_coarse_chan_idxs = context.common_coarse_chan_indices.clone();
+        let img_coarse_chan_range =
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        let img_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 
         let array_pos = Some(LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -1469,9 +1491,9 @@ mod tests {
         let u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
             &context,
-            &timestep_idxs,
-            &coarse_chan_idxs,
-            &baseline_idxs,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            &img_baseline_idxs,
             array_pos,
         )
         .unwrap();
@@ -1495,9 +1517,13 @@ mod tests {
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
 
         let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        let img_coarse_chan_idxs = context.common_coarse_chan_indices.clone();
-
-        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        assert_eq!(img_timestep_idxs.len(), 4);
+        let img_timestep_range =
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let img_coarse_chan_range =
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        let img_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 
         let array_pos = Some(LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -1508,9 +1534,9 @@ mod tests {
         let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
             &context,
-            &img_timestep_idxs,
-            &img_coarse_chan_idxs,
-            &baseline_idxs,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            &img_baseline_idxs,
             array_pos,
         )
         .unwrap();
@@ -1519,40 +1545,38 @@ mod tests {
 
         let aoflagger = unsafe { cxx_aoflagger_new() };
 
-        let mut baseline_flagmasks = init_baseline_flagmasks(
-            &aoflagger,
+        let flag_array = init_flag_array(
             &context,
-            &img_coarse_chan_idxs,
-            &img_timestep_idxs,
+            &img_timestep_range,
+            &img_coarse_chan_range,
             Some(get_antenna_flags(&context)),
         );
 
-        let baseline_imgsets = context_to_baseline_imgsets(
-            &aoflagger,
+        let (jones_array, flag_array) = context_to_jones_array(
             &context,
-            &img_coarse_chan_idxs,
-            &img_timestep_idxs,
-            None,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            Some(flag_array),
         );
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
 
-        flag_imgsets_existing(
+        let flag_array = flag_jones_array_existing(
             &aoflagger,
             strategy_filename,
-            &baseline_imgsets,
-            &mut baseline_flagmasks,
+            &jones_array,
+            Some(flag_array),
             true,
         );
 
-        u.write_baseline_imgset_flagmasks(
+        u.write_jones_flags(
             &mut f,
             &context,
-            &baseline_idxs,
-            &baseline_imgsets,
-            &baseline_flagmasks,
-            &img_timestep_idxs,
-            &img_coarse_chan_idxs,
+            &jones_array,
+            &flag_array,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            &img_baseline_idxs,
         )
         .unwrap();
 

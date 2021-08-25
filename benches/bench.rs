@@ -1,6 +1,6 @@
 use birli::{
-    context_to_baseline_imgsets, context_to_jones_array, correct_cable_lengths, correct_geometry,
-    cxx_aoflagger_new, init_baseline_flagmasks, io::write_uvfits,
+    context_to_jones_array, correct_cable_lengths, correct_geometry, get_flaggable_timesteps,
+    init_flag_array, io::write_uvfits,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use glob::glob;
@@ -80,41 +80,6 @@ fn get_context_1254670392_avg() -> CorrelatorContext {
     CorrelatorContext::new(&metafits_path, &gpufits_files).unwrap()
 }
 
-fn bench_context_to_baseline_imgsets_mwax_half_1247842824(crt: &mut Criterion) {
-    let aoflagger = unsafe { cxx_aoflagger_new() };
-    let context = get_context_mwax_half_1247842824();
-    crt.bench_function(
-        "context_to_baseline_imgsets - mwax_half_1247842824",
-        |bch| {
-            bch.iter(|| {
-                context_to_baseline_imgsets(
-                    black_box(&aoflagger),
-                    black_box(&context),
-                    &context.common_coarse_chan_indices.clone(),
-                    &context.common_timestep_indices.clone(),
-                    None,
-                )
-            })
-        },
-    );
-}
-
-fn bench_context_to_baseline_imgsets_ord_half_1196175296(crt: &mut Criterion) {
-    let aoflagger = unsafe { cxx_aoflagger_new() };
-    let context = get_context_ord_half_1196175296();
-    crt.bench_function("context_to_baseline_imgsets - ord_half_1196175296", |bch| {
-        bch.iter(|| {
-            context_to_baseline_imgsets(
-                black_box(&aoflagger),
-                black_box(&context),
-                &context.common_coarse_chan_indices.clone(),
-                &context.common_timestep_indices.clone(),
-                None,
-            )
-        })
-    });
-}
-
 fn bench_context_to_jones_array_mwax_half_1247842824(crt: &mut Criterion) {
     let context = get_context_mwax_half_1247842824();
     let timestep_idxs = context.common_timestep_indices.clone();
@@ -128,7 +93,7 @@ fn bench_context_to_jones_array_mwax_half_1247842824(crt: &mut Criterion) {
                 black_box(&context),
                 black_box(&timestep_range),
                 black_box(&coarse_chan_range),
-                // black_box(img_baseline_idxs.as_slice()),
+                None,
             )
         })
     });
@@ -147,77 +112,80 @@ fn bench_context_to_jones_array_ord_half_1196175296(crt: &mut Criterion) {
                 black_box(&context),
                 black_box(&timestep_range),
                 black_box(&coarse_chan_range),
-                // black_box(img_baseline_idxs.as_slice()),
+                None,
             )
         })
     });
 }
 
 fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
-    let aoflagger = unsafe { cxx_aoflagger_new() };
     let context = get_context_mwax_half_1247842824();
+
+    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+    assert_eq!(img_timestep_idxs.len(), 4);
+    let img_timestep_range =
+        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
     let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let mut baseline_imgsets = context_to_baseline_imgsets(
-        &aoflagger,
-        &context,
-        img_coarse_chan_idxs,
-        &context.common_timestep_indices.clone(),
-        None,
-    );
+    let img_coarse_chan_range =
+        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+    let (mut jones_array, _) =
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+
     crt.bench_function("correct_cable_lengths - mwax_half_1247842824", |bch| {
         bch.iter(|| {
             correct_cable_lengths(
                 black_box(&context),
-                black_box(&mut baseline_imgsets),
-                black_box(img_coarse_chan_idxs),
+                black_box(&mut jones_array),
+                black_box(&img_coarse_chan_range),
             )
         })
     });
 }
 
 fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
-    let aoflagger = unsafe { cxx_aoflagger_new() };
     let context = get_context_ord_half_1196175296();
+
+    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+    assert_eq!(img_timestep_idxs.len(), 4);
+    let img_timestep_range =
+        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
     let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let mut baseline_imgsets = context_to_baseline_imgsets(
-        &aoflagger,
-        &context,
-        img_coarse_chan_idxs,
-        &context.common_timestep_indices.clone(),
-        None,
-    );
+    let img_coarse_chan_range =
+        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+    let (mut jones_array, _) =
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
     crt.bench_function("correct_cable_lengths - ord_half_1196175296", |bch| {
         bch.iter(|| {
             correct_cable_lengths(
                 black_box(&context),
-                black_box(&mut baseline_imgsets),
-                black_box(img_coarse_chan_idxs),
+                black_box(&mut jones_array),
+                black_box(&img_coarse_chan_range),
             )
         })
     });
 }
 
 fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
-    let aoflagger = unsafe { cxx_aoflagger_new() };
     let context = get_context_mwax_half_1247842824();
+    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+    assert_eq!(img_timestep_idxs.len(), 4);
+    let img_timestep_range =
+        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
     let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let img_timestep_idxs = &context.common_timestep_indices;
-    let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-    let mut baseline_imgsets = context_to_baseline_imgsets(
-        &aoflagger,
-        &context,
-        img_coarse_chan_idxs,
-        &context.common_timestep_indices.clone(),
-        None,
-    );
+    let img_coarse_chan_range =
+        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+    let (mut jones_array, _) =
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
     crt.bench_function("correct_geometry - mwax_half_1247842824", |bch| {
         bch.iter(|| {
             correct_geometry(
                 black_box(&context),
-                black_box(&baseline_idxs),
-                black_box(&mut baseline_imgsets),
-                black_box(img_coarse_chan_idxs),
-                black_box(img_timestep_idxs),
+                black_box(&mut jones_array),
+                black_box(&img_coarse_chan_range),
+                black_box(&img_timestep_range),
                 None,
             );
         })
@@ -225,26 +193,24 @@ fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
 }
 
 fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
-    let aoflagger = unsafe { cxx_aoflagger_new() };
     let context = get_context_ord_half_1196175296();
+    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+    assert_eq!(img_timestep_idxs.len(), 4);
+    let img_timestep_range =
+        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
     let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let img_timestep_idxs = &context.common_timestep_indices;
-    let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-    let mut baseline_imgsets = context_to_baseline_imgsets(
-        &aoflagger,
-        &context,
-        img_coarse_chan_idxs,
-        &context.common_timestep_indices.clone(),
-        None,
-    );
+    let img_coarse_chan_range =
+        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+    let (mut jones_array, _) =
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
     crt.bench_function("correct_geometry - ord_half_1196175296", |bch| {
         bch.iter(|| {
             correct_geometry(
                 black_box(&context),
-                black_box(&baseline_idxs),
-                black_box(&mut baseline_imgsets),
-                black_box(img_coarse_chan_idxs),
-                black_box(img_timestep_idxs),
+                black_box(&mut jones_array),
+                black_box(&img_coarse_chan_range),
+                black_box(&img_timestep_range),
                 None,
             );
         })
@@ -252,40 +218,35 @@ fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
 }
 
 fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
-    let aoflagger = unsafe { cxx_aoflagger_new() };
     let context = get_context_1254670392_avg();
+    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+    assert_eq!(img_timestep_idxs.len(), 4);
+    let img_timestep_range =
+        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
     let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let img_timestep_idxs = &context.common_timestep_indices;
-    let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-    let baseline_imgsets = context_to_baseline_imgsets(
-        &aoflagger,
-        &context,
-        img_coarse_chan_idxs,
-        &context.common_timestep_indices.clone(),
-        None,
-    );
+    let img_coarse_chan_range =
+        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+    let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+
+    let (jones_array, flag_array) =
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
 
     let tmp_dir = tempdir().unwrap();
     let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
 
-    let baseline_flagmasks = init_baseline_flagmasks(
-        &aoflagger,
-        &context,
-        img_coarse_chan_idxs,
-        img_timestep_idxs,
-        None,
-    );
+    init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
 
     crt.bench_function("uvfits_output - 1254670392_avg", |bch| {
         bch.iter(|| {
             write_uvfits(
                 black_box(uvfits_path.as_path()),
                 black_box(&context),
-                black_box(&baseline_idxs),
-                black_box(&baseline_imgsets),
-                black_box(&baseline_flagmasks),
-                black_box(img_timestep_idxs),
-                black_box(img_coarse_chan_idxs),
+                black_box(&jones_array),
+                black_box(&flag_array),
+                black_box(&img_timestep_range),
+                black_box(&img_coarse_chan_range),
+                black_box(&img_baseline_idxs),
                 None,
             )
             .unwrap();
@@ -297,8 +258,6 @@ criterion_group!(
     name = benches;
     config = Criterion::default().sample_size(10);
     targets =
-        bench_context_to_baseline_imgsets_mwax_half_1247842824,
-        bench_context_to_baseline_imgsets_ord_half_1196175296,
         bench_context_to_jones_array_mwax_half_1247842824,
         bench_context_to_jones_array_ord_half_1196175296,
         bench_correct_cable_lengths_mwax_half_1247842824,

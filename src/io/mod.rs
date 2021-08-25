@@ -6,19 +6,21 @@ pub mod error;
 pub mod mwaf;
 pub mod uvfits;
 
-use std::path::Path;
+use std::{ops::Range, path::Path};
 
-use cxx::UniquePtr;
 use log::trace;
-use mwa_rust_core::{mwalib, LatLngHeight};
+use mwa_rust_core::{mwalib, Jones, LatLngHeight};
 use mwalib::CorrelatorContext;
+use ndarray::Array3;
 use uvfits::UvfitsWriter;
-
-use crate::{CxxFlagMask, CxxImageSet};
 
 use self::error::UvfitsWriteError;
 
-/// Write the given [`BirliContext`] to a uvfits file.
+/// Write the given ndarrays of flags and [`Jones`] matrix visibilities to a 
+/// uvfits file.
+///
+/// mwalib timestep, coarse channel and baseline indices are needed to map between
+/// indices in the arrays and indices according to mwalib, which are not the same.
 ///
 /// # Errors
 ///
@@ -29,11 +31,11 @@ use self::error::UvfitsWriteError;
 pub fn write_uvfits<'a>(
     filename: &'a Path,
     context: &CorrelatorContext,
-    baseline_idxs: &[usize],
-    baseline_imgsets: &[UniquePtr<CxxImageSet>],
-    baseline_flagmasks: &[UniquePtr<CxxFlagMask>],
-    img_timestep_idxs: &[usize],
-    img_coarse_chan_idxs: &[usize],
+    jones_array: &Array3<Jones<f32>>,
+    flag_array: &Array3<bool>,
+    mwalib_timestep_range: &Range<usize>,
+    mwalib_coarse_chan_range: &Range<usize>,
+    mwalib_baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
 ) -> Result<(), UvfitsWriteError> {
     trace!("start write_uvfits");
@@ -41,22 +43,22 @@ pub fn write_uvfits<'a>(
     let mut uvfits_writer = UvfitsWriter::from_mwalib(
         filename,
         context,
-        img_timestep_idxs,
-        img_coarse_chan_idxs,
-        baseline_idxs,
+        mwalib_timestep_range,
+        mwalib_coarse_chan_range,
+        mwalib_baseline_idxs,
         array_pos,
     )?;
 
     let mut fits_file = uvfits_writer.open().unwrap();
 
-    uvfits_writer.write_baseline_imgset_flagmasks(
+    uvfits_writer.write_jones_flags(
         &mut fits_file,
         context,
-        baseline_idxs,
-        baseline_imgsets,
-        baseline_flagmasks,
-        img_timestep_idxs,
-        img_coarse_chan_idxs,
+        jones_array,
+        flag_array,
+        mwalib_timestep_range,
+        mwalib_coarse_chan_range,
+        mwalib_baseline_idxs,
     )?;
 
     uvfits_writer.write_ants_from_mwalib(&context.metafits_context)?;
@@ -80,8 +82,8 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::{
-        context_to_baseline_imgsets, cxx_aoflagger_new, flag_imgsets_existing, get_antenna_flags,
-        get_flaggable_timesteps, init_baseline_flagmasks,
+        context_to_jones_array, cxx_aoflagger_new, flags::flag_jones_array_existing,
+        get_antenna_flags, get_flaggable_timesteps, init_flag_array,
     };
 
     use super::write_uvfits;
@@ -110,50 +112,54 @@ mod tests {
         let aoflagger = unsafe { cxx_aoflagger_new() };
 
         // Determine which timesteps and coarse channels we want to use
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
         let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(img_timestep_idxs.len(), 4);
+        let img_timestep_range =
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let img_coarse_chan_range =
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
         // Prepare our flagmasks with known bad antennae
-        let mut baseline_flagmasks = init_baseline_flagmasks(
-            &aoflagger,
+        let flag_array = init_flag_array(
             &context,
-            img_coarse_chan_idxs,
-            &img_timestep_idxs,
+            &img_timestep_range,
+            &img_coarse_chan_range,
             Some(get_antenna_flags(&context)),
         );
 
         // generate imagesets for each baseline in the format required by aoflagger
-        let baseline_imgsets = context_to_baseline_imgsets(
-            &aoflagger,
+        let (jones_array, flag_array) = context_to_jones_array(
             &context,
-            img_coarse_chan_idxs,
-            &img_timestep_idxs,
-            Some(&mut baseline_flagmasks),
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            Some(flag_array),
         );
 
         // use the default strategy file location for MWA
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
 
         // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
-        flag_imgsets_existing(
+        let flag_array = flag_jones_array_existing(
             &aoflagger,
             strategy_filename,
-            &baseline_imgsets,
-            &mut baseline_flagmasks,
+            &jones_array,
+            Some(flag_array),
             true,
         );
 
         // write the visibilities to disk as .uvfits
 
         let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+
         write_uvfits(
             uvfits_out.as_path(),
             &context,
+            &jones_array,
+            &flag_array,
+            &img_timestep_range,
+            &img_coarse_chan_range,
             &baseline_idxs,
-            &baseline_imgsets,
-            &baseline_flagmasks,
-            &img_timestep_idxs,
-            img_coarse_chan_idxs,
             None,
         )
         .unwrap();
