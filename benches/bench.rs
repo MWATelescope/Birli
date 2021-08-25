@@ -122,7 +122,7 @@ fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
     let context = get_context_mwax_half_1247842824();
 
     let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-    assert_eq!(img_timestep_idxs.len(), 4);
+
     let img_timestep_range =
         *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
     let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
@@ -147,7 +147,7 @@ fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
     let context = get_context_ord_half_1196175296();
 
     let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-    assert_eq!(img_timestep_idxs.len(), 4);
+
     let img_timestep_range =
         *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
     let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
@@ -170,7 +170,7 @@ fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
 fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
     let context = get_context_mwax_half_1247842824();
     let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-    assert_eq!(img_timestep_idxs.len(), 4);
+
     let img_timestep_range =
         *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
     let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
@@ -195,7 +195,7 @@ fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
 fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
     let context = get_context_ord_half_1196175296();
     let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-    assert_eq!(img_timestep_idxs.len(), 4);
+
     let img_timestep_range =
         *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
     let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
@@ -220,7 +220,7 @@ fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
 fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
     let context = get_context_1254670392_avg();
     let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-    assert_eq!(img_timestep_idxs.len(), 4);
+
     let img_timestep_range =
         *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
     let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
