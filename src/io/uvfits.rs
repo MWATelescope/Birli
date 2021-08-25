@@ -844,7 +844,7 @@ impl<'a> UvfitsWriter<'a> {
                                 if *flag {
                                     weight *= -1.0;
                                 }
-                                vec![complex.re, complex.im, weight]
+                                [complex.re, complex.im, weight]
                             })
                             .collect::<Vec<_>>()
                     })
