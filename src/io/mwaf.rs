@@ -798,11 +798,6 @@ mod tests {
     #[test]
     fn test_write_flag_array() {
         let context = get_mwax_context();
-        let gpubox_ids: Vec<usize> = context
-            .common_coarse_chan_indices
-            .iter()
-            .map(|&chan| context.coarse_chans[chan].gpubox_number)
-            .collect();
 
         let tmp_dir = tempdir().unwrap();
         let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
@@ -816,6 +811,11 @@ mod tests {
         let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+        let gpubox_ids = context.coarse_chans[img_coarse_chan_range.clone()]
+            .iter()
+            .map(|chan| chan.gpubox_number)
+            .collect::<Vec<_>>();
 
         let mut flag_array =
             init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);

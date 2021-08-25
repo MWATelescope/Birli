@@ -484,10 +484,10 @@ pub fn write_flags(
 ) -> Result<(), IOError> {
     trace!("start write_flags");
 
-    let gpubox_ids: Vec<usize> = mwalib_coarse_chan_range
-        .to_owned()
-        .map(|chan| context.coarse_chans[chan].gpubox_number)
-        .collect();
+    let gpubox_ids = context.coarse_chans[mwalib_coarse_chan_range.clone()]
+        .iter()
+        .map(|chan| chan.gpubox_number)
+        .collect::<Vec<_>>();
 
     trace!(
         "writing flags to template: {}, gpubox ids: {:?}",

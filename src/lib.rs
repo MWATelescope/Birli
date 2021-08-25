@@ -389,7 +389,7 @@ pub fn context_to_jones_array(
     // A queue of errors
     let (tx_error, rx_error) = unbounded();
 
-    // a progress bar containing the progress bars associated with loading the observation's HDUs
+    // a progress bar containing the progress bars associated with this method
     let multi_progress = MultiProgress::with_draw_target(ProgressDrawTarget::stderr());
     // a vector of progress bars for the visibility reading progress of each channel.
     let read_progress: Vec<ProgressBar> = mwalib_coarse_chan_range
@@ -432,6 +432,7 @@ pub fn context_to_jones_array(
 
         total_progress.set_position(0);
 
+        // Error handling thread
         scope.spawn(|_| {
             for (mwalib_timestep_idx, mwalib_coarse_chan_idx, err) in rx_error {
                 warn!(
