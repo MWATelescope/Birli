@@ -16,7 +16,7 @@ use uvfits::UvfitsWriter;
 
 use self::error::UvfitsWriteError;
 
-/// Write the given ndarrays of flags and [`Jones`] matrix visibilities to a 
+/// Write the given ndarrays of flags and [`Jones`] matrix visibilities to a
 /// uvfits file.
 ///
 /// mwalib timestep, coarse channel and baseline indices are needed to map between

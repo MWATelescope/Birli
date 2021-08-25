@@ -255,8 +255,8 @@ macro_rules! _write_hdu_buffer_to_jones_view {
     };
 }
 
-/// generate a 3 dimensional array of Jones matrices from an observation's 
-/// [`mwalib::CorrelatorContext`], for all baselines, over a given range of 
+/// generate a 3 dimensional array of Jones matrices from an observation's
+/// [`mwalib::CorrelatorContext`], for all baselines, over a given range of
 /// mwalib timestep and coarse channel indices.
 ///
 /// The dimensions of the array are:
@@ -282,8 +282,8 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 /// For more details, see the [documentation](https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html).
 ///
 /// Note: it doesn't make sense to ask aoflagger to flag non-contiguous timesteps
-/// or coarse channels, and so this interface only allows to ranges to be used. 
-/// For flagging an obeservation with "picket fence" coarse channels or timesteps, 
+/// or coarse channels, and so this interface only allows to ranges to be used.
+/// For flagging an obeservation with "picket fence" coarse channels or timesteps,
 /// contiguous ranges should be flagged separately.
 ///
 /// [`mwalib::CorrelatorContext`]: https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html

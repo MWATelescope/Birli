@@ -80,7 +80,7 @@ fn _get_range_freqs_hz(
 }
 
 /// Perform cable length corrections, given an observation's
-/// [`mwalib::CorrelatorContext`] and an ['ndarray::Array3`] of [`Jones`] 
+/// [`mwalib::CorrelatorContext`] and an ['ndarray::Array3`] of [`Jones`]
 /// visibilities
 ///
 /// Cable lengths are determined by the difference between a baseline's rfInput
@@ -199,13 +199,8 @@ pub fn correct_cable_lengths(
                     })
                     .collect::<Vec<_>>();
 
-                for mut jones_single_view in jones_chan_view.outer_iter_mut() {
-                    for (pol_complex, rotation) in jones_single_view
-                        .get_mut(())
-                        .unwrap()
-                        .iter_mut()
-                        .zip(pol_sin_cos.iter())
-                    {
+                for jones in jones_chan_view.iter_mut() {
+                    for (pol_complex, rotation) in jones.iter_mut().zip(pol_sin_cos.iter()) {
                         *pol_complex *= rotation;
                     }
                 }
@@ -219,7 +214,7 @@ pub fn correct_cable_lengths(
 }
 
 /// Perform geometric corrections, given an observation's
-/// [`mwalib::CorrelatorContext`] and an ['ndarray::Array3`] of [`Jones`] 
+/// [`mwalib::CorrelatorContext`] and an ['ndarray::Array3`] of [`Jones`]
 /// visibilities
 ///
 /// Complex visibilities are phase-shifted by an angle determined by the length
@@ -291,9 +286,7 @@ pub fn correct_geometry(
         }
     };
 
-    let timesteps = context.timesteps[mwalib_timestep_range.start..mwalib_timestep_range.end]
-        .iter()
-        .collect::<Vec<_>>();
+    let timesteps = &context.timesteps[mwalib_timestep_range.clone()];
 
     let baselines = &context.metafits_context.baselines;
 
@@ -343,18 +336,10 @@ pub fn correct_geometry(
                     tiles_xyz_precessed[ant1_idx] - tiles_xyz_precessed[ant2_idx];
                 let uvw = UVW::from_xyz(baseline_xyz_precessed, prec_info.hadec_j2000);
 
-                for (mut jones_single_view, freq_hz) in jones_baseline_view
-                    .outer_iter_mut()
-                    .zip(all_freqs_hz.clone())
-                {
+                for (jones, freq_hz) in jones_baseline_view.iter_mut().zip(all_freqs_hz.clone()) {
                     let angle = -2.0 * PI * uvw.w * (freq_hz as f64) / VEL_C;
                     let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
-                    let jones = jones_single_view.get_mut(()).unwrap();
                     *jones *= Complex::new(cos_angle_f64 as f32, sin_angle_f64 as f32);
-                    // let rotation = Complex::new(cos_angle_f64 as f32, sin_angle_f64 as f32);
-                    // for (pol_complex) in jones_single_view.get_mut(()).unwrap().iter_mut() {
-                    //     *pol_complex *= rotation;
-                    // }
                 }
             }
 

@@ -316,7 +316,7 @@ impl<'a> UvfitsWriter<'a> {
     /// Create a new uvfits file at the specified filename using an [`mwalib::CorrelatorContext`]
     ///
     /// # Details
-    /// 
+    ///
     /// start epoch is determined by `mwalib_timestep_range.start` which may not necessarily match
     /// the obsid.
     ///
@@ -701,7 +701,7 @@ impl<'a> UvfitsWriter<'a> {
     /// [`mwalib::CorrelatorContext`].
     ///
     /// # Details
-    /// 
+    ///
     /// `uvfits` must have been opened in write mode and currently have HDU 0
     /// open. The [FitsFile] must be supplied to this function to force the
     /// caller to think about calling this function efficiently; opening the
@@ -711,19 +711,19 @@ impl<'a> UvfitsWriter<'a> {
     /// `baseline_idxs` the baseline indices (according to mwalib)
     /// which should be written to the file
     ///
-    /// `jones_array` a [`ndarray::Array3`] of [`Jones`] visibilities with dimensions 
+    /// `jones_array` a [`ndarray::Array3`] of [`Jones`] visibilities with dimensions
     /// [timestep][channel][baselines]
     ///
-    /// `flag_array` a [`ndarray::Array3`] of boolean flags with dimensions 
-    /// identical dimensions to `jones_array` 
+    /// `flag_array` a [`ndarray::Array3`] of boolean flags with dimensions
+    /// identical dimensions to `jones_array`
     ///
     /// `mwalib_timestep_range` the range of timestep indices (according to mwalib)
     /// which are used in the visibility and flag arrays
     ///
     /// `mwalib_coarse_chan_range` the range of coarse channel indices (according to mwalib)
     /// which are used in the visibility and flag arrays
-    /// 
-    /// `mwalib_baseline_idxs` the baseline indices (according to mwalib) used 
+    ///
+    /// `mwalib_baseline_idxs` the baseline indices (according to mwalib) used
     /// in the visibility and flag arrays
     ///
     /// TODO: handle averaging
@@ -765,10 +765,7 @@ impl<'a> UvfitsWriter<'a> {
 
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
-        let img_timesteps =
-            &context.timesteps[mwalib_timestep_range.start..mwalib_timestep_range.end];
-        // let img_coarse_channels =
-        //     &context.coarse_chans[mwalib_coarse_chan_range.start..mwalib_coarse_chan_range.end];
+        let img_timesteps = &context.timesteps[mwalib_timestep_range.clone()];
         let img_baselines = mwalib_baseline_idxs
             .iter()
             .map(|&idx| {

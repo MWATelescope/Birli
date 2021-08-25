@@ -279,7 +279,6 @@ impl FlagFileSet {
         flag_array: &Array3<bool>,
         gpubox_ids: &[usize],
     ) -> Result<(), IOError> {
-
         let flag_dims = flag_array.dim();
         let num_timesteps = flag_dims.0;
         let num_baselines = flag_dims.2;
