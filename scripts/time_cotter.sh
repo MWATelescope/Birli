@@ -7,28 +7,38 @@ if [[ -z "$BIRLI_TEST_DIR" ]]; then
     echo "env var \$BIRLI_TEST_DIR not set."
     exit 1
 fi
+# export OBS_ID="1247842824" # Flags
+export OBS_ID="1254670392" # Smol
+# export OBS_ID="1196175296" # Big 
 
-export FLAGS_OUT_DIR="$BIRLI_TEST_DIR/1247842824_vis/flags_cotter"
-mkdir -p "$FLAGS_OUT_DIR"
+# export OUT_PATH="Flagfile.cotter.%%.mwaf"
 
+# NO CORRECTIONS:
+# export OUT_PATH="${OBSID}.cotter.none.uvfits"
+# export GEOM_FLAG="-nogeom"
+# export CABLE_FLAG="-nocablelength"
+
+# BOTH CORRECTIONS:
+export OUT_PATH="${OBSID}.cotter.both.uvfits"
+export GEOM_FLAG=""
+export CABLE_FLAG=""
+
+cd "${BIRLI_TEST_DIR}/${OBS_ID}_vis/"
 for i in $(seq 10); do
-    if [ -n "$(ls "$BIRLI_TEST_DIR/*")" ]; then
-        rm "$BIRLI_TEST_DIR/*"
-    fi
+    [ -f "${OUT_PATH}" ] && rm "${OUT_PATH}"
     time cotter \
-        -m "$BIRLI_TEST_DIR/1247842824_vis/1247842824.metafits" \
-        -o "$FLAGS_OUT_DIR/Flagfile_Cotter_%%.mwaf" \
+        -m "${OBS_ID}.metafits" \
+        -o "${OUT_PATH}" \
         -nostats \
-        -nogeom \
+        ${GEOM_FLAG} \
         -noantennapruning \
-        -sbpassband tests/data/subband-passband-128ch-unitary.txt \
         -noflagautos \
         -noflagdcchannels \
-        -nocablelength \
+        ${CABLE_FLAG} \
         -edgewidth 0 \
         -initflag 0 \
         -endflag 0 \
         -flag-strategy "/usr/local/share/aoflagger/strategies/mwa-default.lua" \
-        $BIRLI_TEST_DIR/1247842824_vis/1247842824*gpubox*_00.fits |
+        ${OBS_ID}*gpubox*_00.fits |
         tee "output-$i.log"
 done
