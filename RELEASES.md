@@ -1,5 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.1.8 (2021-08-26)
+
+- [EOR-32] replace aoflagger::imageset with `ndarray::Array3<Jones>` wherever possible. 
+- use `mwa_rust_core` for positional and Jones
+- use mwalib::get_fine_chan_freqs_hz_array
+
 # Version 0.1.7 (2021-08-09)
 
 - Bug fixes for uvfits output and geometric correction

@@ -254,7 +254,6 @@ fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
     });
 }
 
-This benchmark needs a stupid amount of RAM.
 fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
     let context = get_context_ord_half_1196175296();
     let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
@@ -292,7 +291,6 @@ fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
     });
 }
 
-This benchmark needs a stupid amount of RAM.
 fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
     let context = get_context_mwax_half_1247842824();
     let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
