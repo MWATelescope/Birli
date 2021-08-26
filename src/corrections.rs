@@ -1,83 +1,15 @@
 //! Corrections that can be performed on visibility data
 
 use indicatif::{ProgressBar, ProgressStyle};
-use itertools::izip;
 use log::trace;
 use mwa_rust_core::{
     constants::VEL_C, mwalib, precession::precess_time, time, Complex, Jones, LatLngHeight, RADec,
     XyzGeodetic, UVW,
 };
-use mwalib::{CorrelatorContext, MWAVersion};
+use mwalib::CorrelatorContext;
 use std::{f64::consts::PI, ops::Range};
 
-fn _correct_cable_length_buffers_cotter(
-    freq_hz: f64,
-    electrical_length_m: &f64,
-    buf_re: &mut [f32],
-    buf_im: &mut [f32],
-) {
-    let angle: f64 = -2.0 * PI * electrical_length_m * freq_hz / VEL_C;
-    let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
-    let (sin_angle, cos_angle) = (sin_angle_f64 as f32, cos_angle_f64 as f32);
-
-    izip!(buf_re.iter_mut(), buf_im.iter_mut()).for_each(|(re, im)| {
-        let vis_re = *re;
-        *re = cos_angle * vis_re - sin_angle * *im;
-        *im = sin_angle * vis_re + cos_angle * *im;
-    })
-}
-
 use ndarray::{parallel::prelude::*, Array3, Axis};
-
-/// A vector of all fine channel frequencies for the provided coarse channels
-/// in order of provided `coarse_chan_idxs`, and ascending fine channel index.
-/// Frequencies are the center of the fine channel bandwidth.
-fn _get_all_freqs_hz(context: &CorrelatorContext, coarse_chan_idxs: &[usize]) -> Vec<u32> {
-    let coarse_chans = context.coarse_chans.clone();
-    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-    let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz;
-    let scrunch_offset = match context.mwa_version {
-        MWAVersion::CorrOldLegacy | MWAVersion::CorrLegacy => {
-            // in the legacy correlator, all fine chan freqnencies
-            // are averages of the base fine chan witdh (10kHz)
-            let base_fine_chan_width_hz = 10000;
-            if fine_chan_width_hz % base_fine_chan_width_hz != 0 {
-                panic!("legacy fine channel bandwidth must be an integer mutliple of 10KHz, instead found {}", fine_chan_width_hz);
-            }
-            let scrunch_factor = fine_chan_width_hz / base_fine_chan_width_hz;
-            (scrunch_factor - 1) * base_fine_chan_width_hz / 2
-        }
-        // This is not the case for MWAX, where ultrafine channels are averaged
-        // together, resulting in zero scrunch offset.
-        MWAVersion::CorrMWAXv2 => 0,
-        _ => {
-            panic!("not sure how to handle this hey.")
-        }
-    };
-    coarse_chan_idxs
-        .iter()
-        .flat_map(|&coarse_chan_idx| {
-            let coarse_chan = &coarse_chans[coarse_chan_idx];
-            let chan_start_hz = coarse_chan.chan_start_hz;
-            (0..fine_chans_per_coarse).map(move |fine_chan_idx| {
-                chan_start_hz + (fine_chan_idx as u32 * fine_chan_width_hz) + scrunch_offset
-            })
-        })
-        .collect()
-}
-
-/// A vector of all fine channel frequencies for the provided coarse channel range
-/// Frequencies are the center of the fine channel bandwidth.
-fn _get_range_freqs_hz(
-    context: &CorrelatorContext,
-    mwalib_coarse_chan_range: Range<usize>,
-) -> Vec<u32> {
-    // TODO: replace _get_all_freqs_hz;
-    _get_all_freqs_hz(
-        context,
-        &mwalib_coarse_chan_range.into_iter().collect::<Vec<_>>(),
-    )
-}
 
 /// Perform cable length corrections, given an observation's
 /// [`mwalib::CorrelatorContext`] and an ['ndarray::Array3`] of [`Jones`]
@@ -151,7 +83,8 @@ pub fn correct_cable_lengths(
     let baselines = &context.metafits_context.baselines;
     let antennas = &context.metafits_context.antennas;
 
-    let all_freqs_hz = _get_range_freqs_hz(context, mwalib_coarse_chan_range.clone());
+    let all_freqs_hz =
+        context.get_fine_chan_freqs_hz_array(&mwalib_coarse_chan_range.clone().collect::<Vec<_>>());
     let jones_dims = jones_array.dim();
 
     // Create a progress bar to show the status of the correction
@@ -290,7 +223,8 @@ pub fn correct_geometry(
 
     let baselines = &context.metafits_context.baselines;
 
-    let all_freqs_hz = _get_range_freqs_hz(context, mwalib_coarse_chan_range.clone());
+    let all_freqs_hz =
+        context.get_fine_chan_freqs_hz_array(&mwalib_coarse_chan_range.clone().collect::<Vec<_>>());
     let jones_dims = jones_array.dim();
 
     let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
@@ -364,7 +298,7 @@ mod tests {
     use mwalib::CorrelatorContext;
     use std::f64::consts::PI;
 
-    use crate::{context_to_jones_array, corrections::_get_all_freqs_hz, get_flaggable_timesteps};
+    use crate::{context_to_jones_array, get_flaggable_timesteps};
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     // TODO: deduplicate from lib.rs
@@ -402,7 +336,7 @@ mod tests {
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
-        let all_freqs_hz = _get_all_freqs_hz(&context, img_coarse_chan_idxs);
+        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(img_coarse_chan_idxs);
 
         // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
@@ -579,7 +513,7 @@ mod tests {
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
-        let all_freqs_hz = _get_all_freqs_hz(&context, img_coarse_chan_idxs);
+        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(img_coarse_chan_idxs);
 
         // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
@@ -756,7 +690,7 @@ mod tests {
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
-        let all_freqs_hz = _get_all_freqs_hz(&context, img_coarse_chan_idxs);
+        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(img_coarse_chan_idxs);
 
         let array_pos = LatLngHeight::new_mwa();
 
@@ -920,6 +854,185 @@ mod tests {
                 Complex::new(rot_5_xy_3_3_re, rot_5_xy_3_3_im),
                 Complex::new(rot_5_yx_3_3_re, rot_5_yx_3_3_im),
                 Complex::new(rot_5_yy_3_3_re, rot_5_yy_3_3_im),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_geometric_corrections_mwax() {
+        let context = get_mwax_context();
+
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        let img_timestep_range =
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let img_coarse_chan_range =
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(img_coarse_chan_idxs);
+
+        let array_pos = LatLngHeight::new_mwa();
+
+        let phase_centre_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+        // let lst_rad = context.metafits_context.lst_rad;
+        // let phase_centre_ha = phase_centre_ra.to_hadec(lst_rad);
+        let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
+
+        let (mut jones_array, _) = context_to_jones_array(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            // img_baseline_idxs.as_slice(),
+            None,
+        );
+
+        // ts 0, chan 0 (cc 0, fc 0), baseline 0
+        let viz_0_0_0 = *jones_array.get((0, 0, 0)).unwrap();
+        assert_abs_diff_eq!(
+            viz_0_0_0,
+            Jones::from([
+                Complex::new(0x410000 as f32, 0x410001 as f32),
+                Complex::new(0x410002 as f32, 0x410003 as f32),
+                Complex::new(0x410004 as f32, 0x410005 as f32),
+                Complex::new(0x410006 as f32, 0x410007 as f32),
+            ])
+        );
+
+        // ts 0, chan 0 (cc 0, fc 0), baseline 5
+        let viz_0_0_1 = *jones_array.get((0, 0, 1)).unwrap();
+        assert_abs_diff_eq!(
+            viz_0_0_1,
+            Jones::from([
+                Complex::new(0x410010 as f32, 0x410011 as f32),
+                Complex::new(0x410012 as f32, 0x410013 as f32),
+                Complex::new(0x410014 as f32, 0x410015 as f32),
+                Complex::new(0x410016 as f32, 0x410017 as f32),
+            ])
+        );
+
+        // ts 3, chan 3 (cc 1, fc 1), baseline 5
+        let viz_3_3_1 = *jones_array.get((3, 3, 1)).unwrap();
+        assert_abs_diff_eq!(
+            viz_3_3_1,
+            Jones::from([
+                Complex::new(0x410718 as f32, 0x410719 as f32),
+                Complex::new(0x41071a as f32, 0x41071b as f32),
+                Complex::new(0x41071c as f32, 0x41071d as f32),
+                Complex::new(0x41071e as f32, 0x41071f as f32),
+            ])
+        );
+
+        let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
+
+        // timestep 0
+        let timestep_0 = &context.timesteps[img_timestep_idxs[0]];
+        let epoch_0 =
+            time::gps_to_epoch(timestep_0.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0);
+        let prec_info_0 = precess_time(
+            phase_centre_ra,
+            epoch_0,
+            array_pos.longitude_rad,
+            array_pos.latitude_rad,
+        );
+        let phase_centre_ha_j2000_0 = prec_info_0.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
+        let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
+        // timestep 3
+        let timestep_3 = &context.timesteps[img_timestep_idxs[3]];
+        let epoch_3 =
+            time::gps_to_epoch(timestep_3.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0);
+        let prec_info_3 = precess_time(
+            phase_centre_ra,
+            epoch_3,
+            array_pos.longitude_rad,
+            array_pos.latitude_rad,
+        );
+        let phase_centre_ha_j2000_3 = prec_info_3.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_3.lmst_j2000);
+        let tiles_xyz_precessed_3 = prec_info_3.precess_xyz_parallel(&tiles_xyz_geod);
+
+        // baseline 1
+        let bl_1 = &context.metafits_context.baselines[1];
+
+        // ts 0, baseline 1
+        let xyz_0_1 =
+            tiles_xyz_precessed_0[bl_1.ant1_index] - tiles_xyz_precessed_0[bl_1.ant2_index];
+        let w_0_1 = UVW::from_xyz(xyz_0_1, phase_centre_ha_j2000_0).w;
+        // ts 3, baseline 1
+        let xyz_3_1 =
+            tiles_xyz_precessed_3[bl_1.ant1_index] - tiles_xyz_precessed_3[bl_1.ant2_index];
+        let w_3_1 = UVW::from_xyz(xyz_3_1, phase_centre_ha_j2000_3).w;
+
+        // ts 0, chan 0 (cc 0, fc 0), baseline 1
+        let angle_0_0_1 = -2.0 * PI * w_0_1 * (all_freqs_hz[0] as f64) / VEL_C;
+        let (sin_0_0_1_f64, cos_0_0_1_f64) = angle_0_0_1.sin_cos();
+        let (sin_0_0_1, cos_0_0_1) = (sin_0_0_1_f64 as f32, cos_0_0_1_f64 as f32);
+
+        // ts 3, chan 3 (cc 1, fc 1), baseline 1
+        let angle_3_3_1 = -2.0 * PI * w_3_1 * (all_freqs_hz[3] as f64) / VEL_C;
+        let (sin_3_3_1_f64, cos_3_3_1_f64) = angle_3_3_1.sin_cos();
+        let (sin_3_3_1, cos_3_3_1) = (sin_3_3_1_f64 as f32, cos_3_3_1_f64 as f32);
+
+        // let angle_5_3 = -2.0 * PI * w_5_3 * (all_freqs_hz[3] as f64) / VEL_C;
+
+        correct_geometry(
+            &context,
+            &mut jones_array,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            None,
+        );
+
+        // there should be no difference in baseline 0
+        // ts 0 (batch 0, scan 0), chan 0 (cc 0, fc 0), baseline 0
+        assert_abs_diff_eq!(*jones_array.get((0, 0, 0)).unwrap(), viz_0_0_0);
+
+        ////
+        // baseline 1 should be rotated
+        ////
+        // ts 0 (batch 0, scan 0), chan 0 (cc 0, fc 0), baseline 1
+        // -> pol XX
+        let rot_1_xx_0_0_re = (cos_0_0_1 * viz_0_0_1[0].re - sin_0_0_1 * viz_0_0_1[0].im) as f32;
+        let rot_1_xx_0_0_im = (sin_0_0_1 * viz_0_0_1[0].re + cos_0_0_1 * viz_0_0_1[0].im) as f32;
+        // -> pol XY
+        let rot_1_xy_0_0_re = (cos_0_0_1 * viz_0_0_1[1].re - sin_0_0_1 * viz_0_0_1[1].im) as f32;
+        let rot_1_xy_0_0_im = (sin_0_0_1 * viz_0_0_1[1].re + cos_0_0_1 * viz_0_0_1[1].im) as f32;
+        // -> pol YX
+        let rot_1_yx_0_0_re = (cos_0_0_1 * viz_0_0_1[2].re - sin_0_0_1 * viz_0_0_1[2].im) as f32;
+        let rot_1_yx_0_0_im = (sin_0_0_1 * viz_0_0_1[2].re + cos_0_0_1 * viz_0_0_1[2].im) as f32;
+        // -> pol YY
+        let rot_1_yy_0_0_re = (cos_0_0_1 * viz_0_0_1[3].re - sin_0_0_1 * viz_0_0_1[3].im) as f32;
+        let rot_1_yy_0_0_im = (sin_0_0_1 * viz_0_0_1[3].re + cos_0_0_1 * viz_0_0_1[3].im) as f32;
+
+        assert_abs_diff_eq!(
+            *jones_array.get((0, 0, 1)).unwrap(),
+            &Jones::from([
+                Complex::new(rot_1_xx_0_0_re, rot_1_xx_0_0_im),
+                Complex::new(rot_1_xy_0_0_re, rot_1_xy_0_0_im),
+                Complex::new(rot_1_yx_0_0_re, rot_1_yx_0_0_im),
+                Complex::new(rot_1_yy_0_0_re, rot_1_yy_0_0_im),
+            ])
+        );
+
+        // ts 3 (batch 1, scan 1), chan 3 (cc 1, fc 1), baseline 1
+        // -> pol XX
+        let rot_1_xx_3_3_re = (cos_3_3_1 * viz_3_3_1[0].re - sin_3_3_1 * viz_3_3_1[0].im) as f32;
+        let rot_1_xx_3_3_im = (sin_3_3_1 * viz_3_3_1[0].re + cos_3_3_1 * viz_3_3_1[0].im) as f32;
+        // -> pol XY
+        let rot_1_xy_3_3_re = (cos_3_3_1 * viz_3_3_1[1].re - sin_3_3_1 * viz_3_3_1[1].im) as f32;
+        let rot_1_xy_3_3_im = (sin_3_3_1 * viz_3_3_1[1].re + cos_3_3_1 * viz_3_3_1[1].im) as f32;
+        // -> pol YX
+        let rot_1_yx_3_3_re = (cos_3_3_1 * viz_3_3_1[2].re - sin_3_3_1 * viz_3_3_1[2].im) as f32;
+        let rot_1_yx_3_3_im = (sin_3_3_1 * viz_3_3_1[2].re + cos_3_3_1 * viz_3_3_1[2].im) as f32;
+        // -> pol YY
+        let rot_1_yy_3_3_re = (cos_3_3_1 * viz_3_3_1[3].re - sin_3_3_1 * viz_3_3_1[3].im) as f32;
+        let rot_1_yy_3_3_im = (sin_3_3_1 * viz_3_3_1[3].re + cos_3_3_1 * viz_3_3_1[3].im) as f32;
+
+        assert_abs_diff_eq!(
+            *jones_array.get((3, 3, 1)).unwrap(),
+            &Jones::from([
+                Complex::new(rot_1_xx_3_3_re, rot_1_xx_3_3_im),
+                Complex::new(rot_1_xy_3_3_re, rot_1_xy_3_3_im),
+                Complex::new(rot_1_yx_3_3_re, rot_1_yx_3_3_im),
+                Complex::new(rot_1_yy_3_3_re, rot_1_yy_3_3_im),
             ])
         );
     }
