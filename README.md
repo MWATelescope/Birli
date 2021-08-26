@@ -156,6 +156,33 @@ Note: This mounts the current directory to `/app` in the Docker image, meaning b
 `target` folder. so if your host system is a different
 architecture than Docker, you may need to `cargo clean` each time you switch between these environments. You may also want to temporarily disable any linters or language servers that use
 
+### the trait bound `Jones<f32>: AbsDiffEq<_>` is not satisfied
+
+if you see an error that looks like this:
+
+```txt
+error[E0277]: the trait bound `Jones<f32>: AbsDiffEq<_>` is not satisfied
+    --> src/corrections.rs:1029:9
+     |
+1029 | /         assert_abs_diff_eq!(
+1030 | |             *jones_array.get((3, 3, 1)).unwrap(),
+1031 | |             &Jones::from([
+1032 | |                 Complex::new(rot_1_xx_3_3_re, rot_1_xx_3_3_im),
+...    |
+1036 | |             ])
+1037 | |         );
+     | |__________^ the trait `AbsDiffEq<_>` is not implemented for `Jones<f32>`
+     |
+     = note: this error originates in the macro `abs_diff_eq` (in Nightly builds, run with -Z macro-backtrace for more info)
+```
+
+try
+
+```bash
+cargo update
+cargo update -p approx:0.5.0 --precise 0.4.0
+```
+
 ## Usage
 
 `birli -h`
@@ -309,3 +336,13 @@ acknowledge the Wajarri Yamatji people as the traditional owners of the Observat
 This repo is approved by...
 
 <img src="https://github.com/MWATelescope/Birli/raw/main/img/CIRA_Rust_Evangelism_Strike_Force.png" height="200px" alt="CIRA Rust Evangelism Strike Force logo">
+
+## Release Checklist
+
+- [ ] pipeline is green
+- [ ] update `RELEASES.md`
+- [ ] update `package.version` in `Cargo.toml` 
+- [ ] commit
+- [ ] `git tag -a $tag -m $tag`
+- [ ] `git push`
+- [ ] `git push --tags`
