@@ -786,12 +786,6 @@ impl<'a> UvfitsWriter<'a> {
         let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz as f64;
         let weight_factor = fine_chan_width_hz * integration_time_s / 10000.0;
 
-        // MWA/CASA/AOFlagger visibility order is XX,XY,YX,YY
-        // UVFits visibility order is XX,YY,XY,YX
-        let pol_order = vec![0, 3, 1, 2];
-        // Real and imaginary component offsets within image width
-        // let re_im = vec![0, 1];
-
         // Create a progress bar to show the writing status
         let write_progress = indicatif::ProgressBar::new(self.total_num_rows as u64);
         write_progress.set_style(
@@ -833,20 +827,33 @@ impl<'a> UvfitsWriter<'a> {
                     tiles_xyz_precessed[ant1_idx] - tiles_xyz_precessed[ant2_idx];
                 let uvw = UVW::from_xyz(baseline_xyz_precessed, prec_info.hadec_j2000);
 
+                // MWA/CASA/AOFlagger visibility order is XX,XY,YX,YY
+                // UVFits visibility order is XX,YY,XY,YX
+
                 let vis: Vec<f32> = izip!(jones_baseline_view.iter(), flag_baseline_view.iter())
                     .flat_map(|(jones, flag)| {
-                        pol_order
-                            .iter()
-                            .flat_map(|&img_pol_idx| {
-                                let complex = jones[img_pol_idx];
-                                // TODO: weight from flags
-                                let mut weight = weight_factor as f32;
-                                if *flag {
-                                    weight *= -1.0;
-                                }
-                                [complex.re, complex.im, weight]
-                            })
-                            .collect::<Vec<_>>()
+                        let mut weight = weight_factor as f32;
+                        if *flag {
+                            weight *= -1.0;
+                        }
+                        [
+                            // XX
+                            jones[0].re,
+                            jones[0].im,
+                            weight,
+                            // YY
+                            jones[3].re,
+                            jones[3].im,
+                            weight,
+                            // XY
+                            jones[1].re,
+                            jones[1].im,
+                            weight,
+                            // YX
+                            jones[2].re,
+                            jones[2].im,
+                            weight,
+                        ]
                     })
                     .collect();
 
