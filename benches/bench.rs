@@ -254,6 +254,82 @@ fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
     });
 }
 
+This benchmark needs a stupid amount of RAM.
+fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
+    let context = get_context_ord_half_1196175296();
+    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+
+    let img_timestep_range =
+        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+    let img_coarse_chan_range =
+        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+    let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+
+    let (jones_array, flag_array) =
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+
+    let tmp_dir = tempdir().unwrap();
+    let uvfits_path = tmp_dir.path().join("1196175296.none.uvfits");
+
+    init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+
+    crt.bench_function("uvfits_output - ord_half_1196175296", |bch| {
+        bch.iter(|| {
+            write_uvfits(
+                black_box(uvfits_path.as_path()),
+                black_box(&context),
+                black_box(&jones_array),
+                black_box(&flag_array),
+                black_box(&img_timestep_range),
+                black_box(&img_coarse_chan_range),
+                black_box(&img_baseline_idxs),
+                None,
+            )
+            .unwrap();
+        });
+    });
+}
+
+This benchmark needs a stupid amount of RAM.
+fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
+    let context = get_context_mwax_half_1247842824();
+    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+
+    let img_timestep_range =
+        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+    let img_coarse_chan_range =
+        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+    let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+
+    let (jones_array, flag_array) =
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+
+    let tmp_dir = tempdir().unwrap();
+    let uvfits_path = tmp_dir.path().join("1247842824.none.uvfits");
+
+    init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+
+    crt.bench_function("uvfits_output - mwax_half_1247842824", |bch| {
+        bch.iter(|| {
+            write_uvfits(
+                black_box(uvfits_path.as_path()),
+                black_box(&context),
+                black_box(&jones_array),
+                black_box(&flag_array),
+                black_box(&img_timestep_range),
+                black_box(&img_coarse_chan_range),
+                black_box(&img_baseline_idxs),
+                None,
+            )
+            .unwrap();
+        });
+    });
+}
+
 criterion_group!(
     name = benches;
     config = Criterion::default().sample_size(10);
@@ -265,5 +341,7 @@ criterion_group!(
         bench_correct_geometry_mwax_half_1247842824,
         bench_correct_geometry_ord_half_1196175296,
         bench_uvfits_output_1254670392_avg_none,
+        bench_uvfits_output_ord_half_1196175296_none,
+        bench_uvfits_output_mwax_half_1247842824_none
 );
 criterion_main!(benches);
