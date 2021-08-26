@@ -127,6 +127,12 @@ def parse_args(argv):
         help="end time [MJD] for normalising timesteps",
         default=None
     )
+    cloud_compare_group.add_argument(
+        "--invert-y",
+        help="invert the y axis",
+        default=False,
+        action="store_true"
+    )
     # cloud_compare_group.add_argument(
     #     "--x-axis",
     #     help="name of parameter used as x-axis",
@@ -168,7 +174,8 @@ def dump_uvfits_data_to_csv(
     vis_scale=1,
     dump_mode="vis-weight",
     axes=None,
-    file=None
+    file=None,
+    invert_y=False,
 ):
     if file is None:
         file = stdout
@@ -222,6 +229,8 @@ def dump_uvfits_data_to_csv(
 
     print(", ".join(header), file=file)
     eprint(f"-> vis scale {vis_scale}")
+
+    timestep_fraction = None
 
     vis_peak = 0
 
@@ -323,16 +332,25 @@ def dump_uvfits_data_to_csv(
                     )
                     weight = row_data[0, 0, chan_idx, pol_idx, 2]
 
+                    phase = cmath.phase(vis)
+
+                    # normalise phase from (-pi,pi) to  (0,1)
+                    if phase < 0:
+                        phase += math.tau
+                    phase /= math.tau
+
                     row_dict[f"{pol_name}_real"] = vis.real
                     row_dict[f"{pol_name}_imag"] = vis.imag
                     row_dict[f"{pol_name}_mag"] = abs(vis)
-                    row_dict[f"{pol_name}_phase"] = cmath.phase(vis)
+                    row_dict[f"{pol_name}_phase"] = phase
                     row_dict[f"{pol_name}_weight"] = weight
 
                     vis_peak = max(vis_peak, abs(vis))
 
-                print(
-                    ", ".join(map(lambda ax: str(row_dict[ax]), axes)), file=file)
+                row_out = list(map(lambda ax: row_dict[ax], axes))
+                if invert_y:
+                    row_out[1] = -1 * row_out[1]
+                print(", ".join(map(str, row_out)), file=file)
 
     print(f"aggregate info")
     print(f"-> vis peak {vis_peak}")
@@ -367,6 +385,7 @@ def main(argv):
             ("bl_offset", args.baseline_offset),
             ("bl_limit", args.baseline_limit),
             ("chan_limit", args.chan_limit),
+            ("invert_y", args.invert_y),
             ("axes", args.axes),
         ]:
             if arg is not None:

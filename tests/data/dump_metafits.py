@@ -16,9 +16,7 @@ from argparse import ArgumentParser
 import pyuvdata
 from tabulate import tabulate
 
-from mpl_toolkits import mplot3d
 import numpy as np
-import matplotlib.pyplot as plt
 
 
 def parse_args(argv):
