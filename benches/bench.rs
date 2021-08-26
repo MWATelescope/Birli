@@ -184,8 +184,8 @@ fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
             correct_geometry(
                 black_box(&context),
                 black_box(&mut jones_array),
-                black_box(&img_coarse_chan_range),
                 black_box(&img_timestep_range),
+                black_box(&img_coarse_chan_range),
                 None,
             );
         })
@@ -209,8 +209,8 @@ fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
             correct_geometry(
                 black_box(&context),
                 black_box(&mut jones_array),
-                black_box(&img_coarse_chan_range),
                 black_box(&img_timestep_range),
+                black_box(&img_coarse_chan_range),
                 None,
             );
         })
