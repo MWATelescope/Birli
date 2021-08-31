@@ -4,8 +4,7 @@ use birli::{
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use glob::glob;
-use mwa_rust_core::mwalib;
-use mwalib::CorrelatorContext;
+use mwa_rust_core::mwalib::CorrelatorContext;
 use std::env;
 use std::path::Path;
 use tempfile::tempdir;

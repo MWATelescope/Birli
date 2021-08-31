@@ -14,9 +14,8 @@
 //! use birli::{
 //!     context_to_jones_array, write_flags,
 //!     get_flaggable_timesteps, init_flag_array,
-//!     get_antenna_flags, mwalib, write_uvfits,
+//!     get_antenna_flags, mwalib::CorrelatorContext, write_uvfits
 //! };
-//! use mwalib::CorrelatorContext;
 //! use tempfile::tempdir;
 //!
 //! // define our input files
@@ -93,8 +92,7 @@
 //!     &img_coarse_chan_range,
 //!     &baseline_idxs,
 //!     None,
-//! )
-//! .unwrap();
+//! ).unwrap();
 //! ```
 //!
 //! # Details
@@ -113,11 +111,9 @@ use crossbeam_utils::thread;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use log::{trace, warn};
-use mwalib::CorrelatorContext;
 use ndarray::{parallel::prelude::*, Array3, Axis};
 use std::ops::Range;
 
-pub mod error;
 pub mod io;
 pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter, write_uvfits};
 pub mod corrections;
@@ -125,18 +121,19 @@ pub use corrections::{correct_cable_lengths, correct_geometry};
 pub mod flags;
 pub use flags::{get_antenna_flags, get_flaggable_timesteps, init_flag_array, write_flags};
 pub use mwa_rust_core;
-pub use mwa_rust_core::{mwalib, Complex, Jones};
-pub use mwalib::{fitsio, fitsio_sys};
+pub use mwa_rust_core::{
+    mwalib,
+    mwalib::{fitsio, fitsio_sys, CorrelatorContext},
+    Complex, Jones,
+};
+
+mod error;
+pub use error::BirliError;
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
-        mod cxx_aoflagger;
-        use cxx::UniquePtr;
-        pub use cxx_aoflagger::ffi::{
-            cxx_aoflagger_new, CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy,
-        };
-        use error::BirliError;
-        pub use flags::{flag_jones_array, flag_jones_array_existing, flagmask_or, flagmask_set};
+        pub use flags::{flag_jones_array, flag_jones_array_existing};
+        pub use aoflagger_sys::{cxx_aoflagger_new, CxxAOFlagger, CxxFlagMask, UniquePtr, CxxImageSet};
         use ndarray::{ArrayBase, Dim, ViewRepr};
         use std::os::raw::c_short;
     }
@@ -237,8 +234,7 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, mwalib};
-/// use mwalib::CorrelatorContext;
+/// use birli::{context_to_jones_array, mwalib::CorrelatorContext};
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -548,14 +544,10 @@ mod tests {
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     #![allow(clippy::float_cmp)]
 
-    // use core::slice::SlicePattern;
-
     use super::{context_to_jones_array, get_flaggable_timesteps};
     use crate::Jones;
     use approx::assert_abs_diff_eq;
-    use mwa_rust_core::{mwalib, Complex};
-    use mwalib::CorrelatorContext;
-    // use num_complex::Complex;
+    use mwa_rust_core::{mwalib::CorrelatorContext, Complex};
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";

@@ -7,7 +7,7 @@ name: MacOS Tests
 jobs:
   test:
     name: MacOS Tests
-    runs-on: macOS-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2

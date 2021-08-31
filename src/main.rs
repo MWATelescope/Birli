@@ -6,7 +6,7 @@ use std::{env, ffi::OsString, fmt::Debug};
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
         use birli::{
-            cxx_aoflagger_new, flags::flag_jones_array_existing, get_aoflagger_version_string,
+            flags::flag_jones_array_existing, get_aoflagger_version_string,
             context_to_jones_array, correct_cable_lengths, correct_geometry, get_antenna_flags,
             get_flaggable_timesteps, init_flag_array,
             io::write_uvfits,
@@ -19,7 +19,7 @@ cfg_if! {
             },
             write_flags,
         };
-
+        use aoflagger_sys::{cxx_aoflagger_new};
         use clap::{Arg, SubCommand};
         use log::trace;
         use std::path::Path;
@@ -268,12 +268,18 @@ mod tests {
     fn forked_main_with_version_prints_version() {
         let pkg_name = env!("CARGO_PKG_NAME");
         let pkg_version = env!("CARGO_PKG_VERSION");
-        assert_cli::Assert::main_binary()
-            .with_args(&["--version"])
-            .succeeds()
-            .stdout()
-            .contains(format!("{} {}\n", pkg_name, pkg_version).as_str())
-            .unwrap();
+        assert_cli::Assert::command(&[
+            "cargo",
+            "run",
+            "--quiet",
+            "--no-default-features",
+            "--",
+            "--version",
+        ])
+        .succeeds()
+        .stdout()
+        .contains(format!("{} {}\n", pkg_name, pkg_version).as_str())
+        .unwrap();
     }
 }
 
@@ -288,10 +294,12 @@ mod tests_aoflagger {
     use fitsio::errors::check_status as fits_check_status;
     use float_cmp::{approx_eq, F32Margin, F64Margin};
     use itertools::izip;
-    use mwa_rust_core::{fitsio, fitsio_sys, mwalib};
-    use mwalib::{
-        CorrelatorContext, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
-        get_required_fits_key,
+    use mwa_rust_core::{
+        fitsio, fitsio_sys,
+        mwalib::{
+            CorrelatorContext, _get_required_fits_key, _open_fits, _open_hdu, fits_open,
+            fits_open_hdu, get_required_fits_key,
+        },
     };
     use regex::Regex;
     use std::{

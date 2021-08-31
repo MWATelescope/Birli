@@ -19,10 +19,12 @@ use fitsio::tables::{ColumnDataDescription, ColumnDataType, ConcreteColumnDescri
 use fitsio::FitsFile;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
-use mwa_rust_core::{fitsio, fitsio_sys, mwalib};
-use mwalib::{
-    CorrelatorContext, MWAVersion, _get_required_fits_key, _open_hdu, fits_open_hdu,
-    get_required_fits_key,
+use mwa_rust_core::{
+    fitsio, fitsio_sys,
+    mwalib::{
+        CorrelatorContext, MWAVersion, _get_required_fits_key, _open_hdu, fits_open_hdu,
+        get_required_fits_key,
+    },
 };
 use ndarray::{Array3, Axis};
 // use rayon::prelude::*;
@@ -475,10 +477,12 @@ mod tests {
     use crate::io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate};
     use crate::{get_flaggable_timesteps, init_flag_array};
     use fitsio::FitsFile;
-    use mwa_rust_core::{fitsio, mwalib};
-    use mwalib::{
-        CorrelatorContext, _get_optional_fits_key, _open_hdu, fits_open_hdu, get_optional_fits_key,
-        MWAVersion,
+    use mwa_rust_core::{
+        fitsio,
+        mwalib::{
+            CorrelatorContext, _get_optional_fits_key, _open_hdu, fits_open_hdu,
+            get_optional_fits_key, MWAVersion,
+        },
     };
     use ndarray::Axis;
     use std::collections::BTreeMap;

@@ -3,10 +3,9 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use log::trace;
 use mwa_rust_core::{
-    constants::VEL_C, mwalib, precession::precess_time, time, Complex, Jones, LatLngHeight, RADec,
-    XyzGeodetic, UVW,
+    constants::VEL_C, mwalib::CorrelatorContext, precession::precess_time, time, Complex, Jones,
+    LatLngHeight, RADec, XyzGeodetic, UVW,
 };
-use mwalib::CorrelatorContext;
 use std::{f64::consts::PI, ops::Range};
 
 use ndarray::{parallel::prelude::*, Array3, Axis};
@@ -23,8 +22,7 @@ use ndarray::{parallel::prelude::*, Array3, Axis};
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, correct_cable_lengths, mwalib};
-/// use mwalib::CorrelatorContext;
+/// use birli::{context_to_jones_array, correct_cable_lengths, mwalib::CorrelatorContext};
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -156,8 +154,7 @@ pub fn correct_cable_lengths(
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, correct_geometry, mwalib};
-/// use mwalib::CorrelatorContext;
+/// use birli::{context_to_jones_array, correct_geometry, mwalib::CorrelatorContext};
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -292,10 +289,9 @@ mod tests {
     use super::{correct_cable_lengths, correct_geometry, VEL_C};
     use approx::assert_abs_diff_eq;
     use mwa_rust_core::{
-        mwalib, precession::precess_time, time, Complex, Jones, LatLngHeight, RADec, XyzGeodetic,
-        UVW,
+        mwalib::CorrelatorContext, precession::precess_time, time, Complex, Jones, LatLngHeight,
+        RADec, XyzGeodetic, UVW,
     };
-    use mwalib::CorrelatorContext;
     use std::f64::consts::PI;
 
     use crate::{context_to_jones_array, get_flaggable_timesteps};

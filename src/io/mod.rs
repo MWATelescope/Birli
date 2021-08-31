@@ -9,8 +9,7 @@ pub mod uvfits;
 use std::{ops::Range, path::Path};
 
 use log::trace;
-use mwa_rust_core::{mwalib, Jones, LatLngHeight};
-use mwalib::CorrelatorContext;
+use mwa_rust_core::{mwalib::CorrelatorContext, Jones, LatLngHeight};
 use ndarray::Array3;
 use uvfits::UvfitsWriter;
 
@@ -132,16 +131,19 @@ pub fn write_uvfits<'a>(
 /// Tests which require the use of the aoflagger feature
 mod tests_aoflagger {
     use crate::{
-        context_to_jones_array, cxx_aoflagger_new, flags::flag_jones_array_existing,
-        get_antenna_flags, get_flaggable_timesteps, init_flag_array, write_uvfits,
+        context_to_jones_array, flags::flag_jones_array_existing, get_antenna_flags,
+        get_flaggable_timesteps, init_flag_array, write_uvfits,
     };
+    use aoflagger_sys::cxx_aoflagger_new;
     use fitsio::errors::check_status as fits_check_status;
     use float_cmp::{approx_eq, F32Margin};
     use itertools::izip;
-    use mwa_rust_core::{fitsio, fitsio_sys, mwalib};
-    use mwalib::{
-        _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
-        get_required_fits_key, CorrelatorContext,
+    use mwa_rust_core::{
+        fitsio, fitsio_sys,
+        mwalib::{
+            _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
+            get_required_fits_key, CorrelatorContext,
+        },
     };
     use tempfile::tempdir;
 

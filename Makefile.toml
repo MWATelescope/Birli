@@ -144,6 +144,10 @@ dependencies = ["clean"]
 command = "cargo"
 args = ["test"]
 
+[tasks.test_ignored]
+command = "cargo"
+args = ["test", "--", "--ignored"]
+
 [tasks.ci]
 dependencies = [
   "clean",
@@ -151,11 +155,13 @@ dependencies = [
   "check",
   "format_check",
   "clippy",
-  "test",
+  "test_ignored",
 ]
 
 [tasks.pre_commit]
 dependencies = [
   "format_fix",
-  "ci",
+  "check",
+  "clippy",
+  "test"
 ]

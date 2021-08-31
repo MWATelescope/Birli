@@ -14,14 +14,19 @@ use indicatif::ProgressStyle;
 use itertools::izip;
 use log::warn;
 use mwa_rust_core::{
-    constants::VEL_C, erfa_sys, erfa_sys::ERFA_DJM0, fitsio, fitsio_sys, hifitime::Epoch, mwalib,
-    precession::*, time, Jones, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
+    constants::VEL_C,
+    erfa_sys,
+    erfa_sys::ERFA_DJM0,
+    fitsio, fitsio_sys,
+    hifitime::Epoch,
+    mwalib::{CorrelatorContext, MetafitsContext},
+    precession::*,
+    time, Jones, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
 };
 use ndarray::{Array3, Axis};
 // use ndarray::prelude::*;
 
 use super::error::UvfitsWriteError;
-use mwalib::{CorrelatorContext, MetafitsContext};
 
 /// From a `hifitime` [Epoch], get a formatted date string with the hours,
 /// minutes and seconds set to 0.
@@ -952,11 +957,10 @@ mod tests_aoflagger {
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
         },
-        mwalib,
-    };
-    use mwalib::{
-        _get_fits_col, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
-        get_fits_col, get_required_fits_key,
+        mwalib::{
+            _get_fits_col, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
+            get_fits_col, get_required_fits_key, CorrelatorContext,
+        },
     };
     use tempfile::NamedTempFile;
 
@@ -970,9 +974,10 @@ mod tests_aoflagger {
     };
 
     use crate::{
-        context_to_jones_array, cxx_aoflagger_new, flags::flag_jones_array_existing,
-        get_antenna_flags, init_flag_array,
+        context_to_jones_array, flags::flag_jones_array_existing, get_antenna_flags,
+        init_flag_array,
     };
+    use aoflagger_sys::cxx_aoflagger_new;
 
     // TODO: dedup this from lib.rs
     fn get_mwa_ord_context() -> CorrelatorContext {

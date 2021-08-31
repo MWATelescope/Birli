@@ -19,9 +19,10 @@ use rayon::prelude::*;
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
         use crate::{
-            flag_baseline_view_to_flagmask, jones_baseline_view_to_imageset, CxxAOFlagger, CxxFlagMask,
+            flag_baseline_view_to_flagmask, jones_baseline_view_to_imageset
         };
-        use cxx::UniquePtr;
+        use aoflagger_sys::{CxxAOFlagger, CxxFlagMask, UniquePtr, flagmask_or,
+            flagmask_set};
         use indicatif::{ProgressBar, ProgressStyle};
         use mwa_rust_core::Jones;
     }
@@ -45,8 +46,7 @@ cfg_if! {
 /// # Examples
 ///
 /// ```rust
-/// use birli::{get_flaggable_timesteps, mwalib};
-/// use mwalib::CorrelatorContext;
+/// use birli::{get_flaggable_timesteps, mwalib::CorrelatorContext};
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -96,8 +96,7 @@ pub fn get_flaggable_timesteps(context: &CorrelatorContext) -> Result<Vec<usize>
 /// # Examples
 ///
 /// ```rust
-/// use birli::{get_antenna_flags, mwalib};
-/// use mwalib::CorrelatorContext;
+/// use birli::{get_antenna_flags, mwalib::CorrelatorContext};
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
@@ -201,58 +200,6 @@ pub fn init_flag_array(
     flag_array
 }
 
-/// Perform the binary or operation on the flag buffer of `this_flagmask` with
-/// the buffer of `other_flagmask`, storing the result in `this_flagmask`
-#[cfg(feature = "aoflagger")]
-pub fn flagmask_or(
-    this_flagmask: &mut UniquePtr<CxxFlagMask>,
-    other_flagmask: &UniquePtr<CxxFlagMask>,
-) {
-    assert_eq!(
-        this_flagmask.Width(),
-        other_flagmask.Width(),
-        "flagmasks should have the same width."
-    );
-    assert_eq!(
-        this_flagmask.Height(),
-        other_flagmask.Height(),
-        "flagmasks should have the same height."
-    );
-    let this_buffer: &mut [bool] = this_flagmask.pin_mut().BufferMut();
-    let other_buffer: &[bool] = other_flagmask.Buffer();
-
-    this_buffer
-        .iter_mut()
-        .zip(other_buffer.iter())
-        .for_each(|(this_flag, other_flag)| *this_flag |= other_flag);
-}
-
-/// Set the flag buffer of `this_flagmask` from the buffer of `other_flagmask`,
-/// storing the result in `this_flagmask`
-#[cfg(feature = "aoflagger")]
-pub fn flagmask_set(
-    this_flagmask: &mut UniquePtr<CxxFlagMask>,
-    other_flagmask: &UniquePtr<CxxFlagMask>,
-) {
-    assert_eq!(
-        this_flagmask.Width(),
-        other_flagmask.Width(),
-        "flagmasks should have the same width."
-    );
-    assert_eq!(
-        this_flagmask.Height(),
-        other_flagmask.Height(),
-        "flagmasks should have the same height."
-    );
-    let this_buffer: &mut [bool] = this_flagmask.pin_mut().BufferMut();
-    let other_buffer: &[bool] = other_flagmask.Buffer();
-
-    this_buffer
-        .iter_mut()
-        .zip(other_buffer.iter())
-        .for_each(|(this_flag, other_flag)| *this_flag = *other_flag);
-}
-
 /// Flag an ndarray of [`Jones`] visibilities, given a [`CxxAOFlagger`] instance,
 /// a [`CxxStrategy`] filename, returning an [`ndarray::Array3`] of boolean flags.
 ///
@@ -273,9 +220,7 @@ pub fn flagmask_set(
 ///
 /// ```
 /// use birli::{context_to_jones_array, init_flag_array, flag_jones_array_existing, write_flags,
-///     cxx_aoflagger_new,
-///     get_antenna_flags, get_flaggable_timesteps, mwalib};
-/// use mwalib::CorrelatorContext;
+///     get_antenna_flags, get_flaggable_timesteps, mwalib::CorrelatorContext, cxx_aoflagger_new};
 /// use tempfile::tempdir;
 ///
 /// // define our input files
@@ -425,8 +370,7 @@ pub fn flag_jones_array(
 /// Here's an example of how to flag some visibility files
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, write_flags, mwalib, init_flag_array, get_antenna_flags};
-/// use mwalib::CorrelatorContext;
+/// use birli::{context_to_jones_array, write_flags, mwalib::CorrelatorContext, init_flag_array, get_antenna_flags};
 /// use tempfile::tempdir;
 ///
 /// // define our input files
@@ -717,11 +661,10 @@ mod tests_aoflagger {
     use ndarray::Array3;
 
     use crate::{
-        context_to_jones_array, cxx_aoflagger_new, flagmask_or, flagmask_set,
+        context_to_jones_array,
         flags::{flag_jones_array, flag_jones_array_existing, get_antenna_flags},
-        CxxAOFlagger, CxxFlagMask,
     };
-    use cxx::UniquePtr;
+    use aoflagger_sys::cxx_aoflagger_new;
 
     fn get_mwa_ord_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
@@ -884,55 +827,5 @@ mod tests_aoflagger {
         assert!(existing_flag_array.get((1, 0, 95)).unwrap());
         assert!(existing_flag_array.get((1, 0, 111)).unwrap());
         assert!(!existing_flag_array.get((1, 0, 113)).unwrap());
-    }
-
-    fn _get_this_flagmask(aoflagger: &CxxAOFlagger) -> UniquePtr<CxxFlagMask> {
-        let mut this_flagmask = unsafe { aoflagger.MakeFlagMask(2, 2, false) };
-        let this_buffer = this_flagmask.pin_mut().BufferMut();
-        this_buffer[0] = false;
-        this_buffer[1] = false;
-        this_buffer[2] = true;
-        this_buffer[3] = true;
-        this_flagmask
-    }
-
-    fn _get_other_flagmask(aoflagger: &CxxAOFlagger) -> UniquePtr<CxxFlagMask> {
-        let mut other_flagmask = unsafe { aoflagger.MakeFlagMask(2, 2, false) };
-        let other_buffer = other_flagmask.pin_mut().BufferMut();
-        other_buffer[0] = false;
-        other_buffer[1] = true;
-        other_buffer[2] = false;
-        other_buffer[3] = true;
-        other_flagmask
-    }
-
-    #[test]
-    fn test_flagmask_or() {
-        let aoflagger = unsafe { cxx_aoflagger_new() };
-        let mut this_flagmask = _get_this_flagmask(&aoflagger);
-        let other_flagmask = _get_other_flagmask(&aoflagger);
-
-        flagmask_or(&mut this_flagmask, &other_flagmask);
-
-        let this_buffer = this_flagmask.Buffer();
-        assert!(!this_buffer[0]);
-        assert!(this_buffer[1]);
-        assert!(this_buffer[2]);
-        assert!(this_buffer[3]);
-    }
-
-    #[test]
-    fn test_flagmask_set() {
-        let aoflagger = unsafe { cxx_aoflagger_new() };
-        let mut this_flagmask = _get_this_flagmask(&aoflagger);
-        let other_flagmask = _get_other_flagmask(&aoflagger);
-
-        flagmask_set(&mut this_flagmask, &other_flagmask);
-
-        let this_buffer = this_flagmask.Buffer();
-        assert!(!this_buffer[0]);
-        assert!(this_buffer[1]);
-        assert!(!this_buffer[2]);
-        assert!(this_buffer[3]);
     }
 }
