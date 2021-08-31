@@ -875,31 +875,9 @@ impl<'a> UvfitsWriter<'a> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use mwa_rust_core::{
-        constants::{
-            COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
-        },
-        mwalib, time,
-    };
-    use mwalib::{
-        _get_fits_col, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
-        get_fits_col, get_required_fits_key,
-    };
+    use mwa_rust_core::time;
     use tempfile::NamedTempFile;
-
-    use float_cmp::{approx_eq, F32Margin, F64Margin};
-
-    use crate::{
-        context_to_jones_array, cxx_aoflagger_new, flags::flag_jones_array_existing,
-        get_antenna_flags, get_flaggable_timesteps, init_flag_array,
-    };
-
-    use fitsio::{
-        errors::check_status as fits_check_status,
-        hdu::{FitsHdu, HduInfo},
-    };
 
     #[test]
     // Make a tiny uvfits file. The result has been verified by CASA's
@@ -964,6 +942,37 @@ mod tests {
             .collect();
         u.write_uvfits_antenna_table(&names, &positions).unwrap();
     }
+}
+#[cfg(test)]
+#[cfg(feature = "aoflagger")]
+/// Tests which require the use of the aoflagger feature
+mod tests_aoflagger {
+    use super::*;
+    use mwa_rust_core::{
+        constants::{
+            COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
+        },
+        mwalib,
+    };
+    use mwalib::{
+        _get_fits_col, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
+        get_fits_col, get_required_fits_key,
+    };
+    use tempfile::NamedTempFile;
+
+    use float_cmp::{approx_eq, F32Margin, F64Margin};
+
+    use crate::get_flaggable_timesteps;
+
+    use fitsio::{
+        errors::check_status as fits_check_status,
+        hdu::{FitsHdu, HduInfo},
+    };
+
+    use crate::{
+        context_to_jones_array, cxx_aoflagger_new, flags::flag_jones_array_existing,
+        get_antenna_flags, init_flag_array,
+    };
 
     // TODO: dedup this from lib.rs
     fn get_mwa_ord_context() -> CorrelatorContext {
@@ -1515,6 +1524,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "aoflagger")]
     fn uvfits_tables_from_mwalib_matches_cotter() {
         let context = get_mwa_ord_context();
 

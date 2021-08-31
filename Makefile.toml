@@ -36,11 +36,8 @@ dependencies = ["linux_apt_get_essentials"]
 script = """
 [ $(id -u) != 0 ] && export SUDO="sudo" || export SUDO=""
 $SUDO apt-get install -y \
-    build-essential \
     casacore-data \
     casacore-dev \
-    cmake \
-    git  \
     libblas-dev \
     libboost-date-time-dev \
     libboost-filesystem-dev \
@@ -55,9 +52,7 @@ $SUDO apt-get install -y \
     libpython3-dev \
     libssl-dev \
     libxml2-dev \
-    pkg-config \
-    python3 \
-    unzip
+    python3
 cd /tmp
 [ -d "aoflagger" ] && rm -rf aoflagger
 git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git --branch v3.1.0

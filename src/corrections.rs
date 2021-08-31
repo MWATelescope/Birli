@@ -23,7 +23,7 @@ use ndarray::{parallel::prelude::*, Array3, Axis};
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, cxx_aoflagger_new, correct_cable_lengths, mwalib};
+/// use birli::{context_to_jones_array, correct_cable_lengths, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files

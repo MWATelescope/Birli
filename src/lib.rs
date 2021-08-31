@@ -12,9 +12,9 @@
 //!
 //! ```rust
 //! use birli::{
-//!     context_to_jones_array, flag_jones_array_existing, write_flags,
-//!     cxx_aoflagger_new, get_flaggable_timesteps, init_flag_array,
-//!     get_antenna_flags, mwalib,
+//!     context_to_jones_array, write_flags,
+//!     get_flaggable_timesteps, init_flag_array,
+//!     get_antenna_flags, mwalib, write_uvfits,
 //! };
 //! use mwalib::CorrelatorContext;
 //! use tempfile::tempdir;
@@ -31,14 +31,12 @@
 //! // define a temporary directory for output files
 //! let tmp_dir = tempdir().unwrap();
 //!
-//! // define our output flag file template
+//! // define our output paths
 //! let flag_template = tmp_dir.path().join("Flagfile%%%.mwaf");
+//! let uvfits_out = tmp_dir.path().join("1297526432.uvfits");
 //!
 //! // Create an mwalib::CorrelatorContext for accessing visibilities.
 //! let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
-//!
-//! // create a CxxAOFlagger object to perform AOFlagger operations
-//! let aoflagger = unsafe { cxx_aoflagger_new() };
 //!
 //! // Determine which timesteps and coarse channels we want to use
 //! let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
@@ -48,6 +46,7 @@
 //!     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
 //! let img_coarse_chan_range =
 //!     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+//! let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 //!
 //! // Prepare our flagmasks with known bad antennae
 //! let flag_array = init_flag_array(
@@ -65,20 +64,37 @@
 //!     Some(flag_array),
 //! );
 //!
-//! // use the default strategy file location for MWA
-//! let strategy_filename = &aoflagger.FindStrategyFileMWA();
-//!
-//! // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
-//! let flag_array = flag_jones_array_existing(
-//!     &aoflagger,
-//!     &strategy_filename,
-//!     &jones_array,
-//!     Some(flag_array),
-//!     true,
-//! );
+//! // This functionality is only available with the aoflagger feature
+//! // use birli::{cxx_aoflagger_new, flag_jones_array_existing}
+//! // // create a CxxAOFlagger object to perform AOFlagger operations
+//! // let aoflagger = unsafe { cxx_aoflagger_new() };
+//! //
+//! // // use the default strategy file location for MWA
+//! // let strategy_filename = &aoflagger.FindStrategyFileMWA();
+//! //
+//! // // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
+//! // let flag_array = flag_jones_array_existing(
+//! //     &aoflagger,
+//! //     &strategy_filename,
+//! //     &jones_array,
+//! //     Some(flag_array),
+//! //     true,
+//! // );
 //!
 //! // write the flags to disk as .mwaf
 //! write_flags(&context, &flag_array, flag_template.to_str().unwrap(), &img_coarse_chan_range).unwrap();
+//! // write the visibilities to disk as .uvfits
+//! write_uvfits(
+//!     uvfits_out.as_path(),
+//!     &context,
+//!     &jones_array,
+//!     &flag_array,
+//!     &img_timestep_range,
+//!     &img_coarse_chan_range,
+//!     &baseline_idxs,
+//!     None,
+//! )
+//! .unwrap();
 //! ```
 //!
 //! # Details
@@ -91,47 +107,40 @@
 //! [`AOFlagger`]: https://gitlab.com/aroffringa/aoflagger
 //! [`aoflagger::AOFlagger`]: http://www.andreoffringa.org/aoflagger/doxygen/classaoflagger_1_1AOFlagger.html
 
-mod cxx_aoflagger;
-use cxx::UniquePtr;
-pub use cxx_aoflagger::ffi::{
-    cxx_aoflagger_new, CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy,
-};
-use error::BirliError;
-use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
-use itertools::izip;
-use ndarray::{parallel::prelude::*, Array3, Axis};
-use ndarray::{ArrayBase, Dim, ViewRepr};
-use std::{ops::Range, os::raw::c_short};
-
-use mwalib::CorrelatorContext;
-
-pub mod error;
-
-// pub mod math;
-
-pub mod io;
-pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter};
-
-pub mod corrections;
-pub use corrections::{correct_cable_lengths, correct_geometry};
-
-pub mod flags;
-pub use flags::{
-    flag_jones_array_existing, flagmask_or, get_antenna_flags, get_flaggable_timesteps,
-    init_flag_array, write_flags,
-};
-
-// pub mod util;
-
-use log::{trace, warn};
-
+use cfg_if::cfg_if;
 use crossbeam_channel::unbounded;
 use crossbeam_utils::thread;
-// use rayon::prelude::*;
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use itertools::izip;
+use log::{trace, warn};
+use mwalib::CorrelatorContext;
+use ndarray::{parallel::prelude::*, Array3, Axis};
+use std::ops::Range;
 
+pub mod error;
+pub mod io;
+pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter, write_uvfits};
+pub mod corrections;
+pub use corrections::{correct_cable_lengths, correct_geometry};
+pub mod flags;
+pub use flags::{get_antenna_flags, get_flaggable_timesteps, init_flag_array, write_flags};
 pub use mwa_rust_core;
 pub use mwa_rust_core::{mwalib, Complex, Jones};
 pub use mwalib::{fitsio, fitsio_sys};
+
+cfg_if! {
+    if #[cfg(feature = "aoflagger")] {
+        mod cxx_aoflagger;
+        use cxx::UniquePtr;
+        pub use cxx_aoflagger::ffi::{
+            cxx_aoflagger_new, CxxAOFlagger, CxxFlagMask, CxxImageSet, CxxStrategy,
+        };
+        use error::BirliError;
+        pub use flags::{flag_jones_array, flag_jones_array_existing, flagmask_or, flagmask_set};
+        use ndarray::{ArrayBase, Dim, ViewRepr};
+        use std::os::raw::c_short;
+    }
+}
 
 /// Get the version of the AOFlagger library from the library itself.
 ///
@@ -146,6 +155,7 @@ pub use mwalib::{fitsio, fitsio_sys};
 /// let version_regex = Regex::new(r"3\.\d+\.\d+").unwrap();
 /// assert!(version_regex.is_match(&aoflagger_version));
 /// ```
+#[cfg(feature = "aoflagger")]
 pub fn get_aoflagger_version_string() -> String {
     let mut major: c_short = -1;
     let mut minor: c_short = -1;
@@ -157,70 +167,6 @@ pub fn get_aoflagger_version_string() -> String {
     }
 
     return format!("{}.{}.{}", major, minor, sub_minor);
-}
-
-/// Initialize a vector of length [`num_baselines`] containing [`CxxImageSet`] of dimensions
-/// [`width`] and [`height`],
-///
-/// # Examples
-///
-/// ```rust
-/// use birli::{init_baseline_imgsets, cxx_aoflagger_new, mwalib};
-/// use mwalib::CorrelatorContext;
-/// use tempfile::tempdir;
-///
-/// // define our input files
-/// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
-/// let gpufits_paths = vec![
-///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
-///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
-///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
-///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
-/// ];
-///
-/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
-///
-/// let num_baselines = context.metafits_context.num_baselines;
-/// let width = context.num_common_timesteps;
-/// let height = context.num_common_coarse_chans * context.metafits_context.num_corr_fine_chans_per_coarse;
-/// let baseline_imgsets = unsafe {
-///     let aoflagger = cxx_aoflagger_new();
-///     init_baseline_imgsets(&aoflagger, num_baselines, width, height)
-/// };
-/// ```
-pub fn init_baseline_imgsets(
-    aoflagger: &CxxAOFlagger,
-    num_baselines: usize,
-    width: usize,
-    height: usize,
-) -> Vec<UniquePtr<CxxImageSet>> {
-    trace!("start init_baseline_imgsets");
-
-    // Create a progress bar to show the status of allocating
-    let allocation_progress = ProgressBar::new(num_baselines as u64);
-    allocation_progress.set_style(
-        ProgressStyle::default_bar()
-            .template(
-                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
-            )
-            .progress_chars("=> "),
-    );
-    allocation_progress.set_message("allocating imgs");
-
-    // Allocate vector of [`CxxImageSet`]s for each baseline
-    let baseline_imgsets: Vec<UniquePtr<CxxImageSet>> = (0..num_baselines)
-        .into_par_iter()
-        .map(|_| {
-            let imgset = unsafe { aoflagger.MakeImageSet(width, height, 8, 0 as f32, width) };
-            allocation_progress.inc(1);
-            imgset
-        })
-        .collect();
-
-    allocation_progress.finish();
-
-    trace!("end init_baseline_imgsets");
-    baseline_imgsets
 }
 
 /// Given a buffer from mwalib::CorrelatorContext.read_by_baseline, which is in the order
@@ -291,7 +237,7 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, cxx_aoflagger_new, mwalib};
+/// use birli::{context_to_jones_array, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -305,8 +251,6 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 ///
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
 /// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
-///
-/// let aoflagger = unsafe { cxx_aoflagger_new() };
 ///
 /// // Determine which timesteps and coarse channels we want to use
 /// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
@@ -529,6 +473,7 @@ pub fn context_to_jones_array(
 /// # Errors
 ///
 /// Will throw [`BirliError`] if there was an error reading from context.
+#[cfg(feature = "aoflagger")]
 pub fn jones_baseline_view_to_imageset(
     aoflagger: &CxxAOFlagger,
     // jones_array: &Array3<Jones<f32>>,
@@ -578,6 +523,7 @@ pub fn jones_baseline_view_to_imageset(
 /// # Errors
 ///
 /// Will throw [`BirliError`] if there was an error reading from context.
+#[cfg(feature = "aoflagger")]
 pub fn flag_baseline_view_to_flagmask(
     aoflagger: &CxxAOFlagger,
     baseline_flag_view: &ArrayBase<ViewRepr<&bool>, Dim<[usize; 2]>>,

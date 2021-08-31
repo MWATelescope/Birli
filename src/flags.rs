@@ -7,17 +7,25 @@ use crate::{
         BirliError,
         BirliError::{NoCommonTimesteps, NoProvidedTimesteps},
     },
-    flag_baseline_view_to_flagmask,
     io::error::IOError,
-    jones_baseline_view_to_imageset, CxxAOFlagger, CxxFlagMask, FlagFileSet,
+    FlagFileSet,
 };
-use cxx::UniquePtr;
-use indicatif::{ProgressBar, ProgressStyle};
+use cfg_if::cfg_if;
 use log::trace;
-use mwa_rust_core::{mwalib::CorrelatorContext, Jones};
-
+use mwa_rust_core::mwalib::CorrelatorContext;
 use ndarray::{Array2, Array3, Axis};
 use rayon::prelude::*;
+
+cfg_if! {
+    if #[cfg(feature = "aoflagger")] {
+        use crate::{
+            flag_baseline_view_to_flagmask, jones_baseline_view_to_imageset, CxxAOFlagger, CxxFlagMask,
+        };
+        use cxx::UniquePtr;
+        use indicatif::{ProgressBar, ProgressStyle};
+        use mwa_rust_core::Jones;
+    }
+}
 
 /// Produce a vector of timesteps which can be used for creating imagesets and
 /// flagmasks for aoflagger flagging, given an [`mwalib::CorrelatorContext`].
@@ -88,7 +96,7 @@ pub fn get_flaggable_timesteps(context: &CorrelatorContext) -> Result<Vec<usize>
 /// # Examples
 ///
 /// ```rust
-/// use birli::{get_antenna_flags, cxx_aoflagger_new, mwalib};
+/// use birli::{get_antenna_flags, mwalib};
 /// use mwalib::CorrelatorContext;
 ///
 /// // define our input files
@@ -195,6 +203,7 @@ pub fn init_flag_array(
 
 /// Perform the binary or operation on the flag buffer of `this_flagmask` with
 /// the buffer of `other_flagmask`, storing the result in `this_flagmask`
+#[cfg(feature = "aoflagger")]
 pub fn flagmask_or(
     this_flagmask: &mut UniquePtr<CxxFlagMask>,
     other_flagmask: &UniquePtr<CxxFlagMask>,
@@ -220,6 +229,7 @@ pub fn flagmask_or(
 
 /// Set the flag buffer of `this_flagmask` from the buffer of `other_flagmask`,
 /// storing the result in `this_flagmask`
+#[cfg(feature = "aoflagger")]
 pub fn flagmask_set(
     this_flagmask: &mut UniquePtr<CxxFlagMask>,
     other_flagmask: &UniquePtr<CxxFlagMask>,
@@ -312,6 +322,7 @@ pub fn flagmask_set(
 ///    true,
 /// );
 /// ```
+#[cfg(feature = "aoflagger")]
 pub fn flag_jones_array_existing(
     aoflagger: &CxxAOFlagger,
     strategy_filename: &str,
@@ -392,6 +403,7 @@ pub fn flag_jones_array_existing(
 }
 
 /// Shorthand for [`flag_jones_array_existing`] with `flag_array` as None.
+#[cfg(feature = "aoflagger")]
 pub fn flag_jones_array(
     aoflagger: &CxxAOFlagger,
     strategy_filename: &str,
@@ -413,7 +425,7 @@ pub fn flag_jones_array(
 /// Here's an example of how to flag some visibility files
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, flag_jones_array_existing, write_flags, cxx_aoflagger_new, mwalib};
+/// use birli::{context_to_jones_array, write_flags, mwalib, init_flag_array, get_antenna_flags};
 /// use mwalib::CorrelatorContext;
 /// use tempfile::tempdir;
 ///
@@ -435,9 +447,6 @@ pub fn flag_jones_array(
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
 /// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 ///
-/// // create a CxxAOFlagger object to perform AOFlagger operations
-/// let aoflagger = unsafe { cxx_aoflagger_new() };
-///
 /// // Determine which timesteps and coarse channels we want to use
 /// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
 /// let img_timestep_idxs = &context.common_timestep_indices;
@@ -447,24 +456,20 @@ pub fn flag_jones_array(
 /// let img_coarse_chan_range =
 ///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 ///
+/// // Prepare our flagmasks with known bad antennae
+/// let flag_array = init_flag_array(
+///     &context,
+///     &img_timestep_range,
+///     &img_coarse_chan_range,
+///     Some(get_antenna_flags(&context)),
+/// );
+///
 /// // read visibilities out of the gpubox files
 /// let (jones_array, flag_array) = context_to_jones_array(
 ///     &context,
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
-///     None
-/// );
-///
-/// // use the default strategy file location for MWA
-/// let strategy_filename = &aoflagger.FindStrategyFileMWA();
-///
-/// // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
-/// let flag_array = flag_jones_array_existing(
-///     &aoflagger,
-///     &strategy_filename,
-///     &jones_array,
-///     Some(flag_array),
-///     true,
+///     Some(flag_array)
 /// );
 ///
 /// // write the flags to disk as .mwaf
@@ -505,22 +510,14 @@ pub fn write_flags(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::float_cmp)]
-
-    use super::{
-        flagmask_or, flagmask_set, get_antenna_flags, get_flaggable_timesteps, init_flag_array,
-        write_flags,
-    };
-    use cxx::UniquePtr;
+    use super::{get_flaggable_timesteps, init_flag_array, write_flags};
     use glob::glob;
-    use mwa_rust_core::{mwalib::CorrelatorContext, Complex, Jones};
-    use ndarray::Array3;
     use tempfile::tempdir;
 
     use crate::{
-        context_to_jones_array, cxx_aoflagger_new,
         error::BirliError::{NoCommonTimesteps, NoProvidedTimesteps},
-        flags::{flag_jones_array, flag_jones_array_existing},
-        CxxAOFlagger, CxxFlagMask, FlagFileSet,
+        mwa_rust_core::mwalib::CorrelatorContext,
+        FlagFileSet,
     };
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
@@ -532,17 +529,6 @@ mod tests {
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
-
-    fn get_mwa_ord_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
         ];
         CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
     }
@@ -627,6 +613,125 @@ mod tests {
             timestep_idxs.last(),
             context.provided_timestep_indices.last()
         );
+    }
+
+    #[test]
+    fn test_write_flags_mwax_minimal() {
+        let flag_timestep = 1;
+        let flag_channel = 1;
+        let flag_baseline = 1;
+
+        let context = get_mwax_context();
+
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(img_timestep_idxs.len(), 4);
+        let img_timestep_range =
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices[..1].to_vec();
+        let img_coarse_chan_range =
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+        let mut flag_array =
+            init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+
+        flag_array[[flag_timestep, flag_channel, flag_baseline]] = true;
+
+        let tmp_dir = tempdir().unwrap();
+
+        let gpubox_ids: Vec<usize> = context
+            .common_coarse_chan_indices
+            .iter()
+            .map(|&chan| context.coarse_chans[chan].gpubox_number)
+            .collect();
+
+        let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
+        let selected_gpuboxes = gpubox_ids[..1].to_vec();
+
+        write_flags(
+            &context,
+            &flag_array,
+            filename_template.to_str().unwrap(),
+            &img_coarse_chan_range,
+        )
+        .unwrap();
+
+        let flag_files = glob(tmp_dir.path().join("Flagfile*.mwaf").to_str().unwrap()).unwrap();
+
+        assert_eq!(flag_files.count(), selected_gpuboxes.len());
+
+        let mut flag_file_set = FlagFileSet::open(
+            filename_template.to_str().unwrap(),
+            &selected_gpuboxes,
+            context.mwa_version,
+        )
+        .unwrap();
+        let chan_header_flags_raw = flag_file_set.read_chan_header_flags_raw().unwrap();
+        let (chan1_header, chan1_flags_raw) =
+            chan_header_flags_raw.get(&selected_gpuboxes[0]).unwrap();
+        assert_eq!(chan1_header.gpubox_id, gpubox_ids[0]);
+        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+
+        let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
+        assert_eq!(chan1_header.num_timesteps, context.num_timesteps);
+        assert_eq!(num_baselines, context.metafits_context.num_baselines);
+        assert_eq!(chan1_header.num_channels, fine_chans_per_coarse);
+        assert_eq!(
+            chan1_flags_raw.len(),
+            chan1_header.num_timesteps * num_baselines * chan1_header.num_channels
+        );
+        dbg!(&chan1_flags_raw);
+
+        let tests = [
+            (0, 0, 0, i8::from(false)),
+            (0, 0, 1, i8::from(false)),
+            (0, 1, 0, i8::from(false)),
+            (0, 1, 1, i8::from(false)),
+            (0, 2, 0, i8::from(false)),
+            (0, 2, 1, i8::from(false)),
+            (1, 0, 0, i8::from(false)),
+            (1, 0, 1, i8::from(false)),
+            (1, 1, 0, i8::from(false)),
+            (1, 1, 1, i8::from(true)),
+            (1, 2, 0, i8::from(false)),
+            (1, 2, 1, i8::from(false)),
+        ];
+        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests.iter() {
+            let row_idx = timestep_idx * num_baselines + baseline_idx;
+            let offset = row_idx * fine_chans_per_coarse + fine_chan_idx;
+            assert_eq!(
+                &chan1_flags_raw[offset], expected_flag,
+                "with timestep {}, baseline {}, fine_chan {}, expected {} at row_idx {}, offset {}",
+                timestep_idx, baseline_idx, fine_chan_idx, expected_flag, row_idx, offset
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "aoflagger")]
+/// Tests which require the use of the aoflagger feature
+mod tests_aoflagger {
+    use super::{get_flaggable_timesteps, init_flag_array};
+    use mwa_rust_core::{mwalib::CorrelatorContext, Complex, Jones};
+    use ndarray::Array3;
+
+    use crate::{
+        context_to_jones_array, cxx_aoflagger_new, flagmask_or, flagmask_set,
+        flags::{flag_jones_array, flag_jones_array_existing, get_antenna_flags},
+        CxxAOFlagger, CxxFlagMask,
+    };
+    use cxx::UniquePtr;
+
+    fn get_mwa_ord_context() -> CorrelatorContext {
+        let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
+        let gpufits_paths = vec![
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
+        ];
+        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
     }
 
     /// Test that flags are sane when not using existing flags.
@@ -779,98 +884,6 @@ mod tests {
         assert!(existing_flag_array.get((1, 0, 95)).unwrap());
         assert!(existing_flag_array.get((1, 0, 111)).unwrap());
         assert!(!existing_flag_array.get((1, 0, 113)).unwrap());
-    }
-
-    #[test]
-    fn test_write_flags_mwax_minimal() {
-        let flag_timestep = 1;
-        let flag_channel = 1;
-        let flag_baseline = 1;
-
-        let context = get_mwax_context();
-
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices[..1].to_vec();
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-
-        let mut flag_array =
-            init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
-
-        flag_array[[flag_timestep, flag_channel, flag_baseline]] = true;
-
-        let tmp_dir = tempdir().unwrap();
-
-        let gpubox_ids: Vec<usize> = context
-            .common_coarse_chan_indices
-            .iter()
-            .map(|&chan| context.coarse_chans[chan].gpubox_number)
-            .collect();
-
-        let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
-        let selected_gpuboxes = gpubox_ids[..1].to_vec();
-
-        write_flags(
-            &context,
-            &flag_array,
-            filename_template.to_str().unwrap(),
-            &img_coarse_chan_range,
-        )
-        .unwrap();
-
-        let flag_files = glob(tmp_dir.path().join("Flagfile*.mwaf").to_str().unwrap()).unwrap();
-
-        assert_eq!(flag_files.count(), selected_gpuboxes.len());
-
-        let mut flag_file_set = FlagFileSet::open(
-            filename_template.to_str().unwrap(),
-            &selected_gpuboxes,
-            context.mwa_version,
-        )
-        .unwrap();
-        let chan_header_flags_raw = flag_file_set.read_chan_header_flags_raw().unwrap();
-        let (chan1_header, chan1_flags_raw) =
-            chan_header_flags_raw.get(&selected_gpuboxes[0]).unwrap();
-        assert_eq!(chan1_header.gpubox_id, gpubox_ids[0]);
-        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-
-        let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
-        assert_eq!(chan1_header.num_timesteps, context.num_timesteps);
-        assert_eq!(num_baselines, context.metafits_context.num_baselines);
-        assert_eq!(chan1_header.num_channels, fine_chans_per_coarse);
-        assert_eq!(
-            chan1_flags_raw.len(),
-            chan1_header.num_timesteps * num_baselines * chan1_header.num_channels
-        );
-        dbg!(&chan1_flags_raw);
-
-        let tests = [
-            (0, 0, 0, i8::from(false)),
-            (0, 0, 1, i8::from(false)),
-            (0, 1, 0, i8::from(false)),
-            (0, 1, 1, i8::from(false)),
-            (0, 2, 0, i8::from(false)),
-            (0, 2, 1, i8::from(false)),
-            (1, 0, 0, i8::from(false)),
-            (1, 0, 1, i8::from(false)),
-            (1, 1, 0, i8::from(false)),
-            (1, 1, 1, i8::from(true)),
-            (1, 2, 0, i8::from(false)),
-            (1, 2, 1, i8::from(false)),
-        ];
-        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests.iter() {
-            let row_idx = timestep_idx * num_baselines + baseline_idx;
-            let offset = row_idx * fine_chans_per_coarse + fine_chan_idx;
-            assert_eq!(
-                &chan1_flags_raw[offset], expected_flag,
-                "with timestep {}, baseline {}, fine_chan {}, expected {} at row_idx {}, offset {}",
-                timestep_idx, baseline_idx, fine_chan_idx, expected_flag, row_idx, offset
-            );
-        }
     }
 
     fn _get_this_flagmask(aoflagger: &CxxAOFlagger) -> UniquePtr<CxxFlagMask> {

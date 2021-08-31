@@ -22,6 +22,65 @@ use self::error::UvfitsWriteError;
 /// mwalib timestep, coarse channel and baseline indices are needed to map between
 /// indices in the arrays and indices according to mwalib, which are not the same.
 ///
+/// # Examples
+///
+/// ```rust
+/// use tempfile::tempdir;
+/// use birli::{
+///     get_flaggable_timesteps,
+///     context_to_jones_array,
+///     write_uvfits,
+///     mwa_rust_core::mwalib::CorrelatorContext
+/// };
+///
+/// // define our input files
+/// let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
+/// let gpufits_paths = vec![
+///     "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
+/// ];
+///
+/// // define a temporary directory for output files
+/// let tmp_dir = tempdir().unwrap();
+///
+/// // define our output flag file template
+/// let uvfits_out = tmp_dir.path().join("synthetic.uvfits");
+///
+/// // Create an mwalib::CorrelatorContext for accessing visibilities.
+/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+///
+/// // Determine which timesteps and coarse channels we want to use
+/// let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+/// let img_timestep_range =
+///     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+/// let img_coarse_chan_range =
+///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+///
+///
+/// // generate an array of jones matrices
+/// let (jones_array, flag_array) = context_to_jones_array(
+///     &context,
+///     &img_timestep_range,
+///     &img_coarse_chan_range,
+///     None,
+/// );
+///
+/// // write the visibilities to disk as .uvfits
+///
+/// let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+///
+/// write_uvfits(
+///     uvfits_out.as_path(),
+///     &context,
+///     &jones_array,
+///     &flag_array,
+///     &img_timestep_range,
+///     &img_coarse_chan_range,
+///     &baseline_idxs,
+///     None,
+/// )
+/// .unwrap();
+/// ```
 /// # Errors
 ///
 /// See: [`UvfitsWriter`]
@@ -69,27 +128,25 @@ pub fn write_uvfits<'a>(
 }
 
 #[cfg(test)]
-mod tests {
-
+#[cfg(feature = "aoflagger")]
+/// Tests which require the use of the aoflagger feature
+mod tests_aoflagger {
+    use crate::{
+        context_to_jones_array, cxx_aoflagger_new, flags::flag_jones_array_existing,
+        get_antenna_flags, get_flaggable_timesteps, init_flag_array, write_uvfits,
+    };
     use fitsio::errors::check_status as fits_check_status;
     use float_cmp::{approx_eq, F32Margin};
     use itertools::izip;
     use mwa_rust_core::{fitsio, fitsio_sys, mwalib};
     use mwalib::{
-        CorrelatorContext, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
-        get_required_fits_key,
+        _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
+        get_required_fits_key, CorrelatorContext,
     };
     use tempfile::tempdir;
 
-    use crate::{
-        context_to_jones_array, cxx_aoflagger_new, flags::flag_jones_array_existing,
-        get_antenna_flags, get_flaggable_timesteps, init_flag_array,
-    };
-
-    use super::write_uvfits;
-
     #[test]
-    fn write_uvfits_mwa_ord() {
+    fn write_uvfits_flags() {
         // define our input files
         let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
         let gpufits_paths = vec![
@@ -102,7 +159,7 @@ mod tests {
         // define a temporary directory for output files
         let tmp_dir = tempdir().unwrap();
 
-        // define our output flag file template
+        // define our output uvfits path
         let uvfits_out = tmp_dir.path().join("1297526432.uvfits");
 
         // Create an mwalib::CorrelatorContext for accessing visibilities.
@@ -119,6 +176,7 @@ mod tests {
         let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 
         // Prepare our flagmasks with known bad antennae
         let flag_array = init_flag_array(
@@ -128,7 +186,7 @@ mod tests {
             Some(get_antenna_flags(&context)),
         );
 
-        // generate imagesets for each baseline in the format required by aoflagger
+        // generate an array of jones matrices
         let (jones_array, flag_array) = context_to_jones_array(
             &context,
             &img_timestep_range,
@@ -149,8 +207,6 @@ mod tests {
         );
 
         // write the visibilities to disk as .uvfits
-
-        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 
         write_uvfits(
             uvfits_out.as_path(),
