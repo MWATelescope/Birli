@@ -788,7 +788,7 @@ impl<'a> WriteableVis for UvfitsWriter<'a> {
         assert_eq!(num_img_timesteps, jones_dims.0);
 
         let num_img_coarse_chans = coarse_chan_range.len();
-        // let num_img_chans = fine_chans_per_coarse * num_img_coarse_chans;
+        let num_img_chans = fine_chans_per_coarse * num_img_coarse_chans;
         assert_eq!(num_img_coarse_chans * fine_chans_per_coarse, jones_dims.1);
 
         let num_baselines = baseline_idxs.len();
@@ -825,6 +825,8 @@ impl<'a> WriteableVis for UvfitsWriter<'a> {
         );
         write_progress.set_message("write uv vis");
 
+        let mut vis: Vec<f32> = vec![0.0; 12 * num_img_chans];
+
         for (timestep, jones_timestep_view, weight_timestep_view) in izip!(
             img_timesteps.iter(),
             jones_array.outer_iter(),
@@ -857,30 +859,28 @@ impl<'a> WriteableVis for UvfitsWriter<'a> {
                 // MWA/CASA/AOFlagger visibility order is XX,XY,YX,YY
                 // UVFits visibility order is XX,YY,XY,YX
 
-                let vis: Vec<f32> = izip!(jones_baseline_view.iter(), weight_baseline_view.iter())
-                    .flat_map(|(jones, &weight)| {
-                        [
-                            // XX
-                            jones[0].re,
-                            jones[0].im,
-                            weight,
-                            // YY
-                            jones[3].re,
-                            jones[3].im,
-                            weight,
-                            // XY
-                            jones[1].re,
-                            jones[1].im,
-                            weight,
-                            // YX
-                            jones[2].re,
-                            jones[2].im,
-                            weight,
-                        ]
-                    })
-                    .collect();
+                izip!(
+                    jones_baseline_view.iter(),
+                    weight_baseline_view.iter(),
+                    vis.chunks_exact_mut(12)
+                )
+                .for_each(|(jones, &weight, vis_chunk)| {
+                    // TODO: something a little prettier
+                    vis_chunk[0] = jones[0].re;
+                    vis_chunk[1] = jones[0].im;
+                    vis_chunk[2] = weight;
+                    vis_chunk[3] = jones[3].re;
+                    vis_chunk[4] = jones[3].im;
+                    vis_chunk[5] = weight;
+                    vis_chunk[6] = jones[1].re;
+                    vis_chunk[7] = jones[1].im;
+                    vis_chunk[8] = weight;
+                    vis_chunk[9] = jones[2].re;
+                    vis_chunk[10] = jones[2].im;
+                    vis_chunk[11] = weight;
+                });
 
-                self.write_vis_row(&mut uvfits, uvw, ant1_idx, ant2_idx, epoch, &vis.clone())?;
+                self.write_vis_row(&mut uvfits, uvw, ant1_idx, ant2_idx, epoch, &vis)?;
 
                 write_progress.inc(1);
             }
