@@ -1,5 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.1.9 (2021-09-01)
+
+- [EOR-34] put aoflagger behind feature
+- [EOR-33] vis io traits
+- slightly faster uvfits
+
 # Version 0.1.8 (2021-08-26)
 
 - [EOR-32] replace aoflagger::imageset with `ndarray::Array3<Jones>` wherever possible. 
