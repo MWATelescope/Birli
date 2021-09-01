@@ -21,8 +21,8 @@ jobs:
           curl https://sh.rustup.rs -sSf | sh -s -- -y
           export PATH="${HOME}/.cargo/bin:${PATH}"
           rustup set profile minimal
-          rustup toolchain install nightly-2021-05-09 --component llvm-tools-preview
-          rustup default nightly-2021-05-09
+          rustup toolchain install nightly --component llvm-tools-preview
+          rustup default nightly
 
       - name: Install Cargo Packages
         run: |
@@ -40,6 +40,10 @@ jobs:
           LLVM_PROFILE_FILE: json5format-%m.profraw
         run: |
           export PATH="${HOME}/.cargo/bin:${PATH}"
+          which cargo
+          rustc -V
+          cargo -V
+          rustup -V
           cargo make update
           mkdir -p coverage
           cargo test --tests
