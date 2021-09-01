@@ -13,7 +13,7 @@ use crate::{
 use cfg_if::cfg_if;
 use log::trace;
 use mwa_rust_core::mwalib::CorrelatorContext;
-use ndarray::{Array2, Array3, Axis};
+use ndarray::{Array2, Array3, ArrayView3, Axis, Zip};
 use rayon::prelude::*;
 
 cfg_if! {
@@ -650,6 +650,28 @@ mod tests {
             );
         }
     }
+}
+
+/// Convert the given ndarray of boolean flags to an ndarray of float weights
+/// TODO: deal with weight factor when doing averaging.
+/// TODO: deal with passband gains
+pub fn flag_to_weight_array(
+    context: &CorrelatorContext,
+    flag_array: ArrayView3<bool>,
+) -> Array3<f32> {
+    let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
+    let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz as f64;
+    let weight_factor = fine_chan_width_hz * integration_time_s / 10000.0;
+
+    let mut weight_array = Array3::from_elem(flag_array.dim(), 0.0_f32);
+
+    Zip::from(&mut weight_array)
+        .and(&flag_array)
+        .par_apply(|weight, &flag| {
+            *weight = if flag { -weight_factor } else { weight_factor } as f32;
+        });
+
+    weight_array
 }
 
 #[cfg(test)]

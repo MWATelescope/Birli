@@ -10,10 +10,56 @@ use std::{ops::Range, path::Path};
 
 use log::trace;
 use mwa_rust_core::{mwalib::CorrelatorContext, Jones, LatLngHeight};
-use ndarray::Array3;
+use ndarray::{Array3, ArrayView3, ArrayViewMut3};
 use uvfits::UvfitsWriter;
 
-use self::error::UvfitsWriteError;
+use self::error::IOError;
+
+/// The container has visibilities which can be read by passing in a mwalib
+/// context and the range of values to read.
+pub trait ReadableVis: Sync + Send {
+    /// Read the visibilities and weights for the selected timesteps, coarse
+    /// channels and baselines into the provided arrays.
+    ///
+    /// # Errors
+    ///
+    /// Can throw IOError if there is an issue reading.
+    ///
+    /// TODO: reduce number of arguments.
+    #[allow(clippy::too_many_arguments)]
+    fn read_vis_mwalib(
+        &self,
+        jones_array: ArrayViewMut3<Jones<f32>>,
+        weight_array: ArrayViewMut3<f32>,
+        context: &CorrelatorContext,
+        timestep_range: &Range<usize>,
+        coarse_chan_range: &Range<usize>,
+        baseline_idxs: &[usize],
+    ) -> Result<(), IOError>;
+}
+
+/// The container can accept visibilities by passing in the range of mwalib
+/// indices corresponding to the visibilities being written.
+pub trait WriteableVis: Sync + Send {
+    /// Write visibilities and weights from the arrays. Timestep, coarse channel
+    /// and baseline indices are needed for labelling the visibility
+    ///
+    /// # Errors
+    ///
+    /// Can throw IOError if there is an issue writing.
+    ///
+    /// TODO: reduce number of arguments.
+    #[allow(clippy::too_many_arguments)]
+    fn write_vis_mwalib(
+        &mut self,
+        jones_array: ArrayView3<Jones<f32>>,
+        weight_array: ArrayView3<f32>,
+        context: &CorrelatorContext,
+        timestep_range: &Range<usize>,
+        coarse_chan_range: &Range<usize>,
+        baseline_idxs: &[usize],
+    ) -> Result<(), IOError>;
+}
 
 /// Write the given ndarrays of flags and [`Jones`] matrix visibilities to a
 /// uvfits file.
@@ -95,7 +141,7 @@ pub fn write_uvfits<'a>(
     mwalib_coarse_chan_range: &Range<usize>,
     mwalib_baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
-) -> Result<(), UvfitsWriteError> {
+) -> Result<(), IOError> {
     trace!("start write_uvfits");
 
     let mut uvfits_writer = UvfitsWriter::from_mwalib(
@@ -107,10 +153,7 @@ pub fn write_uvfits<'a>(
         array_pos,
     )?;
 
-    let mut fits_file = uvfits_writer.open().unwrap();
-
     uvfits_writer.write_jones_flags(
-        &mut fits_file,
         context,
         jones_array,
         flag_array,

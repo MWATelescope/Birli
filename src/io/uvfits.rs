@@ -23,10 +23,12 @@ use mwa_rust_core::{
     precession::*,
     time, Jones, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
 };
-use ndarray::{Array3, Axis};
-// use ndarray::prelude::*;
+use ndarray::{Array3, ArrayView3, Axis};
 
-use super::error::UvfitsWriteError;
+use crate::flags::flag_to_weight_array;
+
+use super::error::{IOError, UvfitsWriteError};
+use super::WriteableVis;
 
 /// From a `hifitime` [Epoch], get a formatted date string with the hours,
 /// minutes and seconds set to 0.
@@ -654,11 +656,9 @@ impl<'a> UvfitsWriter<'a> {
     ///
     /// TODO: Assumes that all fine channels are written in `vis.` This needs to
     /// be updated to add visibilities to an existing uvfits row.
-    ///
-    /// TODO: replace all these args with birli_context
     #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub fn write_vis(
+    pub fn write_vis_row(
         &mut self,
         uvfits: &mut FitsFile,
         uvw: UVW,
@@ -742,36 +742,64 @@ impl<'a> UvfitsWriter<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn write_jones_flags(
         &mut self,
-        uvfits: &mut FitsFile,
         context: &CorrelatorContext,
         jones_array: &Array3<Jones<f32>>,
         flag_array: &Array3<bool>,
         mwalib_timestep_range: &Range<usize>,
         mwalib_coarse_chan_range: &Range<usize>,
         mwalib_baseline_idxs: &[usize],
-    ) -> Result<(), UvfitsWriteError> {
+    ) -> Result<(), IOError> {
+        let weight_array = flag_to_weight_array(context, flag_array.view());
+        self.write_vis_mwalib(
+            jones_array.view(),
+            weight_array.view(),
+            context,
+            mwalib_timestep_range,
+            mwalib_coarse_chan_range,
+            mwalib_baseline_idxs,
+        )
+    }
+}
+
+// In order to get rid of context, would need to :
+// - replace timestep range with slice of epochs
+// - replace coarse chan range with...
+// - replace baseline indices with ...
+// - pass in tiles xyz geodetic
+impl<'a> WriteableVis for UvfitsWriter<'a> {
+    fn write_vis_mwalib(
+        &mut self,
+        jones_array: ArrayView3<Jones<f32>>,
+        weight_array: ArrayView3<f32>,
+        context: &CorrelatorContext,
+        timestep_range: &Range<usize>,
+        coarse_chan_range: &Range<usize>,
+        baseline_idxs: &[usize],
+    ) -> Result<(), IOError> {
+        let mut uvfits = self.open()?;
+
         let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
         let jones_dims = jones_array.dim();
-        let flag_dims = flag_array.dim();
-        assert_eq!(jones_dims, flag_dims);
+        let weight_dims = weight_array.dim();
+        assert_eq!(jones_dims, weight_dims);
 
-        let num_img_timesteps = mwalib_timestep_range.len();
+        let num_img_timesteps = timestep_range.len();
         assert_eq!(num_img_timesteps, jones_dims.0);
 
-        let num_img_coarse_chans = mwalib_coarse_chan_range.len();
+        let num_img_coarse_chans = coarse_chan_range.len();
         // let num_img_chans = fine_chans_per_coarse * num_img_coarse_chans;
         assert_eq!(num_img_coarse_chans * fine_chans_per_coarse, jones_dims.1);
 
-        let num_baselines = mwalib_baseline_idxs.len();
+        let num_baselines = baseline_idxs.len();
         assert_eq!(num_baselines, jones_dims.2);
 
         assert_eq!(self.total_num_rows, num_img_timesteps * num_baselines);
 
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
-        let img_timesteps = &context.timesteps[mwalib_timestep_range.clone()];
-        let img_baselines = mwalib_baseline_idxs
+        let img_timesteps = &context.timesteps[timestep_range.clone()];
+        let img_baselines = baseline_idxs
             .iter()
             .map(|&idx| {
                 context
@@ -784,12 +812,7 @@ impl<'a> UvfitsWriter<'a> {
             .collect::<Vec<_>>();
 
         // Weights are normalized so that default res of 10 kHz, 1s has weight of "1" per sample
-
-        // TODO: deal with weight factor when doing averaging.
-        // TODO: deal with passband gains
         let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
-        let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz as f64;
-        let weight_factor = fine_chan_width_hz * integration_time_s / 10000.0;
 
         // Create a progress bar to show the writing status
         let write_progress = indicatif::ProgressBar::new(self.total_num_rows as u64);
@@ -802,10 +825,10 @@ impl<'a> UvfitsWriter<'a> {
         );
         write_progress.set_message("write uv vis");
 
-        for (timestep, jones_timestep_view, flag_timestep_view) in izip!(
+        for (timestep, jones_timestep_view, weight_timestep_view) in izip!(
             img_timesteps.iter(),
             jones_array.outer_iter(),
-            flag_array.outer_iter()
+            weight_array.outer_iter()
         ) {
             let gps_time_s = timestep.gps_time_ms as f64 / 1000.0;
             let epoch = time::gps_to_epoch(gps_time_s + integration_time_s / 2.0);
@@ -819,12 +842,11 @@ impl<'a> UvfitsWriter<'a> {
 
             let tiles_xyz_precessed = prec_info.precess_xyz_parallel(&tiles_xyz_geod);
 
-            for (baseline, jones_baseline_view, flag_baseline_view) in izip!(
+            for (baseline, jones_baseline_view, weight_baseline_view) in izip!(
                 img_baselines.iter(),
                 jones_timestep_view.axis_iter(Axis(1)),
-                flag_timestep_view.axis_iter(Axis(1))
+                weight_timestep_view.axis_iter(Axis(1))
             ) {
-                let baseline = baseline.clone();
                 let ant1_idx = baseline.ant1_index;
                 let ant2_idx = baseline.ant2_index;
 
@@ -835,12 +857,8 @@ impl<'a> UvfitsWriter<'a> {
                 // MWA/CASA/AOFlagger visibility order is XX,XY,YX,YY
                 // UVFits visibility order is XX,YY,XY,YX
 
-                let vis: Vec<f32> = izip!(jones_baseline_view.iter(), flag_baseline_view.iter())
-                    .flat_map(|(jones, flag)| {
-                        let mut weight = weight_factor as f32;
-                        if *flag {
-                            weight *= -1.0;
-                        }
+                let vis: Vec<f32> = izip!(jones_baseline_view.iter(), weight_baseline_view.iter())
+                    .flat_map(|(jones, &weight)| {
                         [
                             // XX
                             jones[0].re,
@@ -862,11 +880,7 @@ impl<'a> UvfitsWriter<'a> {
                     })
                     .collect();
 
-                // TODO: calculate weights
-                let result = self.write_vis(uvfits, uvw, ant1_idx, ant2_idx, epoch, &vis.clone());
-                if let Err(err) = result {
-                    return Err(err);
-                };
+                self.write_vis_row(&mut uvfits, uvw, ant1_idx, ant2_idx, epoch, &vis.clone())?;
 
                 write_progress.inc(1);
             }
@@ -920,7 +934,7 @@ mod tests {
                     _ => unreachable!(),
                 };
 
-                u.write_vis(
+                u.write_vis_row(
                     &mut f,
                     UVW::default(),
                     tile1,
@@ -1560,8 +1574,6 @@ mod tests_aoflagger {
         )
         .unwrap();
 
-        let mut f = u.open().unwrap();
-
         let aoflagger = unsafe { cxx_aoflagger_new() };
 
         let flag_array = init_flag_array(
@@ -1589,7 +1601,6 @@ mod tests_aoflagger {
         );
 
         u.write_jones_flags(
-            &mut f,
             &context,
             &jones_array,
             &flag_array,
@@ -1600,8 +1611,6 @@ mod tests_aoflagger {
         .unwrap();
 
         u.write_ants_from_mwalib(&context.metafits_context).unwrap();
-
-        drop(f);
 
         let cotter_uvfits_path = Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
 
