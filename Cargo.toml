@@ -20,6 +20,9 @@ exclude = ["tests/*", ".vscode/*", ".github/*", ".talismanrc"]
 [features]
 default = ["aoflagger"]
 aoflagger = ["aoflagger_sys"]
+cfitsio-static = ["mwa_rust_core/cfitsio-static"]
+erfa-static = ["mwa_rust_core/erfa-static"]
+all-static = ["erfa-static", "cfitsio-static"]
 
 [dependencies]
 clap = "2.33"
@@ -32,7 +35,7 @@ indicatif = { version = "0.16", features = ["rayon"] }
 itertools = "0.10"
 libc = "0.2"
 log = "0.4"
-mwa_rust_core = ">=0.1.1"
+mwa_rust_core = "0.2.*"
 ndarray = { version = ">=0.14,<0.16", features = ["rayon"] }
 rayon = "1.5"
 regex = "1.4"
