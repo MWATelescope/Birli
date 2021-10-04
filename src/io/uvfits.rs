@@ -25,7 +25,7 @@ use mwa_rust_core::{
 };
 use ndarray::{Array3, ArrayView3, Axis};
 
-use crate::flags::flag_to_weight_array;
+use crate::{flags::flag_to_weight_array, BirliContext};
 
 use super::error::{IOError, UvfitsWriteError};
 use super::WriteableVis;
@@ -742,7 +742,7 @@ impl<'a> UvfitsWriter<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn write_jones_flags(
         &mut self,
-        context: &CorrelatorContext,
+        context: &BirliContext,
         jones_array: &Array3<Jones<f32>>,
         flag_array: &Array3<bool>,
         mwalib_timestep_range: &Range<usize>,
@@ -771,7 +771,7 @@ impl<'a> WriteableVis for UvfitsWriter<'a> {
         &mut self,
         jones_array: ArrayView3<Jones<f32>>,
         weight_array: ArrayView3<f32>,
-        context: &CorrelatorContext,
+        context: &BirliContext,
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
         baseline_idxs: &[usize],
@@ -815,7 +815,11 @@ impl<'a> WriteableVis for UvfitsWriter<'a> {
         let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
 
         // Create a progress bar to show the writing status
-        let write_progress = indicatif::ProgressBar::new(self.total_num_rows as u64);
+        let write_progress = if context.draw_progress_bars {
+            indicatif::ProgressBar::new(self.total_num_rows as u64)
+        } else {
+            indicatif::ProgressBar::hidden()
+        };
         write_progress.set_style(
             ProgressStyle::default_bar()
                 .template(
@@ -988,13 +992,12 @@ mod tests_aoflagger {
     };
 
     use crate::{
-        context_to_jones_array, flags::flag_jones_array_existing, get_antenna_flags,
-        init_flag_array,
+        flags::flag_jones_array_existing, get_antenna_flags, init_flag_array, BirliContext,
     };
     use aoflagger_sys::cxx_aoflagger_new;
 
     // TODO: dedup this from lib.rs
-    fn get_mwa_ord_context() -> CorrelatorContext {
+    fn get_mwa_ord_context() -> BirliContext {
         let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
         let gpufits_paths = vec![
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
@@ -1002,7 +1005,7 @@ mod tests_aoflagger {
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
             "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
         ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+        BirliContext::new(CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap())
     }
 
     macro_rules! assert_short_string_keys_eq {
@@ -1583,8 +1586,7 @@ mod tests_aoflagger {
             Some(get_antenna_flags(&context)),
         );
 
-        let (jones_array, flag_array) = context_to_jones_array(
-            &context,
+        let (jones_array, flag_array) = context.read_vis(
             &img_timestep_range,
             &img_coarse_chan_range,
             Some(flag_array),

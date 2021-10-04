@@ -12,7 +12,7 @@ use super::error::{
     IOError,
     IOError::{FitsIO, FitsOpen, InvalidFlagFilenameTemplate, InvalidGpuBox, MwafInconsistent},
 };
-use crate::error::BirliError;
+use crate::{error::BirliError, BirliContext};
 use clap::crate_version;
 use fitsio::hdu::FitsHdu;
 use fitsio::tables::{ColumnDataDescription, ColumnDataType, ConcreteColumnDescription};
@@ -277,7 +277,7 @@ impl FlagFileSet {
     ///
     pub fn write_flag_array(
         &mut self,
-        context: &CorrelatorContext,
+        context: &BirliContext,
         flag_array: &Array3<bool>,
         gpubox_ids: &[usize],
     ) -> Result<(), IOError> {
@@ -292,22 +292,24 @@ impl FlagFileSet {
         let write_progress: Vec<ProgressBar> = gpubox_ids
             .iter()
             .map(|gpubox_id| {
-                let channel_progress = multi_progress.add(
+                let channel_progress = multi_progress.add(if context.draw_progress_bars {
                     ProgressBar::new((num_timesteps * num_baselines) as _)
                         .with_style(
                             ProgressStyle::default_bar()
                                 .template("{msg:16}: [{wide_bar:.blue}] {pos:4}/{len:4}")
                                 .progress_chars("=> "),
                         )
-                        .with_message(format!("gpubox {:03}", gpubox_id)),
-                );
+                        .with_message(format!("gpubox {:03}", gpubox_id))
+                } else {
+                    ProgressBar::hidden()
+                });
                 channel_progress.set_position(0);
                 channel_progress
             })
             .collect();
 
         // The total progress.
-        let total_progress = multi_progress.add(
+        let total_progress = multi_progress.add(if context.draw_progress_bars {
             ProgressBar::new((num_timesteps * num_baselines * gpubox_ids.len()) as _)
                 .with_style(
                     ProgressStyle::default_bar()
@@ -317,8 +319,10 @@ impl FlagFileSet {
                         .progress_chars("=> "),
                 )
                 .with_position(0)
-                .with_message("write flags"),
-        );
+                .with_message("write flags")
+            } else {
+                ProgressBar::hidden()
+            });
 
         // TODO: parallelize
         // let thread_write_info: Vec<(usize, &mut FitsFile, ArrayBase<ViewRepr<&bool>, Dim<[usize; 3]>>)> = Vec::with_capacity(gpubox_ids.len());
@@ -475,7 +479,7 @@ impl FlagFileSet {
 mod tests {
     use super::{FlagFileHeaders, FlagFileSet};
     use crate::io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate};
-    use crate::{get_flaggable_timesteps, init_flag_array};
+    use crate::{get_flaggable_timesteps, init_flag_array, BirliContext};
     use fitsio::FitsFile;
     use mwa_rust_core::{
         fitsio,
@@ -491,7 +495,7 @@ mod tests {
     use tempfile::tempdir;
 
     // TODO: deduplicate this from lib.rs
-    fn get_mwax_context() -> CorrelatorContext {
+    fn get_mwax_context() -> BirliContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
         let gpufits_paths = vec![
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
@@ -499,7 +503,7 @@ mod tests {
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
         ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+        BirliContext::new(CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap())
     }
 
     fn get_mwa_ord_context() -> CorrelatorContext {

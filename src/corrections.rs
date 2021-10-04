@@ -3,12 +3,14 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use log::trace;
 use mwa_rust_core::{
-    constants::VEL_C, mwalib::CorrelatorContext, precession::precess_time, time, Complex, Jones,
-    LatLngHeight, RADec, XyzGeodetic, UVW,
+    constants::VEL_C, precession::precess_time, time, Complex, Jones, LatLngHeight, RADec,
+    XyzGeodetic, UVW,
 };
 use std::{f64::consts::PI, ops::Range};
 
 use ndarray::{parallel::prelude::*, Array3, Axis};
+
+use crate::BirliContext;
 
 /// Perform cable length corrections, given an observation's
 /// [`mwalib::CorrelatorContext`] and an ['ndarray::Array3`] of [`Jones`]
@@ -70,7 +72,7 @@ use ndarray::{parallel::prelude::*, Array3, Axis};
 ///
 /// - an Antenna's rfinput is the same for X and Y
 pub fn correct_cable_lengths(
-    context: &CorrelatorContext,
+    context: &BirliContext,
     jones_array: &mut Array3<Jones<f32>>,
     mwalib_coarse_chan_range: &Range<usize>,
     // TODO: allow subset of baselines
@@ -86,7 +88,11 @@ pub fn correct_cable_lengths(
     let jones_dims = jones_array.dim();
 
     // Create a progress bar to show the status of the correction
-    let correction_progress = ProgressBar::new(jones_dims.2 as u64);
+    let correction_progress = if context.draw_progress_bars {
+        ProgressBar::new(jones_dims.2 as u64)
+    } else {
+        ProgressBar::hidden()
+    };
     correction_progress.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -195,7 +201,7 @@ pub fn correct_cable_lengths(
 /// );
 /// ```
 pub fn correct_geometry(
-    context: &CorrelatorContext,
+    context: &BirliContext,
     jones_array: &mut Array3<Jones<f32>>,
     mwalib_timestep_range: &Range<usize>,
     mwalib_coarse_chan_range: &Range<usize>,
@@ -230,7 +236,11 @@ pub fn correct_geometry(
     let tiles_xyz_geod = XyzGeodetic::get_tiles(&context.metafits_context, array_pos.latitude_rad);
 
     // Create a progress bar to show the status of the correction
-    let correction_progress = ProgressBar::new(jones_dims.0 as u64);
+    let correction_progress = if context.draw_progress_bars {
+        ProgressBar::new(jones_dims.0 as u64)
+    } else {
+        ProgressBar::hidden()
+    };
     correction_progress.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -294,11 +304,11 @@ mod tests {
     };
     use std::f64::consts::PI;
 
-    use crate::{context_to_jones_array, get_flaggable_timesteps};
+    use crate::{get_flaggable_timesteps, BirliContext};
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     // TODO: deduplicate from lib.rs
-    fn get_mwax_context() -> CorrelatorContext {
+    fn get_mwax_context() -> BirliContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
         let gpufits_paths = vec![
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
@@ -306,10 +316,10 @@ mod tests {
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
         ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+        BirliContext::new(CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap())
     }
 
-    fn get_mwa_ord_context() -> CorrelatorContext {
+    fn get_mwa_ord_context() -> BirliContext {
         let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
         let gpufits_paths = vec![
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
@@ -317,7 +327,7 @@ mod tests {
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
             "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
         ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+        BirliContext::new(CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap())
     }
 
     #[test]
@@ -336,8 +346,7 @@ mod tests {
 
         // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-        let (mut jones_array, _) = context_to_jones_array(
-            &context,
+        let (mut jones_array, _) = context.read_vis(
             &img_timestep_range,
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
@@ -513,8 +522,7 @@ mod tests {
 
         // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-        let (mut jones_array, _) = context_to_jones_array(
-            &context,
+        let (mut jones_array, _) = context.read_vis(
             &img_timestep_range,
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
@@ -695,8 +703,7 @@ mod tests {
         // let phase_centre_ha = phase_centre_ra.to_hadec(lst_rad);
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
-        let (mut jones_array, _) = context_to_jones_array(
-            &context,
+        let (mut jones_array, _) = context.read_vis(
             &img_timestep_range,
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
@@ -874,8 +881,7 @@ mod tests {
         // let phase_centre_ha = phase_centre_ra.to_hadec(lst_rad);
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
-        let (mut jones_array, _) = context_to_jones_array(
-            &context,
+        let (mut jones_array, _) = context.read_vis(
             &img_timestep_range,
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),

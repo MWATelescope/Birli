@@ -3,8 +3,8 @@
 #![warn(clippy::missing_safety_doc)]
 #![warn(clippy::missing_errors_doc)]
 
-//! Birli is a library of common preprocessing tasks performed in the data pipeline of the Murchison
-//! Widefield Array (MWA) Telescope.
+//! Birli is a library of common preprocessing tasks performed in the data
+//! pipeline of the Murchison Widefield Array (MWA) Telescope.
 //!
 //! # Examples
 //!
@@ -12,7 +12,7 @@
 //!
 //! ```rust
 //! use birli::{
-//!     context_to_jones_array, write_flags,
+//!     BirliContext, write_flags,
 //!     get_flaggable_timesteps, init_flag_array,
 //!     get_antenna_flags, mwalib::CorrelatorContext, write_uvfits
 //! };
@@ -36,6 +36,8 @@
 //!
 //! // Create an mwalib::CorrelatorContext for accessing visibilities.
 //! let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+//! // Wrap the CorrelatorContext with a `BirliContext` to interface with the raw data.
+//! let context = BirliContext::new(context);
 //!
 //! // Determine which timesteps and coarse channels we want to use
 //! let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
@@ -56,8 +58,7 @@
 //! );
 //!
 //! // load visibilities into our array of jones matrices
-//! let (mut jones_array, flag_array) = context_to_jones_array(
-//!     &context,
+//! let (mut jones_array, flag_array) = birli.context_to_jones_array(
 //!     &img_timestep_range,
 //!     &img_coarse_chan_range,
 //!     Some(flag_array),
@@ -97,13 +98,13 @@
 //!
 //! # Details
 //!
-//! Birli reads visibilities with [`MWALib`] and uses CXX to bind to the [`AOFlagger`] C++ library.
-//! For more details about AOFlagger's interface, check out the [`aoflagger::AOFlagger`]
-//! documentation
+//! Birli reads visibilities with [`MWALib`] and uses CXX to bind to the
+//! [`AOFlagger`] C++ library. For more details about AOFlagger's interface,
+//! check out the [`aoflagger::AOFlagger`] documentation
 //!
-//! [`MWALib`]: https://github.com/MWATelescope/mwalib
-//! [`AOFlagger`]: https://gitlab.com/aroffringa/aoflagger
-//! [`aoflagger::AOFlagger`]: http://www.andreoffringa.org/aoflagger/doxygen/classaoflagger_1_1AOFlagger.html
+//! [`MWALib`]: https://github.com/MWATelescope/mwalib [`AOFlagger`]:
+//! https://gitlab.com/aroffringa/aoflagger [`aoflagger::AOFlagger`]:
+//! http://www.andreoffringa.org/aoflagger/doxygen/classaoflagger_1_1AOFlagger.html
 
 use cfg_if::cfg_if;
 use crossbeam_channel::unbounded;
@@ -198,264 +199,309 @@ macro_rules! _write_hdu_buffer_to_jones_view {
     };
 }
 
-/// generate a 3 dimensional array of Jones matrices from an observation's
-/// [`mwalib::CorrelatorContext`], for all baselines, over a given range of
-/// mwalib timestep and coarse channel indices.
-///
-/// The dimensions of the array are:
-///  - timestep
-///  - channel
-///  - baseline
-///
-/// An equally sized flag array is also returned with flags indicating when reading via mwalib
-/// causes a GPUBoxError.
-///
-/// # Details:
-///
-/// Observations can sometimes be too large to fit in memory. This method will only load
-/// visibilities from the provided timesteps and coarse channels, in order to enable the visibility to
-/// be read in user-defined "chunks" of time or frequency.
-///
-/// The timesteps are indices in the [`mwalib::CorrelatorContext`]'s timestep array, which should be a contiguous
-/// superset of times from all provided coarse gpubox files. A similar concept applies to coarse channels.
-/// Instead of reading visibilities for all known timesteps / coarse channels, it is recommended to use
-/// `common_coarse_chan_indices` and `common_timestep_indices`, as these ignore timesteps and coarse channels
-/// which are missing contiguous data. `common_good_timestep_indices` is also a good choice to avoid quack time.
-///
-/// For more details, see the [documentation](https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html).
-///
-/// Note: it doesn't make sense to ask aoflagger to flag non-contiguous timesteps
-/// or coarse channels, and so this interface only allows to ranges to be used.
-/// For flagging an obeservation with "picket fence" coarse channels or timesteps,
-/// contiguous ranges should be flagged separately.
-///
-/// [`mwalib::CorrelatorContext`]: https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html
-///
-/// # Examples
-///
-/// ```rust
-/// use birli::{context_to_jones_array, mwalib::CorrelatorContext};
-///
-/// // define our input files
-/// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
-/// let gpufits_paths = vec![
-///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
-///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
-///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
-///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
-/// ];
-///
-/// // Create an mwalib::CorrelatorContext for accessing visibilities.
-/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
-///
-/// // Determine which timesteps and coarse channels we want to use
-/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-/// let img_timestep_idxs = &context.common_timestep_indices;
-/// let good_timestep_idxs = &context.common_good_timestep_indices;
-///
-/// let img_timestep_range =
-///     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-/// let good_timestep_range =
-///     *good_timestep_idxs.first().unwrap()..(*good_timestep_idxs.last().unwrap() + 1);
-/// let img_coarse_chan_range =
-///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-///
-///
-/// // read visibilities out of the gpubox files
-/// let (jones_array, _) = context_to_jones_array(
-///     &context,
-///     &img_timestep_range,
-///     &img_coarse_chan_range,
-///     None
-/// );
-///
-/// let dims_common = jones_array.dim();
-///
-/// // read visibilities out of the gpubox files
-/// let (jones_array, _) = context_to_jones_array(
-///     &context,
-///     &good_timestep_range,
-///     &img_coarse_chan_range,
-///     None
-/// );
-///
-/// let dims_good = jones_array.dim();
-///
-/// assert_ne!(dims_common, dims_good);
-/// ```
-///
-/// # Assumptions
-/// - img_coarse_chan_idxs and img_timestep_idxs are contiguous
-pub fn context_to_jones_array(
-    context: &CorrelatorContext,
-    mwalib_timestep_range: &Range<usize>,
-    mwalib_coarse_chan_range: &Range<usize>,
-    // TODO: allow subset of baselines
-    // mwalib_baseline_idxs: &[usize],
-    flag_array: Option<Array3<bool>>,
-) -> (Array3<Jones<f32>>, Array3<bool>) {
-    trace!("start context_to_jones_array");
+/// An interface to raw MWA data.
+pub struct BirliContext {
+    /// The [mwalib::CorrelatorContext] that this [BirliContext] is bound to.
+    mwalib_context: CorrelatorContext,
 
-    // allocate our result
+    /// Should we draw progress bars while doing various operations?
+    draw_progress_bars: bool,
+}
 
-    let num_timesteps = mwalib_timestep_range.len();
-    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-    let num_coarse_chans = mwalib_coarse_chan_range.len();
-    let num_chans = num_coarse_chans * fine_chans_per_coarse;
-    let num_baselines = context.metafits_context.num_baselines;
+impl BirliContext {
+    /// Create an interface to raw MWA data.
+    pub fn new(mwalib_context: CorrelatorContext) -> BirliContext {
+        Self {
+            mwalib_context,
+            draw_progress_bars: false,
+        }
+    }
 
-    let shape = (num_timesteps, num_chans, num_baselines);
+    /// Enable progress bars when doing `Birli` operations.
+    pub fn enable_progress_bars(&mut self) {
+        self.draw_progress_bars = true;
+    }
 
-    let mut jones_array: Array3<Jones<f32>> = Array3::from_elem(shape, Jones::default());
+    /// Get access to the [mwalib::CorrelatorContext] that this [BirliContext]
+    /// is bound to.
+    pub fn get_mwalib_context(&self) -> &CorrelatorContext {
+        &self.mwalib_context
+    }
 
-    let mut flag_array: Array3<bool> = if let Some(flag_array_) = flag_array {
-        assert_eq!(
-            flag_array_.dim(),
-            shape,
-            "jones array and flag array should be the same dimensions"
-        );
-        flag_array_
-    } else {
-        Array3::from_elem(shape, false)
-    };
+    /// generate a 3 dimensional array of Jones matrices from an observation's
+    /// [`mwalib::CorrelatorContext`], for all baselines, over a given range of
+    /// mwalib timestep and coarse channel indices.
+    ///
+    /// The dimensions of the array are:
+    ///  - timestep
+    ///  - channel
+    ///  - baseline
+    ///
+    /// An equally sized flag array is also returned with flags indicating when reading via mwalib
+    /// causes a GPUBoxError.
+    ///
+    /// # Details:
+    ///
+    /// Observations can sometimes be too large to fit in memory. This method will only load
+    /// visibilities from the provided timesteps and coarse channels, in order to enable the visibility to
+    /// be read in user-defined "chunks" of time or frequency.
+    ///
+    /// The timesteps are indices in the [`mwalib::CorrelatorContext`]'s timestep array, which should be a contiguous
+    /// superset of times from all provided coarse gpubox files. A similar concept applies to coarse channels.
+    /// Instead of reading visibilities for all known timesteps / coarse channels, it is recommended to use
+    /// `common_coarse_chan_indices` and `common_timestep_indices`, as these ignore timesteps and coarse channels
+    /// which are missing contiguous data. `common_good_timestep_indices` is also a good choice to avoid quack time.
+    ///
+    /// For more details, see the [documentation](https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html).
+    ///
+    /// Note: it doesn't make sense to ask aoflagger to flag non-contiguous timesteps
+    /// or coarse channels, and so this interface only allows to ranges to be used.
+    /// For flagging an obeservation with "picket fence" coarse channels or timesteps,
+    /// contiguous ranges should be flagged separately.
+    ///
+    /// [`mwalib::CorrelatorContext`]: https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use birli::{BirliContext, mwalib::CorrelatorContext};
+    ///
+    /// // define our input files
+    /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+    /// let gpufits_paths = vec![
+    ///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+    ///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+    ///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+    ///     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+    /// ];
+    ///
+    /// // Create a `Birli` interface to the raw MWA data with an `mwalib::CorrelatorContext`.
+    /// let context = BirliContext::new(CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap());
+    ///
+    /// // Determine which timesteps and coarse channels we want to use
+    /// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+    /// let img_timestep_idxs = &context.common_timestep_indices;
+    /// let good_timestep_idxs = &context.common_good_timestep_indices;
+    ///
+    /// let img_timestep_range =
+    ///     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+    /// let good_timestep_range =
+    ///     *good_timestep_idxs.first().unwrap()..(*good_timestep_idxs.last().unwrap() + 1);
+    /// let img_coarse_chan_range =
+    ///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+    ///
+    /// // read visibilities out of the gpubox files
+    /// let (jones_array, _) = birli.context_to_jones_array(
+    ///     &img_timestep_range,
+    ///     &img_coarse_chan_range,
+    ///     None
+    /// );
+    ///
+    /// let dims_common = jones_array.dim();
+    ///
+    /// // read visibilities out of the gpubox files
+    /// let (jones_array, _) = birli.context_to_jones_array(
+    ///     &good_timestep_range,
+    ///     &img_coarse_chan_range,
+    ///     None
+    /// );
+    ///
+    /// let dims_good = jones_array.dim();
+    ///
+    /// assert_ne!(dims_common, dims_good);
+    /// ```
+    ///
+    /// # Assumptions
+    /// - img_coarse_chan_idxs and img_timestep_idxs are contiguous
+    pub fn read_vis(
+        &self,
+        mwalib_timestep_range: &Range<usize>,
+        mwalib_coarse_chan_range: &Range<usize>,
+        // TODO: allow subset of baselines
+        // mwalib_baseline_idxs: &[usize],
+        flag_array: Option<Array3<bool>>,
+    ) -> (Array3<Jones<f32>>, Array3<bool>) {
+        trace!("start context_to_jones_array");
 
-    // since we are using read_by_by basline into buffer, the visibilities are read in order:
-    // baseline,frequency,pol,r,i
+        // allocate our result
 
-    let floats_per_chan = context.metafits_context.num_visibility_pols * 2;
-    let floats_per_baseline = floats_per_chan * fine_chans_per_coarse;
-    let floats_per_hdu = floats_per_baseline * num_baselines;
+        let num_timesteps = mwalib_timestep_range.len();
+        let fine_chans_per_coarse = self
+            .mwalib_context
+            .metafits_context
+            .num_corr_fine_chans_per_coarse;
+        let num_coarse_chans = mwalib_coarse_chan_range.len();
+        let num_chans = num_coarse_chans * fine_chans_per_coarse;
+        let num_baselines = self.mwalib_context.metafits_context.num_baselines;
 
-    // A queue of errors
-    let (tx_error, rx_error) = unbounded();
+        let shape = (num_timesteps, num_chans, num_baselines);
 
-    // a progress bar containing the progress bars associated with this method
-    let multi_progress = MultiProgress::with_draw_target(ProgressDrawTarget::stderr());
-    // a vector of progress bars for the visibility reading progress of each channel.
-    let read_progress: Vec<ProgressBar> = mwalib_coarse_chan_range
-        .to_owned()
-        .map(|mwalib_coarse_chan_idx| {
-            let channel_progress = multi_progress.add(
-                ProgressBar::new(num_timesteps as _)
+        let mut jones_array: Array3<Jones<f32>> = Array3::from_elem(shape, Jones::default());
+
+        let mut flag_array: Array3<bool> = if let Some(flag_array_) = flag_array {
+            assert_eq!(
+                flag_array_.dim(),
+                shape,
+                "jones array and flag array should be the same dimensions"
+            );
+            flag_array_
+        } else {
+            Array3::from_elem(shape, false)
+        };
+
+        // since we are using read_by_by basline into buffer, the visibilities are read in order:
+        // baseline,frequency,pol,r,i
+
+        let floats_per_chan = self.mwalib_context.metafits_context.num_visibility_pols * 2;
+        let floats_per_baseline = floats_per_chan * fine_chans_per_coarse;
+        let floats_per_hdu = floats_per_baseline * num_baselines;
+
+        // A queue of errors
+        let (tx_error, rx_error) = unbounded();
+
+        // a progress bar containing the progress bars associated with this method
+        let multi_progress = MultiProgress::with_draw_target(ProgressDrawTarget::stderr());
+        // a vector of progress bars for the visibility reading progress of each channel.
+        let read_progress: Vec<ProgressBar> = mwalib_coarse_chan_range
+            .to_owned()
+            .map(|mwalib_coarse_chan_idx| {
+                let channel_progress = multi_progress.add(if !self.draw_progress_bars {
+                    ProgressBar::hidden()
+                } else {
+                    ProgressBar::new(num_timesteps as _)
+                        .with_style(
+                            ProgressStyle::default_bar()
+                                .template("{msg:16}: [{wide_bar:.blue}] {pos:4}/{len:4}")
+                                .progress_chars("=> "),
+                        )
+                        .with_position(0)
+                        .with_message(format!("coarse_chan {:03}", mwalib_coarse_chan_idx))
+                });
+                channel_progress.set_position(0);
+                channel_progress
+            })
+            .collect();
+
+        // The total reading progress.
+        let total_progress = multi_progress.add(if !self.draw_progress_bars {
+                ProgressBar::hidden()
+            } else {
+                ProgressBar::new((num_timesteps * num_coarse_chans) as _)
                     .with_style(
                         ProgressStyle::default_bar()
-                            .template("{msg:16}: [{wide_bar:.blue}] {pos:4}/{len:4}")
+                            .template(
+                                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+                            )
                             .progress_chars("=> "),
                     )
                     .with_position(0)
-                    .with_message(format!("coarse_chan {:03}", mwalib_coarse_chan_idx)),
-            );
-            channel_progress.set_position(0);
-            channel_progress
-        })
-        .collect();
+                    .with_message("loading hdus")
+            });
 
-    // The total reading progress.
-    let total_progress = multi_progress.add(
-        ProgressBar::new((num_timesteps * num_coarse_chans) as _)
-            .with_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
-                    )
-                    .progress_chars("=> "),
-            )
-            .with_position(0)
-            .with_message("loading hdus"),
-    );
+        thread::scope(|scope| {
+            // Spawn a thread to draw the progress bars.
+            scope.spawn(|_| {
+                multi_progress.join().unwrap();
+            });
 
-    thread::scope(|scope| {
-        // Spawn a thread to draw the progress bars.
-        scope.spawn(|_| {
-            multi_progress.join().unwrap();
-        });
+            total_progress.set_position(0);
 
-        total_progress.set_position(0);
+            // Error handling thread
+            scope.spawn(|_| {
+                for (mwalib_timestep_idx, mwalib_coarse_chan_idx, err) in rx_error {
+                    warn!(
+                        "could not read hdu ts={}, cc={} {:?}",
+                        mwalib_timestep_idx, mwalib_coarse_chan_idx, err
+                    );
 
-        // Error handling thread
-        scope.spawn(|_| {
-            for (mwalib_timestep_idx, mwalib_coarse_chan_idx, err) in rx_error {
-                warn!(
-                    "could not read hdu ts={}, cc={} {:?}",
-                    mwalib_timestep_idx, mwalib_coarse_chan_idx, err
-                );
+                    assert!(mwalib_timestep_range.contains(&mwalib_timestep_idx));
+                    let img_timestep_idx = mwalib_timestep_idx - mwalib_timestep_range.start;
+                    assert!(mwalib_coarse_chan_range.contains(&mwalib_coarse_chan_idx));
+                    let img_coarse_chan_idx =
+                        mwalib_coarse_chan_idx - mwalib_coarse_chan_range.start;
 
-                assert!(mwalib_timestep_range.contains(&mwalib_timestep_idx));
-                let img_timestep_idx = mwalib_timestep_idx - mwalib_timestep_range.start;
-                assert!(mwalib_coarse_chan_range.contains(&mwalib_coarse_chan_idx));
-                let img_coarse_chan_idx = mwalib_coarse_chan_idx - mwalib_coarse_chan_range.start;
-
-                // TODO: there's probably a better way of doing this.
-                for mut coarse_chan_flags_view in flag_array
-                    .axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
-                    .skip(img_coarse_chan_idx)
-                    .take(1)
-                {
-                    for mut hdu_flags_view in coarse_chan_flags_view
-                        .outer_iter_mut()
-                        .skip(img_timestep_idx)
+                    // TODO: there's probably a better way of doing this.
+                    for mut coarse_chan_flags_view in flag_array
+                        .axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
+                        .skip(img_coarse_chan_idx)
                         .take(1)
                     {
-                        hdu_flags_view.fill(true);
+                        for mut hdu_flags_view in coarse_chan_flags_view
+                            .outer_iter_mut()
+                            .skip(img_timestep_idx)
+                            .take(1)
+                        {
+                            hdu_flags_view.fill(true);
+                        }
                     }
                 }
-            }
-        });
+            });
 
-        // Load HDUs from each coarse channel in parallel.
-        jones_array
-            .axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
-            .into_par_iter()
-            .zip(mwalib_coarse_chan_range.clone())
-            .zip(read_progress)
-            .for_each(
-                |((mut jones_coarse_chan_view, mwalib_coarse_chan_idx), progress)| {
-                    progress.set_position(0);
+            // Load HDUs from each coarse channel in parallel.
+            jones_array
+                .axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
+                .into_par_iter()
+                .zip(mwalib_coarse_chan_range.clone())
+                .zip(read_progress)
+                .for_each(
+                    |((mut jones_coarse_chan_view, mwalib_coarse_chan_idx), progress)| {
+                        progress.set_position(0);
 
-                    let mut hdu_buffer: Vec<f32> = vec![0.0; floats_per_hdu];
+                        let mut hdu_buffer: Vec<f32> = vec![0.0; floats_per_hdu];
 
-                    // jones_coarse_chan_view is [timestep][chan][baseline] for all chans in the coarse channel
-                    for (mwalib_timestep_idx, mut jones_hdu_view) in izip!(
-                        mwalib_timestep_range.clone(),
-                        jones_coarse_chan_view.outer_iter_mut()
-                    ) {
-                        match context.read_by_baseline_into_buffer(
-                            mwalib_timestep_idx,
-                            mwalib_coarse_chan_idx,
-                            hdu_buffer.as_mut_slice(),
+                        // jones_coarse_chan_view is [timestep][chan][baseline] for all chans in the coarse channel
+                        for (mwalib_timestep_idx, mut jones_hdu_view) in izip!(
+                            mwalib_timestep_range.clone(),
+                            jones_coarse_chan_view.outer_iter_mut()
                         ) {
-                            Ok(()) => {
-                                _write_hdu_buffer_to_jones_view!(
-                                    hdu_buffer,
-                                    jones_hdu_view,
-                                    floats_per_baseline,
-                                    floats_per_chan
-                                );
+                            match self.mwalib_context.read_by_baseline_into_buffer(
+                                mwalib_timestep_idx,
+                                mwalib_coarse_chan_idx,
+                                hdu_buffer.as_mut_slice(),
+                            ) {
+                                Ok(()) => {
+                                    _write_hdu_buffer_to_jones_view!(
+                                        hdu_buffer,
+                                        jones_hdu_view,
+                                        floats_per_baseline,
+                                        floats_per_chan
+                                    );
+                                }
+                                Err(err) => {
+                                    tx_error
+                                        .send((mwalib_timestep_idx, mwalib_coarse_chan_idx, err))
+                                        .unwrap();
+                                }
                             }
-                            Err(err) => {
-                                tx_error
-                                    .send((mwalib_timestep_idx, mwalib_coarse_chan_idx, err))
-                                    .unwrap();
-                            }
+
+                            progress.inc(1);
+                            total_progress.inc(1);
                         }
+                        progress.finish();
+                    },
+                );
 
-                        progress.inc(1);
-                        total_progress.inc(1);
-                    }
-                    progress.finish();
-                },
-            );
+            drop(tx_error);
 
-        drop(tx_error);
+            // We're done!
+            total_progress.finish();
+        })
+        .unwrap();
 
-        // We're done!
-        total_progress.finish();
-    })
-    .unwrap();
+        trace!("end context_to_jones_array");
 
-    trace!("end context_to_jones_array");
+        (jones_array, flag_array)
+    }
+}
 
-    (jones_array, flag_array)
+// This deref code means that `mwalib::CorrelatorContext` metadata can be
+// transparently accessed on a `BirliContext`.
+impl std::ops::Deref for BirliContext {
+    type Target = CorrelatorContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.mwalib_context
+    }
 }
 
 /// Create an aoflagger [`CxxImageSet`] for a particular baseline from the given jones array
@@ -544,12 +590,12 @@ mod tests {
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     #![allow(clippy::float_cmp)]
 
-    use super::{context_to_jones_array, get_flaggable_timesteps};
+    use super::{get_flaggable_timesteps, BirliContext};
     use crate::Jones;
     use approx::assert_abs_diff_eq;
     use mwa_rust_core::{mwalib::CorrelatorContext, Complex};
 
-    fn get_mwax_context() -> CorrelatorContext {
+    fn get_mwax_context() -> BirliContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
         let gpufits_paths = vec![
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
@@ -557,7 +603,7 @@ mod tests {
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
         ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+        BirliContext::new(CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap())
     }
 
     fn get_mwa_ord_context() -> CorrelatorContext {
@@ -607,8 +653,9 @@ mod tests {
 
         // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-        let (jones_array, flags_array) = context_to_jones_array(
-            &context,
+        let context = BirliContext::new(context);
+
+        let (jones_array, flags_array) = context.read_vis(
             &img_timestep_range,
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
@@ -725,8 +772,7 @@ mod tests {
 
         // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-        let (jones_array, _) = context_to_jones_array(
-            &context,
+        let (jones_array, _) = context.read_vis(
             &img_timestep_range,
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
@@ -827,8 +873,8 @@ mod tests {
 
         // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-        let (jones_array, _) = context_to_jones_array(
-            &context,
+        let context = BirliContext::new(context);
+        let (jones_array, _) = context.read_vis(
             &img_timestep_range,
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),

@@ -7,7 +7,7 @@ cfg_if! {
     if #[cfg(feature = "aoflagger")] {
         use birli::{
             flags::flag_jones_array_existing, get_aoflagger_version_string,
-            context_to_jones_array, correct_cable_lengths, correct_geometry, get_antenna_flags,
+            BirliContext, correct_cable_lengths, correct_geometry, get_antenna_flags,
             get_flaggable_timesteps, init_flag_array,
             io::write_uvfits,
             mwa_rust_core::{
@@ -90,6 +90,13 @@ where
                     .help("Do not perform geometric length corrections.")
             )
             .arg(
+                Arg::with_name("disable-progress-bars")
+                    .long("disable-progress-bars")
+                    .takes_value(false)
+                    .required(false)
+                    .help("Don't draw progress bars.")
+            )
+            .arg(
                 Arg::with_name("emulate-cotter")
                     .long("emulate-cotter")
                     .takes_value(false)
@@ -112,9 +119,15 @@ where
                 let flag_template = aoflagger_matches.value_of("flag-template");
                 let uvfits_out = aoflagger_matches.value_of("uvfits-out");
                 let fits_files: Vec<&str> = aoflagger_matches.values_of("fits-files").unwrap().collect();
-                let context = CorrelatorContext::new(&metafits_path, &fits_files)
-                    .expect("unable to get mwalib context");
-                debug!("mwalib correlator context:\n{}", &context);
+                let context = {
+                    let mut c = BirliContext::new(CorrelatorContext::new(&metafits_path, &fits_files)
+                .expect("unable to get mwalib context"));
+                    if !aoflagger_matches.is_present("disable-progress-bars") {
+                        c.enable_progress_bars();
+                    }
+                    c
+                };
+                debug!("mwalib correlator context:\n{}", &context.get_mwalib_context());
                 let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
                 let img_timestep_idxs =
                     get_flaggable_timesteps(&context).expect("unable to determine flaggable timesteps");
@@ -151,8 +164,7 @@ where
                     Some(get_antenna_flags(&context)),
                 );
 
-                let (mut jones_array, flag_array) = context_to_jones_array(
-                    &context,
+                let (mut jones_array, flag_array) = context.read_vis(
                     &img_timestep_range,
                     &img_coarse_chan_range,
                     Some(flag_array),

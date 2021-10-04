@@ -13,6 +13,8 @@ use mwa_rust_core::{mwalib::CorrelatorContext, Jones, LatLngHeight};
 use ndarray::{Array3, ArrayView3, ArrayViewMut3};
 use uvfits::UvfitsWriter;
 
+use crate::BirliContext;
+
 use self::error::IOError;
 
 /// The container has visibilities which can be read by passing in a mwalib
@@ -54,7 +56,7 @@ pub trait WriteableVis: Sync + Send {
         &mut self,
         jones_array: ArrayView3<Jones<f32>>,
         weight_array: ArrayView3<f32>,
-        context: &CorrelatorContext,
+        context: &BirliContext,
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
         baseline_idxs: &[usize],
@@ -134,7 +136,7 @@ pub trait WriteableVis: Sync + Send {
 #[allow(clippy::too_many_arguments)]
 pub fn write_uvfits<'a>(
     filename: &'a Path,
-    context: &CorrelatorContext,
+    context: &BirliContext,
     jones_array: &Array3<Jones<f32>>,
     flag_array: &Array3<bool>,
     mwalib_timestep_range: &Range<usize>,
@@ -174,8 +176,8 @@ pub fn write_uvfits<'a>(
 /// Tests which require the use of the aoflagger feature
 mod tests_aoflagger {
     use crate::{
-        context_to_jones_array, flags::flag_jones_array_existing, get_antenna_flags,
-        get_flaggable_timesteps, init_flag_array, write_uvfits,
+        flags::flag_jones_array_existing, get_antenna_flags, get_flaggable_timesteps,
+        init_flag_array, write_uvfits, BirliContext,
     };
     use aoflagger_sys::cxx_aoflagger_new;
     use fitsio::errors::check_status as fits_check_status;
@@ -207,8 +209,9 @@ mod tests_aoflagger {
         // define our output uvfits path
         let uvfits_out = tmp_dir.path().join("1297526432.uvfits");
 
-        // Create an mwalib::CorrelatorContext for accessing visibilities.
-        let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+        // Create a BirliContext for accessing visibilities via mwalib.
+        let context =
+            BirliContext::new(CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap());
 
         // create a CxxAOFlagger object to perform AOFlagger operations
         let aoflagger = unsafe { cxx_aoflagger_new() };
@@ -232,8 +235,7 @@ mod tests_aoflagger {
         );
 
         // generate an array of jones matrices
-        let (jones_array, flag_array) = context_to_jones_array(
-            &context,
+        let (jones_array, flag_array) = context.read_vis(
             &img_timestep_range,
             &img_coarse_chan_range,
             Some(flag_array),

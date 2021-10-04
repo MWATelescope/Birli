@@ -8,7 +8,7 @@ use crate::{
         BirliError::{NoCommonTimesteps, NoProvidedTimesteps},
     },
     io::error::IOError,
-    FlagFileSet,
+    BirliContext, FlagFileSet,
 };
 use cfg_if::cfg_if;
 use log::trace;
@@ -426,7 +426,7 @@ pub fn flag_jones_array(
 /// - Will error with [IOError::InvalidFlagFilenameTemplate] if an invalid flag filename template is provided (wrong number of percents).
 
 pub fn write_flags(
-    context: &CorrelatorContext,
+    context: &BirliContext,
     flag_array: &Array3<bool>,
     filename_template: &str,
     mwalib_coarse_chan_range: &Range<usize>,
@@ -454,7 +454,7 @@ pub fn write_flags(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::float_cmp)]
-    use super::{get_flaggable_timesteps, init_flag_array, write_flags};
+    use super::{get_flaggable_timesteps, init_flag_array, write_flags, BirliContext};
     use glob::glob;
     use tempfile::tempdir;
 
@@ -466,7 +466,7 @@ mod tests {
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     // TODO: deduplicate from lib.rs
-    fn get_mwax_context() -> CorrelatorContext {
+    fn get_mwax_context() -> BirliContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
         let gpufits_paths = vec![
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
@@ -474,7 +474,7 @@ mod tests {
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
             "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
         ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+        BirliContext::new(CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap())
     }
 
     /// Get a dummy MWA Ord context with multiple holes in the data
@@ -683,12 +683,12 @@ mod tests_aoflagger {
     use ndarray::Array3;
 
     use crate::{
-        context_to_jones_array,
         flags::{flag_jones_array, flag_jones_array_existing, get_antenna_flags},
+        BirliContext,
     };
     use aoflagger_sys::cxx_aoflagger_new;
 
-    fn get_mwa_ord_context() -> CorrelatorContext {
+    fn get_mwa_ord_context() -> BirliContext {
         let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
         let gpufits_paths = vec![
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
@@ -696,7 +696,7 @@ mod tests_aoflagger {
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
             "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
         ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+        BirliContext::new(CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap())
     }
 
     /// Test that flags are sane when not using existing flags.
@@ -815,8 +815,7 @@ mod tests_aoflagger {
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
-        let (jones_array, _) =
-            context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+        let (jones_array, _) = context.read_vis(&img_timestep_range, &img_coarse_chan_range, None);
 
         let existing_flag_array = init_flag_array(
             &context,
