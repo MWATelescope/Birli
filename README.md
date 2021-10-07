@@ -92,10 +92,10 @@ Unfortunately most of the prerequisites aren't available on Windows. However, WS
 ### Installing the binary
 
 ```bash
-cargo install --path .
+cargo --features=aoflagger install --path .
 ```
 
-This creates a `birli` binary in `$HOME/.cargo/bin`
+This creates a `birli` binary with the `aoflagger` feature enabled in `$HOME/.cargo/bin`
 
 ## Troubleshooting
 
@@ -214,6 +214,7 @@ FLAGS:
     -h, --help                  Prints help information
         --no-cable-delay        Do not perform cable length corrections.
         --no-geometric-delay    Do not perform geometric length corrections.
+        --no-rfi                Do not perform RFI Flagging.
     -V, --version               Prints version information
 
 OPTIONS:
