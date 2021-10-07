@@ -13,15 +13,4 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Stable toolchain
-        run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y
-          export PATH="${HOME}/.cargo/bin:${PATH}"
-          rustup set profile default
-          rustup toolchain install stable --component rustfmt,clippy
-          rustup default stable
-
-      - name: Cargo Make CI
-        run: |
-          export PATH="${HOME}/.cargo/bin:${PATH}"
-          cargo make ci
+      - run: cargo make ci

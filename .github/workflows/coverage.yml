@@ -18,20 +18,15 @@ jobs:
 
       - name: Install nightly toolchain
         run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y
-          export PATH="${HOME}/.cargo/bin:${PATH}"
           rustup set profile minimal
           rustup toolchain install nightly-2021-05-09 --component llvm-tools-preview
           rustup default nightly-2021-05-09
 
       - name: Install Cargo Packages
         run: |
-          export PATH="${HOME}/.cargo/bin:${PATH}"
-          apt-get update
-          apt-get install -y unzip libssl-dev jq
           cargo update
           # TODO: thisn't
-          cargo update -p proc-macro2:1.0.29 --precise 1.0.28
+          cargo update -p proc-macro2 --precise 1.0.28
           cargo install --force cargo-make cargo-binutils --locked
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -42,10 +37,9 @@ jobs:
           RUSTFLAGS: -Zinstrument-coverage
           LLVM_PROFILE_FILE: json5format-%m.profraw
         run: |
-          export PATH="${HOME}/.cargo/bin:${PATH}"
           mkdir -p coverage
           # TODO: thisn't
-          cargo update -p approx:0.5.0 --precise 0.4.0
+          cargo update -p approx --precise 0.4.0
           cargo test -- --include-ignored
           cargo profdata -- \
             merge -sparse json5format-*.profraw -o json5format.profdata
