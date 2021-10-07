@@ -90,6 +90,13 @@ where
                     .help("Do not perform geometric length corrections.")
             )
             .arg(
+                Arg::with_name("no-rfi")
+                    .long("no-rfi")
+                    .takes_value(false)
+                    .required(false)
+                    .help("Do not perform RFI Flagging.")
+            )
+            .arg(
                 Arg::with_name("emulate-cotter")
                     .long("emulate-cotter")
                     .takes_value(false)
@@ -151,7 +158,7 @@ where
                     Some(get_antenna_flags(&context)),
                 );
 
-                let (mut jones_array, flag_array) = context_to_jones_array(
+                let (mut jones_array, mut flag_array) = context_to_jones_array(
                     &context,
                     &img_timestep_range,
                     &img_coarse_chan_range,
@@ -175,15 +182,20 @@ where
                     );
                 }
 
-                let strategy_filename = &aoflagger.FindStrategyFileMWA();
-                debug!("flagging with strategy {}", strategy_filename);
-                let flag_array = flag_jones_array_existing(
-                    &aoflagger,
-                    strategy_filename,
-                    &jones_array,
-                    Some(flag_array),
-                    true,
-                );
+                let no_rfi = aoflagger_matches.is_present("no-rfi");
+                if !no_rfi {
+                    let strategy_filename = &aoflagger.FindStrategyFileMWA();
+                    debug!("flagging with strategy {}", strategy_filename);
+                    flag_array = flag_jones_array_existing(
+                        &aoflagger,
+                        strategy_filename,
+                        &jones_array,
+                        Some(flag_array),
+                        true,
+                    );
+                } else {
+                    debug!("skipped flagging");
+                }
 
                 let array_pos = if aoflagger_matches.is_present("emulate-cotter") {
                     Some(LatLngHeight {
