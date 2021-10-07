@@ -8,6 +8,7 @@ RUN apt-get update \
         build-essential \
         curl \
         git \
+        jq \
         libcfitsio-dev \
         liberfa-dev \
         libssl-dev \
@@ -18,18 +19,17 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Get Rust
+RUN mkdir -m755 /opt/rust /opt/cargo
+ENV RUSTUP_HOME=/opt/rust CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
 
-# Add .cargo/bin to PATH
-ENV PATH="/root/.cargo/bin:${PATH}"
-
 # Get cargo make
-RUN cargo install --force cargo-make
+RUN cargo install --force cargo-make cargo-binutils
 
 ADD . /app
 WORKDIR /app
 
 RUN cargo clean
-RUN cargo install --path .
+RUN cargo install --path . --features aoflagger
 
-ENTRYPOINT [ "/root/.cargo/bin/birli" ]
+ENTRYPOINT [ "birli" ]
