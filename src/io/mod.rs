@@ -142,7 +142,7 @@ pub fn write_uvfits<'a>(
     mwalib_baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
 ) -> Result<(), IOError> {
-    trace!("start write_uvfits");
+    trace!("start write_uvfits to {:?}", filename);
 
     let mut uvfits_writer = UvfitsWriter::from_mwalib(
         filename,
