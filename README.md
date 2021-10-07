@@ -112,17 +112,17 @@ cargo test
 Experiencing segfaults? I can guarantee it's because of one of the C library dependencies.
 Make sure you have the right versions of all the libraries. These are specified in [Prerequisites](#Prerequisites).
 
-Get library versions with:
+Get library versions on linux with:
 
 ```bash
-apt show liberfa-dev
+pkg-config --modversion cfitsio
+pkg-config --modversion erfa
 aoflagger --version
-# cfitsio: ???
 ```
 
 If you have something like CASA installed from apt, it's going to put an
 ancient cfitsio library version in `/usr/lib/x86_64-linux-gnu/`, to get around
-this, you must export `LD_LIBRARY_PATH=/usr/local/lib/:/usr/lib/x86_64-linux-gnu/` in the shell so that Birli can find the correct library version.
+this, you must export `LD_LIBRARY_PATH=/usr/local/lib/` in the shell so that Birli can find the correct library version.
 
 ### Logging
 
