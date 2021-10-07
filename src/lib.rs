@@ -1,5 +1,5 @@
 #![warn(missing_docs)]
-#![warn(missing_doc_code_examples)]
+#![warn(rustdoc::missing_doc_code_examples)]
 #![warn(clippy::missing_safety_doc)]
 #![warn(clippy::missing_errors_doc)]
 
