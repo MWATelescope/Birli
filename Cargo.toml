@@ -59,6 +59,7 @@ num-complex = "0.3.0"
 
 [[bench]]
 name = "bench"
+path = "benches"
 harness = false
 
 [profile.bench]
