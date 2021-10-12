@@ -346,6 +346,13 @@ impl<'a> UvfitsWriter<'a> {
         let start_epoch = time::gps_to_epoch(first_gps_time);
         let phase_centre = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
         let centre_freq_chan = num_img_chans / 2;
+        // Get the first coarse chan index, and multiply by number of fine chans per coarse
+        // then add the centre_freq_chan which will give us the centre index (of all fine channels).
+        let img_centre_fine_chan_idx: usize =
+            mwalib_coarse_chan_range.start * fine_chans_per_coarse + centre_freq_chan;
+        let centre_freq_hz =
+            context.metafits_context.metafits_fine_chan_freqs_hz[img_centre_fine_chan_idx];
+
         Self::new(
             filename,
             mwalib_timestep_range.len(),
@@ -353,7 +360,7 @@ impl<'a> UvfitsWriter<'a> {
             num_img_chans,
             start_epoch,
             context.metafits_context.corr_fine_chan_width_hz as f64,
-            context.metafits_context.centre_freq_hz as f64,
+            centre_freq_hz,
             centre_freq_chan,
             phase_centre,
             Some(context.metafits_context.obs_name.as_str()),
@@ -1013,11 +1020,7 @@ mod tests_aoflagger {
                     get_required_fits_key!($right_fptr, &$right_hdu, key),
                 ) {
                     (Ok::<String, _>(left_val), Ok::<String, _>(right_val)) => {
-                        assert_eq!(
-                            left_val, right_val,
-                            "mismatch for metafits short string key {}",
-                            key,
-                        );
+                        assert_eq!(left_val, right_val, "mismatch for short string key {}", key,);
                     }
                     (Err(err), Ok(right_val)) => {
                         panic!(
@@ -1043,7 +1046,7 @@ mod tests_aoflagger {
                     (Ok(left_val), Ok(right_val)) => {
                         assert!(
                             approx_eq!(f64, left_val, right_val, F64Margin::default()),
-                            "mismatch for metafits short f64 key {}. {} != {} (margin={:?})",
+                            "mismatch for short f64 key {}. {} != {} (margin={:?})",
                             key,
                             left_val,
                             right_val,
