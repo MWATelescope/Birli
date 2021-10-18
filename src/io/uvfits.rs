@@ -84,6 +84,8 @@ fn decode_uvfits_baseline(bl: usize) -> (usize, usize) {
 
 /// A helper struct to write out a uvfits file.
 ///
+/// Note: only a single contiguous spectral window is supported.
+/// 
 /// TODO: make writer and reader a single class?
 pub struct UvfitsWriter<'a> {
     /// The path to the uvifts file.
@@ -96,7 +98,12 @@ pub struct UvfitsWriter<'a> {
     /// The number of uvfits rows that have currently been written.
     current_num_rows: usize,
 
-    /// The center frequency of the center fine channel \[Hz\].
+    /// The center frequency of the center fine channel of the spectral
+    /// window being written to this file. \[Hz\]
+    /// 
+    /// This is used in both the reference frequency (`FREQ`) in the antenna HDU, 
+    /// and the center reference value of the frequency axis (`CRVAL4`) in the 
+    /// visibility hdu.
     centre_freq: f64,
 
     /// A `hifitime` [Epoch] struct associated with the first timestep of the
@@ -126,11 +133,12 @@ impl<'a> UvfitsWriter<'a> {
     /// let start_epoch = time::gps_to_epoch(first_gps_time);
     /// ```
     ///
-    /// `centre_freq_hz` is the centre frequency of the coarse band that this
-    /// uvfits file pertains to [Hz].
+    /// `centre_freq_hz` is center frequency of the center fine channel of the 
+    /// spectral window being written to this file. \[Hz\]
     ///
-    /// `centre_freq_chan` is the index (from zero) of the centre frequency of
-    /// the channels of this uvfits file.
+    /// `centre_freq_chan` is the index (from zero) of the center frequency of 
+    /// the center fine channel of the spectral] window being written to this 
+    /// file.
     ///
     /// `phase_centre` is a [`RADec`] of the observation's phase center, used to
     /// populate the `OBSRA` and `OBSDEC` keys.
@@ -974,6 +982,7 @@ mod tests {
 /// Tests which require the use of the aoflagger feature
 mod tests_aoflagger {
     use super::*;
+    use approx::assert_abs_diff_eq;
     use mwa_rust_core::{
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
@@ -1241,9 +1250,11 @@ mod tests_aoflagger {
                 "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "NAXIS3", "NAXIS4", "NAXIS5", "NAXIS6",
                 "BSCALE", "PSCAL1", "PZERO1", "PSCAL2", "PZERO2", "PSCAL3", "PZERO3", "PSCAL4",
                 "PZERO4", "PSCAL5", "PZERO5", "CRVAL2", "CRPIX2", "CDELT2", "CRVAL3", "CDELT3",
-                "CRPIX3", "CRVAL4", "CDELT4", "CRPIX4", "CRVAL5", "CRPIX5", "CDELT5", "CRVAL6",
-                "CRPIX6", "CDELT6", "EPOCH", "OBSRA",
-                "OBSDEC",
+                "CRPIX3",
+                // This is actually incorrect in Cotter, see https://github.com/MWATelescope/Birli/issues/6
+                // "CRVAL4",
+                "CDELT4", "CRPIX4", "CRVAL5", "CRPIX5", "CDELT5", "CRVAL6", "CRPIX6", "CDELT6",
+                "EPOCH", "OBSRA", "OBSDEC",
                 // TODO: "FIBRFACT", (v-factor, cable type?)
             ],
             left_fptr,
@@ -1272,10 +1283,12 @@ mod tests_aoflagger {
 
         assert_f64_string_keys_eq!(
             vec![
-                "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "PCOUNT", "GCOUNT", "TFIELDS",
+                "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "PCOUNT", "GCOUNT", "TFIELDS", //
                 // TODO: "ARRAYX", "ARRAYY", "ARRAYZ",
-                "FREQ",   // TODO: "GSTIA0",
-                "DEGPDY", // TODO: "RDATE",
+                // "FREQ", // This is incorrect in Cotter. See: https://github.com/MWATelescope/Birli/issues/6
+                // TODO: "GSTIA0",
+                "DEGPDY", //
+                // TODO: "RDATE",
                 "POLARX", "POLARY", "UT1UTC", "DATUTC", "NUMORB", "NOPCAL", "FREQID", "IATUTC",
             ],
             left_fptr,
@@ -1548,6 +1561,8 @@ mod tests_aoflagger {
     #[test]
     #[cfg(feature = "aoflagger")]
     fn uvfits_tables_from_mwalib_matches_cotter() {
+        use approx::assert_abs_diff_eq;
+
         let context = get_mwa_ord_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
@@ -1624,5 +1639,76 @@ mod tests_aoflagger {
         assert_uvfits_vis_table_eq(&mut birli_fptr, &mut cotter_fptr);
         assert_uvfits_ant_header_eq(&mut birli_fptr, &mut cotter_fptr);
         assert_uvfits_ant_table_eq(&mut birli_fptr, &mut cotter_fptr);
+    }
+
+    /// This test ensures center frequencies are calculated correctly. 
+    /// See: https://github.com/MWATelescope/Birli/issues/6
+    #[test]
+    fn center_frequencies() {
+        
+        let context = get_mwa_ord_context();
+
+
+        let tmp_uvfits_file = NamedTempFile::new().unwrap();
+
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(img_timestep_idxs.len(), 4);
+        let img_timestep_range =
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let img_coarse_chan_range =
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        let img_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+
+        let array_pos = Some(LatLngHeight {
+            longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
+            latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
+            height_metres: COTTER_MWA_HEIGHT_METRES,
+        });
+
+        let mut u = UvfitsWriter::from_mwalib(
+            tmp_uvfits_file.path(),
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            &img_baseline_idxs,
+            array_pos,
+        )
+        .unwrap();
+
+        let flag_array = init_flag_array(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            Some(get_antenna_flags(&context)),
+        );
+
+        let (jones_array, flag_array) = context_to_jones_array(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            Some(flag_array),
+        );
+
+        u.write_jones_flags(
+            &context,
+            &jones_array,
+            &flag_array,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            &img_baseline_idxs,
+        )
+        .unwrap();
+
+        u.write_ants_from_mwalib(&context.metafits_context).unwrap();        
+        
+        let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
+
+        let birli_vis_hdu = fits_open_hdu!(&mut birli_fptr, 0).unwrap();
+        let birli_vis_freq: f64 = get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "CRVAL4").unwrap();
+        assert_abs_diff_eq!(birli_vis_freq, 229760000.);
+        let birli_ant_hdu = fits_open_hdu!(&mut birli_fptr, 1).unwrap();
+        let birli_ant_freq: f64 = get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FREQ").unwrap();
+        assert_abs_diff_eq!(birli_ant_freq, 229760000.);
     }
 }
