@@ -1,7 +1,7 @@
 FROM ubuntu:21.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-
+ARG DEBUG
 RUN apt-get update \
     && apt-get install -y \
         aoflagger-dev \
@@ -14,8 +14,11 @@ RUN apt-get update \
         libssl-dev \
         pkg-config \
         unzip \
-        zip \
-    && apt-get clean \
+        zip
+RUN test -z "$DEBUG" || ( \
+        apt-get install -y vim gdb \
+    )
+RUN apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Get Rust
@@ -29,7 +32,12 @@ RUN cargo install --force cargo-make cargo-binutils
 ADD . /app
 WORKDIR /app
 
-RUN cargo clean
-RUN cargo install --path . --features aoflagger
+RUN cargo clean \
+    && cargo install --path . --features aoflagger
+RUN test -z "$DEBUG" || (\
+        mkdir benches \
+        && touch benches/bench.rs \
+        && cargo build --features aoflagger \
+    )
 
-ENTRYPOINT [ "birli" ]
+ENTRYPOINT [ "/app/target/release/birli" ]

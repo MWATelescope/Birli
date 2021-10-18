@@ -156,6 +156,45 @@ Note: This mounts the current directory to `/app` in the Docker image, meaning b
 `target` folder. so if your host system is a different
 architecture than Docker, you may need to `cargo clean` each time you switch between these environments. You may also want to temporarily disable any linters or language servers that use
 
+### Singularity on HPC
+
+```bash
+# - load the singularity module
+module load singularity
+# - cd into your preferred sif file location, e.g. /pawsey/mwa/singularity/birli
+# - create a .sif file from the latest mwatelescope/birli docker image
+singularity pull --dir . docker://mwatelescope/birli:latest
+# - run birli within the singularity image
+singularity exec  /pawsey/mwa/singularity/birli/birli_latest.sif /app/target/release/birli ${YOUR_BIRLI_ARGS}
+```
+
+### Singularity on HPC (debug mode)
+
+This will give you much more information about any problem you're having with Birli, however the
+debug build is not optimised, and is much slower.
+
+```bash
+# - request an interactive HPC session
+salloc --partition workq --time 1:00:00 --nodes 1 -c 38 --mem=350G
+# - load the singularity module
+module load singularity
+# - cd into your preferred sif file location, e.g. /pawsey/mwa/singularity/birli
+# - create a .sif file from the latest mwatelescope/birli docker image
+singularity pull --dir . docker://mwatelescope/birli:debug
+# - run birli within the singularity image
+singularity exec  /pawsey/mwa/singularity/birli/birli_debug.sif /bin/bash
+```
+
+then within this shell
+
+```bash
+# - enable lots of logs
+export RUST_LOG=trace
+# - run birli in debug mode with GDB
+gdb --args /app/target/debug/birli ${YOUR_BIRLI_ARGS}
+# > run
+```
+
 ### the trait bound `Jones<f32>: AbsDiffEq<_>` is not satisfied
 
 if you see an error that looks like this:
