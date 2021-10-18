@@ -12,7 +12,7 @@ use std::{ffi::CString, ops::Range};
 use fitsio::{errors::check_status as fits_check_status, FitsFile};
 use indicatif::ProgressStyle;
 use itertools::izip;
-use log::warn;
+use log::{trace, warn};
 use mwa_rust_core::{
     constants::VEL_C,
     erfa_sys,
@@ -161,6 +161,7 @@ impl<'a> UvfitsWriter<'a> {
     ) -> Result<Self, UvfitsWriteError> {
         // Delete any file that already exists.
         if filename.exists() {
+            trace!("file {:?} exists, deleting", &filename);
             std::fs::remove_file(&filename)?;
         }
 
@@ -168,6 +169,7 @@ impl<'a> UvfitsWriter<'a> {
         let mut status = 0;
         let c_filename = CString::new(filename.to_str().unwrap())?;
         let mut fptr = std::ptr::null_mut();
+        trace!("initialising fits file with fitsio_sys ({:?})", &filename);
         unsafe {
             fitsio_sys::ffinit(
                 &mut fptr as *mut *mut _, /* O - FITS file pointer                   */
@@ -182,6 +184,7 @@ impl<'a> UvfitsWriter<'a> {
         let mut naxes = [0, 3, 4, num_chans as i64, 1, 1];
         let num_group_params = 5;
         let total_num_rows = num_timesteps * num_baselines;
+        trace!("setting group params in fits file ({:?})", &filename);
         unsafe {
             fitsio_sys::ffphpr(
                 fptr,                  /* I - FITS file pointer                        */
@@ -198,12 +201,14 @@ impl<'a> UvfitsWriter<'a> {
         fits_check_status(status)?;
 
         // Finally close the file.
+        trace!("closing fits file ({:?})", &filename);
         unsafe {
             fitsio_sys::ffclos(fptr, &mut status);
         }
         fits_check_status(status)?;
 
         // Open the fits file with rust-fitsio.
+        trace!("opening  ({:?})", &filename);
         let mut u = FitsFile::edit(&filename)?;
         let hdu = u.hdu(0)?;
         hdu.write_key(&mut u, "BSCALE", 1.0)?;
