@@ -85,7 +85,7 @@ fn decode_uvfits_baseline(bl: usize) -> (usize, usize) {
 /// A helper struct to write out a uvfits file.
 ///
 /// Note: only a single contiguous spectral window is supported.
-/// 
+///
 /// TODO: make writer and reader a single class?
 pub struct UvfitsWriter<'a> {
     /// The path to the uvifts file.
@@ -100,9 +100,9 @@ pub struct UvfitsWriter<'a> {
 
     /// The center frequency of the center fine channel of the spectral
     /// window being written to this file. \[Hz\]
-    /// 
-    /// This is used in both the reference frequency (`FREQ`) in the antenna HDU, 
-    /// and the center reference value of the frequency axis (`CRVAL4`) in the 
+    ///
+    /// This is used in both the reference frequency (`FREQ`) in the antenna HDU,
+    /// and the center reference value of the frequency axis (`CRVAL4`) in the
     /// visibility hdu.
     centre_freq: f64,
 
@@ -133,11 +133,11 @@ impl<'a> UvfitsWriter<'a> {
     /// let start_epoch = time::gps_to_epoch(first_gps_time);
     /// ```
     ///
-    /// `centre_freq_hz` is center frequency of the center fine channel of the 
+    /// `centre_freq_hz` is center frequency of the center fine channel of the
     /// spectral window being written to this file. \[Hz\]
     ///
-    /// `centre_freq_chan` is the index (from zero) of the center frequency of 
-    /// the center fine channel of the spectral] window being written to this 
+    /// `centre_freq_chan` is the index (from zero) of the center frequency of
+    /// the center fine channel of the spectral] window being written to this
     /// file.
     ///
     /// `phase_centre` is a [`RADec`] of the observation's phase center, used to
@@ -1561,8 +1561,6 @@ mod tests_aoflagger {
     #[test]
     #[cfg(feature = "aoflagger")]
     fn uvfits_tables_from_mwalib_matches_cotter() {
-        use approx::assert_abs_diff_eq;
-
         let context = get_mwa_ord_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
@@ -1641,13 +1639,11 @@ mod tests_aoflagger {
         assert_uvfits_ant_table_eq(&mut birli_fptr, &mut cotter_fptr);
     }
 
-    /// This test ensures center frequencies are calculated correctly. 
+    /// This test ensures center frequencies are calculated correctly.
     /// See: https://github.com/MWATelescope/Birli/issues/6
     #[test]
     fn center_frequencies() {
-        
         let context = get_mwa_ord_context();
-
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
 
@@ -1700,15 +1696,17 @@ mod tests_aoflagger {
         )
         .unwrap();
 
-        u.write_ants_from_mwalib(&context.metafits_context).unwrap();        
-        
+        u.write_ants_from_mwalib(&context.metafits_context).unwrap();
+
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
 
         let birli_vis_hdu = fits_open_hdu!(&mut birli_fptr, 0).unwrap();
-        let birli_vis_freq: f64 = get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "CRVAL4").unwrap();
+        let birli_vis_freq: f64 =
+            get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "CRVAL4").unwrap();
         assert_abs_diff_eq!(birli_vis_freq, 229760000.);
         let birli_ant_hdu = fits_open_hdu!(&mut birli_fptr, 1).unwrap();
-        let birli_ant_freq: f64 = get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FREQ").unwrap();
+        let birli_ant_freq: f64 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FREQ").unwrap();
         assert_abs_diff_eq!(birli_ant_freq, 229760000.);
     }
 }
