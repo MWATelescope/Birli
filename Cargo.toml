@@ -8,6 +8,7 @@ repository = "https://github.com/MWATelescope/Birli"
 authors = [
     "Derwent McElhinney <derwent.mcelhinney@curtin.edu.au>",
     "Christopher H. Jordan <christopherjordan87@gmail.com>",
+    "Greg Sleap <greg.sleap@curtin.edu.au>",
 ]
 edition = "2018"
 license = "MPL-2.0"
