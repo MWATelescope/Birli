@@ -1,5 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.1.10 (2021-10-22)
+
+- add CLI flag to skip flagging
+- calculate the correct reference frequency for uvfits (issue #6)
+- extra logging for uvfits
+
 # Version 0.1.9 (2021-09-01)
 
 - [EOR-34] put aoflagger behind feature
@@ -30,7 +36,7 @@
   - weights aren't yet affected by averaging
 - Added Docker image
 
- # Version 0.1.4 (2021-07-09)
+# Version 0.1.4 (2021-07-09)
 
 - [EOR-22] correct_cable_lengths
 - [EOR-18] Implement updated mwalib timestep / coarse channel interface
@@ -48,34 +54,34 @@
 
 # Version 0.1.3 (2021-05-13)
 
-* Release was created to test a fix for docs.rs.
+- Release was created to test a fix for docs.rs.
 
 # Version 0.1.2 (2021-05-05)
 
-* Release was created to test release automation.
-* [EOR-19] optimizations:
-  * reducing `pin()`s.
-  * parallelize allocating, loading and flagging
-  * use chunks_exact instead of chunks
-  * use Vec instead of BTreeMap where possible
-* [EOR-21] quality of life features:
-  * progress bars!
-  * basic timing info for each stage
-* [EOR-20] automation and [documentation](doc/benchmark_results.md) of benchmarks
-* Public API is fully documented.
-* Use Rust 1.51
+- Release was created to test release automation.
+- [EOR-19] optimizations:
+  - reducing `pin()`s.
+  - parallelize allocating, loading and flagging
+  - use chunks_exact instead of chunks
+  - use Vec instead of BTreeMap where possible
+- [EOR-21] quality of life features:
+  - progress bars!
+  - basic timing info for each stage
+- [EOR-20] automation and [documentation](doc/benchmark_results.md) of benchmarks
+- Public API is fully documented.
+- Use Rust 1.51
 
 # Version 0.1.1 (2021-05-04)
 
-* Release was created to test docs.rs. Flagging with AOFlagger mostly works and seems to resemble
+- Release was created to test docs.rs. Flagging with AOFlagger mostly works and seems to resemble
   output from Cotter with some caveats:
-  * does not match for observations where not all coarse channels start at the same time because of
+  - does not match for observations where not all coarse channels start at the same time because of
     <https://github.com/MWATelescope/mwalib/issues/22>
-  * no optimization, so significantly slower.
-* [EOR-6] CI/CD runs multi-platform tests and tracks coverage automatically
-* [EOR-13] 95% test coverage using synthetic test data
-* [EOR-14] Created CXX Bindings for AOFlagger
-* [EOR-11] GPUFits files can be read into AOFlagger ImageSet objects
-* [EOR-15] Writes to .mwaf flag file sets.
-* [EOR-17] Implemented `birli aoflagger` command line interface
-* [EOR-20] CI/CD tracks benchmark results automatically
+  - no optimization, so significantly slower.
+- [EOR-6] CI/CD runs multi-platform tests and tracks coverage automatically
+- [EOR-13] 95% test coverage using synthetic test data
+- [EOR-14] Created CXX Bindings for AOFlagger
+- [EOR-11] GPUFits files can be read into AOFlagger ImageSet objects
+- [EOR-15] Writes to .mwaf flag file sets.
+- [EOR-17] Implemented `birli aoflagger` command line interface
+- [EOR-20] CI/CD tracks benchmark results automatically

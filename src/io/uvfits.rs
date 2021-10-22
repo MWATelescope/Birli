@@ -1111,7 +1111,7 @@ mod tests_aoflagger {
                 _ => {
                     panic!("could not read left ant HDU as a table")
                 }
-            };
+            }
         };
     }
 
@@ -1338,7 +1338,7 @@ mod tests_aoflagger {
                 _ => {
                     panic!("could not read HDUs as group table")
                 }
-            };
+            }
         };
     }
 
@@ -1705,13 +1705,15 @@ mod tests_aoflagger {
 
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
 
+        let expected_center_freq = 229760000.;
+
         let birli_vis_hdu = fits_open_hdu!(&mut birli_fptr, 0).unwrap();
         let birli_vis_freq: f64 =
             get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "CRVAL4").unwrap();
-        assert_abs_diff_eq!(birli_vis_freq, 229760000.);
+        assert_abs_diff_eq!(birli_vis_freq, expected_center_freq);
         let birli_ant_hdu = fits_open_hdu!(&mut birli_fptr, 1).unwrap();
         let birli_ant_freq: f64 =
             get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FREQ").unwrap();
-        assert_abs_diff_eq!(birli_ant_freq, 229760000.);
+        assert_abs_diff_eq!(birli_ant_freq, expected_center_freq);
     }
 }
