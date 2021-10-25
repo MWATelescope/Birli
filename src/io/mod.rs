@@ -132,8 +132,8 @@ pub trait WriteableVis: Sync + Send {
 ///
 /// TODO: replace all these args with birli_context
 #[allow(clippy::too_many_arguments)]
-pub fn write_uvfits<'a>(
-    filename: &'a Path,
+pub fn write_uvfits<T: AsRef<Path>>(
+    path: T,
     context: &CorrelatorContext,
     jones_array: &Array3<Jones<f32>>,
     flag_array: &Array3<bool>,
@@ -142,10 +142,10 @@ pub fn write_uvfits<'a>(
     mwalib_baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
 ) -> Result<(), IOError> {
-    trace!("start write_uvfits to {:?}", filename);
+    trace!("start write_uvfits to {:?}", path.as_ref());
 
     let mut uvfits_writer = UvfitsWriter::from_mwalib(
-        filename,
+        path,
         context,
         mwalib_timestep_range,
         mwalib_coarse_chan_range,

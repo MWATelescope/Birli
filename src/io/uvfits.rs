@@ -6,7 +6,7 @@
 //! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
 // use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{ffi::CString, ops::Range};
 
 use fitsio::{errors::check_status as fits_check_status, FitsFile};
@@ -87,9 +87,9 @@ fn decode_uvfits_baseline(bl: usize) -> (usize, usize) {
 /// Note: only a single contiguous spectral window is supported.
 ///
 /// TODO: make writer and reader a single class?
-pub struct UvfitsWriter<'a> {
+pub struct UvfitsWriter {
     /// The path to the uvifts file.
-    path: &'a Path,
+    path: PathBuf,
 
     /// The number of uvfits rows. This is equal to `num_timesteps` *
     /// `num_baselines`.
@@ -117,8 +117,8 @@ pub struct UvfitsWriter<'a> {
     array_pos: LatLngHeight,
 }
 
-impl<'a> UvfitsWriter<'a> {
-    /// Create a new uvfits file at the specified filename.
+impl UvfitsWriter {
+    /// Create a new uvfits file at the specified path.
     ///
     /// This will destroy any existing uvfits file at that path
     ///
@@ -149,13 +149,13 @@ impl<'a> UvfitsWriter<'a> {
     /// # Errors
     ///
     /// Will return an [`UvfitsWriteError`] if:
-    /// - there is an existing file at `filename` which cannot be removed.
+    /// - there is an existing file at `path` which cannot be removed.
     /// - a fits operation fails.
     ///
     /// TODO: replace all these args with birli_context
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        filename: &'a Path,
+    pub fn new<T: AsRef<Path>>(
+        path: T,
         num_timesteps: usize,
         num_baselines: usize,
         num_chans: usize,
@@ -168,20 +168,20 @@ impl<'a> UvfitsWriter<'a> {
         array_pos: Option<LatLngHeight>,
     ) -> Result<Self, UvfitsWriteError> {
         // Delete any file that already exists.
-        if filename.exists() {
-            trace!("file {:?} exists, deleting", &filename);
-            std::fs::remove_file(&filename)?;
+        if path.as_ref().exists() {
+            trace!("file {:?} exists, deleting", &path.as_ref());
+            std::fs::remove_file(&path)?;
         }
 
         // Create a new fits file.
         let mut status = 0;
-        let c_filename = CString::new(filename.to_str().unwrap())?;
+        let c_path = CString::new(path.as_ref().to_str().unwrap())?;
         let mut fptr = std::ptr::null_mut();
-        trace!("initialising fits file with fitsio_sys ({:?})", &filename);
+        trace!("initialising fits file with fitsio_sys ({:?})", &path.as_ref());
         unsafe {
             fitsio_sys::ffinit(
                 &mut fptr as *mut *mut _, /* O - FITS file pointer                   */
-                c_filename.as_ptr(),      /* I - name of file to create              */
+                c_path.as_ptr(),      /* I - name of file to create              */
                 &mut status,              /* IO - error status                       */
             );
         }
@@ -192,7 +192,7 @@ impl<'a> UvfitsWriter<'a> {
         let mut naxes = [0, 3, 4, num_chans as i64, 1, 1];
         let num_group_params = 5;
         let total_num_rows = num_timesteps * num_baselines;
-        trace!("setting group params in fits file ({:?})", &filename);
+        trace!("setting group params in fits file ({:?})", &path.as_ref());
         unsafe {
             fitsio_sys::ffphpr(
                 fptr,                  /* I - FITS file pointer                        */
@@ -209,15 +209,15 @@ impl<'a> UvfitsWriter<'a> {
         fits_check_status(status)?;
 
         // Finally close the file.
-        trace!("closing fits file ({:?})", &filename);
+        trace!("closing fits file ({:?})", &path.as_ref());
         unsafe {
             fitsio_sys::ffclos(fptr, &mut status);
         }
         fits_check_status(status)?;
 
         // Open the fits file with rust-fitsio.
-        trace!("opening  ({:?})", &filename);
-        let mut u = FitsFile::edit(&filename)?;
+        trace!("opening  ({:?})", &path.as_ref());
+        let mut u = FitsFile::edit(&path)?;
         let hdu = u.hdu(0)?;
         hdu.write_key(&mut u, "BSCALE", 1.0)?;
 
@@ -323,7 +323,7 @@ impl<'a> UvfitsWriter<'a> {
         };
 
         Ok(Self {
-            path: filename,
+            path: path.as_ref().to_path_buf(),
             total_num_rows,
             current_num_rows: 0,
             centre_freq: centre_freq_hz,
@@ -333,7 +333,7 @@ impl<'a> UvfitsWriter<'a> {
         })
     }
 
-    /// Create a new uvfits file at the specified filename using an [`mwalib::CorrelatorContext`]
+    /// Create a new uvfits file at the specified path using an [`mwalib::CorrelatorContext`]
     ///
     /// # Details
     ///
@@ -343,8 +343,8 @@ impl<'a> UvfitsWriter<'a> {
     /// # Errors
     ///
     /// See: [`UvfitsWriter::new`]
-    pub fn from_mwalib(
-        filename: &'a Path,
+    pub fn from_mwalib<T: AsRef<Path>>(
+        path: T,
         context: &CorrelatorContext,
         mwalib_timestep_range: &Range<usize>,
         mwalib_coarse_chan_range: &Range<usize>,
@@ -367,7 +367,7 @@ impl<'a> UvfitsWriter<'a> {
             context.metafits_context.metafits_fine_chan_freqs_hz[img_centre_fine_chan_idx];
 
         Self::new(
-            filename,
+            path,
             mwalib_timestep_range.len(),
             mwalib_baseline_idxs.len(),
             num_img_chans,
@@ -786,7 +786,7 @@ impl<'a> UvfitsWriter<'a> {
 // - replace coarse chan range with...
 // - replace baseline indices with ...
 // - pass in tiles xyz geodetic
-impl<'a> WriteableVis for UvfitsWriter<'a> {
+impl WriteableVis for UvfitsWriter {
     fn write_vis_mwalib(
         &mut self,
         jones_array: ArrayView3<Jones<f32>>,
@@ -1611,11 +1611,11 @@ mod tests_aoflagger {
             Some(flag_array),
         );
 
-        let strategy_filename = &aoflagger.FindStrategyFileMWA();
+        let strategy_path = &aoflagger.FindStrategyFileMWA();
 
         let flag_array = flag_jones_array_existing(
             &aoflagger,
-            strategy_filename,
+            strategy_path,
             &jones_array,
             Some(flag_array),
             true,
