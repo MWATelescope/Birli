@@ -113,7 +113,7 @@ pub struct UvfitsWriter {
     /// The RA/Dec where this observation is phased to
     phase_centre: RADec,
 
-    /// Array Position, geocentric
+    /// Array Position [Latitude (radians), Longitude (radians), Height (m)]
     array_pos: LatLngHeight,
 }
 

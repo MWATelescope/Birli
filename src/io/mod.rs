@@ -9,7 +9,7 @@ pub mod uvfits;
 use std::{ops::Range, path::Path};
 
 use log::trace;
-use mwa_rust_core::{mwalib::CorrelatorContext, Jones, LatLngHeight};
+use mwa_rust_core::{Jones, LatLngHeight, RADec, io::{VisWritable, ms::MeasurementSetWriter}, mwalib::CorrelatorContext};
 use ndarray::{Array3, ArrayView3, ArrayViewMut3};
 use uvfits::UvfitsWriter;
 
@@ -165,6 +165,114 @@ pub fn write_uvfits<T: AsRef<Path>>(
     uvfits_writer.write_ants_from_mwalib(&context.metafits_context)?;
 
     trace!("end write_uvfits");
+
+    Ok(())
+}
+
+/// Write the given ndarrays of flags and [`Jones`] matrix visibilities to a
+/// measurement set.
+///
+/// mwalib timestep, coarse channel and baseline indices are needed to map between
+/// indices in the arrays and indices according to mwalib, which are not the same.
+///
+/// # Examples
+///
+/// ```rust
+/// use tempfile::tempdir;
+/// use birli::{
+///     get_flaggable_timesteps,
+///     context_to_jones_array,
+///     write_ms,
+///     mwa_rust_core::mwalib::CorrelatorContext
+/// };
+///
+/// // define our input files
+/// let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
+/// let gpufits_paths = vec![
+///     "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
+/// ];
+///
+/// // define a temporary directory for output files
+/// let tmp_dir = tempdir().unwrap();
+///
+/// // define our output flag file template
+/// let ms_out = tmp_dir.path().join("synthetic.ms");
+///
+/// // Create an mwalib::CorrelatorContext for accessing visibilities.
+/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+///
+/// // Determine which timesteps and coarse channels we want to use
+/// let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+/// let img_timestep_range =
+///     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+/// let img_coarse_chan_range =
+///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+///
+///
+/// // generate an array of jones matrices
+/// let (jones_array, flag_array) = context_to_jones_array(
+///     &context,
+///     &img_timestep_range,
+///     &img_coarse_chan_range,
+///     None,
+/// );
+///
+/// // write the visibilities to disk as .ms
+///
+/// let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+///
+/// write_ms(
+///     ms_out.as_path(),
+///     &context,
+///     &jones_array,
+///     &flag_array,
+///     &img_timestep_range,
+///     &img_coarse_chan_range,
+///     &baseline_idxs,
+///     None,
+/// )
+/// .unwrap();
+/// ```
+/// # Errors
+///
+/// See: [`UvfitsWriter`]
+///
+/// TODO: replace all these args with birli_context
+#[allow(clippy::too_many_arguments)]
+pub fn write_ms<T: AsRef<Path>>(
+    path: T,
+    context: &CorrelatorContext,
+    jones_array: &Array3<Jones<f32>>,
+    flag_array: &Array3<bool>,
+    mwalib_timestep_range: &Range<usize>,
+    mwalib_coarse_chan_range: &Range<usize>,
+    mwalib_baseline_idxs: &[usize],
+    array_pos: Option<LatLngHeight>,
+) -> Result<(), IOError> {
+    trace!("start write_ms to {:?}", path.as_ref());
+
+    let phase_centre = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+    let mut ms_writer = MeasurementSetWriter::new(path, phase_centre, array_pos);
+
+    ms_writer
+        .initialize_from_mwalib(&context, &mwalib_timestep_range, &mwalib_coarse_chan_range)
+        .unwrap();
+
+    let weight_array = Array3::from_elem((1, 768, 1), 1.);
+
+    ms_writer
+        .write_vis_mwalib(
+            jones_array.view(),
+            weight_array.view(),
+            &context,
+            &mwalib_timestep_range,
+            &mwalib_coarse_chan_range,
+            &mwalib_baseline_idxs
+        )
+        .unwrap();
+
+    trace!("end write_ms");
 
     Ok(())
 }

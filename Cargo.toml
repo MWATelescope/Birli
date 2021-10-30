@@ -34,7 +34,8 @@ indicatif = { version = "0.16", features = ["rayon"] }
 itertools = "0.10"
 libc = "0.2"
 log = "0.4"
-mwa_rust_core = ">=0.1.1"
+# mwa_rust_core = ">=0.1.1"
+mwa_rust_core = { git = "https://github.com/MWATelescope/mwa_rust_core.git" }
 ndarray = { version = ">=0.14,<0.16", features = ["rayon"] }
 rayon = "1.5"
 regex = "1.4"
