@@ -228,11 +228,26 @@ cargo update -p approx:0.5.0 --precise 0.4.0
 
 ```txt
 USAGE:
-    birli [SUBCOMMAND]
+    birli [FLAGS] [OPTIONS] <fits-files>... -m <metafits> [SUBCOMMAND]
 
 FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
+        --emulate-cotter        Use Cotter's value for array position instead of MWAlib for direct comparison with
+                                Cotter.
+    -h, --help                  Prints help information
+        --no-cable-delay        Do not perform cable length corrections.
+        --no-geometric-delay    Do not perform geometric length corrections.
+    -V, --version               Prints version information
+
+OPTIONS:
+    -f <flag-template>        Sets the template used to name flag files. Percents are substituted for the zero-prefixed
+                              GPUBox ID, which can be up to 3 characters log. Similar to -o in Cotter. Example:
+                              FlagFile%%%.mwaf
+    -m <metafits>             Sets the metafits file.
+    -M <ms-out>               Path for measurement set output. Similar to -o in Cotter. Example: 1196175296.ms
+    -u <uvfits-out>           Path for uvfits output. Similar to -o in Cotter. Example: 1196175296.uvfits
+
+ARGS:
+    <fits-files>...    
 
 SUBCOMMANDS:
     aoflagger    flag visibilities with aoFlagger
@@ -241,30 +256,20 @@ SUBCOMMANDS:
 
 `birli aoflagger -h`
 
+This option is available when the aoflagger feature is enabled. It takes all of
+the same arguments as the base command, but they must come before the aoflagger 
+subcommand.
+
 ```txt
 flag visibilities with aoFlagger
 
 USAGE:
-    birli aoflagger [FLAGS] [OPTIONS] <fits-files>... -m <metafits>
+    birli <fits-files>... -m <metafits> aoflagger [FLAGS]
 
 FLAGS:
-        --emulate-cotter        Use Cotter's value for array position instead of MWAlib for direct comparison with
-                                Cotter.
-    -h, --help                  Prints help information
-        --no-cable-delay        Do not perform cable length corrections.
-        --no-geometric-delay    Do not perform geometric length corrections.
-        --no-rfi                Do not perform RFI Flagging.
-    -V, --version               Prints version information
-
-OPTIONS:
-    -f <flag-template>        Sets the template used to name flag files. Percents are substituted for the zero-prefixed
-                              GPUBox ID, which can be up to 3 characters log. Similar to -o in Cotter. Example:
-                              FlagFile%%%.mwaf
-    -m <metafits>             Sets the metafits file.
-    -u <uvfits-out>           Filename for uvfits output. Similar to -o in Cotter. Example: 1196175296.uvfits
-
-ARGS:
-    <fits-files>...
+    -h, --help       Prints help information
+        --no-rfi     Do not perform RFI Flagging.
+    -V, --version    Prints version information
 ```
 
 ### Cable Delay Corrections

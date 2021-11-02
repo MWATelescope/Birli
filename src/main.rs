@@ -1,6 +1,6 @@
 use birli::io::write_ms;
 use cfg_if::cfg_if;
-use clap::{crate_authors, crate_description, crate_name, crate_version, App};
+use clap::{crate_authors, crate_description, crate_name, crate_version, App, ArgMatches};
 use log::{debug, info};
 use std::{env, ffi::OsString, fmt::Debug};
 
@@ -29,6 +29,7 @@ use clap::{Arg, SubCommand};
 use log::trace;
 use std::path::Path;
 
+
 fn main_with_args<I, T>(args: I)
 where
     I: IntoIterator<Item = T>,
@@ -42,7 +43,59 @@ where
     let mut app = App::new(crate_name!())
         .version(crate_version!())
         .author(crate_authors!())
-        .about(crate_description!());
+        .about(crate_description!())
+        .arg(
+            Arg::with_name("metafits")
+                .short("m")
+                .takes_value(true)
+                .required(true)
+                .help("Sets the metafits file."),
+        )
+        .arg(
+            Arg::with_name("fits-files")
+                .required(true)
+                .multiple(true)
+                // .last(true)
+        )
+        .arg(
+            Arg::with_name("flag-template")
+                .short("f")
+                .takes_value(true)// TODO: specify a default that works with mwa-ord and mwax
+                .help("Sets the template used to name flag files. Percents are substituted for the zero-prefixed GPUBox ID, which can be up to 3 characters log. Similar to -o in Cotter. Example: FlagFile%%%.mwaf")
+        )
+        .arg(
+            Arg::with_name("uvfits-out")
+                .short("u")
+                .takes_value(true)
+                .help("Path for uvfits output. Similar to -o in Cotter. Example: 1196175296.uvfits")
+        )
+        .arg(
+            Arg::with_name("ms-out")
+                .short("M")
+                .takes_value(true)
+                .help("Path for measurement set output. Similar to -o in Cotter. Example: 1196175296.ms")
+        )
+        .arg(
+            Arg::with_name("no-cable-delay")
+                .long("no-cable-delay")
+                .takes_value(false)
+                .required(false)
+                .help("Do not perform cable length corrections.")
+        )
+        .arg(
+            Arg::with_name("no-geometric-delay")
+                .long("no-geometric-delay")
+                .takes_value(false)
+                .required(false)
+                .help("Do not perform geometric length corrections.")
+        )
+        .arg(
+            Arg::with_name("emulate-cotter")
+                .long("emulate-cotter")
+                .takes_value(false)
+                .required(false)
+                .help("Use Cotter's value for array position instead of MWAlib for direct comparison with Cotter.")
+        );
 
     // TODO: fix this lifetime stuff
     #[allow(unused_variables)]
@@ -54,430 +107,181 @@ where
             .about("flag visibilities with aoFlagger")
             .version(&*aoflagger_version.as_str())
             .arg(
-                Arg::with_name("metafits")
-                    .short("m")
-                    .takes_value(true)
-                    .required(true)
-                    .help("Sets the metafits file."),
-            )
-            .arg(
-                Arg::with_name("fits-files")
-                    .required(true)
-                    .multiple(true)
-                    // .last(true)
-            )
-            .arg(
-                Arg::with_name("flag-template")
-                    .short("f")
-                    .takes_value(true)// TODO: specify a default that works with mwa-ord and mwax
-                    .help("Sets the template used to name flag files. Percents are substituted for the zero-prefixed GPUBox ID, which can be up to 3 characters log. Similar to -o in Cotter. Example: FlagFile%%%.mwaf")
-            )
-            .arg(
-                Arg::with_name("uvfits-out")
-                    .short("u")
-                    .takes_value(true)
-                    .help("Path for uvfits output. Similar to -o in Cotter. Example: 1196175296.uvfits")
-            )
-            .arg(
-                Arg::with_name("ms-out")
-                    .short("M")
-                    .takes_value(true)
-                    .help("Path for measurement set output. Similar to -o in Cotter. Example: 1196175296.ms")
-            )
-            .arg(
-                Arg::with_name("no-cable-delay")
-                    .long("no-cable-delay")
-                    .takes_value(false)
-                    .required(false)
-                    .help("Do not perform cable length corrections.")
-            )
-            .arg(
-                Arg::with_name("no-geometric-delay")
-                    .long("no-geometric-delay")
-                    .takes_value(false)
-                    .required(false)
-                    .help("Do not perform geometric length corrections.")
-            )
-            .arg(
                 Arg::with_name("no-rfi")
                     .long("no-rfi")
                     .takes_value(false)
                     .required(false)
                     .help("Do not perform RFI Flagging.")
-            )
-            .arg(
-                Arg::with_name("emulate-cotter")
-                    .long("emulate-cotter")
-                    .takes_value(false)
-                    .required(false)
-                    .help("Use Cotter's value for array position instead of MWAlib for direct comparison with Cotter.")
             );
             app = app.subcommand(aoflagger_subcommand);
         }
     };
-
-    let transform_subcommand = SubCommand::with_name("transform")
-    .about("transform file format")
-    .arg(
-        Arg::with_name("metafits")
-            .short("m")
-            .takes_value(true)
-            .required(true)
-            .help("Sets the metafits file."),
-    )
-    .arg(
-        Arg::with_name("fits-files")
-            .required(true)
-            .multiple(true)
-            // .last(true)
-    )
-    .arg(
-        Arg::with_name("flag-template")
-            .short("f")
-            .takes_value(true)// TODO: specify a default that works with mwa-ord and mwax
-            .help("Sets the template used to name flag files. Percents are substituted for the zero-prefixed GPUBox ID, which can be up to 3 characters log. Similar to -o in Cotter. Example: FlagFile%%%.mwaf")
-    )
-    .arg(
-        Arg::with_name("uvfits-out")
-            .short("u")
-            .takes_value(true)
-            .help("Path for uvfits output. Similar to -o in Cotter. Example: 1196175296.uvfits")
-    )
-    .arg(
-        Arg::with_name("ms-out")
-            .short("M")
-            .takes_value(true)
-            .help("Path for measurement set output. Similar to -o in Cotter. Example: 1196175296.ms")
-    )
-    .arg(
-        Arg::with_name("no-cable-delay")
-            .long("no-cable-delay")
-            .takes_value(false)
-            .required(false)
-            .help("Do not perform cable length corrections.")
-    )
-    .arg(
-        Arg::with_name("no-geometric-delay")
-            .long("no-geometric-delay")
-            .takes_value(false)
-            .required(false)
-            .help("Do not perform geometric length corrections.")
-    )
-    .arg(
-        Arg::with_name("emulate-cotter")
-            .long("emulate-cotter")
-            .takes_value(false)
-            .required(false)
-            .help("Use Cotter's value for array position instead of MWAlib for direct comparison with Cotter.")
-    );
-    app = app.subcommand(transform_subcommand);
-
     let matches = app.get_matches_from(args);
 
-    debug!("arg matches:\n{:?}", &matches);
+    trace!("arg matches:\n{:?}", &matches);
+
+    let metafits_path = matches.value_of("metafits").unwrap();
+    let fits_files: Vec<&str> = matches.values_of("fits-files").unwrap().collect();
+    let flag_template = matches.value_of("flag-template");
+    let uvfits_out = matches.value_of("uvfits-out");
+    let ms_out = matches.value_of("ms-out");
+
+    let context =
+        CorrelatorContext::new(&metafits_path, &fits_files).expect("unable to get mwalib context");
+    debug!("mwalib correlator context:\n{}", &context);
+    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+    let img_timestep_idxs =
+        get_flaggable_timesteps(&context).expect("unable to determine flaggable timesteps");
+
+    let img_coarse_chan_range =
+        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+    trace!("img_coarse_chan_range: {:?}", img_coarse_chan_range);
+    let img_timestep_range =
+        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+    trace!("img_timestep_range: {:?}", img_timestep_range);
+
+    let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+
+    let antenna_flags = get_antenna_flags(&context);
+    trace!(
+        "antenna_flags: {:?}",
+        antenna_flags
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, &flag)| {
+                if flag {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+    );
+
+    let flag_array = init_flag_array(
+        &context,
+        &img_timestep_range,
+        &img_coarse_chan_range,
+        Some(get_antenna_flags(&context)),
+    );
+
+    let (mut jones_array, mut flag_array) = context_to_jones_array(
+        &context,
+        &img_timestep_range,
+        &img_coarse_chan_range,
+        Some(flag_array),
+    );
+
+    // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
+
+    let no_cable_delays = matches.is_present("no-cable-delay");
+    let cable_delays_applied = context.metafits_context.cable_delays_applied;
+    if !cable_delays_applied && !no_cable_delays {
+        debug!(
+            "Applying cable delays. applied: {}, desired: {}",
+            cable_delays_applied, !no_cable_delays
+        );
+        correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range);
+    } else {
+        debug!(
+            "Skipping cable delays. applied: {}, desired: {}",
+            cable_delays_applied, !no_cable_delays
+        );
+    }
 
     cfg_if! {
         if #[cfg(feature = "aoflagger")] {
+            let mut no_rfi: bool = true;
             if let Some(aoflagger_matches) = matches.subcommand_matches("aoflagger") {
+                no_rfi = aoflagger_matches.is_present("no-rfi");
+            }
+            if !no_rfi {
                 let aoflagger = unsafe { cxx_aoflagger_new() };
-                let metafits_path = aoflagger_matches.value_of("metafits").unwrap();
-                let flag_template = aoflagger_matches.value_of("flag-template");
-                let uvfits_out = aoflagger_matches.value_of("uvfits-out");
-                let ms_out = aoflagger_matches.value_of("ms-out");
-                let fits_files: Vec<&str> = aoflagger_matches.values_of("fits-files").unwrap().collect();
-                let context = CorrelatorContext::new(&metafits_path, &fits_files)
-                    .expect("unable to get mwalib context");
-                debug!("mwalib correlator context:\n{}", &context);
-                let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-                let img_timestep_idxs =
-                    get_flaggable_timesteps(&context).expect("unable to determine flaggable timesteps");
-
-                let img_coarse_chan_range =
-                    *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-                trace!("img_coarse_chan_range: {:?}", img_coarse_chan_range);
-                let img_timestep_range =
-                    *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-                trace!("img_timestep_range: {:?}", img_timestep_range);
-
-                let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-
-                let antenna_flags = get_antenna_flags(&context);
-                trace!(
-                    "antenna_flags: {:?}",
-                    antenna_flags
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(idx, &flag)| {
-                            if flag {
-                                Some(idx)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                );
-
-                let flag_array = init_flag_array(
-                    &context,
-                    &img_timestep_range,
-                    &img_coarse_chan_range,
-                    Some(get_antenna_flags(&context)),
-                );
-
-                let (mut jones_array, mut flag_array) = context_to_jones_array(
-                    &context,
-                    &img_timestep_range,
-                    &img_coarse_chan_range,
+                let strategy_filename = &aoflagger.FindStrategyFileMWA();
+                debug!("flagging with strategy {}", strategy_filename);
+                flag_array = flag_jones_array_existing(
+                    &aoflagger,
+                    strategy_filename,
+                    &jones_array,
                     Some(flag_array),
+                    true,
                 );
-
-                // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
-
-                let no_cable_delays = aoflagger_matches.is_present("no-cable-delay");
-                let cable_delays_applied = context.metafits_context.cable_delays_applied;
-                if !cable_delays_applied && !no_cable_delays {
-                    debug!(
-                        "Applying cable delays. applied: {}, desired: {}",
-                        cable_delays_applied, !no_cable_delays
-                    );
-                    correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range);
-                } else {
-                    debug!(
-                        "Skipping cable delays. applied: {}, desired: {}",
-                        cable_delays_applied, !no_cable_delays
-                    );
-                }
-
-                let no_rfi = aoflagger_matches.is_present("no-rfi");
-                if !no_rfi {
-                    let strategy_filename = &aoflagger.FindStrategyFileMWA();
-                    debug!("flagging with strategy {}", strategy_filename);
-                    flag_array = flag_jones_array_existing(
-                        &aoflagger,
-                        strategy_filename,
-                        &jones_array,
-                        Some(flag_array),
-                        true,
-                    );
-                } else {
-                    debug!("skipped flagging");
-                }
-
-                let array_pos = if aoflagger_matches.is_present("emulate-cotter") {
-                    Some(LatLngHeight {
-                        longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
-                        latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
-                        height_metres: COTTER_MWA_HEIGHT_METRES,
-                    })
-                } else {
-                    None
-                };
-
-                // perform geometric delaysq if user has not disabled it, and they haven't aleady beeen applied.
-                let no_geometric_delays = aoflagger_matches.is_present("no-geometric-delay");
-                let geometric_delays_applied = context.metafits_context.geometric_delays_applied;
-
-                match (geometric_delays_applied, no_geometric_delays) {
-                    (GeometricDelaysApplied::No, false) => {
-                        debug!(
-                            "Applying geometric delays. applied: {:?}, desired: {}",
-                            geometric_delays_applied, !no_geometric_delays
-                        );
-                        correct_geometry(
-                            &context,
-                            &mut jones_array,
-                            &img_timestep_range,
-                            &img_coarse_chan_range,
-                            array_pos,
-                        );
-                    }
-                    (..) => {
-                        debug!(
-                            "Skipping geometric delays. applied: {:?}, desired: {}",
-                            geometric_delays_applied, !no_geometric_delays
-                        );
-                    }
-                };
-
-                // output flags
-                if let Some(flag_template) = flag_template {
-                    write_flags(&context, &flag_array, flag_template, &img_coarse_chan_range)
-                        .expect("unable to write flags");
-                }
-
-                // output uvfits
-                if let Some(uvfits_out) = uvfits_out {
-                    write_uvfits(
-                        Path::new(uvfits_out),
-                        &context,
-                        &jones_array,
-                        &flag_array,
-                        &img_timestep_range,
-                        &img_coarse_chan_range,
-                        &baseline_idxs,
-                        array_pos,
-                    )
-                    .expect("unable to write uvfits");
-                }
-
-                // output ms
-                if let Some(ms_out) = ms_out {
-                    write_ms(
-                        Path::new(ms_out),
-                        &context,
-                        &jones_array,
-                        &flag_array,
-                        &img_timestep_range,
-                        &img_coarse_chan_range,
-                        &baseline_idxs,
-                        array_pos,
-                    )
-                    .expect("unable to write ms");
-                }
+            } else {
+                debug!("skipped flagging");
             }
         }
     }
 
-    if let Some(transform_matches) = matches.subcommand_matches("transform") {
-        let metafits_path = transform_matches.value_of("metafits").unwrap();
-        let flag_template = transform_matches.value_of("flag-template");
-        let uvfits_out = transform_matches.value_of("uvfits-out");
-        let ms_out = transform_matches.value_of("ms-out");
-        let fits_files: Vec<&str> = transform_matches.values_of("fits-files").unwrap().collect();
-        let context = CorrelatorContext::new(&metafits_path, &fits_files)
-            .expect("unable to get mwalib context");
-        debug!("mwalib correlator context:\n{}", &context);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_timestep_idxs =
-            get_flaggable_timesteps(&context).expect("unable to determine flaggable timesteps");
+    let array_pos = if matches.is_present("emulate-cotter") {
+        Some(LatLngHeight {
+            longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
+            latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
+            height_metres: COTTER_MWA_HEIGHT_METRES,
+        })
+    } else {
+        None
+    };
 
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-        trace!("img_coarse_chan_range: {:?}", img_coarse_chan_range);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        trace!("img_timestep_range: {:?}", img_timestep_range);
+    // perform geometric delaysq if user has not disabled it, and they haven't aleady beeen applied.
+    let no_geometric_delays = matches.is_present("no-geometric-delay");
+    let geometric_delays_applied = context.metafits_context.geometric_delays_applied;
 
-        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-
-        let antenna_flags = get_antenna_flags(&context);
-        trace!(
-            "antenna_flags: {:?}",
-            antenna_flags
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, &flag)| {
-                    if flag {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-        );
-
-        let flag_array = init_flag_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            Some(get_antenna_flags(&context)),
-        );
-
-        let (mut jones_array, mut flag_array) = context_to_jones_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            Some(flag_array),
-        );
-
-        // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
-
-        let no_cable_delays = transform_matches.is_present("no-cable-delay");
-        let cable_delays_applied = context.metafits_context.cable_delays_applied;
-        if !cable_delays_applied && !no_cable_delays {
+    match (geometric_delays_applied, no_geometric_delays) {
+        (GeometricDelaysApplied::No, false) => {
             debug!(
-                "Applying cable delays. applied: {}, desired: {}",
-                cable_delays_applied, !no_cable_delays
+                "Applying geometric delays. applied: {:?}, desired: {}",
+                geometric_delays_applied, !no_geometric_delays
             );
-            correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range);
-        } else {
-            debug!(
-                "Skipping cable delays. applied: {}, desired: {}",
-                cable_delays_applied, !no_cable_delays
-            );
-        }
-
-        let array_pos = if transform_matches.is_present("emulate-cotter") {
-            Some(LatLngHeight {
-                longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
-                latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
-                height_metres: COTTER_MWA_HEIGHT_METRES,
-            })
-        } else {
-            None
-        };
-
-        // perform geometric delaysq if user has not disabled it, and they haven't aleady beeen applied.
-        let no_geometric_delays = transform_matches.is_present("no-geometric-delay");
-        let geometric_delays_applied = context.metafits_context.geometric_delays_applied;
-
-        match (geometric_delays_applied, no_geometric_delays) {
-            (GeometricDelaysApplied::No, false) => {
-                debug!(
-                    "Applying geometric delays. applied: {:?}, desired: {}",
-                    geometric_delays_applied, !no_geometric_delays
-                );
-                correct_geometry(
-                    &context,
-                    &mut jones_array,
-                    &img_timestep_range,
-                    &img_coarse_chan_range,
-                    array_pos,
-                );
-            }
-            (..) => {
-                debug!(
-                    "Skipping geometric delays. applied: {:?}, desired: {}",
-                    geometric_delays_applied, !no_geometric_delays
-                );
-            }
-        };
-
-        // output flags
-        if let Some(flag_template) = flag_template {
-            write_flags(&context, &flag_array, flag_template, &img_coarse_chan_range)
-                .expect("unable to write flags");
-        }
-
-        // output uvfits
-        if let Some(uvfits_out) = uvfits_out {
-            write_uvfits(
-                Path::new(uvfits_out),
+            correct_geometry(
                 &context,
-                &jones_array,
-                &flag_array,
+                &mut jones_array,
                 &img_timestep_range,
                 &img_coarse_chan_range,
-                &baseline_idxs,
                 array_pos,
-            )
-            .expect("unable to write uvfits");
+            );
         }
+        (..) => {
+            debug!(
+                "Skipping geometric delays. applied: {:?}, desired: {}",
+                geometric_delays_applied, !no_geometric_delays
+            );
+        }
+    };
 
-        // output ms
-        if let Some(ms_out) = ms_out {
-            write_ms(
-                Path::new(ms_out),
-                &context,
-                &jones_array,
-                &flag_array,
-                &img_timestep_range,
-                &img_coarse_chan_range,
-                &baseline_idxs,
-                array_pos,
-            )
-            .expect("unable to write ms");
-        }
+    // output flags
+    if let Some(flag_template) = flag_template {
+        write_flags(&context, &flag_array, flag_template, &img_coarse_chan_range)
+            .expect("unable to write flags");
+    }
+
+    // output uvfits
+    if let Some(uvfits_out) = uvfits_out {
+        write_uvfits(
+            Path::new(uvfits_out),
+            &context,
+            &jones_array,
+            &flag_array,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            &baseline_idxs,
+            array_pos,
+        )
+        .expect("unable to write uvfits");
+    }
+
+    // output ms
+    if let Some(ms_out) = ms_out {
+        write_ms(
+            Path::new(ms_out),
+            &context,
+            &jones_array,
+            &flag_array,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            &baseline_idxs,
+            array_pos,
+        )
+        .expect("unable to write ms");
     }
 }
 
@@ -495,21 +299,14 @@ mod tests {
 
     #[test]
     fn main_with_version_doesnt_crash() {
-        main_with_args(&["--version"]);
+        main_with_args(&["birli", "--version"]);
     }
 
     #[test]
     fn forked_main_with_version_prints_version() {
         let pkg_name = env!("CARGO_PKG_NAME");
         let pkg_version = env!("CARGO_PKG_VERSION");
-        assert_cli::Assert::command(&[
-            "cargo",
-            "run",
-            "--quiet",
-            "--no-default-features",
-            "--",
-            "--version",
-        ])
+        assert_cli::Assert::main_binary().with_args(&["--version"])
         .succeeds()
         .stdout()
         .contains(format!("{} {}\n", pkg_name, pkg_version).as_str())
@@ -630,13 +427,13 @@ mod tests_aoflagger {
 
         let mut args = vec![
             "birli",
-            "aoflagger",
             "-m",
             metafits_path,
             "-f",
             mwaf_path_template.to_str().unwrap(),
         ];
         args.extend_from_slice(&gpufits_paths);
+        args.extend(["aoflagger"]);
 
         main_with_args(&args);
 
@@ -683,7 +480,6 @@ mod tests_aoflagger {
 
         let mut args = vec![
             "birli",
-            "aoflagger",
             "-m",
             metafits_path,
             "-u",
@@ -692,6 +488,7 @@ mod tests_aoflagger {
             "--no-geometric-delay",
         ];
         args.extend_from_slice(&gpufits_paths);
+        args.extend(["aoflagger"]);
 
         main_with_args(&args);
 
@@ -1004,7 +801,6 @@ mod tests_aoflagger {
 
         let mut args = vec![
             "birli",
-            "aoflagger",
             "-m",
             metafits_path,
             "-u",
@@ -1013,8 +809,8 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--emulate-cotter",
         ];
-
         args.extend_from_slice(&gpufits_paths);
+        args.extend(["aoflagger"]);
 
         main_with_args(&args);
         // let uvfits_path = PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.none.uvfits");
@@ -1034,7 +830,6 @@ mod tests_aoflagger {
 
         let mut args = vec![
             "birli",
-            "aoflagger",
             "-m",
             metafits_path,
             "-u",
@@ -1042,8 +837,8 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--emulate-cotter",
         ];
-
         args.extend_from_slice(&gpufits_paths);
+        args.extend(["aoflagger"]);
 
         main_with_args(&args);
         // let uvfits_path = PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.cable.uvfits");
@@ -1067,7 +862,6 @@ mod tests_aoflagger {
 
         let mut args = vec![
             "birli",
-            "aoflagger",
             "-m",
             metafits_path,
             "-u",
@@ -1075,8 +869,8 @@ mod tests_aoflagger {
             "--no-cable-delay",
             "--emulate-cotter",
         ];
-
         args.extend_from_slice(&gpufits_paths);
+        args.extend(["aoflagger"]);
 
         main_with_args(&args);
         // let uvfits_path = PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.geom.uvfits");
@@ -1099,15 +893,14 @@ mod tests_aoflagger {
 
         let mut args = vec![
             "birli",
-            "aoflagger",
             "-m",
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
             "--emulate-cotter",
         ];
-
         args.extend_from_slice(&gpufits_paths);
+        args.extend(["aoflagger"]);
 
         main_with_args(&args);
         // let uvfits_path =
