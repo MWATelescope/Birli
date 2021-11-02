@@ -220,6 +220,7 @@ try
 ```bash
 cargo update
 cargo update -p approx:0.5.0 --precise 0.4.0
+cargo update -p ndarray:0.15.3 --precise 0.14.0
 ```
 
 ## Usage

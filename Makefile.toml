@@ -131,7 +131,6 @@ args = ["clean"]
 # released, probably just deleted.
 [tasks.update]
 script = """
-cargo update
 cargo update -p approx:0.5.0 --precise 0.4.0
 cargo update -p ndarray:0.15.3 --precise 0.14.0
 """
@@ -149,6 +148,10 @@ args = ["test"]
 command = "cargo"
 args = ["test", "--", "--ignored"]
 
+[tasks.test_no_default]
+command = "cargo"
+args = ["test", "--", "--no-default-features"]
+
 [tasks.ci]
 dependencies = [
   "clean",
@@ -164,5 +167,6 @@ dependencies = [
   "format_fix",
   "check",
   "clippy",
+  "test_no_default",
   "test"
 ]

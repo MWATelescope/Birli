@@ -24,7 +24,6 @@ jobs:
 
       - name: Install Cargo Packages
         run: |
-          cargo update
           cargo install --force cargo-make --locked --version '^0.32'
           cargo install --force cargo-binutils --locked
         env:
@@ -39,6 +38,7 @@ jobs:
           # TODO: thisn't
           cargo update -p proc-macro2 --precise 1.0.28
           cargo update -p approx:0.5.0 --precise 0.4.0
+          cargo update -p ndarray:0.15.3 --precise 0.14.0
           cargo test -- --include-ignored
           cargo profdata -- \
             merge -sparse json5format-*.profraw -o json5format.profdata

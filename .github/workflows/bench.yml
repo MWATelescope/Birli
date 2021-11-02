@@ -23,9 +23,8 @@ jobs:
 
       - name: Cargo Bench
         run: |
-          cargo update
           cargo update -p approx:0.5.0 --precise 0.4.0
-          # TODO: fix the hack above
+          cargo update -p ndarray:0.15.3 --precise 0.14.0
           cargo bench
         env:
           LD_LIBRARY_PATH: /usr/local/lib/
