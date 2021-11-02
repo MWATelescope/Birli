@@ -23,8 +23,11 @@ jobs:
 
       - name: Cargo Bench
         run: |
-          cargo update -p approx:0.5.0 --precise 0.4.0
-          cargo update -p ndarray:0.15.3 --precise 0.14.0
+          cargo update -p cxx --precise 1.0.54 || echo "cargo update cxx failed"
+          cargo update -p cxx-build --precise 1.0.54 || echo "cargo update cxx-build failed"
+          cargo update -p proc-macro2 --precise 1.0.28 || echo "cargo update proc-macro2 failed"
+          cargo update -p approx:0.5.0 --precise 0.4.0 || echo "cargo update approx failed"
+          cargo update -p ndarray:0.15.3 --precise 0.14.0 || echo "cargo update ndarray failed"
           cargo bench
         env:
           LD_LIBRARY_PATH: /usr/local/lib/
