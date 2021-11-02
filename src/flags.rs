@@ -653,13 +653,11 @@ mod tests {
 }
 
 /// Get the weight factor of an observation's context.
-/// 
-/// This is a conceptfrom Cotter, and the legacy MWA correlator where the value 
-/// is a multiple of the frequency averaging factor (relative to 10kHz), and the 
-/// time averaging factor (relative to 1s). 
-pub fn get_weight_factor(
-    context: &CorrelatorContext,
-) -> f64 {
+///
+/// This is a conceptfrom Cotter, and the legacy MWA correlator where the value
+/// is a multiple of the frequency averaging factor (relative to 10kHz), and the
+/// time averaging factor (relative to 1s).
+pub fn get_weight_factor(context: &CorrelatorContext) -> f64 {
     let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
     let fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz as f64;
     fine_chan_width_hz * integration_time_s / 10000.0
@@ -668,10 +666,7 @@ pub fn get_weight_factor(
 /// Convert the given ndarray of boolean flags to an ndarray of float weights
 /// TODO: deal with weight factor when doing averaging.
 /// TODO: deal with passband gains
-pub fn flag_to_weight_array(
-    flag_array: ArrayView3<bool>,
-    weight_factor: f64,
-) -> Array3<f32> {
+pub fn flag_to_weight_array(flag_array: ArrayView3<bool>, weight_factor: f64) -> Array3<f32> {
     let mut weight_array = Array3::from_elem(flag_array.dim(), 0.0_f32);
 
     Zip::from(&mut weight_array)

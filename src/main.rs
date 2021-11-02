@@ -1,6 +1,6 @@
 use birli::io::write_ms;
 use cfg_if::cfg_if;
-use clap::{crate_authors, crate_description, crate_name, crate_version, App, ArgMatches};
+use clap::{crate_authors, crate_description, crate_name, crate_version, App};
 use log::{debug, info};
 use std::{env, ffi::OsString, fmt::Debug};
 
@@ -28,7 +28,6 @@ use birli::{
 use clap::{Arg, SubCommand};
 use log::trace;
 use std::path::Path;
-
 
 fn main_with_args<I, T>(args: I)
 where
@@ -306,11 +305,12 @@ mod tests {
     fn forked_main_with_version_prints_version() {
         let pkg_name = env!("CARGO_PKG_NAME");
         let pkg_version = env!("CARGO_PKG_VERSION");
-        assert_cli::Assert::main_binary().with_args(&["--version"])
-        .succeeds()
-        .stdout()
-        .contains(format!("{} {}\n", pkg_name, pkg_version).as_str())
-        .unwrap();
+        assert_cli::Assert::main_binary()
+            .with_args(&["--version"])
+            .succeeds()
+            .stdout()
+            .contains(format!("{} {}\n", pkg_name, pkg_version).as_str())
+            .unwrap();
     }
 }
 

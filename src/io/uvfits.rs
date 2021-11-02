@@ -177,11 +177,14 @@ impl UvfitsWriter {
         let mut status = 0;
         let c_path = CString::new(path.as_ref().to_str().unwrap())?;
         let mut fptr = std::ptr::null_mut();
-        trace!("initialising fits file with fitsio_sys ({:?})", &path.as_ref());
+        trace!(
+            "initialising fits file with fitsio_sys ({:?})",
+            &path.as_ref()
+        );
         unsafe {
             fitsio_sys::ffinit(
                 &mut fptr as *mut *mut _, /* O - FITS file pointer                   */
-                c_path.as_ptr(),      /* I - name of file to create              */
+                c_path.as_ptr(),          /* I - name of file to create              */
                 &mut status,              /* IO - error status                       */
             );
         }
@@ -770,7 +773,7 @@ impl UvfitsWriter {
         mwalib_baseline_idxs: &[usize],
     ) -> Result<(), IOError> {
         let weight_factor = get_weight_factor(context);
-        let weight_array = flag_to_weight_array( flag_array.view(), weight_factor);
+        let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
         self.write_vis_mwalib(
             jones_array.view(),
             weight_array.view(),

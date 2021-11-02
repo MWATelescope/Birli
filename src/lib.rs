@@ -115,7 +115,7 @@ use ndarray::{parallel::prelude::*, Array3, Axis};
 use std::ops::Range;
 
 pub mod io;
-pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter, write_uvfits, write_ms};
+pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter, write_ms, write_uvfits};
 pub mod corrections;
 pub use corrections::{correct_cable_lengths, correct_geometry};
 pub mod flags;
