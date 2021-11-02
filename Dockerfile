@@ -33,7 +33,7 @@ ADD . /app
 WORKDIR /app
 
 RUN cargo clean \
-    && cargo install --path . --features aoflagger
+    && cargo install --path . --features aoflagger --locked
 RUN test -z "$DEBUG" || (\
         mkdir benches \
         && touch benches/bench.rs \
