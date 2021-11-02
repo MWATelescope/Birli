@@ -10,8 +10,10 @@ use std::{ops::Range, path::Path};
 
 use log::trace;
 use mwa_rust_core::{Jones, LatLngHeight, RADec, io::{VisWritable, ms::MeasurementSetWriter}, mwalib::CorrelatorContext};
-use ndarray::{Array3, ArrayView3, ArrayViewMut3};
+use ndarray::{Array3, Array4, ArrayView3, ArrayViewMut3};
 use uvfits::UvfitsWriter;
+
+use crate::flags::get_weight_factor;
 
 use self::error::IOError;
 
@@ -259,7 +261,17 @@ pub fn write_ms<T: AsRef<Path>>(
         .initialize_from_mwalib(&context, &mwalib_timestep_range, &mwalib_coarse_chan_range)
         .unwrap();
 
-    let weight_array = Array3::from_elem((1, 768, 1), 1.);
+    let jones_shape = jones_array.shape();
+    let flag_shape = flag_array.shape();
+    let num_pols = context.metafits_context.num_visibility_pols;
+    assert_eq!(jones_shape[0], flag_shape[0]);
+    assert_eq!(jones_shape[1], flag_shape[1]);
+    assert_eq!(jones_shape[2], flag_shape[2]);
+
+    let weight_factor = get_weight_factor(context) as f32;
+    let weight_array = Array4::from_shape_fn((flag_shape[0], flag_shape[1], flag_shape[2], num_pols), |(t, f, b, _)| {
+        if *flag_array.get((t, f, b)).unwrap() {weight_factor} else {0.}
+    });
 
     ms_writer
         .write_vis_mwalib(

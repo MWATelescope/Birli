@@ -25,7 +25,7 @@ use mwa_rust_core::{
 };
 use ndarray::{Array3, ArrayView3, Axis};
 
-use crate::flags::flag_to_weight_array;
+use crate::flags::{flag_to_weight_array, get_weight_factor};
 
 use super::error::{IOError, UvfitsWriteError};
 use super::WriteableVis;
@@ -769,7 +769,8 @@ impl UvfitsWriter {
         mwalib_coarse_chan_range: &Range<usize>,
         mwalib_baseline_idxs: &[usize],
     ) -> Result<(), IOError> {
-        let weight_array = flag_to_weight_array(context, flag_array.view());
+        let weight_factor = get_weight_factor(context);
+        let weight_array = flag_to_weight_array( flag_array.view(), weight_factor);
         self.write_vis_mwalib(
             jones_array.view(),
             weight_array.view(),
