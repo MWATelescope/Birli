@@ -273,21 +273,31 @@ pub fn write_ms<T: AsRef<Path>>(
     assert_eq!(jones_shape[2], flag_shape[2]);
 
     let weight_factor = get_weight_factor(context) as f32;
+    // TODO: This is how I thought weights work, but it's not what Cotter does.
+    // let weight_array = Array4::from_shape_fn(
+    //     (flag_shape[0], flag_shape[1], flag_shape[2], num_pols),
+    //     |(t, f, b, _)| {
+    //         if *flag_array.get((t, f, b)).unwrap() {
+    //             0.
+    //         } else {
+    //             weight_factor
+    //         }
+    //     },
+    // );
     let weight_array = Array4::from_shape_fn(
         (flag_shape[0], flag_shape[1], flag_shape[2], num_pols),
-        |(t, f, b, _)| {
-            if *flag_array.get((t, f, b)).unwrap() {
-                weight_factor
-            } else {
-                0.
-            }
-        },
+        |_| weight_factor,
+    );
+    let flag_array_expanded = Array4::from_shape_fn(
+        (flag_shape[0], flag_shape[1], flag_shape[2], num_pols),
+        |(t, f, b, _)| *flag_array.get((t, f, b)).unwrap(),
     );
 
     ms_writer
         .write_vis_mwalib(
             jones_array.view(),
             weight_array.view(),
+            flag_array_expanded.view(),
             context,
             mwalib_timestep_range,
             mwalib_coarse_chan_range,
