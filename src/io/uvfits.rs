@@ -475,6 +475,9 @@ impl UvfitsWriter {
 
         hdu.write_key(&mut uvfits, "FREQ", self.centre_freq)?;
 
+        // Antenna position reference frame
+        hdu.write_key(&mut uvfits, "FRAME", "ITRF")?;
+
         // Get the Greenwich apparent sidereal time from ERFA.
         let mjd = self.start_epoch.as_mjd_utc_days();
         let gst = unsafe { erfa_sys::eraGst06a(ERFA_DJM0, mjd.floor(), ERFA_DJM0, mjd.floor()) }
@@ -490,7 +493,9 @@ impl UvfitsWriter {
         hdu.write_key(&mut uvfits, "UT1UTC", 0.0)?;
         hdu.write_key(&mut uvfits, "DATUTC", 0.0)?;
 
+        // AIPS 117 calls this TIMESYS, but Cotter calls in TIMSYS, so we do both.
         hdu.write_key(&mut uvfits, "TIMSYS", "UTC")?;
+        hdu.write_key(&mut uvfits, "TIMESYS", "UTC")?;
         hdu.write_key(&mut uvfits, "ARRNAM", "MWA")?;
         hdu.write_key(&mut uvfits, "NUMORB", 0)?; // number of orbital parameters in table
         hdu.write_key(&mut uvfits, "NOPCAL", 3)?; // Nr pol calibration values / IF(N_pcal)
@@ -1719,5 +1724,78 @@ mod tests_aoflagger {
         let birli_ant_freq: f64 =
             get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FREQ").unwrap();
         assert_abs_diff_eq!(birli_ant_freq, expected_center_freq);
+    }
+
+    /// Tests for AIPS 117 compliance. 
+    /// See https://github.com/MWATelescope/Birli/issues/9
+    #[test]
+    fn aips_117() {
+        let context = get_mwa_ord_context();
+
+        let tmp_uvfits_file = NamedTempFile::new().unwrap();
+
+        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(img_timestep_idxs.len(), 4);
+        let img_timestep_range =
+            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let img_coarse_chan_range =
+            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        let img_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+
+        let array_pos = Some(LatLngHeight {
+            longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
+            latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
+            height_metres: COTTER_MWA_HEIGHT_METRES,
+        });
+
+        let mut u = UvfitsWriter::from_mwalib(
+            tmp_uvfits_file.path(),
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            &img_baseline_idxs,
+            array_pos,
+        )
+        .unwrap();
+
+        let flag_array = init_flag_array(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            Some(get_antenna_flags(&context)),
+        );
+
+        let (jones_array, flag_array) = context_to_jones_array(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            Some(flag_array),
+        );
+
+        u.write_jones_flags(
+            &context,
+            &jones_array,
+            &flag_array,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            &img_baseline_idxs,
+        )
+        .unwrap();
+
+        u.write_ants_from_mwalib(&context.metafits_context).unwrap();
+
+        let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
+        
+        // let birli_vis_hdu = fits_open_hdu!(&mut birli_fptr, 0).unwrap();
+        // TODO: vis_hdu
+        let birli_ant_hdu = fits_open_hdu!(&mut birli_fptr, 1).unwrap();
+        let birli_ant_frame: String =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FRAME").unwrap();
+        assert_eq!(birli_ant_frame, "ITRF");
+        let birli_ant_timesys: String =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "TIMESYS").unwrap();
+        assert_eq!(birli_ant_timesys, "UTC");
+        
     }
 }
