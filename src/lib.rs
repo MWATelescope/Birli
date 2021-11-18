@@ -120,9 +120,9 @@ pub mod corrections;
 pub use corrections::{correct_cable_lengths, correct_geometry};
 pub mod flags;
 pub use flags::{get_antenna_flags, get_flaggable_timesteps, init_flag_array, write_flags};
-pub use mwa_rust_core;
-pub use mwa_rust_core::{
-    mwalib,
+pub use marlu;
+pub use marlu::{
+    approx, mwalib,
     mwalib::{fitsio, fitsio_sys, CorrelatorContext},
     Complex, Jones,
 };
@@ -545,9 +545,7 @@ mod tests {
     #![allow(clippy::float_cmp)]
 
     use super::{context_to_jones_array, get_flaggable_timesteps};
-    use crate::Jones;
-    use approx::assert_abs_diff_eq;
-    use mwa_rust_core::{mwalib::CorrelatorContext, Complex};
+    use marlu::{approx::assert_abs_diff_eq, mwalib::CorrelatorContext, Complex, Jones};
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";

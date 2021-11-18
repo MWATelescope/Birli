@@ -16,7 +16,7 @@ use birli::{
     context_to_jones_array, correct_cable_lengths, correct_geometry, get_antenna_flags,
     get_flaggable_timesteps, init_flag_array,
     io::write_uvfits,
-    mwa_rust_core::{
+    marlu::{
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
         },
@@ -325,7 +325,7 @@ mod tests_aoflagger {
     use fitsio::errors::check_status as fits_check_status;
     use float_cmp::{approx_eq, F32Margin, F64Margin};
     use itertools::izip;
-    use mwa_rust_core::{
+    use marlu::{
         fitsio, fitsio_sys,
         mwalib::{
             CorrelatorContext, _get_required_fits_key, _open_fits, _open_hdu, fits_open,
@@ -341,6 +341,9 @@ mod tests_aoflagger {
     use tempfile::tempdir;
 
     use lexical::parse;
+    // use rubbl_casatables::{
+    //     GlueDataType, Table, TableCreateMode, TableDesc, TableDescCreateMode, TableOpenMode,
+    // };
 
     #[test]
     fn forked_aoflagger_with_version_prints_version() {
@@ -910,5 +913,44 @@ mod tests_aoflagger {
             expected_csv_path,
             F32Margin::default().epsilon(1e-4),
         );
+    }
+
+    #[test]
+    fn test_1254670392_avg_ms_both() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("1254670392.ms");
+
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        // let expected_csv_path =
+        //     PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.corrected.ms.csv");
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-M",
+            ms_path.to_str().unwrap(),
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+        args.extend(["aoflagger"]);
+
+        main_with_args(&args);
+
+        // TODO: finish this test.
+
+        // let ms_path =
+        //     PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.corrected.ms");
+        // compare_ms_with_csv(
+        //     ms_path,
+        //     expected_csv_path,
+        //     F32Margin::default().epsilon(1e-4),
+        // );
+
+        // for (
+        //     idx,
+        //     timestep
+        // )
     }
 }

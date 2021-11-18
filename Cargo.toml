@@ -34,9 +34,8 @@ indicatif = { version = "0.16", features = ["rayon"] }
 itertools = "0.10"
 libc = "0.2"
 log = "0.4"
-# mwa_rust_core = ">=0.1.1"
-mwa_rust_core = { git = "https://github.com/MWATelescope/mwa_rust_core.git" }
-ndarray = { version = ">=0.14,<0.16", features = ["rayon"] }
+marlu = "0.2.2"
+ndarray = { version = ">=0.14,<0.16", features = ["rayon", "approx"] }
 rayon = "1.5"
 regex = "1.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -52,12 +51,7 @@ tempfile = "3.2"
 csv = "1.1"
 lexical = "5.2"
 
-# ndarray 0.14.* depends on approx 0.4.0, which in turn uses num-complex 0.3.0.
-# Forcing the versions here means that ndarrays of complex numbers can be
-# tested!
-approx = { version = "0.4.0", features = ["num-complex"] }
 ndarray = { version = "0.14.*", features = ["approx"] }
-num-complex = "0.3.0"
 
 [[bench]]
 name = "bench"

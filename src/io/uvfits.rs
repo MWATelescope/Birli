@@ -13,7 +13,7 @@ use fitsio::{errors::check_status as fits_check_status, FitsFile};
 use indicatif::ProgressStyle;
 use itertools::izip;
 use log::{trace, warn};
-use mwa_rust_core::{
+use marlu::{
     constants::VEL_C,
     erfa_sys,
     erfa_sys::ERFA_DJM0,
@@ -128,7 +128,7 @@ impl UvfitsWriter {
     /// `start_epoch` can be calculated from GPS Time using the hifitime library, e.g.
     ///
     /// ```rust
-    /// use mwa_rust_core::time;
+    /// use marlu::time;
     /// let first_gps_time = 1196175296.0;
     /// let start_epoch = time::gps_to_epoch(first_gps_time);
     /// ```
@@ -924,7 +924,7 @@ impl WriteableVis for UvfitsWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mwa_rust_core::time;
+    use marlu::time;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -996,8 +996,8 @@ mod tests {
 /// Tests which require the use of the aoflagger feature
 mod tests_aoflagger {
     use super::*;
-    use approx::assert_abs_diff_eq;
-    use mwa_rust_core::{
+    use marlu::{
+        approx::assert_abs_diff_eq,
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
         },
@@ -1726,7 +1726,7 @@ mod tests_aoflagger {
         assert_abs_diff_eq!(birli_ant_freq, expected_center_freq);
     }
 
-    /// Tests for AIPS 117 compliance. 
+    /// Tests for AIPS 117 compliance.
     /// See https://github.com/MWATelescope/Birli/issues/9
     #[test]
     fn aips_117() {
@@ -1786,7 +1786,7 @@ mod tests_aoflagger {
         u.write_ants_from_mwalib(&context.metafits_context).unwrap();
 
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
-        
+
         // let birli_vis_hdu = fits_open_hdu!(&mut birli_fptr, 0).unwrap();
         // TODO: vis_hdu
         let birli_ant_hdu = fits_open_hdu!(&mut birli_fptr, 1).unwrap();
@@ -1796,6 +1796,5 @@ mod tests_aoflagger {
         let birli_ant_timesys: String =
             get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "TIMESYS").unwrap();
         assert_eq!(birli_ant_timesys, "UTC");
-        
     }
 }

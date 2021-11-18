@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use mwa_rust_core::{fitsio, mwalib};
+use marlu::{fitsio, mwalib};
 
 ///
 /// Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
@@ -28,7 +28,7 @@ pub enum UvfitsWriteError {
 
     /// An error associated with ERFA.
     #[error("{0}")]
-    Erfa(#[from] mwa_rust_core::pos::ErfaError),
+    Erfa(#[from] marlu::pos::ErfaError),
 
     /// An error associated with fitsio.
     #[error("{0}")]

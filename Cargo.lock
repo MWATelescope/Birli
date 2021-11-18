@@ -62,7 +62,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f2a05fd1bd10b2527e20a2cd32d8873d115b8b39fe219ee25f42a8aca6ba278"
 dependencies = [
- "num-complex 0.3.1",
+ "num-complex",
  "num-traits",
 ]
 
@@ -168,9 +168,9 @@ dependencies = [
  "lexical",
  "libc",
  "log 0.4.14",
- "mwa_rust_core",
+ "marlu",
  "ndarray",
- "num-complex 0.3.1",
+ "num-complex",
  "rayon",
  "regex 1.4.6",
  "rustfmt",
@@ -496,9 +496,9 @@ dependencies = [
 
 [[package]]
 name = "cxx"
-version = "1.0.56"
+version = "1.0.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8497fb19bda9be0d113b940f88acd2e9faab278a5397861f6c7e31583289f29d"
+checksum = "8431240a7c50efe7610cbddd167ea5737a053947940fc815f72cd2864c0af36b"
 dependencies = [
  "cc",
  "cxxbridge-flags",
@@ -508,9 +508,9 @@ dependencies = [
 
 [[package]]
 name = "cxx-build"
-version = "1.0.56"
+version = "1.0.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a561716d81b24f50b705dce50c3f79d9294fb54d06017a56f840a00f72a9b98d"
+checksum = "b6843a1e1fa9cffc5ba1780c4aed9561f20b86706e6a0e380e9fd066c0164f2c"
 dependencies = [
  "cc",
  "codespan-reporting",
@@ -523,15 +523,15 @@ dependencies = [
 
 [[package]]
 name = "cxxbridge-flags"
-version = "1.0.56"
+version = "1.0.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "592c3f94d14bb92cc8867159c5a072ae61ac288ff1f08051c4b26ec664a233e3"
+checksum = "1396df99aac70a2b73cc0f1bb333adb83d71dfa17cfa31a5467dc933071c5ef0"
 
 [[package]]
 name = "cxxbridge-macro"
-version = "1.0.56"
+version = "1.0.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04f5cb3b337856fe25282ca3c8ae58ae688adb956ab96c39af159b04b190ea52"
+checksum = "0ac15d8552d84daf53d8a195bf45f2ca529d099465228146eb59e75bbbfdde5c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -712,16 +712,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fraction"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78d24d088325f939faaf806483fbfac0548e43018606bfe7a44abc83f6dc75ea"
-dependencies = [
- "lazy_static",
- "num",
-]
-
-[[package]]
 name = "fuchsia-cprng"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -797,16 +787,16 @@ dependencies = [
 
 [[package]]
 name = "hifitime"
-version = "2.2.3"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4724cd1c446e891096b1991bb8614bd738673d00f8a2e831e616e1606cdd7459"
+checksum = "e77ac6013042f9839632ded91ca82c456394ee8bca808c0d3b04e316e4077f13"
 dependencies = [
- "fraction",
  "rand 0.8.4",
  "rand_distr",
  "regex 1.4.6",
  "serde",
  "serde_derive",
+ "twofloat",
 ]
 
 [[package]]
@@ -977,6 +967,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "marlu"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfa21aa371f794167488613dbf5a7977d46b0bb894baa2b6292bd935e018be8e"
+dependencies = [
+ "erfa-sys",
+ "flate2",
+ "hifitime",
+ "itertools",
+ "lazy_static",
+ "log 0.4.14",
+ "mwalib",
+ "ndarray",
+ "num-traits",
+ "rayon",
+ "rubbl_casatables",
+ "rubbl_core",
+ "tar",
+ "thiserror",
+]
+
+[[package]]
 name = "matches"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1017,28 +1029,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mwa_rust_core"
-version = "0.2.0"
-source = "git+https://github.com/MWATelescope/mwa_rust_core.git#3b8bedd0115354c32e378422c8a2c235984f6b31"
-dependencies = [
- "approx",
- "erfa-sys",
- "flate2",
- "hifitime",
- "itertools",
- "lazy_static",
- "log 0.4.14",
- "mwalib",
- "ndarray",
- "num-traits",
- "rayon",
- "rubbl_casatables",
- "rubbl_core",
- "tar",
- "thiserror",
-]
-
-[[package]]
 name = "mwalib"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1067,7 +1057,7 @@ checksum = "6c0d5c9540a691d153064dc47a4db2504587a75eae07bf1d73f7a596ebc73c04"
 dependencies = [
  "approx",
  "matrixmultiply",
- "num-complex 0.3.1",
+ "num-complex",
  "num-integer",
  "num-traits",
  "rawpointer",
@@ -1084,41 +1074,6 @@ dependencies = [
  "funty",
  "memchr",
  "version_check",
-]
-
-[[package]]
-name = "num"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8536030f9fea7127f841b45bb6243b27255787fb4eb83958aa1ef9d2fdc0c36"
-dependencies = [
- "num-bigint",
- "num-complex 0.2.4",
- "num-integer",
- "num-iter",
- "num-rational",
- "num-traits",
-]
-
-[[package]]
-name = "num-bigint"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "090c7f9998ee0ff65aa5b723e4009f7b217707f1fb5ea551329cc4d6231fb304"
-dependencies = [
- "autocfg 1.0.1",
- "num-integer",
- "num-traits",
-]
-
-[[package]]
-name = "num-complex"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6b19411a9719e753aff12e5187b74d60d3dc449ec3f4dc21e3989c3f554bc95"
-dependencies = [
- "autocfg 1.0.1",
- "num-traits",
 ]
 
 [[package]]
@@ -1148,29 +1103,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2cc698a63b549a70bc047073d2949cce27cd1c7b0a4a862d08a8031bc2801db"
 dependencies = [
  "autocfg 1.0.1",
- "num-traits",
-]
-
-[[package]]
-name = "num-iter"
-version = "0.1.42"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2021c8337a54d21aca0d59a92577a029af9431cb59b909b03252b9c164fad59"
-dependencies = [
- "autocfg 1.0.1",
- "num-integer",
- "num-traits",
-]
-
-[[package]]
-name = "num-rational"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c000134b5dbf44adc5cb772486d335293351644b801551abe8f75c84cfa4aef"
-dependencies = [
- "autocfg 1.0.1",
- "num-bigint",
- "num-integer",
  "num-traits",
 ]
 
@@ -1272,9 +1204,9 @@ checksum = "ed0cfbc8191465bed66e1718596ee0b0b35d5ee1f41c5df2189d0fe8bde535ba"
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.32"
+version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba508cc11742c0dc5c1659771673afbab7a0efab23aa17e854cbab0837ed0b43"
+checksum = "5c7ed8b8c7b886ea3ed7dde405212185f423ab44682667c8c6dd14aa1d9f6612"
 dependencies = [
  "unicode-xid 0.2.2",
 ]
@@ -1555,8 +1487,9 @@ dependencies = [
 
 [[package]]
 name = "rubbl_casatables"
-version = "0.0.0-dev.0"
-source = "git+https://github.com/derwentx/rubbl.git?branch=links#c51ef9ae6858e70bc764817f2f34882d78a71fe1"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e45b21c1a5759c827f2cb7b29838d496ed428c6e17918270ab7947d36dbb5477"
 dependencies = [
  "cc",
  "failure",
@@ -1568,16 +1501,18 @@ dependencies = [
 
 [[package]]
 name = "rubbl_casatables_impl"
-version = "0.0.0-dev.0"
-source = "git+https://github.com/derwentx/rubbl.git?branch=links#c51ef9ae6858e70bc764817f2f34882d78a71fe1"
+version = "0.3.31100"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71d7ca9bf474f0377b4b18ad5db243efe96c4dd71fc16a47dc109f33a863058b"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "rubbl_core"
-version = "0.0.0-dev.0"
-source = "git+https://github.com/derwentx/rubbl.git?branch=links#c51ef9ae6858e70bc764817f2f34882d78a71fe1"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30757883f9a8cd24076742d849e9c3461057bd546c760e6a204e3bd0c4aee7c8"
 dependencies = [
  "approx",
  "byteorder",
@@ -1585,7 +1520,7 @@ dependencies = [
  "failure",
  "failure_derive",
  "ndarray",
- "num-complex 0.3.1",
+ "num-complex",
  "termcolor",
 ]
 
@@ -1765,9 +1700,9 @@ checksum = "8ea5119cdb4c55b55d432abb513a0429384878c15dde60cc77b1c99de1a95a6a"
 
 [[package]]
 name = "syn"
-version = "1.0.81"
+version = "1.0.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2afee18b8beb5a596ecb4a2dce128c719b4ba399d34126b9e4396e3f9860966"
+checksum = "d010a1623fbd906d51d650a9916aaefc05ffa0e4053ff7fe601167f3e715d194"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1977,6 +1912,12 @@ checksum = "a31142970826733df8241ef35dc040ef98c679ab14d7c3e54d827099b3acecaa"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "twofloat"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1d3b9d87a28e878668a297cde8c31403d85dab3f34e8eb38e110d3dccc84253"
 
 [[package]]
 name = "ucd-util"

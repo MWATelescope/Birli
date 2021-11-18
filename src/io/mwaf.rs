@@ -19,7 +19,7 @@ use fitsio::tables::{ColumnDataDescription, ColumnDataType, ConcreteColumnDescri
 use fitsio::FitsFile;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
-use mwa_rust_core::{
+use marlu::{
     fitsio, fitsio_sys,
     mwalib::{
         CorrelatorContext, MWAVersion, _get_required_fits_key, _open_hdu, fits_open_hdu,
@@ -477,7 +477,7 @@ mod tests {
     use crate::io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate};
     use crate::{get_flaggable_timesteps, init_flag_array};
     use fitsio::FitsFile;
-    use mwa_rust_core::{
+    use marlu::{
         fitsio,
         mwalib::{
             CorrelatorContext, _get_optional_fits_key, _open_hdu, fits_open_hdu,

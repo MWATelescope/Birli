@@ -12,7 +12,7 @@ use crate::{
 };
 use cfg_if::cfg_if;
 use log::trace;
-use mwa_rust_core::mwalib::CorrelatorContext;
+use marlu::mwalib::CorrelatorContext;
 use ndarray::{Array2, Array3, ArrayView3, Axis, Zip};
 use rayon::prelude::*;
 
@@ -24,7 +24,7 @@ cfg_if! {
         use aoflagger_sys::{CxxAOFlagger, CxxFlagMask, UniquePtr, flagmask_or,
             flagmask_set};
         use indicatif::{ProgressBar, ProgressStyle};
-        use mwa_rust_core::Jones;
+        use marlu::Jones;
     }
 }
 
@@ -460,7 +460,7 @@ mod tests {
 
     use crate::{
         error::BirliError::{NoCommonTimesteps, NoProvidedTimesteps},
-        mwa_rust_core::mwalib::CorrelatorContext,
+        marlu::mwalib::CorrelatorContext,
         FlagFileSet,
     };
 
@@ -683,7 +683,7 @@ pub fn flag_to_weight_array(flag_array: ArrayView3<bool>, weight_factor: f64) ->
 /// Tests which require the use of the aoflagger feature
 mod tests_aoflagger {
     use super::{get_flaggable_timesteps, init_flag_array};
-    use mwa_rust_core::{mwalib::CorrelatorContext, Complex, Jones};
+    use marlu::{mwalib::CorrelatorContext, Complex, Jones};
     use ndarray::Array3;
 
     use crate::{

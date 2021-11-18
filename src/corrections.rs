@@ -2,7 +2,7 @@
 
 use indicatif::{ProgressBar, ProgressStyle};
 use log::trace;
-use mwa_rust_core::{
+use marlu::{
     constants::VEL_C, mwalib::CorrelatorContext, precession::precess_time, time, Complex, Jones,
     LatLngHeight, RADec, XyzGeodetic, UVW,
 };
@@ -287,10 +287,9 @@ mod tests {
     #![allow(clippy::float_cmp)]
 
     use super::{correct_cable_lengths, correct_geometry, VEL_C};
-    use approx::assert_abs_diff_eq;
-    use mwa_rust_core::{
-        mwalib::CorrelatorContext, precession::precess_time, time, Complex, Jones, LatLngHeight,
-        RADec, XyzGeodetic, UVW,
+    use marlu::{
+        approx::assert_abs_diff_eq, mwalib::CorrelatorContext, precession::precess_time, time,
+        Complex, Jones, LatLngHeight, RADec, XyzGeodetic, UVW,
     };
     use std::f64::consts::PI;
 

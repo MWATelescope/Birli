@@ -9,7 +9,7 @@ pub mod uvfits;
 use std::{ops::Range, path::Path};
 
 use log::trace;
-use mwa_rust_core::{
+use marlu::{
     io::{ms::MeasurementSetWriter, VisWritable},
     mwalib::CorrelatorContext,
     Jones, LatLngHeight, RADec,
@@ -81,7 +81,7 @@ pub trait WriteableVis: Sync + Send {
 ///     get_flaggable_timesteps,
 ///     context_to_jones_array,
 ///     write_uvfits,
-///     mwa_rust_core::mwalib::CorrelatorContext
+///     marlu::mwalib::CorrelatorContext
 /// };
 ///
 /// // define our input files
@@ -189,7 +189,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///     get_flaggable_timesteps,
 ///     context_to_jones_array,
 ///     write_ms,
-///     mwa_rust_core::mwalib::CorrelatorContext
+///     marlu::mwalib::CorrelatorContext
 /// };
 ///
 /// // define our input files
@@ -322,7 +322,7 @@ mod tests_aoflagger {
     use fitsio::errors::check_status as fits_check_status;
     use float_cmp::{approx_eq, F32Margin};
     use itertools::izip;
-    use mwa_rust_core::{
+    use marlu::{
         fitsio, fitsio_sys,
         mwalib::{
             _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
