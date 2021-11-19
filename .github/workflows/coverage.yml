@@ -1,6 +1,11 @@
 # Based on https://github.com/actions-rs/meta/blob/master/recipes/quickstart.md
 
-on: [push, pull_request]
+# Do this on every push, but don't double up on tags
+on: 
+  push:
+    tags-ignore:
+      - '**'
+    pull_request
 
 name: Generate Coverage report
 
@@ -23,8 +28,34 @@ jobs:
 
       - name: Install Cargo Packages
         run: |
-          cargo install --force cargo-make --locked --version '^0.32'
-          cargo install --force cargo-binutils --locked
+          cargo install --force cargo-make --locked --version '=0.32'
+          # # addr2line <- backtrace
+          # cargo update -p addr2line --precise v0.13.0 || echo "cargo update addr2line failed" 
+          # # adler <- minz_oxide
+          # cargo update -p adler --precise v0.2.3 || echo "cargo update adler failed"
+          # cargo update -p anyhow --precise v1.0.32 || echo "cargo update anyhow failed"
+          # # backtrace <- failure
+          # cargo update -p backtrace --precise v0.3.50 || echo "cargo update backtrace failed"
+          # cargo update -p bitflags:1.3.2 --precise v1.2.1 || echo "cargo update bitflags failed"
+          # cargo update -p cfg-if --precise v0.1.10 || echo "cargo update cfg-if failed"
+          # # gimli <- addr2line
+          # cargo update -p gimli --precise v0.22.0 || echo "cargo update gimli failed"
+          # # itoa <- serde_json
+          # cargo update -p itoa --precise v0.4.6 || echo "cargo update itoa failed"
+
+          # cargo update -p libc --precise v0.2.74 || echo "cargo update libc failed"
+          # cargo update -p memchr --precise v2.3.3 || echo "cargo update memchr failed"
+          # cargo update -p miniz_oxide --precise v0.4.0 || echo "cargo update miniz_oxide failed"
+          # cargo update -p proc-macro2 --precise v1.0.19 || echo "cargo update proc-macro2 failed"
+          # cargo update -p regex-syntax --precise v0.6.18 || echo "cargo update regex-syntax failed"
+          # cargo update -p rustc-demangle --precise v0.1.16 || echo "cargo update rustc-demangle failed"
+          # cargo update -p serde --precise v1.0.114 || echo "cargo update serde failed"
+          # cargo update -p serde_derive --precise v1.0.114 || echo "cargo update serde_derive failed"
+          # cargo update -p serde_json --precise v1.0.57 || echo "cargo update serde_json failed"
+          # cargo update -p syn --precise v1.0.36 || echo "cargo update syn failed"
+          # cargo update -p unicode-width --precise v0.1.8 || echo "cargo update unicode-width failed"
+          # cargo update -p unicode-xid --precise v0.2.1 || echo "cargo update unicode-xid failed"
+          cargo install --force cargo-binutils --locked --version '=0.3.3'
         env:
           DEBIAN_FRONTEND: noninteractive
 
@@ -35,12 +66,12 @@ jobs:
         run: |
           mkdir -p coverage
           # TODO: thisn't
-          cargo update -p cxx --precise 1.0.54 || echo "cargo update cxx failed"
-          cargo update -p cxx-build --precise 1.0.54 || echo "cargo update cxx-build failed"
+          # cargo update -p cxx --precise 1.0.54 || echo "cargo update cxx failed"
+          # cargo update -p cxx-build --precise 1.0.54 || echo "cargo update cxx-build failed"
           cargo update -p syn --precise 1.0.80 || echo "cargo update syn failed"
           cargo update -p proc-macro2 --precise 1.0.28 || echo "cargo update proc-macro2 failed"
           cargo update -p approx:0.5.0 --precise 0.4.0 || echo "cargo update approx failed"
-          cargo update -p ndarray:0.15.3 --precise 0.14.0 || echo "cargo update ndarray failed"
+          # cargo update -p ndarray:0.15.3 --precise 0.14.0 || echo "cargo update ndarray failed"
           cargo test -- --include-ignored
           cargo profdata -- \
             merge -sparse json5format-*.profraw -o json5format.profdata
