@@ -40,4 +40,11 @@ RUN test -z "$DEBUG" || (\
         && cargo build --features aoflagger \
     )
 
+# setup the toolchain used for coverage analysis
+RUN rustup toolchain install nightly-2021-05-09 --component llvm-tools-preview --profile minimal \
+    && cargo +nightly-2021-05-09 update -p syn --precise 1.0.80 \
+    && cargo +nightly-2021-05-09 update -p proc-macro2 --precise 1.0.28 \
+    && cargo +nightly-2021-05-09 install --force cargo-make --locked --version '=0.32' \
+    && cargo +nightly-2021-05-09 install --force cargo-binutils --locked --version '=0.3.3'
+
 ENTRYPOINT [ "/app/target/release/birli" ]
