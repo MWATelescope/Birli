@@ -149,10 +149,9 @@ dependencies = [
 
 [[package]]
 name = "birli"
-version = "0.1.10"
+version = "0.2.0"
 dependencies = [
  "aoflagger_sys",
- "approx",
  "assert_cli",
  "cfg-if",
  "clap",
@@ -170,7 +169,6 @@ dependencies = [
  "log 0.4.14",
  "marlu",
  "ndarray",
- "num-complex",
  "rayon",
  "regex 1.4.6",
  "rustfmt",

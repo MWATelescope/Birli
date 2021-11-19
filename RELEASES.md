@@ -1,5 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.2.0 (2021-11-19)
+
+- Breaking CLI changes, most aoflagger subcommands moved to root
+- [EOR-4](https://github.com/MWATelescope/Birli/projects/1#card-73186083) use Marlu to write measurement sets
+- write some missing mandatory AIPS 117 fields to uvfits
+
 # Version 0.1.10 (2021-10-22)
 
 - add CLI flag to skip flagging
