@@ -152,7 +152,7 @@ args = ["test", "--", "--ignored"]
 
 [tasks.test_no_default]
 command = "cargo"
-args = ["test", "--", "--no-default-features"]
+args = ["test", "--no-default-features"]
 
 [tasks.ci]
 dependencies = [
