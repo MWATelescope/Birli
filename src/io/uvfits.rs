@@ -1069,11 +1069,10 @@ mod tests_aoflagger {
                     (Ok(left_val), Ok(right_val)) => {
                         assert!(
                             approx_eq!(f64, left_val, right_val, F64Margin::default()),
-                            "mismatch for short f64 key {}. {} != {} (margin={:?})",
+                            "mismatch for short f64 key {}. {} != {}",
                             key,
                             left_val,
-                            right_val,
-                            F64Margin::default()
+                            right_val
                         );
                     }
                     (Err(err), Ok(right_val)) => {
@@ -1268,8 +1267,7 @@ mod tests_aoflagger {
                 // This is actually incorrect in Cotter, see https://github.com/MWATelescope/Birli/issues/6
                 // "CRVAL4",
                 "CDELT4", "CRPIX4", "CRVAL5", "CRPIX5", "CDELT5", "CRVAL6", "CRPIX6", "CDELT6",
-                "EPOCH", "OBSRA", "OBSDEC",
-                // TODO: "FIBRFACT", (v-factor, cable type?)
+                "EPOCH", "OBSRA", "OBSDEC", "FIBRFACT", // (v-factor, cable type?)
             ],
             left_fptr,
             _left_primary_hdu,
@@ -1287,7 +1285,7 @@ mod tests_aoflagger {
                 "XTENSION", "TTYPE1", "TFORM1", "TTYPE2", "TFORM2", "TUNIT2", "TTYPE3", "TFORM3",
                 "TTYPE4", "TFORM4", "TTYPE5", "TFORM5", "TUNIT5", "TTYPE6", "TFORM6", "TTYPE7",
                 "TFORM7", "TUNIT7", "TTYPE8", "TFORM8", "TTYPE9", "TFORM9", "TTYPE10", "TFORM10",
-                "TUNIT10", "TTYPE11", "TFORM11", "EXTNAME", "TIMSYS", "ARRNAM",
+                "TUNIT10", "TTYPE11", "TFORM11", "EXTNAME", "TIMSYS", "ARRNAM", "RDATE"
             ],
             left_fptr,
             _left_ant_hdu,
@@ -1298,12 +1296,10 @@ mod tests_aoflagger {
         assert_f64_string_keys_eq!(
             vec![
                 "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "PCOUNT", "GCOUNT", "TFIELDS", //
-                // TODO: "ARRAYX", "ARRAYY", "ARRAYZ",
+                "ARRAYX", "ARRAYY", "ARRAYZ",
                 // "FREQ", // This is incorrect in Cotter. See: https://github.com/MWATelescope/Birli/issues/6
-                // TODO: "GSTIA0",
-                "DEGPDY", //
-                // TODO: "RDATE",
-                "POLARX", "POLARY", "UT1UTC", "DATUTC", "NUMORB", "NOPCAL", "FREQID", "IATUTC",
+                "GSTIA0", "DEGPDY", "POLARX", "POLARY", "UT1UTC", "DATUTC", "NUMORB", "NOPCAL",
+                "FREQID", "IATUTC",
             ],
             left_fptr,
             _left_ant_hdu,
@@ -1728,6 +1724,7 @@ mod tests_aoflagger {
 
     /// Tests for AIPS 117 compliance.
     /// See https://github.com/MWATelescope/Birli/issues/9
+    /// and ftp://ftp.aoc.nrao.edu/pub/software/aips/TEXT/PUBL/AIPSMEM117.PS
     #[test]
     fn aips_117() {
         let context = get_mwa_ord_context();
@@ -1786,15 +1783,202 @@ mod tests_aoflagger {
         u.write_ants_from_mwalib(&context.metafits_context).unwrap();
 
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
+        
+        // /////////// //
+        // PRIMARY HDU //
+        // /////////// //
+        
+        let birli_vis_hdu = fits_open_hdu!(&mut birli_fptr, 0).unwrap();
 
-        // let birli_vis_hdu = fits_open_hdu!(&mut birli_fptr, 0).unwrap();
-        // TODO: vis_hdu
+        // -> OBJECT
+        let birli_vis_object: String =
+        get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "OBJECT").unwrap();
+        assert_eq!(birli_vis_object, "ForA");
+        // -> TELESCOP
+        let birli_vis_telescop: String =
+        get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "TELESCOP").unwrap();
+        assert_eq!(birli_vis_telescop, "MWA");
+        // -> INSTRUME
+        let birli_vis_instrume: String =
+        get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "INSTRUME").unwrap();
+        assert_eq!(birli_vis_instrume, "MWA");
+        // -> DATE-OBS
+        // ---> in AIPS117:
+        // -----> on page 12: "The value of the RDATE parameter will be the date for which the time 
+        //  system parameters GSTIA0, DECPDY, and IATUTC apply. 
+        //  If the table contains orbital parameters for orbiting antennæ, this keyword also 
+        //  designates the epoch for the orbital parameters. 
+        //  (This is copy-pasted twice)
+        // -----> on page 85 onwards, all examples show YYYY-MM-DD format
+        // ---> in Cotter, it is given in ISO8601 (YYYY-MM-DDTHH:mm:ss) with time fixed to 00:00:00.
+        let birli_vis_date_obs: String =
+        get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "DATE-OBS").unwrap();
+        assert_eq!(birli_vis_date_obs, "2017-12-01T14:54:38");
+        // -> DATE-MAP - File processing date
+        // ---> not in Cotter, not mandatory, so not written
+        // -> BSCALE
+        let birli_ant_bscale: f32 =
+        get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "BSCALE").unwrap();
+        assert_eq!(birli_ant_bscale, 1.);
+        // -> BUNIT - units, 
+        // ---> not in Cotter, not mandatory, so not written
+        // let birli_ant_bunit: String =
+        // get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "BUNIT").unwrap();
+        // -> EQUINOX - Equinox of source coordinates and uvw
+        // ---> not in Cotter, not mandatory, so not written
+        // -> ALTRPIX - Reference pixel for velocity
+        // ---> not in Cotter, not mandatory, so not written
+
+
+        // /////////// //
+        // ANTENNA HDU //
+        // /////////// //
+
         let birli_ant_hdu = fits_open_hdu!(&mut birli_fptr, 1).unwrap();
-        let birli_ant_frame: String =
-            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FRAME").unwrap();
-        assert_eq!(birli_ant_frame, "ITRF");
+
+        // -> EXTVER
+        // ---> in AIPS117:
+        // -----> on page 12, it's "Subarray number", type I
+        // -----> on page 84 onwards, all examples say "Version number of table"
+        // ---> in pyuvdata is 1, presumably since we're only writing a single 
+        //   AIPS_AN version and someone assumed it was 1 indexed
+        // ---> @derwentx: I'm pretty sure the wrong description was pasted into 
+        // EXTVER, and it's incorrectly being used as subarray number, when it 
+        // should just be the version number of the table.
+        let birli_ant_extver: i32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "EXTVER").unwrap();
+        assert_eq!(birli_ant_extver, 1);
+        // -> ARRAY{X|Y|Z} = coordinate of array center (meters)
+        let birli_ant_arrayx: f32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "ARRAYX").unwrap();
+        assert_abs_diff_eq!(birli_ant_arrayx, -2559453.29059553, epsilon=f32::EPSILON);
+        let birli_ant_arrayy: f32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "ARRAYY").unwrap();
+        assert_abs_diff_eq!(birli_ant_arrayy, 5095371.73544116, epsilon=f32::EPSILON);
+        let birli_ant_arrayz: f32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "ARRAYZ").unwrap();
+        assert_abs_diff_eq!(birli_ant_arrayz, -2849056.77357178, epsilon=f32::EPSILON);
+        // -> GSTIAO = GST at 0h on reference date (degrees)
+        // ---> our value is out from cotter's by about 1e-3. Not sure if this is an issue.
+        // ---> notes from @mkolopanis: this one depends on your RDATE but I'm not 100% sure what 
+        //   sets the RDATE for our kind of data. We just use 0 to spoof this because we don't 
+        //   directly use it in any of our calculations.
+        let birli_ant_gstia0: f32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "GSTIA0").unwrap();
+        assert_abs_diff_eq!(birli_ant_gstia0, 70.0441623797412, epsilon=5e-2);
+        // -> DEGPDY = Earth’s rotation rate (degrees/day)
+        let birli_ant_degpdy: f32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "DEGPDY").unwrap();
+        assert_abs_diff_eq!(birli_ant_degpdy, 360.985, epsilon=f32::EPSILON);
+        // -> FREQ = Reference frequency (Hz)
+        // ---> Cotter-calculated value was slightly incorrect because of 
+        //   https://github.com/MWATelescope/Birli/issues/6
+        let birli_ant_freq: f32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FREQ").unwrap();
+        assert_abs_diff_eq!(birli_ant_freq, 229760000., epsilon=f32::EPSILON);
+        // -> RDATE = Reference date
+        // ---> in AIPS117:
+        // -----> on page 12: "The value of the RDATE parameter will be the date for which the time 
+        //  system parameters GSTIA0, DECPDY, and IATUTC apply. 
+        //  If the table contains orbital parameters for orbiting antennæ, this keyword also 
+        //  designates the epoch for the orbital parameters. 
+        //  (This is copy-pasted twice)
+        // -----> on page 85 onwards, all examples show YYYY-MM-DD format
+        // ---> in Cotter, it is given in ISO8601 (YYYY-MM-DDTHH:mm:ss) with time fixed to 00:00:00.
+        let birli_ant_rdate: String =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "RDATE").unwrap();
+        assert_eq!(birli_ant_rdate, "2017-12-01T00:00:00.0");
+        // -> POLAR{X|Y} = coordinate of North Pole (arc seconds)
+        // ---> notes from @mkolopanis: 0 makes sense here I think. Unless there's an offset from 
+        //   North Pole in images.
+        let birli_ant_polarx: f32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "POLARX").unwrap();
+        assert_abs_diff_eq!(birli_ant_polarx, 0., epsilon=f32::EPSILON);
+        let birli_ant_polary: f32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "POLARX").unwrap();
+        assert_abs_diff_eq!(birli_ant_polary, 0., epsilon=f32::EPSILON);
+        // -> UT1UTC = UT1 - UTC (sec)
+        // ---> notes from @mkolopanis: we also use 0 here.
+        let birli_ant_ut1utc: f32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "UT1UTC").unwrap();
+        assert_abs_diff_eq!(birli_ant_ut1utc, 0., epsilon=f32::EPSILON);
+        // -> DATUTC = "time system - UTC (sec)" (huh)
+        // ---> notes from @mkolopanis: would 0 if your TIMESYS is UTC. We assume UTC ourselves so 
+        //   it is always 0
+        let birli_ant_datutc: f32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "DATUTC").unwrap();
+        assert_abs_diff_eq!(birli_ant_datutc, 0., epsilon=f32::EPSILON);
+
+        // -> TIMSYS/TIMESYS "Time system"
+        // ---> in AIPS117: 
+        // -----> on page 12 it's listed as `TIMESYS`, type A in Mandatory keywords
+        // -----> on page 13 it's Time system. The TIMSYS keyword shall specify the time system used 
+        //        for the array. It shall either have the value ’IAT’, denoting international atomic 
+        //        time, or the value ’UTC’, denoting coordinated universal time. This indicates 
+        //        whether the zero hour for the TIME parameter in the UV DATA table is midnight IAT 
+        //        or midnight UTC.
+        // -----> on page 87, it's `TIMSYS` in an example
+        // ---> in CASA it's `TIMSYS`
+        // ---> in pyuvdata: they look for both
+        // ---> in Cotter it's `TIMSYS`
+        // So ¯\_(ツ)_/¯
         let birli_ant_timesys: String =
             get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "TIMESYS").unwrap();
         assert_eq!(birli_ant_timesys, "UTC");
+        let birli_ant_timsys: String =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "TIMSYS").unwrap();
+        assert_eq!(birli_ant_timsys, "UTC");
+        // -> ARRNAM
+        let birli_ant_timsys: String =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "ARRNAM").unwrap();
+        assert_eq!(birli_ant_timsys, "MWA");
+        // -> XYZHAND
+        // ---> Birli assumes the station coordinates are "right handed".
+        let birli_ant_frame: String =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "XYZHAND").unwrap();
+        assert_eq!(birli_ant_frame, "RIGHT");
+        // -> FRAME - Coordinate frame
+        // ---> in AIPS117: The value of the FRAME keyword shall be a string that identifies the 
+        //  coordinate system used for antenna coordinates. At present, only one value of the FRAME 
+        //  keyword has been defined (’ITRF’), although ’????’ is widely used to reflect ignorance.
+        // ---> notes from @mkolopanis: the "FRAME" keyword in particular in the "AIPS AN" table is 
+        //   important to know which frame the antenna positions are recorded in.
+        let birli_ant_frame: String =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FRAME").unwrap();
+        assert_eq!(birli_ant_frame, "ITRF");
+        // -> NUMORB - Number orbital parameters in table (norb)
+        let birli_ant_numorb: i32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "NUMORB").unwrap();
+        assert_eq!(birli_ant_numorb, 0);
+        // -> NO_IF - Number IFs (nIF)
+        // ---> in AIPS117: The value of the NO IF keyword shall specify the number of spectral
+        //  windows (IFs) in the data set. In the antenna file, this controls the dimension of the 
+        //  polarization calibration value column.
+        // ---> in Cotter, this is not used.
+        // ---> notes from @mkolopanis: we handle NO_IF as the number of independent spectral 
+        //  windows. I can see how you could interpret each coarse band as its own spectral window. 
+        // We just view the full band as a single window since it is contiguous with all coarse 
+        // bands present. The idea of multiple spectral windows I think is more common for things 
+        // like the VLA when you observe in multiple bands that do not form a contiguous frequency 
+        // band if concatenated.
+        let birli_ant_no_if: i32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "NO_IF").unwrap();
+        assert_eq!(birli_ant_no_if, 1);
+        // -> NOPCAL - Number of polarization calibration values / IF (npcal)
+        let birli_ant_nopcal: i32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "NOPCAL").unwrap();
+        assert_eq!(birli_ant_nopcal, 3);
+        // -> POLTYPE - Type of polarization calibration
+        // ---> If the table contains information about the polarization characteristics of
+        //  the feeds, then the feed parametrization that is used shall be indicated by the value of 
+        //  the POLTYPE keyword, as given in Table 9.
+        // ---> not used.
+        // let birli_ant_poltype: i32 =
+        //     get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "POLTYPE").unwrap();
+
+        // -> FREQID - Frequency setup number
+        let birli_ant_freqid: i32 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FREQID").unwrap();
+        assert_eq!(birli_ant_freqid, -1);
     }
 }
