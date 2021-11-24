@@ -62,7 +62,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f2a05fd1bd10b2527e20a2cd32d8873d115b8b39fe219ee25f42a8aca6ba278"
 dependencies = [
- "num-complex",
+ "num-complex 0.3.1",
  "num-traits",
 ]
 
@@ -168,7 +168,7 @@ dependencies = [
  "libc",
  "log 0.4.14",
  "marlu",
- "ndarray",
+ "ndarray 0.15.4",
  "rayon",
  "regex 1.4.6",
  "rustfmt",
@@ -977,7 +977,7 @@ dependencies = [
  "lazy_static",
  "log 0.4.14",
  "mwalib",
- "ndarray",
+ "ndarray 0.14.0",
  "num-traits",
  "rayon",
  "rubbl_casatables",
@@ -997,6 +997,15 @@ name = "matrixmultiply"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "916806ba0031cd542105d916a97c8572e1fa6dd79c9c51e7eb43a09ec2dd84c1"
+dependencies = [
+ "rawpointer",
+]
+
+[[package]]
+name = "matrixmultiply"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "add85d4dd35074e6fedc608f8c8f513a3548619a9024b751949ef0e8e45a4d84"
 dependencies = [
  "rawpointer",
 ]
@@ -1054,8 +1063,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c0d5c9540a691d153064dc47a4db2504587a75eae07bf1d73f7a596ebc73c04"
 dependencies = [
  "approx",
- "matrixmultiply",
- "num-complex",
+ "matrixmultiply 0.2.4",
+ "num-complex 0.3.1",
+ "num-integer",
+ "num-traits",
+ "rawpointer",
+]
+
+[[package]]
+name = "ndarray"
+version = "0.15.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dec23e6762830658d2b3d385a75aa212af2f67a4586d4442907144f3bb6a1ca8"
+dependencies = [
+ "approx",
+ "matrixmultiply 0.3.2",
+ "num-complex 0.4.0",
  "num-integer",
  "num-traits",
  "rawpointer",
@@ -1079,6 +1102,15 @@ name = "num-complex"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "747d632c0c558b87dbabbe6a82f3b4ae03720d0646ac5b7b4dae89394be5f2c5"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "num-complex"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26873667bbbb7c5182d4a37c1add32cdf09f841af72da53318fdb81543c15085"
 dependencies = [
  "num-traits",
 ]
@@ -1492,7 +1524,7 @@ dependencies = [
  "cc",
  "failure",
  "failure_derive",
- "ndarray",
+ "ndarray 0.15.4",
  "rubbl_casatables_impl",
  "rubbl_core",
 ]
@@ -1517,8 +1549,8 @@ dependencies = [
  "clap",
  "failure",
  "failure_derive",
- "ndarray",
- "num-complex",
+ "ndarray 0.15.4",
+ "num-complex 0.3.1",
  "termcolor",
 ]
 

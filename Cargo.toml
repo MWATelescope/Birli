@@ -35,7 +35,7 @@ itertools = "0.10"
 libc = "0.2"
 log = "0.4"
 marlu = "0.2.2"
-ndarray = { version = ">=0.14,<0.16", features = ["rayon", "approx"] }
+ndarray = { version = ">=0.14, <0.16", features = ["rayon", "approx"] }
 rayon = "1.5"
 regex = "1.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -51,7 +51,7 @@ tempfile = "3.2"
 csv = "1.1"
 lexical = "5.2"
 
-ndarray = { version = "0.14.*", features = ["approx"] }
+ndarray = { version = "0.15.*", features = ["approx"] }
 
 [[bench]]
 name = "bench"
