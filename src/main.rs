@@ -1,8 +1,8 @@
 use birli::io::write_ms;
 use cfg_if::cfg_if;
-use clap::{crate_authors, crate_description, crate_name, crate_version, App};
-use log::{debug, info};
-use std::{env, ffi::OsString, fmt::Debug};
+use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg};
+use log::{debug, info, trace};
+use std::{env, ffi::OsString, fmt::Debug, path::Path};
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
@@ -10,6 +10,7 @@ cfg_if! {
             flags::flag_jones_array_existing, get_aoflagger_version_string,
         };
         use aoflagger_sys::{cxx_aoflagger_new};
+        use clap::SubCommand;
     }
 }
 use birli::{
@@ -25,9 +26,6 @@ use birli::{
     },
     write_flags,
 };
-use clap::{Arg, SubCommand};
-use log::trace;
-use std::path::Path;
 
 fn main_with_args<I, T>(args: I)
 where
@@ -103,7 +101,9 @@ where
         if #[cfg(feature = "aoflagger")] {
             aoflagger_version = get_aoflagger_version_string();
             let aoflagger_subcommand = SubCommand::with_name("aoflagger")
-            .about("flag visibilities with aoFlagger")
+            .about("flag visibilities with aoFlagger. This option takes all of \
+            the same arguments as the base command, but they must come before \
+            the aoflagger subcommand.")
             .version(&*aoflagger_version.as_str())
             .arg(
                 Arg::with_name("no-rfi")

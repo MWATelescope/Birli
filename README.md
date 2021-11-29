@@ -262,7 +262,8 @@ the same arguments as the base command, but they must come before the aoflagger
 subcommand.
 
 ```txt
-flag visibilities with aoFlagger
+flag visibilities with aoFlagger. This option takes all of the same arguments as 
+the base command, but they must come before the aoflagger subcommand.
 
 USAGE:
     birli <fits-files>... -m <metafits> aoflagger [FLAGS]
