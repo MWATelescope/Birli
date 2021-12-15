@@ -8,12 +8,12 @@ use crate::{
         BirliError::{NoCommonTimesteps, NoProvidedTimesteps},
     },
     io::error::IOError,
+    ndarray::{Array2, Array3, ArrayView3, Axis, Zip},
     FlagFileSet,
 };
 use cfg_if::cfg_if;
 use log::trace;
 use marlu::mwalib::CorrelatorContext;
-use ndarray::{Array2, Array3, ArrayView3, Axis, Zip};
 use rayon::prelude::*;
 
 cfg_if! {
@@ -81,11 +81,11 @@ pub fn get_flaggable_timesteps(context: &CorrelatorContext) -> Result<Vec<usize>
         context.common_timestep_indices.first(),
         context.provided_timestep_indices.last(),
     ) {
-        (Some(&first), Some(&last)) => Ok((first..last + 1).collect()),
+        (Some(&first), Some(&last)) if first <= last => Ok((first..last + 1).collect()),
         (.., None) => Err(NoProvidedTimesteps {
             timestep_info: format!("{:?}", &context.gpubox_time_map),
         }),
-        (None, ..) => Err(NoCommonTimesteps {
+        _ => Err(NoCommonTimesteps {
             timestep_info: format!("{:?}", &context.gpubox_time_map),
         }),
     }
@@ -671,7 +671,7 @@ pub fn flag_to_weight_array(flag_array: ArrayView3<bool>, weight_factor: f64) ->
 
     Zip::from(&mut weight_array)
         .and(&flag_array)
-        .par_apply(|weight, &flag| {
+        .par_for_each(|weight, &flag| {
             *weight = if flag { -weight_factor } else { weight_factor } as f32;
         });
 

@@ -164,6 +164,7 @@ where
         Some(get_antenna_flags(&context)),
     );
 
+    #[allow(unused_mut)]
     let (mut jones_array, mut flag_array) = context_to_jones_array(
         &context,
         &img_timestep_range,

@@ -14,10 +14,12 @@ use marlu::{
     mwalib::CorrelatorContext,
     Jones, LatLngHeight, RADec,
 };
-use ndarray::{Array3, Array4, ArrayView3, ArrayViewMut3};
 use uvfits::UvfitsWriter;
 
-use crate::flags::get_weight_factor;
+use crate::{
+    flags::get_weight_factor,
+    ndarray::{Array3, Array4, ArrayView3, ArrayViewMut3},
+};
 
 use self::error::IOError;
 
@@ -272,18 +274,8 @@ pub fn write_ms<T: AsRef<Path>>(
     assert_eq!(jones_shape[1], flag_shape[1]);
     assert_eq!(jones_shape[2], flag_shape[2]);
 
+    // TODO: this will change with averaging.
     let weight_factor = get_weight_factor(context) as f32;
-    // TODO: This is how I thought weights work, but it's not what Cotter does.
-    // let weight_array = Array4::from_shape_fn(
-    //     (flag_shape[0], flag_shape[1], flag_shape[2], num_pols),
-    //     |(t, f, b, _)| {
-    //         if *flag_array.get((t, f, b)).unwrap() {
-    //             0.
-    //         } else {
-    //             weight_factor
-    //         }
-    //     },
-    // );
     let weight_array = Array4::from_shape_fn(
         (flag_shape[0], flag_shape[1], flag_shape[2], num_pols),
         |_| weight_factor,

@@ -5,9 +5,11 @@
 //! Module for uvfits file format reading and writing
 //! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
-// use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-use std::{ffi::CString, ops::Range};
+use std::{
+    ffi::CString,
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 use fitsio::{errors::check_status as fits_check_status, FitsFile};
 use indicatif::ProgressStyle;
@@ -23,12 +25,16 @@ use marlu::{
     precession::*,
     time, Jones, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
 };
-use ndarray::{Array3, ArrayView3, Axis};
 
-use crate::flags::{flag_to_weight_array, get_weight_factor};
+use crate::{
+    flags::{flag_to_weight_array, get_weight_factor},
+    ndarray::{Array3, ArrayView3, Axis},
+};
 
-use super::error::{IOError, UvfitsWriteError};
-use super::WriteableVis;
+use super::{
+    error::{IOError, UvfitsWriteError},
+    WriteableVis,
+};
 
 /// From a `hifitime` [Epoch], get a formatted date string with the hours,
 /// minutes and seconds set to 0.

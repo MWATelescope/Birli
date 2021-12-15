@@ -34,8 +34,7 @@ indicatif = { version = "0.16", features = ["rayon"] }
 itertools = "0.10"
 libc = "0.2"
 log = "0.4"
-marlu = "0.2.2"
-ndarray = { version = ">=0.14,<0.16", features = ["rayon", "approx"] }
+marlu = "0.2.3"
 rayon = "1.5"
 regex = "1.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -50,8 +49,8 @@ rustfmt = "0.10"
 tempfile = "3.2"
 csv = "1.1"
 lexical = "5.2"
-
-ndarray = { version = "0.14.*", features = ["approx"] }
+num-traits = "0.2.*"
+ndarray = { version = ">=0.15.4,<0.16", features = ["approx-0_5"] }
 
 [[bench]]
 name = "bench"

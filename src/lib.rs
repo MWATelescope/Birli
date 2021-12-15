@@ -111,7 +111,6 @@ use crossbeam_utils::thread;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use log::{trace, warn};
-use ndarray::{parallel::prelude::*, Array3, Axis};
 use std::ops::Range;
 
 pub mod io;
@@ -119,13 +118,19 @@ pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter, write_ms, write_uvfits};
 pub mod corrections;
 pub use corrections::{correct_cable_lengths, correct_geometry};
 pub mod flags;
+#[cfg(test)]
+pub(crate) mod types;
 pub use flags::{get_antenna_flags, get_flaggable_timesteps, init_flag_array, write_flags};
 pub use marlu;
 pub use marlu::{
     approx, mwalib,
     mwalib::{fitsio, fitsio_sys, CorrelatorContext},
+    ndarray,
+    ndarray::{parallel::prelude::*, Array3, Axis},
     Complex, Jones,
 };
+#[cfg(test)]
+pub(crate) use types::TestJones;
 
 mod error;
 pub use error::BirliError;
@@ -544,8 +549,10 @@ mod tests {
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     #![allow(clippy::float_cmp)]
 
+    use crate::TestJones;
+
     use super::{context_to_jones_array, get_flaggable_timesteps};
-    use marlu::{approx::assert_abs_diff_eq, mwalib::CorrelatorContext, Complex, Jones};
+    use marlu::{approx::assert_abs_diff_eq, mwalib::CorrelatorContext, Complex};
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -612,11 +619,12 @@ mod tests {
             // img_baseline_idxs.as_slice(),
             None,
         );
+        let jones_array = jones_array.mapv(TestJones::from);
 
         // ts 0, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x10c5be as f32, -0x10c5bf as f32),
                 Complex::new(0x10c5ae as f32, 0x10c5af as f32),
                 Complex::new(0x10c5ae as f32, -0x10c5af as f32),
@@ -626,7 +634,7 @@ mod tests {
         // ts 1, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x14c5be as f32, -0x14c5bf as f32),
                 Complex::new(0x14c5ae as f32, 0x14c5af as f32),
                 Complex::new(0x14c5ae as f32, -0x14c5af as f32),
@@ -636,7 +644,7 @@ mod tests {
         // ts 2, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x18c5be as f32, -0x18c5bf as f32),
                 Complex::new(0x18c5ae as f32, 0x18c5af as f32),
                 Complex::new(0x18c5ae as f32, -0x18c5af as f32),
@@ -646,7 +654,7 @@ mod tests {
         // ts 3, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((3, 0, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x1cc5be as f32, -0x1cc5bf as f32),
                 Complex::new(0x1cc5ae as f32, 0x1cc5af as f32),
                 Complex::new(0x1cc5ae as f32, -0x1cc5af as f32),
@@ -660,13 +668,13 @@ mod tests {
         assert_abs_diff_eq!(
             jones_array.get((0, 2, 0)).unwrap(),
             // Normally this would be:
-            // &Jones::from([
+            // &TestJones::from([
             //     Complex::new(0x00c5be as f32, -0x00c5bf as f32),
             //     Complex::new(0x00c5ae as f32, 0x00c5af as f32),
             //     Complex::new(0x00c5ae as f32, -0x00c5af as f32),
             //     Complex::new(0x00bec6 as f32, -0x00bec7 as f32),
             // ])
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x04c5be as f32, -0x04c5bf as f32),
                 Complex::new(0x04c5ae as f32, 0x04c5af as f32),
                 Complex::new(0x04c5ae as f32, -0x04c5af as f32),
@@ -677,7 +685,7 @@ mod tests {
         // ts 1, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((1, 2, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0.0, 0.0),
                 Complex::new(0.0, 0.0),
                 Complex::new(0.0, 0.0),
@@ -688,7 +696,7 @@ mod tests {
         // ts 2, chan 2, baseline 0 - unchanged
         assert_abs_diff_eq!(
             jones_array.get((2, 2, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x08c5be as f32, -0x08c5bf as f32),
                 Complex::new(0x08c5ae as f32, 0x08c5af as f32),
                 Complex::new(0x08c5ae as f32, -0x08c5af as f32),
@@ -699,7 +707,7 @@ mod tests {
         // ts 3, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((3, 2, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0.0, 0.0),
                 Complex::new(0.0, 0.0),
                 Complex::new(0.0, 0.0),
@@ -731,10 +739,12 @@ mod tests {
             None,
         );
 
+        let jones_array = jones_array.mapv(TestJones::from);
+
         // ts 0, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x410000 as f32, 0x410001 as f32),
                 Complex::new(0x410002 as f32, 0x410003 as f32),
                 Complex::new(0x410004 as f32, 0x410005 as f32),
@@ -746,7 +756,7 @@ mod tests {
         let viz_0_0_1 = *jones_array.get((0, 0, 1)).unwrap();
         assert_abs_diff_eq!(
             viz_0_0_1,
-            Jones::from([
+            TestJones::from([
                 Complex::new(0x410010 as f32, 0x410011 as f32),
                 Complex::new(0x410012 as f32, 0x410013 as f32),
                 Complex::new(0x410014 as f32, 0x410015 as f32),
@@ -757,7 +767,7 @@ mod tests {
         // ts 0, chan 0, baseline 2
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 2)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x410020 as f32, 0x410021 as f32),
                 Complex::new(0x410022 as f32, 0x410023 as f32),
                 Complex::new(0x410024 as f32, 0x410025 as f32),
@@ -768,7 +778,7 @@ mod tests {
         // ts 0, chan 1, baseline 2
         assert_abs_diff_eq!(
             jones_array.get((0, 1, 2)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x410028 as f32, 0x410029 as f32),
                 Complex::new(0x41002a as f32, 0x41002b as f32),
                 Complex::new(0x41002c as f32, 0x41002d as f32),
@@ -779,7 +789,7 @@ mod tests {
         // ts 1, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x410100 as f32, 0x410101 as f32),
                 Complex::new(0x410102 as f32, 0x410103 as f32),
                 Complex::new(0x410104 as f32, 0x410105 as f32),
@@ -790,7 +800,7 @@ mod tests {
         // ts 2, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x410200 as f32, 0x410201 as f32),
                 Complex::new(0x410202 as f32, 0x410203 as f32),
                 Complex::new(0x410204 as f32, 0x410205 as f32),
@@ -802,7 +812,7 @@ mod tests {
         let viz_3_3_1 = *jones_array.get((3, 3, 1)).unwrap();
         assert_abs_diff_eq!(
             viz_3_3_1,
-            Jones::from([
+            TestJones::from([
                 Complex::new(0x410718 as f32, 0x410719 as f32),
                 Complex::new(0x41071a as f32, 0x41071b as f32),
                 Complex::new(0x41071c as f32, 0x41071d as f32),
@@ -833,10 +843,12 @@ mod tests {
             None,
         );
 
+        let jones_array = jones_array.mapv(TestJones::from);
+
         // ts 0, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x10c5be as f32, -0x10c5bf as f32),
                 Complex::new(0x10c5ae as f32, 0x10c5af as f32),
                 Complex::new(0x10c5ae as f32, -0x10c5af as f32),
@@ -846,7 +858,7 @@ mod tests {
         // ts 1, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x14c5be as f32, -0x14c5bf as f32),
                 Complex::new(0x14c5ae as f32, 0x14c5af as f32),
                 Complex::new(0x14c5ae as f32, -0x14c5af as f32),
@@ -856,7 +868,7 @@ mod tests {
         // ts 2, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x18c5be as f32, -0x18c5bf as f32),
                 Complex::new(0x18c5ae as f32, 0x18c5af as f32),
                 Complex::new(0x18c5ae as f32, -0x18c5af as f32),
@@ -866,7 +878,7 @@ mod tests {
         // ts 3, chan 0, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((3, 0, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x1cc5be as f32, -0x1cc5bf as f32),
                 Complex::new(0x1cc5ae as f32, 0x1cc5af as f32),
                 Complex::new(0x1cc5ae as f32, -0x1cc5af as f32),
@@ -877,7 +889,7 @@ mod tests {
         // ts 0, chan 0, baseline 5
         assert_abs_diff_eq!(
             jones_array.get((0, 0, 5)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x10f1ce as f32, -0x10f1cf as f32),
                 Complex::new(0x10ea26 as f32, -0x10ea27 as f32),
                 Complex::new(0x10f1be as f32, -0x10f1bf as f32),
@@ -887,7 +899,7 @@ mod tests {
         // ts 1, chan 0, baseline 5
         assert_abs_diff_eq!(
             jones_array.get((1, 0, 5)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x14f1ce as f32, -0x14f1cf as f32),
                 Complex::new(0x14ea26 as f32, -0x14ea27 as f32),
                 Complex::new(0x14f1be as f32, -0x14f1bf as f32),
@@ -897,7 +909,7 @@ mod tests {
         // ts 2, chan 0, baseline 5
         assert_abs_diff_eq!(
             jones_array.get((2, 0, 5)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x18f1ce as f32, -0x18f1cf as f32),
                 Complex::new(0x18ea26 as f32, -0x18ea27 as f32),
                 Complex::new(0x18f1be as f32, -0x18f1bf as f32),
@@ -907,7 +919,7 @@ mod tests {
         // ts 3, chan 0, baseline 5
         assert_abs_diff_eq!(
             jones_array.get((3, 0, 5)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x1cf1ce as f32, -0x1cf1cf as f32),
                 Complex::new(0x1cea26 as f32, -0x1cea27 as f32),
                 Complex::new(0x1cf1be as f32, -0x1cf1bf as f32),
@@ -918,7 +930,7 @@ mod tests {
         // ts 0, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((0, 2, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x00c5be as f32, -0x00c5bf as f32),
                 Complex::new(0x00c5ae as f32, 0x00c5af as f32),
                 Complex::new(0x00c5ae as f32, -0x00c5af as f32),
@@ -928,7 +940,7 @@ mod tests {
         // ts 1, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((1, 2, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x04c5be as f32, -0x04c5bf as f32),
                 Complex::new(0x04c5ae as f32, 0x04c5af as f32),
                 Complex::new(0x04c5ae as f32, -0x04c5af as f32),
@@ -938,7 +950,7 @@ mod tests {
         // ts 2, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((2, 2, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x08c5be as f32, -0x08c5bf as f32),
                 Complex::new(0x08c5ae as f32, 0x08c5af as f32),
                 Complex::new(0x08c5ae as f32, -0x08c5af as f32),
@@ -948,7 +960,7 @@ mod tests {
         // ts 3, chan 2, baseline 0
         assert_abs_diff_eq!(
             jones_array.get((3, 2, 0)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x0cc5be as f32, -0x0cc5bf as f32),
                 Complex::new(0x0cc5ae as f32, 0x0cc5af as f32),
                 Complex::new(0x0cc5ae as f32, -0x0cc5af as f32),
@@ -958,7 +970,7 @@ mod tests {
         // ts 3, chan 3, baseline 5
         assert_abs_diff_eq!(
             jones_array.get((3, 3, 5)).unwrap(),
-            &Jones::from([
+            &TestJones::from([
                 Complex::new(0x0df3ce as f32, -0x0df3cf as f32),
                 Complex::new(0x0dec26 as f32, -0x0dec27 as f32),
                 Complex::new(0x0df3be as f32, -0x0df3bf as f32),

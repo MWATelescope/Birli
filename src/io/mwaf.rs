@@ -12,11 +12,16 @@ use super::error::{
     IOError,
     IOError::{FitsIO, FitsOpen, InvalidFlagFilenameTemplate, InvalidGpuBox, MwafInconsistent},
 };
-use crate::error::BirliError;
+use crate::{
+    error::BirliError,
+    ndarray::{Array3, Axis},
+};
 use clap::crate_version;
-use fitsio::hdu::FitsHdu;
-use fitsio::tables::{ColumnDataDescription, ColumnDataType, ConcreteColumnDescription};
-use fitsio::FitsFile;
+use fitsio::{
+    hdu::FitsHdu,
+    tables::{ColumnDataDescription, ColumnDataType, ConcreteColumnDescription},
+    FitsFile,
+};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use marlu::{
@@ -26,7 +31,6 @@ use marlu::{
         get_required_fits_key,
     },
 };
-use ndarray::{Array3, Axis};
 // use rayon::prelude::*;
 use regex::Regex;
 use std::collections::BTreeMap;
