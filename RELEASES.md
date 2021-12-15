@@ -1,5 +1,9 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.2.1 (2021-12-15)
+
+- upgrade ndarray and marlu for better ms writing performance.
+
 # Version 0.2.0 (2021-11-19)
 
 - Breaking CLI changes, most aoflagger subcommands moved to root

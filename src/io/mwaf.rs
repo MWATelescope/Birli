@@ -671,8 +671,8 @@ mod tests {
         )
         .unwrap();
 
-        for (&gpubox_id, mut fptr) in flag_file_set.gpubox_fptrs.iter_mut() {
-            let header = FlagFileSet::read_header(&mut fptr).unwrap();
+        for (&gpubox_id, fptr) in flag_file_set.gpubox_fptrs.iter_mut() {
+            let header = FlagFileSet::read_header(fptr).unwrap();
             assert_eq!(header.obs_id, 1247842824);
             assert_eq!(header.num_channels, 128);
             assert_eq!(header.num_ants, 128);

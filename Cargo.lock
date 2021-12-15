@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "birli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aoflagger_sys",
  "assert_cli",
