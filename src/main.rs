@@ -305,6 +305,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "flaky"]
     fn forked_main_with_version_prints_version() {
         let pkg_name = env!("CARGO_PKG_NAME");
         let pkg_version = env!("CARGO_PKG_VERSION");

@@ -158,7 +158,8 @@ dependencies = [
   "check",
   "format_check",
   "clippy",
-  "test_ignored",
+  "test_no_default",
+  "test",
 ]
 
 [tasks.pre_commit]
