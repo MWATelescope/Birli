@@ -294,10 +294,12 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::main_with_args;
     use std::env;
 
+    use super::main_with_args;
+
     #[test]
+    #[ignore = "flaky"]
     fn main_with_version_doesnt_crash() {
         main_with_args(&["birli", "--version"]);
     }
@@ -326,6 +328,7 @@ mod tests_aoflagger {
     use fitsio::errors::check_status as fits_check_status;
     use float_cmp::{approx_eq, F32Margin, F64Margin};
     use itertools::izip;
+    use lexical::parse;
     use marlu::{
         fitsio, fitsio_sys,
         mwalib::{
@@ -340,11 +343,6 @@ mod tests_aoflagger {
         path::PathBuf,
     };
     use tempfile::tempdir;
-
-    use lexical::parse;
-    // use rubbl_casatables::{
-    //     GlueDataType, Table, TableCreateMode, TableDesc, TableDescCreateMode, TableOpenMode,
-    // };
 
     #[test]
     fn forked_aoflagger_with_version_prints_version() {

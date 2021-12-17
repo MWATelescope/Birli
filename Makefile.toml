@@ -127,13 +127,10 @@ install_crate = "clippy"
 command = "cargo"
 args = ["clean"]
 
-# The "cargo update -p" line will need to be updated when ndarray 0.16 is
-# released, probably just deleted.
 [tasks.update]
 script = """
 set +e
-cargo update -p approx:0.5.0 --precise 0.4.0
-cargo update -p ndarray:0.15.3 --precise 0.14.0
+# hopefully this won't be needed again any time soon.
 exit 0
 """
 
