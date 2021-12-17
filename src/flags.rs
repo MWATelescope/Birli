@@ -13,8 +13,7 @@ use crate::{
 };
 use cfg_if::cfg_if;
 use log::trace;
-use marlu::mwalib::CorrelatorContext;
-use rayon::prelude::*;
+use marlu::{mwalib::CorrelatorContext, rayon::prelude::*};
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {

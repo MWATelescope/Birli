@@ -31,7 +31,6 @@ use marlu::{
         get_required_fits_key,
     },
 };
-// use rayon::prelude::*;
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::path::Path;

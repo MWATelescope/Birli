@@ -1,4 +1,4 @@
-use num_traits::{Float, Num};
+use marlu::num_traits::{Float, Num};
 
 pub use crate::{Complex, Jones};
 
