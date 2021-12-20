@@ -32,7 +32,7 @@ env_logger = "0.9"
 indicatif = { version = "0.16", features = ["rayon"] }
 itertools = "0.10"
 log = "0.4"
-marlu = "0.2.3"
+marlu = "0.3.0"
 regex = "1.4"
 thiserror = "1.0"
 
