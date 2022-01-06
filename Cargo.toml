@@ -1,6 +1,6 @@
 [package]
 name = "birli"
-description = "Common preprocessing tasks for the Murchison Widefield Array Epoch of Reionization pipeline"
+description = "A preprocessing pipeline for the Murchison Widefield Array"
 version = "0.2.1"
 readme = "README.md"
 homepage = "https://github.com/MWATelescope/Birli"
@@ -23,20 +23,23 @@ default = ["aoflagger"]
 aoflagger = ["aoflagger_sys"]
 
 [dependencies]
-aoflagger_sys = { version= "0.1.*", optional = true }
+aoflagger_sys = { version = "0.1.*", optional = true }
 cfg-if = "1.0.0"
-clap = "2.33"
+clap = { version = "3.0.5", features = ["cargo"] }
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
 env_logger = "0.9"
 indicatif = { version = "0.16", features = ["rayon"] }
 itertools = "0.10"
 log = "0.4"
-marlu = "0.2.3"
+# marlu = "0.2.3"
+marlu = { path = "../Marlu" }
 regex = "1.4"
 thiserror = "1.0"
+prettytable-rs = "0.8.0"
 
 [dev-dependencies]
+approx = { version = "0.5.*", features = ["num-complex"] }
 assert_cli = "0.6"
 criterion = "0.3"
 csv = "1.1"

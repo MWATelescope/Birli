@@ -204,6 +204,7 @@ pub fn correct_geometry(
     // TODO: allow subset of baselines
     // mwalib_baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
+    phase_centre_ra: Option<RADec>,
 ) {
     trace!("start correct_geometry");
 
@@ -228,7 +229,10 @@ pub fn correct_geometry(
 
     let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
 
-    let phase_centre_ra = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+    let phase_centre_ra = match phase_centre_ra {
+        Some(pc) => pc,
+        None => RADec::from_mwalib_phase_or_pointing(&context.metafits_context)
+    };
     let tiles_xyz_geod = XyzGeodetic::get_tiles(&context.metafits_context, array_pos.latitude_rad);
 
     // Create a progress bar to show the status of the correction
@@ -290,12 +294,12 @@ mod tests {
 
     use super::{correct_cable_lengths, correct_geometry, VEL_C};
     use marlu::{
-        approx::assert_abs_diff_eq, mwalib::CorrelatorContext, precession::precess_time, time,
+        mwalib::CorrelatorContext, precession::precess_time, time,
         Complex, Jones, LatLngHeight, RADec, XyzGeodetic, UVW,
     };
     use std::f64::consts::PI;
 
-    use crate::{context_to_jones_array, get_flaggable_timesteps, TestJones};
+    use crate::{context_to_jones_array, get_flaggable_timesteps, TestJones, approx::assert_abs_diff_eq};
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     // TODO: deduplicate from lib.rs
@@ -814,6 +818,7 @@ mod tests {
             &img_timestep_range,
             &img_coarse_chan_range,
             None,
+            None,
         );
 
         let jones_array = jones_array.mapv(TestJones::from);
@@ -996,6 +1001,7 @@ mod tests {
             &mut jones_array,
             &img_timestep_range,
             &img_coarse_chan_range,
+            None,
             None,
         );
         let jones_array = jones_array.mapv(TestJones::from);

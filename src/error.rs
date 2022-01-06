@@ -10,17 +10,24 @@ pub enum BirliError {
     /// Error derived from [`crate::io::error::IOError`]
     IOError(#[from] crate::io::error::IOError),
 
-    #[error("No common timesteps found. CorrelatorContext timestep info: {timestep_info}")]
+    #[error("No common timesteps found. CorrelatorContext hdu info: {hdu_info}")]
     /// Error for when gpuboxes provided have no overlapping visibilities
     NoCommonTimesteps {
         /// display of mwalib::CorrelatorContext::gpubox_time_map
-        timestep_info: String,
+        hdu_info: String,
     },
 
-    #[error("No timesteps were provided. CorrelatorContext timestep info: {timestep_info}")]
+    #[error("No timesteps were provided. CorrelatorContext hdu info: {hdu_info}")]
     /// Error for when gpuboxes provided have no overlapping visibilities
     NoProvidedTimesteps {
         /// display of mwalib::CorrelatorContext::gpubox_time_map
-        timestep_info: String,
+        hdu_info: String,
     },
+
+    #[error("No common coarse channels found. CorrelatorContext hdu info: {hdu_info}")]
+    /// Error for when gpuboxes provided have no overlapping visibilities
+    NoCommonCoarseChans {
+        /// display of mwalib::CorrelatorContext::gpubox_time_map
+        hdu_info: String,
+    }
 }

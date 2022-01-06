@@ -119,18 +119,20 @@ pub mod corrections;
 pub use corrections::{correct_cable_lengths, correct_geometry};
 pub mod flags;
 #[cfg(test)]
+pub use approx;
+#[cfg(test)]
 pub(crate) mod types;
+#[cfg(test)]
+pub(crate) use types::TestJones;
 pub use flags::{get_antenna_flags, get_flaggable_timesteps, init_flag_array, write_flags};
 pub use marlu;
 pub use marlu::{
-    approx, mwalib,
+    mwalib,
     mwalib::{fitsio, fitsio_sys, CorrelatorContext},
     ndarray,
     ndarray::{parallel::prelude::*, Array3, Axis},
     Complex, Jones,
 };
-#[cfg(test)]
-pub(crate) use types::TestJones;
 
 mod error;
 pub use error::BirliError;
@@ -552,7 +554,8 @@ mod tests {
     use crate::TestJones;
 
     use super::{context_to_jones_array, get_flaggable_timesteps};
-    use marlu::{approx::assert_abs_diff_eq, mwalib::CorrelatorContext, Complex};
+    use marlu::{mwalib::CorrelatorContext, Complex};
+    use approx::assert_abs_diff_eq;
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
