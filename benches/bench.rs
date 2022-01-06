@@ -186,6 +186,7 @@ fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
                 black_box(&img_timestep_range),
                 black_box(&img_coarse_chan_range),
                 None,
+                None,
             );
         })
     });
@@ -210,6 +211,7 @@ fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
                 black_box(&mut jones_array),
                 black_box(&img_timestep_range),
                 black_box(&img_coarse_chan_range),
+                None,
                 None,
             );
         })
@@ -246,6 +248,7 @@ fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
                 black_box(&img_timestep_range),
                 black_box(&img_coarse_chan_range),
                 black_box(&img_baseline_idxs),
+                None,
                 None,
             )
             .unwrap();
@@ -284,6 +287,7 @@ fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
                 black_box(&img_coarse_chan_range),
                 black_box(&img_baseline_idxs),
                 None,
+                None,
             )
             .unwrap();
         });
@@ -320,6 +324,7 @@ fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
                 black_box(&img_timestep_range),
                 black_box(&img_coarse_chan_range),
                 black_box(&img_baseline_idxs),
+                None,
                 None,
             )
             .unwrap();

@@ -5,7 +5,7 @@ use std::ops::Range;
 use crate::{
     error::{
         BirliError,
-        BirliError::{NoCommonTimesteps, NoProvidedTimesteps},
+        BirliError::{NoCommonTimesteps, NoProvidedTimesteps, NoCommonCoarseChans},
     },
     io::error::IOError,
     ndarray::{Array2, Array3, ArrayView3, Axis, Zip},
@@ -82,10 +82,10 @@ pub fn get_flaggable_timesteps(context: &CorrelatorContext) -> Result<Vec<usize>
     ) {
         (Some(&first), Some(&last)) if first <= last => Ok((first..last + 1).collect()),
         (.., None) => Err(NoProvidedTimesteps {
-            timestep_info: format!("{:?}", &context.gpubox_time_map),
+            hdu_info: format!("{:?}", &context.gpubox_time_map),
         }),
         _ => Err(NoCommonTimesteps {
-            timestep_info: format!("{:?}", &context.gpubox_time_map),
+            hdu_info: format!("{:?}", &context.gpubox_time_map),
         }),
     }
 }
@@ -129,6 +129,63 @@ pub fn get_antenna_flags(context: &CorrelatorContext) -> Vec<bool> {
         .map(|antenna| antenna.rfinput_x.flagged || antenna.rfinput_y.flagged)
         .collect()
 }
+
+/// Produce a contiguous range of coarse channel indices from [`MWALib::CorrelatorContext.common_coarse_chan_indices`]
+/// along with a vector of flags for all known coarse channels. 
+/// 
+/// In the case where the common range of coase channels is not contiguous, 
+/// a channel is flagged if it appears within the range of common coarse channels, 
+/// but is not itself provided.
+pub fn get_coarse_chan_range_flags(context: &CorrelatorContext) -> Result<(Range<usize>, Vec<bool>), BirliError> {
+    let common_indices = &context.common_coarse_chan_indices;
+    let provided_indices = &context.provided_coarse_chan_indices;
+
+    let range = match (common_indices.first(), common_indices.last()) {
+        (Some(first), Some(last)) if first <= last => Ok((*first)..(*last + 1)),
+        _ => Err(NoCommonCoarseChans {
+            hdu_info: format!("{:?}", &context.gpubox_time_map),
+        }),
+    }?;
+
+    let mut flags = vec![false; context.num_coarse_chans];
+    for idx in range.clone() {
+        if !provided_indices.contains(&idx) {
+            flags[idx] = true;
+        }
+    }
+
+    Ok((range, flags))
+}
+
+/// Produce a contiguous range of timestep indices from the first [`MWALib::CorrelatorContext.common_timestep_indices`]
+/// to the last [`MWALib::CorrelatorContext.provided_timestep_indices`]
+/// along with a vector of flags for all known timesteps. 
+/// 
+/// In the case where the common range of timesteps is not contiguous, 
+/// a timestep is flagged if it appears within the range, but is not itself common.
+pub fn get_timestep_range_flags(context: &CorrelatorContext) -> Result<(Range<usize>, Vec<bool>), BirliError> {
+    let common_indices = &context.common_timestep_indices;
+    let provided_indices = &context.provided_timestep_indices;
+    let range = match (common_indices.first(), provided_indices.last()) {
+        (Some(first), Some(last)) if first <= last => Ok((*first)..(*last + 1)),
+        (.., None) => Err(NoProvidedTimesteps {
+            hdu_info: format!("{:?}", &context.gpubox_time_map),
+        }),
+        _ => Err(NoCommonTimesteps {
+            hdu_info: format!("{:?}", &context.gpubox_time_map),
+        }),
+    }?;
+
+    let mut flags = vec![false; context.num_coarse_chans];
+    for idx in range.clone() {
+        if !provided_indices.contains(&idx) {
+            flags[idx] = true;
+        }
+    }
+
+    Ok((range, flags))
+}
+
 
 /// Produce a vector of flags for baslines whose antennae are flagged in `antenna_flags`
 fn get_baseline_flags(context: &CorrelatorContext, antenna_flags: Vec<bool>) -> Vec<bool> {

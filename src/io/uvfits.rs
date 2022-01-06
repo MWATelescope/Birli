@@ -357,6 +357,7 @@ impl UvfitsWriter {
         mwalib_coarse_chan_range: &Range<usize>,
         mwalib_baseline_idxs: &[usize],
         array_pos: Option<LatLngHeight>,
+        phase_centre: Option<RADec>,
     ) -> Result<Self, UvfitsWriteError> {
         let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
         let num_img_coarse_chans = mwalib_coarse_chan_range.len();
@@ -364,7 +365,7 @@ impl UvfitsWriter {
         let first_gps_time =
             context.timesteps[mwalib_timestep_range.start].gps_time_ms as f64 / 1000.0;
         let start_epoch = time::gps_to_epoch(first_gps_time);
-        let phase_centre = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+        let phase_centre = phase_centre.unwrap_or(RADec::from_mwalib_phase_or_pointing(&context.metafits_context));
         let centre_freq_chan = num_img_chans / 2;
         // Get the first coarse chan index, and multiply by number of fine chans per coarse
         // then add the centre_freq_chan which will give us the centre index (of all fine channels).
@@ -1028,7 +1029,6 @@ mod tests {
 mod tests_aoflagger {
     use super::*;
     use marlu::{
-        approx::assert_abs_diff_eq,
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
         },
@@ -1041,7 +1041,7 @@ mod tests_aoflagger {
 
     use float_cmp::{approx_eq, F32Margin, F64Margin};
 
-    use crate::get_flaggable_timesteps;
+    use crate::{get_flaggable_timesteps, approx::assert_abs_diff_eq};
 
     use fitsio::{
         errors::check_status as fits_check_status,
@@ -1589,6 +1589,7 @@ mod tests_aoflagger {
             &img_coarse_chan_range,
             &img_baseline_idxs,
             array_pos,
+            None,
         )
         .unwrap();
 
@@ -1633,6 +1634,7 @@ mod tests_aoflagger {
             &img_coarse_chan_range,
             &img_baseline_idxs,
             array_pos,
+            None,
         )
         .unwrap();
 
@@ -1715,6 +1717,7 @@ mod tests_aoflagger {
             &img_coarse_chan_range,
             &img_baseline_idxs,
             array_pos,
+            None
         )
         .unwrap();
 
@@ -1789,6 +1792,7 @@ mod tests_aoflagger {
             &img_coarse_chan_range,
             &img_baseline_idxs,
             array_pos,
+            None,
         )
         .unwrap();
 

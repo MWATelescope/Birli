@@ -149,6 +149,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
     mwalib_coarse_chan_range: &Range<usize>,
     mwalib_baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
+    phase_centre: Option<RADec>
 ) -> Result<(), IOError> {
     trace!("start write_uvfits to {:?}", path.as_ref());
 
@@ -159,6 +160,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
         mwalib_coarse_chan_range,
         mwalib_baseline_idxs,
         array_pos,
+        phase_centre,
     )?;
 
     uvfits_writer.write_jones_flags(
@@ -257,10 +259,11 @@ pub fn write_ms<T: AsRef<Path>>(
     mwalib_coarse_chan_range: &Range<usize>,
     mwalib_baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
+    phase_centre: Option<RADec>,
 ) -> Result<(), IOError> {
     trace!("start write_ms to {:?}", path.as_ref());
 
-    let phase_centre = RADec::from_mwalib_phase_or_pointing(&context.metafits_context);
+    let phase_centre = phase_centre.unwrap_or(RADec::from_mwalib_phase_or_pointing(&context.metafits_context));
     let mut ms_writer = MeasurementSetWriter::new(path, phase_centre, array_pos);
 
     ms_writer
@@ -394,6 +397,7 @@ mod tests_aoflagger {
             &img_timestep_range,
             &img_coarse_chan_range,
             &baseline_idxs,
+            None,
             None,
         )
         .unwrap();

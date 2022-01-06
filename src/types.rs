@@ -1,6 +1,6 @@
 use marlu::num_traits::{Float, Num};
 
-pub use crate::{Complex, Jones};
+pub use crate::{Complex, Jones, approx};
 
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) struct TestJones<F: Float + Num>(Jones<F>);
@@ -103,7 +103,7 @@ impl std::fmt::Debug for TestJones<f64> {
     }
 }
 
-impl<F: Float + marlu::approx::AbsDiffEq> marlu::approx::AbsDiffEq for TestJones<F>
+impl<F: Float + approx::AbsDiffEq> approx::AbsDiffEq for TestJones<F>
 where
     F::Epsilon: Clone,
 {
