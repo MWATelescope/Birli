@@ -27,8 +27,8 @@ use marlu::{
 };
 
 use crate::{
-    flags::{flag_to_weight_array, get_weight_factor},
-    ndarray::{Array3, ArrayView3, Axis},
+    flags::{expand_flag_array, flag_to_weight_array, get_weight_factor},
+    ndarray::{Array3, ArrayView3, ArrayView4, Axis},
 };
 
 use super::{
@@ -350,6 +350,9 @@ impl UvfitsWriter {
     /// # Errors
     ///
     /// See: [`UvfitsWriter::new`]
+    ///
+    /// TODO: fix too_many_arguments
+    #[allow(clippy::too_many_arguments)]
     pub fn from_mwalib<T: AsRef<Path>>(
         path: T,
         context: &CorrelatorContext,
@@ -365,7 +368,8 @@ impl UvfitsWriter {
         let first_gps_time =
             context.timesteps[mwalib_timestep_range.start].gps_time_ms as f64 / 1000.0;
         let start_epoch = time::gps_to_epoch(first_gps_time);
-        let phase_centre = phase_centre.unwrap_or(RADec::from_mwalib_phase_or_pointing(&context.metafits_context));
+        let phase_centre = phase_centre
+            .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&context.metafits_context));
         let centre_freq_chan = num_img_chans / 2;
         // Get the first coarse chan index, and multiply by number of fine chans per coarse
         // then add the centre_freq_chan which will give us the centre index (of all fine channels).
@@ -809,11 +813,13 @@ impl UvfitsWriter {
         mwalib_coarse_chan_range: &Range<usize>,
         mwalib_baseline_idxs: &[usize],
     ) -> Result<(), IOError> {
+        let expanded_flag_array = expand_flag_array(flag_array.view(), 4);
         let weight_factor = get_weight_factor(context);
-        let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+        let weight_array = flag_to_weight_array(expanded_flag_array.view(), weight_factor);
         self.write_vis_mwalib(
             jones_array.view(),
             weight_array.view(),
+            expanded_flag_array.view(),
             context,
             mwalib_timestep_range,
             mwalib_coarse_chan_range,
@@ -831,7 +837,8 @@ impl WriteableVis for UvfitsWriter {
     fn write_vis_mwalib(
         &mut self,
         jones_array: ArrayView3<Jones<f32>>,
-        weight_array: ArrayView3<f32>,
+        weight_array: ArrayView4<f32>,
+        flag_array: ArrayView4<bool>,
         context: &CorrelatorContext,
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
@@ -843,7 +850,23 @@ impl WriteableVis for UvfitsWriter {
 
         let jones_dims = jones_array.dim();
         let weight_dims = weight_array.dim();
-        assert_eq!(jones_dims, weight_dims);
+        if weight_dims != (jones_dims.0, jones_dims.1, jones_dims.2, 4) {
+            return Err(IOError::BadArrayShape {
+                argument: "weight_array".into(),
+                function: "UvfitsWriter::write_vis_mwalib".into(),
+                expected: format!("{:?}", (jones_dims.0, jones_dims.1, jones_dims.2, 4)),
+                received: format!("{:?}", weight_dims),
+            });
+        }
+        let flag_dims = flag_array.dim();
+        if flag_dims != (jones_dims.0, jones_dims.1, jones_dims.2, 4) {
+            return Err(IOError::BadArrayShape {
+                argument: "flag_array".into(),
+                function: "UvfitsWriter::write_vis_mwalib".into(),
+                expected: format!("{:?}", (jones_dims.0, jones_dims.1, jones_dims.2, 4)),
+                received: format!("{:?}", flag_dims),
+            });
+        }
 
         let num_img_timesteps = timestep_range.len();
         assert_eq!(num_img_timesteps, jones_dims.0);
@@ -1041,7 +1064,7 @@ mod tests_aoflagger {
 
     use float_cmp::{approx_eq, F32Margin, F64Margin};
 
-    use crate::{get_flaggable_timesteps, approx::assert_abs_diff_eq};
+    use crate::{approx::assert_abs_diff_eq, get_flaggable_timesteps};
 
     use fitsio::{
         errors::check_status as fits_check_status,
@@ -1608,6 +1631,8 @@ mod tests_aoflagger {
     #[test]
     #[cfg(feature = "aoflagger")]
     fn uvfits_tables_from_mwalib_matches_cotter() {
+        use crate::flags::get_baseline_flags;
+
         let context = get_mwa_ord_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
@@ -1640,11 +1665,15 @@ mod tests_aoflagger {
 
         let aoflagger = unsafe { cxx_aoflagger_new() };
 
+        // Prepare our flagmasks with known bad antennae
         let flag_array = init_flag_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            Some(get_antenna_flags(&context)),
+            img_timestep_range.clone(),
+            img_coarse_chan_range.clone(),
+            None,
+            None,
+            None,
+            Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
         );
 
         let (jones_array, flag_array) = context_to_jones_array(
@@ -1652,7 +1681,8 @@ mod tests_aoflagger {
             &img_timestep_range,
             &img_coarse_chan_range,
             Some(flag_array),
-        );
+        )
+        .unwrap();
 
         let strategy_path = &aoflagger.FindStrategyFileMWA();
 
@@ -1717,15 +1747,19 @@ mod tests_aoflagger {
             &img_coarse_chan_range,
             &img_baseline_idxs,
             array_pos,
-            None
+            None,
         )
         .unwrap();
 
+        // Prepare our flagmasks with known bad antennae
         let flag_array = init_flag_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            Some(get_antenna_flags(&context)),
+            img_timestep_range.clone(),
+            img_coarse_chan_range.clone(),
+            None,
+            None,
+            None,
+            None,
         );
 
         let (jones_array, flag_array) = context_to_jones_array(
@@ -1733,7 +1767,8 @@ mod tests_aoflagger {
             &img_timestep_range,
             &img_coarse_chan_range,
             Some(flag_array),
-        );
+        )
+        .unwrap();
 
         u.write_jones_flags(
             &context,
@@ -1798,9 +1833,12 @@ mod tests_aoflagger {
 
         let flag_array = init_flag_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            Some(get_antenna_flags(&context)),
+            img_timestep_range.clone(),
+            img_coarse_chan_range.clone(),
+            None,
+            None,
+            None,
+            None,
         );
 
         let (jones_array, flag_array) = context_to_jones_array(
@@ -1808,7 +1846,8 @@ mod tests_aoflagger {
             &img_timestep_range,
             &img_coarse_chan_range,
             Some(flag_array),
-        );
+        )
+        .unwrap();
 
         u.write_jones_flags(
             &context,

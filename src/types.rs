@@ -1,6 +1,6 @@
 use marlu::num_traits::{Float, Num};
 
-pub use crate::{Complex, Jones, approx};
+pub use crate::{approx, Complex, Jones};
 
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) struct TestJones<F: Float + Num>(Jones<F>);

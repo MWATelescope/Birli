@@ -12,7 +12,7 @@
   <img alt="Crates.io" src="https://img.shields.io/crates/d/birli?label=crates.io%20%E2%AC%87%EF%B8%8F"></a>
 <a href="https://docs.rs/crate/birli/">
   <img src="https://docs.rs/birli/badge.svg" alt="codecov"></a>
-<a href="https://codecov.io/gh/MWATelescope/Birli"> 
+<a href="https://codecov.io/gh/MWATelescope/Birli">
   <img src="https://codecov.io/gh/MWATelescope/Birli/branch/main/graph/badge.svg?token=PK2KYEZOW9" alt="codecov"></a>
 <a href="https://rust-reportcard.xuri.me/report/github.com/mwatelescope/birli">
   <img src="https://rust-reportcard.xuri.me/badge/github.com/mwatelescope/birli" alt="rust-reportcard"></a>
@@ -229,50 +229,46 @@ cargo update -p ndarray:0.15.3 --precise 0.14.0
 
 ```txt
 USAGE:
-    birli [FLAGS] [OPTIONS] <fits-files>... -m <metafits> [SUBCOMMAND]
-
-FLAGS:
-        --emulate-cotter        Use Cotter's value for array position instead of MWAlib for direct comparison with
-                                Cotter.
-    -h, --help                  Prints help information
-        --no-cable-delay        Do not perform cable length corrections.
-        --no-geometric-delay    Do not perform geometric length corrections.
-    -V, --version               Prints version information
+    birli [OPTIONS] --metafits <PATH> <PATHS>...
 
 OPTIONS:
-    -f <flag-template>        Sets the template used to name flag files. Percents are substituted for the zero-prefixed
-                              GPUBox ID, which can be up to 3 characters log. Similar to -o in Cotter. Example:
-                              FlagFile%%%.mwaf
-    -m <metafits>             Sets the metafits file.
-    -M <ms-out>               Path for measurement set output. Similar to -o in Cotter. Example: 1196175296.ms
-    -u <uvfits-out>           Path for uvfits output. Similar to -o in Cotter. Example: 1196175296.uvfits
+        --emulate-cotter             Use Cotter's array position, not MWAlib's
+    -h, --help                       Print help information
+        --no-cable-delay             Do not perform cable length corrections
+        --no-geometric-delay         Do not perform geometric corrections
+        --phase-centre <RA> <DEC>    Override Phase centre from metafits (degrees)
+        --pointing-centre            Use pointing instead phase centre
+    -V, --version                    Print version information
 
-ARGS:
-    <fits-files>...    
+INPUT:
+    -m, --metafits <PATH>    Metadata file for the observation
+    <PATHS>...           GPUBox files to process
 
-SUBCOMMANDS:
-    aoflagger    flag visibilities with aoFlagger
-    help         Prints this message or the help of the given subcommand(s)
+FLAGGING:
+        --flag-antennae <ANTS>...         Flag antenna indices
+        --flag-coarse-chans <CHANS>...    Flag additional coarse channel indices
+        --flag-timesteps <STEPS>...       Flag additional timestep indices
+        --no-flag-metafits                Ignore antenna flags in metafits
+
+AVERAGING:
+        --avg-freq-factor <FACTOR>    Average <FACTOR> channels per averaged channel
+        --avg-freq-res <KHZ>          Frequency resolution of averaged data
+        --avg-time-factor <FACTOR>    Average <FACTOR> timesteps per averaged timestep
+        --avg-time-res <SECONDS>      Time resolution of averaged data
+
+OUTPUT:
+    -f, --flag-template <TEMPLATE>    The template used to name flag files. Percents are substituted
+                                      for the zero-prefixed GPUBox ID, which can be up to 3
+                                      characters long. Example: FlagFile%%%.mwaf
+    -M, --ms-out <PATH>               Path for measurement set output
+    -u, --uvfits-out <PATH>           Path for uvfits output
+
+AOFLAGGER:
+        --aoflagger-strategy <PATH>    Strategy to use for RFI Flagging
+        --no-rfi                       Do not perform RFI Flagging with aoflagger
 ```
 
-`birli aoflagger -h`
-
-This option is available when the aoflagger feature is enabled. It takes all of
-the same arguments as the base command, but they must come before the aoflagger 
-subcommand.
-
-```txt
-flag visibilities with aoFlagger. This option takes all of the same arguments as 
-the base command, but they must come before the aoflagger subcommand.
-
-USAGE:
-    birli <fits-files>... -m <metafits> aoflagger [FLAGS]
-
-FLAGS:
-    -h, --help       Prints help information
-        --no-rfi     Do not perform RFI Flagging.
-    -V, --version    Prints version information
-```
+Note: the aoflagged options are only available when the aoflagger feature is enabled.
 
 ### Cable Delay Corrections
 
@@ -320,11 +316,11 @@ In this example, we use the aoflagger subcommand to:
 - Output visibilities to .uvfits (`-u`)
 
 ```bash
-birli aoflagger \
+birli \
   -m tests/data/1254670392_avg/1254670392.metafits \
-  -u "tests/data/1254670392_avg/Flagfile.Birli.MWA.%%.mwaf" \
-  -f "tests/data/1254670392_avg/1254670392.birli.uvfits" \
-  tests/data/1254670392_avg/1254670392_20191009153257_gpubox*.fits
+  -u "/tmp/Flagfile.Birli.MWA.%%.mwaf" \
+  -f "/tmp/1254670392.birli.uvfits" \
+  tests/data/1254670392_avg/1254670392_*gpubox*.fits
 ```
 
 Since Cotter can't output flags and uvfits at the same time, the equivalent Cotter commands would be:

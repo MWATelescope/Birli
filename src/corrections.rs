@@ -54,7 +54,7 @@ use std::{f64::consts::PI, ops::Range};
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
 ///     None
-/// );
+/// ).unwrap();
 ///
 /// correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range);
 /// ```
@@ -186,13 +186,14 @@ pub fn correct_cable_lengths(
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
 ///     None
-/// );
+/// ).unwrap();
 ///
 /// correct_geometry(
 ///     &context,
 ///     &mut jones_array,
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
+///     None,
 ///     None,
 /// );
 /// ```
@@ -231,7 +232,7 @@ pub fn correct_geometry(
 
     let phase_centre_ra = match phase_centre_ra {
         Some(pc) => pc,
-        None => RADec::from_mwalib_phase_or_pointing(&context.metafits_context)
+        None => RADec::from_mwalib_phase_or_pointing(&context.metafits_context),
     };
     let tiles_xyz_geod = XyzGeodetic::get_tiles(&context.metafits_context, array_pos.latitude_rad);
 
@@ -294,12 +295,14 @@ mod tests {
 
     use super::{correct_cable_lengths, correct_geometry, VEL_C};
     use marlu::{
-        mwalib::CorrelatorContext, precession::precess_time, time,
-        Complex, Jones, LatLngHeight, RADec, XyzGeodetic, UVW,
+        mwalib::CorrelatorContext, precession::precess_time, time, Complex, Jones, LatLngHeight,
+        RADec, XyzGeodetic, UVW,
     };
     use std::f64::consts::PI;
 
-    use crate::{context_to_jones_array, get_flaggable_timesteps, TestJones, approx::assert_abs_diff_eq};
+    use crate::{
+        approx::assert_abs_diff_eq, context_to_jones_array, get_flaggable_timesteps, TestJones,
+    };
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     // TODO: deduplicate from lib.rs
@@ -341,13 +344,9 @@ mod tests {
 
         // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-        let (jones_array, _) = context_to_jones_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            // img_baseline_idxs.as_slice(),
-            None,
-        );
+        let (jones_array, _) =
+            context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+                .unwrap();
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -524,13 +523,9 @@ mod tests {
 
         // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-        let (jones_array, _) = context_to_jones_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            // img_baseline_idxs.as_slice(),
-            None,
-        );
+        let (jones_array, _) =
+            context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+                .unwrap();
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -713,13 +708,9 @@ mod tests {
         // let phase_centre_ha = phase_centre_ra.to_hadec(lst_rad);
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
-        let (jones_array, _) = context_to_jones_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            // img_baseline_idxs.as_slice(),
-            None,
-        );
+        let (jones_array, _) =
+            context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+                .unwrap();
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -905,7 +896,8 @@ mod tests {
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
             None,
-        );
+        )
+        .unwrap();
 
         let jones_array = jones_array.mapv(TestJones::from);
 

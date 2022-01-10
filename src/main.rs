@@ -1,22 +1,33 @@
-use birli::{io::write_ms, flags::{get_coarse_chan_range_flags, get_timestep_range_flags}};
+use birli::{
+    flags::{
+        expand_flag_array, flag_to_weight_array, get_baseline_flags, get_coarse_chan_range_flags,
+        get_timestep_range_flags, get_weight_factor,
+    },
+    io::write_ms,
+};
 use cfg_if::cfg_if;
-use clap::{app_from_crate, App, AppSettings, arg, ArgGroup, ValueHint::FilePath};
-use log::{debug, info, trace, warn};
-use marlu::{RADec, time::gps_millis_to_epoch, precession::{precess_time, PrecessionInfo}, sexagesimal::{sexagesimal_dms_string_to_degrees, sexagesimal_hms_string_to_degrees}};
-use std::{env, ffi::OsString, fmt::Debug, path::Path, ops::Range};
-use prettytable::{table, row, cell, format as prettyformat};
+use clap::{app_from_crate, arg, AppSettings, ValueHint::FilePath};
+use log::{debug, info, trace};
+use marlu::{
+    averaging::average_visibilities,
+    precession::{precess_time, PrecessionInfo},
+    time::gps_millis_to_epoch,
+    RADec,
+};
+use prettytable::{cell, format as prettyformat, row, table};
+use std::{env, ffi::OsString, fmt::Debug, ops::Range, path::Path};
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
         use birli::{
-            flags::flag_jones_array_existing, get_aoflagger_version_string,
+            flags::flag_jones_array_existing,
         };
         use aoflagger_sys::{cxx_aoflagger_new};
     }
 }
 use birli::{
     context_to_jones_array, correct_cable_lengths, correct_geometry, get_antenna_flags,
-    get_flaggable_timesteps, init_flag_array,
+    init_flag_array,
     io::write_uvfits,
     marlu::{
         constants::{
@@ -28,21 +39,27 @@ use birli::{
     write_flags,
 };
 
+// TODO: fix too_many_arguments
+#[allow(clippy::too_many_arguments)]
 pub fn show_param_info(
-    context: &CorrelatorContext, 
-    array_pos: LatLngHeight, 
-    phase_centre: RADec, 
-    coarse_chan_range: &Range<usize>, 
-    timestep_range: &Range<usize>, 
+    context: &CorrelatorContext,
+    array_pos: LatLngHeight,
+    phase_centre: RADec,
+    coarse_chan_range: &Range<usize>,
+    timestep_range: &Range<usize>,
     baseline_idxs: &[usize],
     coarse_chan_flags: &[bool],
     fine_chan_flags: &[bool],
     timestep_flags: &[bool],
     antenna_flags: &[bool],
+    baseline_flags: &[bool],
     avg_time: usize,
     avg_freq: usize,
 ) {
-    info!("observation name:     {}", context.metafits_context.obs_name);
+    info!(
+        "observation name:     {}",
+        context.metafits_context.obs_name
+    );
 
     info!("Array position:       {}", &array_pos);
     info!("Phase centre:         {}", &phase_centre);
@@ -51,52 +68,39 @@ pub fn show_param_info(
         info!("Pointing centre:      {}", &pointing_centre);
     }
 
-    let antenna_flag_idxs = antenna_flags
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, &flag)| {
-                if flag {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-    let coarse_chan_flag_idxs = coarse_chan_flags
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, &flag)| {
-                if flag {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-    let fine_chan_flag_idxs = fine_chan_flags
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, &flag)| {
-                if flag {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-    let timestep_flag_idxs = timestep_flags
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, &flag)| {
-                if flag {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
+    let antenna_flag_idxs: Vec<usize> = antenna_flags
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
+        .collect();
+    let coarse_chan_flag_idxs: Vec<usize> = coarse_chan_flags
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
+        .collect();
+    // TODO: actually display this.
+    let _fine_chan_flag_idxs: Vec<usize> = fine_chan_flags
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
+        .collect();
+    let timestep_flag_idxs: Vec<usize> = timestep_flags
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
+        .collect();
+    #[allow(clippy::needless_collect)]
+    let baseline_flag_idxs: Vec<usize> = baseline_flags
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
+        .collect();
 
-    fn time_details(gps_time_ms: u64, phase_centre: RADec, array_pos: LatLngHeight) -> (String, String, f64, PrecessionInfo) {
+    fn time_details(
+        gps_time_ms: u64,
+        phase_centre: RADec,
+        array_pos: LatLngHeight,
+    ) -> (String, String, f64, PrecessionInfo) {
         let epoch = gps_millis_to_epoch(gps_time_ms);
         let (y, mo, d, h, mi, s, ms) = epoch.as_gregorian_utc();
         let precession_info = precess_time(
@@ -109,27 +113,35 @@ pub fn show_param_info(
             format!("{:02}-{:02}-{:02}", y, mo, d),
             format!("{:02}:{:02}:{:02}.{:03}", h, mi, s, ms),
             epoch.as_mjd_utc_seconds(),
-            precession_info
+            precession_info,
         )
     }
 
-    let (sched_start_date, sched_start_time, sched_start_mjd_s, sched_start_prec) = time_details(context.metafits_context.sched_start_gps_time_ms, phase_centre, array_pos);
+    let (sched_start_date, sched_start_time, sched_start_mjd_s, sched_start_prec) = time_details(
+        context.metafits_context.sched_start_gps_time_ms,
+        phase_centre,
+        array_pos,
+    );
     info!(
-        "Scheduled start:      {} {} UTC, unix={:.3}, gps={:.3}, mjd={:.3}, lmst={:7.4}°, lmst2k={:7.4}°, lat2k={:7.4}°", 
-        sched_start_date, sched_start_time, 
-        context.metafits_context.sched_start_unix_time_ms as f64 / 1e3, 
-        context.metafits_context.sched_start_gps_time_ms as f64 / 1e3, 
+        "Scheduled start:      {} {} UTC, unix={:.3}, gps={:.3}, mjd={:.3}, lmst={:7.4}°, lmst2k={:7.4}°, lat2k={:7.4}°",
+        sched_start_date, sched_start_time,
+        context.metafits_context.sched_start_unix_time_ms as f64 / 1e3,
+        context.metafits_context.sched_start_gps_time_ms as f64 / 1e3,
         sched_start_mjd_s,
         sched_start_prec.lmst.to_degrees(),
         sched_start_prec.lmst_j2000.to_degrees(),
         sched_start_prec.array_latitude_j2000.to_degrees(),
     );
-    let (sched_end_date, sched_end_time, sched_end_mjd_s, sched_end_prec) = time_details(context.metafits_context.sched_end_gps_time_ms, phase_centre, array_pos);
+    let (sched_end_date, sched_end_time, sched_end_mjd_s, sched_end_prec) = time_details(
+        context.metafits_context.sched_end_gps_time_ms,
+        phase_centre,
+        array_pos,
+    );
     info!(
-        "Scheduled end:        {} {} UTC, unix={:.3}, gps={:.3}, mjd={:.3}, lmst={:7.4}°, lmst2k={:7.4}°, lat2k={:7.4}°", 
-        sched_end_date, sched_end_time, 
-        context.metafits_context.sched_end_unix_time_ms as f64 / 1e3, 
-        context.metafits_context.sched_end_gps_time_ms as f64 / 1e3, 
+        "Scheduled end:        {} {} UTC, unix={:.3}, gps={:.3}, mjd={:.3}, lmst={:7.4}°, lmst2k={:7.4}°, lat2k={:7.4}°",
+        sched_end_date, sched_end_time,
+        context.metafits_context.sched_end_unix_time_ms as f64 / 1e3,
+        context.metafits_context.sched_end_gps_time_ms as f64 / 1e3,
         sched_end_mjd_s,
         sched_end_prec.lmst.to_degrees(),
         sched_end_prec.lmst_j2000.to_degrees(),
@@ -157,7 +169,11 @@ pub fn show_param_info(
         avg_timesteps as f64 * avg_int_time_s,
         avg_timesteps,
         avg_int_time_s,
-        if avg_time != 1 {format!(" ({}x)", avg_time)} else {"".into()}
+        if avg_time != 1 {
+            format!(" ({}x)", avg_time)
+        } else {
+            "".into()
+        }
     );
 
     let total_bandwidth_mhz = context.metafits_context.obs_bandwidth_hz as f64 / 1e6;
@@ -172,21 +188,38 @@ pub fn show_param_info(
         fine_chan_width_khz
     );
 
-    let out_bandwidth_mhz = coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64 * fine_chan_width_khz / 1e3;
-    let out_channel_count = (coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64 / avg_freq as f64).ceil() as usize;
+    let out_bandwidth_mhz =
+        coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64 * fine_chan_width_khz / 1e3;
+    let out_channel_count = (coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64
+        / avg_freq as f64)
+        .ceil() as usize;
     let avg_fine_chan_width_khz = fine_chan_width_khz * avg_freq as f64;
     info!(
         "Output Bandwidth:     {:.3}MHz = {:9} * {:.3}kHz{}",
         out_bandwidth_mhz,
         out_channel_count,
         avg_fine_chan_width_khz,
-        if avg_freq != 1 {format!(" ({}x)", avg_freq)} else {"".into()}
+        if avg_freq != 1 {
+            format!(" ({}x)", avg_freq)
+        } else {
+            "".into()
+        }
     );
 
     let first_epoch = gps_millis_to_epoch(context.timesteps[0].gps_time_ms);
     let (y, mo, d, ..) = first_epoch.as_gregorian_utc();
 
-    let mut timestep_table = table!(["", format!("{:02}-{:02}-{:02} UTC +", y, mo, d), "unix [s]", "gps [s]", "p", "c", "g", "s", "f"]);
+    let mut timestep_table = table!([
+        "",
+        format!("{:02}-{:02}-{:02} UTC +", y, mo, d),
+        "unix [s]",
+        "gps [s]",
+        "p",
+        "c",
+        "g",
+        "s",
+        "f"
+    ]);
     timestep_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
 
     let provided_timestep_indices = context.provided_timestep_indices.clone();
@@ -197,15 +230,15 @@ pub fn show_param_info(
         let selected = timestep_range.contains(&timestep_idx);
         let common = common_timestep_indices.contains(&timestep_idx);
         let good = common_good_timestep_indices.contains(&timestep_idx);
-        let flagged = *timestep_flags.get(timestep_idx).unwrap_or(&false);
+        let flagged = timestep_flag_idxs.contains(&timestep_idx);
 
         let (_, time, ..) = time_details(timestep.gps_time_ms, phase_centre, array_pos);
-        let row = row![r => 
-            format!("ts{}:", timestep_idx), 
+        let row = row![r =>
+            format!("ts{}:", timestep_idx),
             time,
-            format!("{:.3}", timestep.unix_time_ms as f64 / 1e3), 
-            format!("{:.3}", timestep.gps_time_ms as f64 / 1e3), 
-            if provided {"p"} else {""}, 
+            format!("{:.3}", timestep.unix_time_ms as f64 / 1e3),
+            format!("{:.3}", timestep.gps_time_ms as f64 / 1e3),
+            if provided {"p"} else {""},
             if common {"c"} else {""},
             if good {"g"} else {""},
             if selected {"s"} else {""},
@@ -214,18 +247,41 @@ pub fn show_param_info(
         timestep_table.add_row(row);
     }
 
+    let show_timestep_table = true;
+
     info!(
-        "Timestep details (all={}, provided={}, common={}, good={}, select={}, flag={}):\n{}", 
+        "Timestep details (all={}, provided={}, common={}, good={}, select={}, flag={}):{}",
         context.num_timesteps,
         context.num_provided_timesteps,
         context.num_common_timesteps,
         context.num_common_good_timesteps,
         timestep_range.len(),
         timestep_flag_idxs.len(),
-        timestep_table
+        if show_timestep_table {
+            format!("\n{}", timestep_table)
+        } else {
+            "".into()
+        }
     );
+    if !show_timestep_table {
+        info!("-> provided:    {:?}", context.provided_timestep_indices);
+        info!("-> common:      {:?}", context.common_timestep_indices);
+        info!("-> common good: {:?}", context.common_good_timestep_indices);
+        info!("-> selected:    {:?}", timestep_range);
+    }
 
-    let mut coarse_chan_table = table!(["", "gpu", "corr", "rec", "cen [MHz]", "p", "c", "g", "s", "f"]);
+    let mut coarse_chan_table = table!([
+        "",
+        "gpu",
+        "corr",
+        "rec",
+        "cen [MHz]",
+        "p",
+        "c",
+        "g",
+        "s",
+        "f"
+    ]);
     coarse_chan_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
     // coarse_chan_table
     let provided_coarse_chan_indices = context.provided_coarse_chan_indices.clone();
@@ -236,14 +292,14 @@ pub fn show_param_info(
         let selected = coarse_chan_range.contains(&chan_idx);
         let common = common_coarse_chan_indices.contains(&chan_idx);
         let good = common_good_coarse_chan_indices.contains(&chan_idx);
-        let flagged = *coarse_chan_flags.get(chan_idx).unwrap_or(&false);
-        let row = row![r => 
-            format!("cc{}:", chan_idx), 
-            chan.gpubox_number, 
-            chan.corr_chan_number, 
-            chan.rec_chan_number, 
-            format!("{:.4}", chan.chan_centre_hz as f64 / 1e6), 
-            if provided {"p"} else {""}, 
+        let flagged = coarse_chan_flag_idxs.contains(&chan_idx);
+        let row = row![r =>
+            format!("cc{}:", chan_idx),
+            chan.gpubox_number,
+            chan.corr_chan_number,
+            chan.rec_chan_number,
+            format!("{:.4}", chan.chan_centre_hz as f64 / 1e6),
+            if provided {"p"} else {""},
             if common {"c"} else {""},
             if good {"g"} else {""},
             if selected {"s"} else {""},
@@ -251,45 +307,86 @@ pub fn show_param_info(
         ];
         coarse_chan_table.add_row(row);
     }
+
+    let show_coarse_chan_table = true;
+
     info!(
-        "Coarse channel details (metafits={}, provided={}, common={}, good={}, select={}, flag={}):\n{}", 
+        "Coarse channel details (metafits={}, provided={}, common={}, good={}, select={}, flag={}):{}",
         context.num_coarse_chans,
         context.num_provided_coarse_chans,
         context.num_common_coarse_chans,
         context.num_common_good_coarse_chans,
         coarse_chan_range.len(),
         coarse_chan_flag_idxs.len(),
-        coarse_chan_table
+        if show_coarse_chan_table { format!("\n{}", coarse_chan_table) } else { "".into() }
     );
 
-    let mut ant_table = table!(["", "tile", "name", "north [m]", "east [m]", "height [m]", "f"]);
+    if !show_coarse_chan_table {
+        info!("-> provided:    {:?}", context.provided_coarse_chan_indices);
+        info!("-> common:      {:?}", context.common_coarse_chan_indices);
+        info!(
+            "-> common good: {:?}",
+            context.common_good_coarse_chan_indices
+        );
+        info!("-> selected:    {:?}", coarse_chan_range);
+    }
+
+    let mut ant_table = table!([
+        "",
+        "tile",
+        "name",
+        "north [m]",
+        "east [m]",
+        "height [m]",
+        "f"
+    ]);
     ant_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
 
     for (ant_idx, ant) in context.metafits_context.antennas.iter().enumerate() {
         let flagged = *antenna_flags.get(ant_idx).unwrap_or(&false);
-        let row = row![r => 
-            format!("ant{}:", ant_idx), 
-            ant.tile_id, 
-            ant.tile_name, 
-            format!("{:.3}", ant.north_m), 
-            format!("{:.3}", ant.east_m), 
-            format!("{:.3}", ant.height_m), 
+        let row = row![r =>
+            format!("ant{}:", ant_idx),
+            ant.tile_id,
+            ant.tile_name,
+            format!("{:.3}", ant.north_m),
+            format!("{:.3}", ant.east_m),
+            format!("{:.3}", ant.height_m),
             if flagged {"f"} else {""}
         ];
         ant_table.add_row(row);
     }
 
+    let show_ant_table = true;
+
     info!(
-        "Antenna details (all={}, flag={}):\n{}", 
+        "Antenna details (all={}, flag={}):{}",
         context.metafits_context.num_ants,
         antenna_flag_idxs.len(),
-        // ant_table
-        ""
+        if show_ant_table {
+            format!("\n{}", ant_table)
+        } else {
+            "".into()
+        }
     );
 
-    // trace!("selected MWALib coarse channel indices: {:?}", coarse_chan_range);
-    // trace!("selected MWALib timestep indices: {:?}", timestep_range);
-    panic!();
+    if !show_ant_table {
+        info!("-> flagged:    {:?}", antenna_flag_idxs);
+    }
+
+    // let show_baseline_table = false;
+
+    info!(
+        "Baseline Details (all={}, auto={}, select={}, flag={}):",
+        context.metafits_context.num_baselines,
+        context.metafits_context.num_ants,
+        baseline_idxs.len(),
+        baseline_flag_idxs.len(),
+    );
+
+    // if !show_baseline_table {
+    //     info!("-> selected:    {:?}", baseline_idxs);
+    //     info!("-> flags:    {:?}", baseline_flag_idxs);
+    // }
 }
 
 fn main_with_args<I, T>(args: I)
@@ -343,7 +440,7 @@ where
             // -> channels
             arg!(--"flag-coarse-chans" <CHANS> ... "Flag additional coarse channel indices")
                 .help_heading("FLAGGING")
-                .multiple_values(true)        
+                .multiple_values(true)
                 .required(false),
             arg!(--"flag-edge-width" <KHZ> "Flag bandwidth [kHz] on either end of each coarse channel")
                 .help_heading("FLAGGING")
@@ -354,7 +451,7 @@ where
                 .required(false),
             arg!(--"flag-fine-chans" <CHANS>... "Flag fine channel indices in each coarse channel")
                 .help_heading("FLAGGING")
-                .multiple_values(true)    
+                .multiple_values(true)
                 .required(false),
             arg!(--"flag-dc" "Force flagging of DC centre channels")
                 .help_heading("FLAGGING")
@@ -381,7 +478,7 @@ where
             arg!(--"no-geometric-delay" "Do not perform geometric corrections")
                 .alias("no-geom"),
             arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's"),
-            
+
             // averaging
             arg!(--"avg-time-res" <SECONDS> "Time resolution of averaged data")
                 .help_heading("AVERAGING")
@@ -429,7 +526,9 @@ where
     let matches = app.get_matches_from(args);
     trace!("arg matches:\n{:?}", &matches);
 
-    let metafits_path = matches.value_of("metafits").expect("--metafits must be a valid path");
+    let metafits_path = matches
+        .value_of("metafits")
+        .expect("--metafits must be a valid path");
     let fits_paths: Vec<&str> = matches.values_of("fits_paths").expect("--").collect();
 
     let context =
@@ -453,23 +552,29 @@ where
         LatLngHeight::new_mwa()
     };
 
-    let phase_centre = match (matches.values_of("phase-centre"), matches.is_present("pointing-centre")) {
+    let phase_centre = match (
+        matches.values_of("phase-centre"),
+        matches.is_present("pointing-centre"),
+    ) {
         (Some(mut values), _) => {
             if let (Some(ra), Some(dec)) = (values.next(), values.next()) {
-                let ra = ra.parse::<f64>().expect(&format!("unable to parse RA {}", ra));
-                let dec = dec.parse::<f64>().expect(&format!("unable to parse DEC {}", dec));
-                debug!("Using phase centre from command line: RA={}, DEC={}", ra, dec);
+                let ra = ra
+                    .parse::<f64>()
+                    .unwrap_or_else(|_| panic!("unable to parse RA {}", ra));
+                let dec = dec
+                    .parse::<f64>()
+                    .unwrap_or_else(|_| panic!("unable to parse DEC {}", dec));
+                debug!(
+                    "Using phase centre from command line: RA={}, DEC={}",
+                    ra, dec
+                );
                 RADec::new(ra.to_radians(), dec.to_radians())
             } else {
                 panic!("Unable to parse RADec. from --phase-centre");
             }
         }
-        (_, true) => {
-            RADec::from_mwalib_tile_pointing(&context.metafits_context)
-        }
-        _ => {
-            RADec::from_mwalib_phase_or_pointing(&context.metafits_context)
-        }
+        (_, true) => RADec::from_mwalib_tile_pointing(&context.metafits_context),
+        _ => RADec::from_mwalib_phase_or_pointing(&context.metafits_context),
     };
 
     // /////////////// //
@@ -505,7 +610,7 @@ where
     // if let Some(count_str) = matches.value_of("flag-init-steps") {
     //     init_steps = count_str.parse::<usize>().unwrap();
     //     info!("Flagging {} initial timesteps", init_steps);
-    // } 
+    // }
     // if let Some(seconds_str) = matches.value_of("flag-init") {
     //     let init_seconds = seconds_str.parse::<f64>().unwrap();
     //     // init_steps = todo!();
@@ -547,47 +652,66 @@ where
 
     let int_time_s = context.metafits_context.corr_int_time_ms as f64 / 1e3;
 
-    let avg_time: usize = match (matches.value_of("avg-time-factor"), matches.value_of("avg-time-res")) {
+    let avg_time: usize = match (
+        matches.value_of("avg-time-factor"),
+        matches.value_of("avg-time-res"),
+    ) {
         (Some(_), Some(_)) => {
             panic!("you can't use --avg-time-factor and --avg-time-res at the same time");
-        },
-        (Some(factor_str), None) => {
-            factor_str.parse().expect("unable to parse --avg-time-factor")
-        },
+        }
+        (Some(factor_str), None) => factor_str
+            .parse()
+            .expect("unable to parse --avg-time-factor"),
         (_, Some(res_str)) => {
-            let res = res_str.parse::<f64>().expect("unable to parse --avg-time-res");
+            let res = res_str
+                .parse::<f64>()
+                .expect("unable to parse --avg-time-res");
             let ratio = res / int_time_s;
             debug_assert!(ratio.is_finite() && ratio >= 1.0 && ratio.fract() < 1e-6);
             ratio.round() as _
-        },
-        _ => {
-            1
         }
+        _ => 1,
     };
 
     let fine_chan_width_khz = context.metafits_context.corr_fine_chan_width_hz as f64 / 1e3;
 
-    let avg_freq: usize = match (matches.value_of("avg-freq-factor"), matches.value_of("avg-freq-res")) {
+    let avg_freq: usize = match (
+        matches.value_of("avg-freq-factor"),
+        matches.value_of("avg-freq-res"),
+    ) {
         (Some(_), Some(_)) => {
             panic!("you can't use --avg-freq-factor and --avg-freq-res at the same time");
-        },
-        (Some(factor_str), None) => {
-            factor_str.parse().expect("unable to parse --avg-freq-factor")
-        },
+        }
+        (Some(factor_str), None) => factor_str
+            .parse()
+            .expect("unable to parse --avg-freq-factor"),
         (_, Some(res_str)) => {
-            let res = res_str.parse::<f64>().expect("unable to parse --avg-freq-res");
+            let res = res_str
+                .parse::<f64>()
+                .expect("unable to parse --avg-freq-res");
             let ratio = res / fine_chan_width_khz;
             debug_assert!(ratio.is_finite() && ratio >= 1.0 && ratio.fract() < 1e-6);
             ratio.round() as _
-        },
-        _ => {
-            1
         }
+        _ => 1,
     };
 
+    let baseline_flags = get_baseline_flags(&context, &antenna_flags);
+
     show_param_info(
-        &context, array_pos, phase_centre, &coarse_chan_range, &timestep_range, &baseline_idxs,
-        &coarse_chan_flags, &fine_chan_flags, &timestep_flags, &antenna_flags, avg_time, avg_freq
+        &context,
+        array_pos,
+        phase_centre,
+        &coarse_chan_range,
+        &timestep_range,
+        &baseline_idxs,
+        &coarse_chan_flags,
+        &fine_chan_flags,
+        &timestep_flags,
+        &antenna_flags,
+        &baseline_flags,
+        avg_time,
+        avg_freq,
     );
 
     for unimplemented_option in &[
@@ -596,7 +720,7 @@ where
         "flag-init-steps",
         "flag-end",
         "flag-end-steps",
-        "flag-timesteps",
+        // "flag-timesteps",
         "flag-coarse-chans",
         "flag-edge-width",
         "flag-edge-chans",
@@ -610,18 +734,21 @@ where
         "avg-time-res",
         "avg-time-factor",
         "avg-freq-res",
-        "avg-channel-factor",
+        "avg-freq-factor",
     ] {
         if matches.is_present(unimplemented_option) {
-            panic!("option not yet implemented: {}", unimplemented_option);
+            panic!("option not yet implemented: --{}", unimplemented_option);
         }
     }
 
     let flag_array = init_flag_array(
         &context,
-        &timestep_range,
-        &coarse_chan_range,
-        Some(antenna_flags),
+        timestep_range.clone(),
+        coarse_chan_range.clone(),
+        Some(&timestep_flags),
+        Some(&coarse_chan_flags),
+        Some(&fine_chan_flags),
+        Some(&baseline_flags),
     );
 
     #[allow(unused_mut)]
@@ -630,14 +757,15 @@ where
         &timestep_range,
         &coarse_chan_range,
         Some(flag_array),
-    );
+    )
+    .unwrap();
 
     // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
 
     let no_cable_delays = matches.is_present("no-cable-delay");
     let cable_delays_applied = context.metafits_context.cable_delays_applied;
     if !cable_delays_applied && !no_cable_delays {
-        debug!(
+        info!(
             "Applying cable delays. applied: {}, desired: {}",
             cable_delays_applied, !no_cable_delays
         );
@@ -674,7 +802,7 @@ where
     let geometric_delays_applied = context.metafits_context.geometric_delays_applied;
     match (geometric_delays_applied, no_geometric_delays) {
         (GeometricDelaysApplied::No, false) => {
-            debug!(
+            info!(
                 "Applying geometric delays. applied: {:?}, desired: {}",
                 geometric_delays_applied, !no_geometric_delays
             );
@@ -695,10 +823,31 @@ where
         }
     };
 
-    // output flags
+    // output flags (before averaging)
     if let Some(flag_template) = matches.value_of("flag-template") {
         write_flags(&context, &flag_array, flag_template, &coarse_chan_range)
             .expect("unable to write flags");
+    }
+
+    // perform averaging
+    let num_pols = context.metafits_context.num_visibility_pols;
+    let mut flag_array = expand_flag_array(flag_array.view(), num_pols);
+    let weight_factor = get_weight_factor(&context);
+    let mut weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+
+    if avg_time != 1 || avg_freq != 1 {
+        let (avg_jones_array, avg_weight_array, avg_flag_array) = average_visibilities(
+            jones_array.view(),
+            weight_array.view(),
+            flag_array.view(),
+            avg_time,
+            avg_freq,
+        )
+        .unwrap();
+
+        jones_array = avg_jones_array;
+        weight_array = avg_weight_array;
+        flag_array = avg_flag_array;
     }
 
     // output uvfits
@@ -706,8 +855,9 @@ where
         write_uvfits(
             Path::new(uvfits_out),
             &context,
-            &jones_array,
-            &flag_array,
+            jones_array.view(),
+            weight_array.view(),
+            flag_array.view(),
             &timestep_range,
             &coarse_chan_range,
             &baseline_idxs,
@@ -722,13 +872,14 @@ where
         write_ms(
             Path::new(ms_out),
             &context,
-            &jones_array,
-            &flag_array,
+            jones_array.view(),
+            weight_array.view(),
+            flag_array.view(),
             &timestep_range,
             &coarse_chan_range,
             &baseline_idxs,
             Some(array_pos),
-            Some(phase_centre)
+            Some(phase_centre),
         )
         .expect("unable to write ms");
     }
@@ -736,9 +887,9 @@ where
 
 fn main() {
     env_logger::try_init().unwrap_or(());
-    info!("start main");
+    trace!("start main");
     main_with_args(env::args());
-    info!("end main");
+    trace!("end main");
 }
 
 #[cfg(test)]
@@ -773,7 +924,6 @@ mod tests {
 mod tests_aoflagger {
 
     use super::main_with_args;
-    use birli::get_aoflagger_version_string;
     use birli::io::mwaf::FlagFileSet;
     use fitsio::errors::check_status as fits_check_status;
     use float_cmp::{approx_eq, F32Margin, F64Margin};
@@ -789,22 +939,9 @@ mod tests_aoflagger {
     use regex::Regex;
     use std::{
         collections::{BTreeMap, HashSet},
-        env,
         path::PathBuf,
     };
     use tempfile::tempdir;
-
-    #[test]
-    fn forked_aoflagger_with_version_prints_version() {
-        let pkg_name = env!("CARGO_PKG_NAME");
-        let aoflagger_version = get_aoflagger_version_string();
-        assert_cli::Assert::main_binary()
-            .with_args(&["aoflagger", "--version"])
-            .succeeds()
-            .stdout()
-            .contains(format!("{}-aoflagger {}\n", pkg_name, aoflagger_version).as_str())
-            .unwrap();
-    }
 
     macro_rules! assert_flagsets_eq {
         ($context:expr, $left_flagset:expr, $right_flagset:expr, $gpubox_ids:expr) => {
@@ -885,7 +1022,6 @@ mod tests_aoflagger {
             mwaf_path_template.to_str().unwrap(),
         ];
         args.extend_from_slice(&gpufits_paths);
-        args.extend(["aoflagger"]);
 
         main_with_args(&args);
 
@@ -940,7 +1076,6 @@ mod tests_aoflagger {
             "--no-geometric-delay",
         ];
         args.extend_from_slice(&gpufits_paths);
-        args.extend(["aoflagger"]);
 
         main_with_args(&args);
 
@@ -1061,7 +1196,7 @@ mod tests_aoflagger {
 
         let complex_regex =
             Regex::new(format!(
-                r"^(?P<only_real>{0})$|^(?P<only_imag>{0})j$|^\((?P<complex_real>{0})\+?(?P<complex_imag>{0})j\)$", 
+                r"^(?P<only_real>{0})$|^(?P<only_imag>{0})j$|^\((?P<complex_real>{0})\+?(?P<complex_imag>{0})j\)$",
                 float_regex
             ).as_str()
         ).unwrap();
@@ -1262,7 +1397,6 @@ mod tests_aoflagger {
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
-        args.extend(["aoflagger"]);
 
         main_with_args(&args);
         // let uvfits_path = PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.none.uvfits");
@@ -1290,7 +1424,6 @@ mod tests_aoflagger {
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
-        args.extend(["aoflagger"]);
 
         main_with_args(&args);
         // let uvfits_path = PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.cable.uvfits");
@@ -1322,7 +1455,6 @@ mod tests_aoflagger {
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
-        args.extend(["aoflagger"]);
 
         main_with_args(&args);
         // let uvfits_path = PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.geom.uvfits");
@@ -1352,7 +1484,6 @@ mod tests_aoflagger {
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
-        args.extend(["aoflagger"]);
 
         main_with_args(&args);
         // let uvfits_path =
@@ -1383,7 +1514,6 @@ mod tests_aoflagger {
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
-        args.extend(["aoflagger"]);
 
         main_with_args(&args);
 

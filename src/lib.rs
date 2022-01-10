@@ -14,7 +14,9 @@
 //! use birli::{
 //!     context_to_jones_array, write_flags,
 //!     get_flaggable_timesteps, init_flag_array,
-//!     get_antenna_flags, mwalib::CorrelatorContext, write_uvfits
+//!     get_antenna_flags, mwalib::CorrelatorContext, write_uvfits,
+//!     expand_flag_array, get_weight_factor, flag_to_weight_array,
+//!     get_baseline_flags,
 //! };
 //! use tempfile::tempdir;
 //!
@@ -50,9 +52,12 @@
 //! // Prepare our flagmasks with known bad antennae
 //! let flag_array = init_flag_array(
 //!     &context,
-//!     &img_timestep_range,
-//!     &img_coarse_chan_range,
-//!     Some(get_antenna_flags(&context)),
+//!     img_timestep_range.clone(),
+//!     img_coarse_chan_range.clone(),
+//!     None,
+//!     None,
+//!     None,
+//!     Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
 //! );
 //!
 //! // load visibilities into our array of jones matrices
@@ -61,36 +66,26 @@
 //!     &img_timestep_range,
 //!     &img_coarse_chan_range,
 //!     Some(flag_array),
-//! );
-//!
-//! // This functionality is only available with the aoflagger feature
-//! // use birli::{cxx_aoflagger_new, flag_jones_array_existing}
-//! // // create a CxxAOFlagger object to perform AOFlagger operations
-//! // let aoflagger = unsafe { cxx_aoflagger_new() };
-//! //
-//! // // use the default strategy file location for MWA
-//! // let strategy_filename = &aoflagger.FindStrategyFileMWA();
-//! //
-//! // // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
-//! // let flag_array = flag_jones_array_existing(
-//! //     &aoflagger,
-//! //     &strategy_filename,
-//! //     &jones_array,
-//! //     Some(flag_array),
-//! //     true,
-//! // );
+//! ).unwrap();
 //!
 //! // write the flags to disk as .mwaf
 //! write_flags(&context, &flag_array, flag_template.to_str().unwrap(), &img_coarse_chan_range).unwrap();
 //! // write the visibilities to disk as .uvfits
+//!
+//! let num_pols = context.metafits_context.num_visibility_pols;
+//! let flag_array = expand_flag_array(flag_array.view(), num_pols);
+//! let weight_factor = get_weight_factor(&context);
+//! let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 //! write_uvfits(
 //!     uvfits_out.as_path(),
 //!     &context,
-//!     &jones_array,
-//!     &flag_array,
+//!     jones_array.view(),
+//!     weight_array.view(),
+//!     flag_array.view(),
 //!     &img_timestep_range,
 //!     &img_coarse_chan_range,
 //!     &baseline_idxs,
+//!     None,
 //!     None,
 //! ).unwrap();
 //! ```
@@ -111,6 +106,7 @@ use crossbeam_utils::thread;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use log::{trace, warn};
+use ndarray::ArrayView2;
 use std::ops::Range;
 
 pub mod io;
@@ -122,9 +118,10 @@ pub mod flags;
 pub use approx;
 #[cfg(test)]
 pub(crate) mod types;
-#[cfg(test)]
-pub(crate) use types::TestJones;
-pub use flags::{get_antenna_flags, get_flaggable_timesteps, init_flag_array, write_flags};
+pub use flags::{
+    expand_flag_array, flag_to_weight_array, get_antenna_flags, get_baseline_flags,
+    get_flaggable_timesteps, get_weight_factor, init_flag_array, write_flags,
+};
 pub use marlu;
 pub use marlu::{
     mwalib,
@@ -133,6 +130,8 @@ pub use marlu::{
     ndarray::{parallel::prelude::*, Array3, Axis},
     Complex, Jones,
 };
+#[cfg(test)]
+pub(crate) use types::TestJones;
 
 mod error;
 pub use error::BirliError;
@@ -274,7 +273,7 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
 ///     None
-/// );
+/// ).unwrap();
 ///
 /// let dims_common = jones_array.dim();
 ///
@@ -284,15 +283,17 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 ///     &good_timestep_range,
 ///     &img_coarse_chan_range,
 ///     None
-/// );
+/// ).unwrap();
 ///
 /// let dims_good = jones_array.dim();
 ///
 /// assert_ne!(dims_common, dims_good);
 /// ```
 ///
-/// # Assumptions
-/// - img_coarse_chan_idxs and img_timestep_idxs are contiguous
+/// # Errors
+///
+/// can throw BadArrayShape flag_array is provided and its shape does not match
+/// that of the timestep and coarse channel ranges.
 pub fn context_to_jones_array(
     context: &CorrelatorContext,
     mwalib_timestep_range: &Range<usize>,
@@ -300,7 +301,7 @@ pub fn context_to_jones_array(
     // TODO: allow subset of baselines
     // mwalib_baseline_idxs: &[usize],
     flag_array: Option<Array3<bool>>,
-) -> (Array3<Jones<f32>>, Array3<bool>) {
+) -> Result<(Array3<Jones<f32>>, Array3<bool>), BirliError> {
     trace!("start context_to_jones_array");
 
     // allocate our result
@@ -316,11 +317,14 @@ pub fn context_to_jones_array(
     let mut jones_array: Array3<Jones<f32>> = Array3::from_elem(shape, Jones::default());
 
     let mut flag_array: Array3<bool> = if let Some(flag_array_) = flag_array {
-        assert_eq!(
-            flag_array_.dim(),
-            shape,
-            "jones array and flag array should be the same dimensions"
-        );
+        if flag_array_.dim() != shape {
+            return Err(BirliError::BadArrayShape {
+                argument: "flag_array".to_string(),
+                function: "context_to_jones_array".to_string(),
+                expected: format!("({}, {}, {}, 4)", shape.0, shape.1, shape.2),
+                received: format!("{:?}", shape),
+            });
+        };
         flag_array_
     } else {
         Array3::from_elem(shape, false)
@@ -383,7 +387,7 @@ pub fn context_to_jones_array(
         scope.spawn(|_| {
             for (mwalib_timestep_idx, mwalib_coarse_chan_idx, err) in rx_error {
                 warn!(
-                    "could not read hdu ts={}, cc={} {:?}",
+                    "Flagging missing HDU @ ts={}, cc={} {:?}",
                     mwalib_timestep_idx, mwalib_coarse_chan_idx, err
                 );
 
@@ -462,7 +466,7 @@ pub fn context_to_jones_array(
 
     trace!("end context_to_jones_array");
 
-    (jones_array, flag_array)
+    Ok((jones_array, flag_array))
 }
 
 /// Create an aoflagger [`CxxImageSet`] for a particular baseline from the given jones array
@@ -529,7 +533,7 @@ pub fn jones_baseline_view_to_imageset(
 #[cfg(feature = "aoflagger")]
 pub fn flag_baseline_view_to_flagmask(
     aoflagger: &CxxAOFlagger,
-    baseline_flag_view: &ArrayBase<ViewRepr<&bool>, Dim<[usize; 2]>>,
+    baseline_flag_view: &ArrayView2<bool>,
 ) -> Result<UniquePtr<CxxFlagMask>, BirliError> {
     let array_dims = baseline_flag_view.dim();
     let mut flag_mask = unsafe { aoflagger.MakeFlagMask(array_dims.0, array_dims.1, false) };
@@ -537,6 +541,7 @@ pub fn flag_baseline_view_to_flagmask(
     let flag_buf = flag_mask.pin_mut().BufferMut();
 
     // TODO: assign by slice
+    // flag_buf.copy_from_slice(baseline_flag_view.as_slice().unwrap());
     for (img_timestep_idx, timestep_flag_view) in baseline_flag_view.outer_iter().enumerate() {
         for (img_chan_idx, singular_flag_view) in timestep_flag_view.outer_iter().enumerate() {
             flag_buf[img_chan_idx * stride + img_timestep_idx] =
@@ -554,8 +559,8 @@ mod tests {
     use crate::TestJones;
 
     use super::{context_to_jones_array, get_flaggable_timesteps};
-    use marlu::{mwalib::CorrelatorContext, Complex};
     use approx::assert_abs_diff_eq;
+    use marlu::{mwalib::CorrelatorContext, Complex};
 
     fn get_mwax_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -621,7 +626,8 @@ mod tests {
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
             None,
-        );
+        )
+        .unwrap();
         let jones_array = jones_array.mapv(TestJones::from);
 
         // ts 0, chan 0, baseline 0
@@ -740,7 +746,8 @@ mod tests {
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
             None,
-        );
+        )
+        .unwrap();
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -844,7 +851,8 @@ mod tests {
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
             None,
-        );
+        )
+        .unwrap();
 
         let jones_array = jones_array.mapv(TestJones::from);
 

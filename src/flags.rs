@@ -5,10 +5,10 @@ use std::ops::Range;
 use crate::{
     error::{
         BirliError,
-        BirliError::{NoCommonTimesteps, NoProvidedTimesteps, NoCommonCoarseChans},
+        BirliError::{NoCommonCoarseChans, NoCommonTimesteps, NoProvidedTimesteps},
     },
     io::error::IOError,
-    ndarray::{Array2, Array3, ArrayView3, Axis, Zip},
+    ndarray::{Array, Array3, Array4, ArrayView, ArrayView3, Axis, Dimension, Zip},
     FlagFileSet,
 };
 use cfg_if::cfg_if;
@@ -131,12 +131,19 @@ pub fn get_antenna_flags(context: &CorrelatorContext) -> Vec<bool> {
 }
 
 /// Produce a contiguous range of coarse channel indices from [`MWALib::CorrelatorContext.common_coarse_chan_indices`]
-/// along with a vector of flags for all known coarse channels. 
-/// 
-/// In the case where the common range of coase channels is not contiguous, 
-/// a channel is flagged if it appears within the range of common coarse channels, 
+/// along with a vector of flags for all known coarse channels.
+///
+/// In the case where the common range of coase channels is not contiguous,
+/// a channel is flagged if it appears within the range of common coarse channels,
 /// but is not itself provided.
-pub fn get_coarse_chan_range_flags(context: &CorrelatorContext) -> Result<(Range<usize>, Vec<bool>), BirliError> {
+///
+/// # Errors
+///
+/// - Can throw NoCommonCoarseChannels if the common coarse channel range is empty.
+///
+pub fn get_coarse_chan_range_flags(
+    context: &CorrelatorContext,
+) -> Result<(Range<usize>, Vec<bool>), BirliError> {
     let common_indices = &context.common_coarse_chan_indices;
     let provided_indices = &context.provided_coarse_chan_indices;
 
@@ -148,9 +155,9 @@ pub fn get_coarse_chan_range_flags(context: &CorrelatorContext) -> Result<(Range
     }?;
 
     let mut flags = vec![false; context.num_coarse_chans];
-    for idx in range.clone() {
+    for (idx, flag) in flags.iter_mut().enumerate() {
         if !provided_indices.contains(&idx) {
-            flags[idx] = true;
+            *flag = true;
         }
     }
 
@@ -159,11 +166,18 @@ pub fn get_coarse_chan_range_flags(context: &CorrelatorContext) -> Result<(Range
 
 /// Produce a contiguous range of timestep indices from the first [`MWALib::CorrelatorContext.common_timestep_indices`]
 /// to the last [`MWALib::CorrelatorContext.provided_timestep_indices`]
-/// along with a vector of flags for all known timesteps. 
-/// 
-/// In the case where the common range of timesteps is not contiguous, 
+/// along with a vector of flags for all known timesteps.
+///
+/// In the case where the common range of timesteps is not contiguous,
 /// a timestep is flagged if it appears within the range, but is not itself common.
-pub fn get_timestep_range_flags(context: &CorrelatorContext) -> Result<(Range<usize>, Vec<bool>), BirliError> {
+///
+/// # Errors
+///
+/// - can throw NoProvidedTimesteps if no timesteps have been provided.
+/// - can throw NoCommonTimesteps if there are no common timesteps.
+pub fn get_timestep_range_flags(
+    context: &CorrelatorContext,
+) -> Result<(Range<usize>, Vec<bool>), BirliError> {
     let common_indices = &context.common_timestep_indices;
     let provided_indices = &context.provided_timestep_indices;
     let range = match (common_indices.first(), provided_indices.last()) {
@@ -176,84 +190,142 @@ pub fn get_timestep_range_flags(context: &CorrelatorContext) -> Result<(Range<us
         }),
     }?;
 
-    let mut flags = vec![false; context.num_coarse_chans];
-    for idx in range.clone() {
+    let mut flags = vec![false; context.num_timesteps];
+    for (idx, flag) in flags.iter_mut().enumerate() {
         if !provided_indices.contains(&idx) {
-            flags[idx] = true;
+            *flag = true;
         }
     }
 
     Ok((range, flags))
 }
 
-
 /// Produce a vector of flags for baslines whose antennae are flagged in `antenna_flags`
-fn get_baseline_flags(context: &CorrelatorContext, antenna_flags: Vec<bool>) -> Vec<bool> {
+pub fn get_baseline_flags(context: &CorrelatorContext, antenna_flags: &[bool]) -> Vec<bool> {
     assert_eq!(antenna_flags.len(), context.metafits_context.num_ants);
     context
         .metafits_context
         .baselines
         .clone()
         .into_iter()
-        .map(|baseline| {
-            antenna_flags[baseline.ant1_index] || antenna_flags[baseline.ant2_index]
-            // *antenna_flags.get(baseline.ant1_index).unwrap_or(&false) || *antenna_flags.get(baseline.ant2_index).unwrap_or(&false)
-        })
+        .map(|baseline| antenna_flags[baseline.ant1_index] || antenna_flags[baseline.ant2_index])
         .collect()
 }
 
-/// Initialize an array of `bool` flags for each timestep, channel provided.
+/// Produce a vector of flags for fine each channel in the selected range of channels.
+// pub fn get_chan_flags(
+//     context: &CorrelatorContext,
+//     coarse_chan_flags: Option<&[bool]>,
+//     fine_chan_flags: Option<&[bool]>,
+// ) -> Vec<bool> {
+
+//     let num_coarse_chans = context.num_coarse_chans;
+//     let num_fine_chans = context.metafits_context.num_corr_fine_chans_per_coarse;
+
+//     let coarse_chan_flags: Vec<_> = match coarse_chan_flags {
+//         Some(coarse_chan_flags) => {
+//             assert_eq!(coarse_chan_flags.len(), num_coarse_chans);
+//             coarse_chan_flags.to_vec()
+//         },
+//         None => (0..num_coarse_chans).into_iter()
+//             .map(|_| false)
+//             .collect(),
+//     };
+//     let fine_chan_flags: Vec<_> = match fine_chan_flags {
+//         Some(fine_chan_flags) => {
+//             assert_eq!(fine_chan_flags.len(), num_fine_chans);
+//             fine_chan_flags.to_vec()
+//         },
+//         None => (0..num_fine_chans)
+//             .map(|_| false)
+//             .collect(),
+//     };
+
+//     coarse_chan_flags.iter().flat_map(|coarse_chan_flag| {
+//         if *coarse_chan_flag {
+//             fine_chan_flags.to_vec()
+//         } else {
+//             vec![false; fine_chan_flags.len()]
+//         }
+//     }).collect()
+// }
+
+/// Initialize a 3D array of `bool` flags for each timestep, channel, baseline provided.
 ///
-/// Assumptions:
-/// - you want all baselines
+/// Optionally provide flags for the timestep, channel and baseline axes
 ///
-/// TODO: use:
-/// - [x] antenna_flags
-/// - [ ] coarse_chan_flags
-/// - [ ] fine_chan_flags
-/// - [ ] timestep_flags
-/// to set correlator mask
+/// TODO: fix clippy::too_many_arguments
+#[allow(clippy::too_many_arguments)]
 pub fn init_flag_array(
     context: &CorrelatorContext,
-    mwalib_timestep_range: &Range<usize>,
-    mwalib_coarse_chan_range: &Range<usize>,
-    antenna_flags: Option<Vec<bool>>,
+    mwalib_timestep_range: Range<usize>,
+    mwalib_coarse_chan_range: Range<usize>,
+    timestep_flags: Option<&[bool]>,
+    coarse_chan_flags: Option<&[bool]>,
+    fine_chan_flags: Option<&[bool]>,
+    baseline_flags: Option<&[bool]>,
 ) -> Array3<bool> {
+    let num_timesteps_total = context.num_timesteps;
     let num_timesteps = mwalib_timestep_range.len();
     let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+    let num_coarse_chans_total = context.num_coarse_chans;
     let num_coarse_chans = mwalib_coarse_chan_range.len();
     let num_chans = num_coarse_chans * fine_chans_per_coarse;
     let num_baselines = context.metafits_context.num_baselines;
-
     let shape = (num_timesteps, num_chans, num_baselines);
 
-    let correlator_baseline_flags: Array2<bool> =
-        Array2::from_elem((num_timesteps, num_chans), false);
-    // TODO: there are other things that can affect correlator flags
-    let flagged_baseline_flags: Array2<bool> = Array2::from_elem((num_timesteps, num_chans), true);
-
-    let antenna_flags = match antenna_flags {
-        Some(antenna_flags) => antenna_flags,
-        None => (0..context.metafits_context.num_ants)
-            .map(|_| false)
-            .collect(),
+    let timestep_flags: Vec<_> = match timestep_flags {
+        Some(timestep_flags) => {
+            assert_eq!(timestep_flags.len(), num_timesteps_total);
+            timestep_flags[mwalib_timestep_range].to_vec()
+        }
+        None => (0..num_timesteps).map(|_| false).collect(),
+    };
+    let coarse_chan_flags: Vec<_> = match coarse_chan_flags {
+        Some(coarse_chan_flags) => {
+            assert_eq!(coarse_chan_flags.len(), num_coarse_chans_total);
+            coarse_chan_flags[mwalib_coarse_chan_range].to_vec()
+        }
+        None => (0..num_coarse_chans).map(|_| false).collect(),
+    };
+    let fine_chan_flags: Vec<_> = match fine_chan_flags {
+        Some(fine_chan_flags) => {
+            assert_eq!(fine_chan_flags.len(), fine_chans_per_coarse);
+            fine_chan_flags.to_vec()
+        }
+        None => (0..fine_chans_per_coarse).map(|_| false).collect(),
+    };
+    let baseline_flags: Vec<_> = match baseline_flags {
+        Some(baseline_flags) => {
+            assert_eq!(baseline_flags.len(), num_baselines);
+            baseline_flags.to_vec()
+        }
+        None => (0..num_baselines).map(|_| false).collect(),
     };
 
-    let mut flag_array = Array3::from_elem(shape, false);
-
-    flag_array
-        .axis_iter_mut(Axis(2))
-        .into_par_iter()
-        .zip(get_baseline_flags(context, antenna_flags))
-        .for_each(|(mut baseline_flag_view, baseline_flag_val)| {
-            baseline_flag_view.assign(if baseline_flag_val {
-                &flagged_baseline_flags
+    let chan_flags: Vec<_> = coarse_chan_flags
+        .iter()
+        .flat_map(|coarse_chan_flag| {
+            if *coarse_chan_flag {
+                fine_chan_flags.to_vec()
             } else {
-                &correlator_baseline_flags
-            });
-        });
+                vec![false; fine_chan_flags.len()]
+            }
+        })
+        .collect();
 
-    flag_array
+    Array3::from_shape_fn(shape, |(ts_idx, ch_idx, bl_idx)| {
+        timestep_flags[ts_idx] || chan_flags[ch_idx] || baseline_flags[bl_idx]
+    })
+}
+
+/// Expand a flag array of `[timestep][channel][baseline]` to `[timestep][channel][baseline][pol]`
+pub fn expand_flag_array(flag_array: ArrayView3<bool>, num_pols: usize) -> Array4<bool> {
+    let shape = flag_array.dim();
+    Array4::from_shape_fn(
+        (shape.0, shape.1, shape.2, num_pols),
+        |(ts_idx, ch_idx, bl_idx, _)| flag_array[[ts_idx, ch_idx, bl_idx]],
+    )
 }
 
 /// Flag an ndarray of [`Jones`] visibilities, given a [`CxxAOFlagger`] instance,
@@ -309,7 +381,7 @@ pub fn init_flag_array(
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
 ///     None
-/// );
+/// ).unwrap();
 ///
 /// // use the default strategy file location for MWA
 /// let strategy_filename = &aoflagger.FindStrategyFileMWA();
@@ -335,15 +407,12 @@ pub fn flag_jones_array_existing(
 
     let jones_shape = jones_array.dim();
 
-    let mut flags_provided = false;
-    let mut flag_array = match flag_array {
+    let (flags_provided, mut flag_array) = match flag_array {
         Some(flag_array) => {
-            let flag_shape = flag_array.dim();
-            assert_eq!(jones_shape, flag_shape);
-            flags_provided = true;
-            flag_array
+            assert_eq!(flag_array.dim(), jones_shape);
+            (true, flag_array)
         }
-        None => Array3::from_elem(jones_shape, false),
+        None => (false, Array3::from_elem(jones_shape, false)),
     };
 
     // The total reading progress.
@@ -426,7 +495,9 @@ pub fn flag_jones_array(
 /// Here's an example of how to flag some visibility files
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, write_flags, mwalib::CorrelatorContext, init_flag_array, get_antenna_flags};
+/// use birli::{
+///     context_to_jones_array, write_flags, mwalib::CorrelatorContext,
+///     init_flag_array, get_antenna_flags, get_baseline_flags};
 /// use tempfile::tempdir;
 ///
 /// // define our input files
@@ -459,9 +530,12 @@ pub fn flag_jones_array(
 /// // Prepare our flagmasks with known bad antennae
 /// let flag_array = init_flag_array(
 ///     &context,
-///     &img_timestep_range,
-///     &img_coarse_chan_range,
-///     Some(get_antenna_flags(&context)),
+///     img_timestep_range.clone(),
+///     img_coarse_chan_range.clone(),
+///     None,
+///     None,
+///     None,
+///     Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
 /// );
 ///
 /// // read visibilities out of the gpubox files
@@ -470,7 +544,7 @@ pub fn flag_jones_array(
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
 ///     Some(flag_array)
-/// );
+/// ).unwrap();
 ///
 /// // write the flags to disk as .mwaf
 /// write_flags(&context, &flag_array, flag_template.to_str().unwrap(), &img_coarse_chan_range).unwrap();
@@ -632,8 +706,15 @@ mod tests {
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
-        let mut flag_array =
-            init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+        let mut flag_array = init_flag_array(
+            &context,
+            img_timestep_range,
+            img_coarse_chan_range.clone(),
+            None,
+            None,
+            None,
+            None,
+        );
 
         flag_array[[flag_timestep, flag_channel, flag_baseline]] = true;
 
@@ -722,8 +803,11 @@ pub fn get_weight_factor(context: &CorrelatorContext) -> f64 {
 /// Convert the given ndarray of boolean flags to an ndarray of float weights
 /// TODO: deal with weight factor when doing averaging.
 /// TODO: deal with passband gains
-pub fn flag_to_weight_array(flag_array: ArrayView3<bool>, weight_factor: f64) -> Array3<f32> {
-    let mut weight_array = Array3::from_elem(flag_array.dim(), 0.0_f32);
+pub fn flag_to_weight_array<D>(flag_array: ArrayView<bool, D>, weight_factor: f64) -> Array<f32, D>
+where
+    D: Dimension,
+{
+    let mut weight_array = Array::from_elem(flag_array.dim(), 0.0_f32);
 
     Zip::from(&mut weight_array)
         .and(&flag_array)
@@ -738,13 +822,16 @@ pub fn flag_to_weight_array(flag_array: ArrayView3<bool>, weight_factor: f64) ->
 #[cfg(feature = "aoflagger")]
 /// Tests which require the use of the aoflagger feature
 mod tests_aoflagger {
-    use super::{get_flaggable_timesteps, init_flag_array};
+    use super::init_flag_array;
     use marlu::{mwalib::CorrelatorContext, Complex, Jones};
     use ndarray::Array3;
 
     use crate::{
         context_to_jones_array,
-        flags::{flag_jones_array, flag_jones_array_existing, get_antenna_flags},
+        flags::{
+            flag_jones_array, flag_jones_array_existing, get_antenna_flags, get_baseline_flags,
+            get_flaggable_timesteps,
+        },
     };
     use aoflagger_sys::cxx_aoflagger_new;
 
@@ -876,13 +963,17 @@ mod tests_aoflagger {
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
         let (jones_array, _) =
-            context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+            context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+                .unwrap();
 
         let existing_flag_array = init_flag_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            Some(get_antenna_flags(&context)),
+            img_timestep_range,
+            img_coarse_chan_range,
+            None,
+            None,
+            None,
+            Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
         );
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
