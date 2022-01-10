@@ -117,4 +117,17 @@ pub enum IOError {
         /// The unexpected value that was found
         found: String,
     },
+
+    #[error("bad array shape supplied to argument {argument} of function {function}. expected {expected}, received {received}")]
+    /// Error for bad array shape in provided argument
+    BadArrayShape {
+        /// The argument name within the funciton
+        argument: String,
+        /// The function name
+        function: String,
+        /// The expected shape
+        expected: String,
+        /// The shape that was received instead
+        received: String,
+    },
 }

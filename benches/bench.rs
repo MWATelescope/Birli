@@ -1,6 +1,8 @@
 use birli::{
-    context_to_jones_array, correct_cable_lengths, correct_geometry, get_flaggable_timesteps,
-    init_flag_array, io::write_uvfits,
+    context_to_jones_array, correct_cable_lengths, correct_geometry,
+    flags::{expand_flag_array, flag_to_weight_array, get_weight_factor},
+    get_flaggable_timesteps,
+    io::write_uvfits,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use glob::glob;
@@ -129,7 +131,8 @@ fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
         *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
     let (mut jones_array, _) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+            .unwrap();
 
     crt.bench_function("correct_cable_lengths - mwax_half_1247842824", |bch| {
         bch.iter(|| {
@@ -154,7 +157,8 @@ fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
         *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
     let (mut jones_array, _) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+            .unwrap();
     crt.bench_function("correct_cable_lengths - ord_half_1196175296", |bch| {
         bch.iter(|| {
             correct_cable_lengths(
@@ -177,7 +181,8 @@ fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
         *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
     let (mut jones_array, _) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+            .unwrap();
     crt.bench_function("correct_geometry - mwax_half_1247842824", |bch| {
         bch.iter(|| {
             correct_geometry(
@@ -203,7 +208,8 @@ fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
         *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
     let (mut jones_array, _) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+            .unwrap();
     crt.bench_function("correct_geometry - ord_half_1196175296", |bch| {
         bch.iter(|| {
             correct_geometry(
@@ -231,20 +237,24 @@ fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
     let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
     let (jones_array, flag_array) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+            .unwrap();
 
     let tmp_dir = tempdir().unwrap();
     let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
 
-    init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+    let weight_factor = get_weight_factor(&context);
+    let flag_array = expand_flag_array(flag_array.view(), 4);
+    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
     crt.bench_function("uvfits_output - 1254670392_avg", |bch| {
         bch.iter(|| {
             write_uvfits(
                 black_box(uvfits_path.as_path()),
                 black_box(&context),
-                black_box(&jones_array),
-                black_box(&flag_array),
+                black_box(jones_array.view()),
+                black_box(weight_array.view()),
+                black_box(flag_array.view()),
                 black_box(&img_timestep_range),
                 black_box(&img_coarse_chan_range),
                 black_box(&img_baseline_idxs),
@@ -269,20 +279,24 @@ fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
     let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
     let (jones_array, flag_array) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+            .unwrap();
 
     let tmp_dir = tempdir().unwrap();
     let uvfits_path = tmp_dir.path().join("1196175296.none.uvfits");
 
-    init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+    let weight_factor = get_weight_factor(&context);
+    let flag_array = expand_flag_array(flag_array.view(), 4);
+    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
     crt.bench_function("uvfits_output - ord_half_1196175296", |bch| {
         bch.iter(|| {
             write_uvfits(
                 black_box(uvfits_path.as_path()),
                 black_box(&context),
-                black_box(&jones_array),
-                black_box(&flag_array),
+                black_box(jones_array.view()),
+                black_box(weight_array.view()),
+                black_box(flag_array.view()),
                 black_box(&img_timestep_range),
                 black_box(&img_coarse_chan_range),
                 black_box(&img_baseline_idxs),
@@ -307,20 +321,24 @@ fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
     let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
     let (jones_array, flag_array) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+            .unwrap();
 
     let tmp_dir = tempdir().unwrap();
     let uvfits_path = tmp_dir.path().join("1247842824.none.uvfits");
 
-    init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+    let weight_factor = get_weight_factor(&context);
+    let flag_array = expand_flag_array(flag_array.view(), 4);
+    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
     crt.bench_function("uvfits_output - mwax_half_1247842824", |bch| {
         bch.iter(|| {
             write_uvfits(
                 black_box(uvfits_path.as_path()),
                 black_box(&context),
-                black_box(&jones_array),
-                black_box(&flag_array),
+                black_box(jones_array.view()),
+                black_box(weight_array.view()),
+                black_box(flag_array.view()),
                 black_box(&img_timestep_range),
                 black_box(&img_coarse_chan_range),
                 black_box(&img_baseline_idxs),

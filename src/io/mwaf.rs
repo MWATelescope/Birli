@@ -824,8 +824,15 @@ mod tests {
             .map(|chan| chan.gpubox_number)
             .collect::<Vec<_>>();
 
-        let mut flag_array =
-            init_flag_array(&context, &img_timestep_range, &img_coarse_chan_range, None);
+        let mut flag_array = init_flag_array(
+            &context,
+            img_timestep_range,
+            img_coarse_chan_range,
+            None,
+            None,
+            None,
+            None,
+        );
 
         let mut idx = 0;
 

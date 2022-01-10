@@ -16,10 +16,7 @@ use marlu::{
 };
 use uvfits::UvfitsWriter;
 
-use crate::{
-    flags::get_weight_factor,
-    ndarray::{Array3, Array4, ArrayView3, ArrayViewMut3},
-};
+use crate::ndarray::{ArrayView3, ArrayView4, ArrayViewMut3};
 
 use self::error::IOError;
 
@@ -61,7 +58,8 @@ pub trait WriteableVis: Sync + Send {
     fn write_vis_mwalib(
         &mut self,
         jones_array: ArrayView3<Jones<f32>>,
-        weight_array: ArrayView3<f32>,
+        weight_array: ArrayView4<f32>,
+        flag_array: ArrayView4<bool>,
         context: &CorrelatorContext,
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
@@ -83,7 +81,10 @@ pub trait WriteableVis: Sync + Send {
 ///     get_flaggable_timesteps,
 ///     context_to_jones_array,
 ///     write_uvfits,
-///     marlu::mwalib::CorrelatorContext
+///     marlu::mwalib::CorrelatorContext,
+///     expand_flag_array,
+///     get_weight_factor,
+///     flag_to_weight_array
 /// };
 ///
 /// // define our input files
@@ -116,20 +117,27 @@ pub trait WriteableVis: Sync + Send {
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
 ///     None,
-/// );
+/// ).unwrap();
 ///
 /// // write the visibilities to disk as .uvfits
 ///
 /// let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 ///
+/// let num_pols = context.metafits_context.num_visibility_pols;
+/// let flag_array = expand_flag_array(flag_array.view(), num_pols);
+/// let weight_factor = get_weight_factor(&context);
+/// let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+///
 /// write_uvfits(
 ///     uvfits_out.as_path(),
 ///     &context,
-///     &jones_array,
-///     &flag_array,
+///     jones_array.view(),
+///     weight_array.view(),
+///     flag_array.view(),
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
 ///     &baseline_idxs,
+///     None,
 ///     None,
 /// )
 /// .unwrap();
@@ -143,13 +151,14 @@ pub trait WriteableVis: Sync + Send {
 pub fn write_uvfits<T: AsRef<Path>>(
     path: T,
     context: &CorrelatorContext,
-    jones_array: &Array3<Jones<f32>>,
-    flag_array: &Array3<bool>,
+    jones_array: ArrayView3<Jones<f32>>,
+    weight_array: ArrayView4<f32>,
+    flag_array: ArrayView4<bool>,
     mwalib_timestep_range: &Range<usize>,
     mwalib_coarse_chan_range: &Range<usize>,
     mwalib_baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
-    phase_centre: Option<RADec>
+    phase_centre: Option<RADec>,
 ) -> Result<(), IOError> {
     trace!("start write_uvfits to {:?}", path.as_ref());
 
@@ -163,10 +172,11 @@ pub fn write_uvfits<T: AsRef<Path>>(
         phase_centre,
     )?;
 
-    uvfits_writer.write_jones_flags(
-        context,
+    uvfits_writer.write_vis_mwalib(
         jones_array,
+        weight_array,
         flag_array,
+        context,
         mwalib_timestep_range,
         mwalib_coarse_chan_range,
         mwalib_baseline_idxs,
@@ -193,7 +203,10 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///     get_flaggable_timesteps,
 ///     context_to_jones_array,
 ///     write_ms,
-///     marlu::mwalib::CorrelatorContext
+///     marlu::mwalib::CorrelatorContext,
+///     expand_flag_array,
+///     get_weight_factor,
+///     flag_to_weight_array
 /// };
 ///
 /// // define our input files
@@ -226,20 +239,27 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
 ///     None,
-/// );
+/// ).unwrap();
 ///
 /// // write the visibilities to disk as .ms
 ///
 /// let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 ///
+/// let num_pols = context.metafits_context.num_visibility_pols;
+/// let flag_array = expand_flag_array(flag_array.view(), num_pols);
+/// let weight_factor = get_weight_factor(&context);
+/// let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+///
 /// write_ms(
 ///     ms_out.as_path(),
 ///     &context,
-///     &jones_array,
-///     &flag_array,
+///     jones_array.view(),
+///     weight_array.view(),
+///     flag_array.view(),
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
 ///     &baseline_idxs,
+///     None,
 ///     None,
 /// )
 /// .unwrap();
@@ -253,8 +273,9 @@ pub fn write_uvfits<T: AsRef<Path>>(
 pub fn write_ms<T: AsRef<Path>>(
     path: T,
     context: &CorrelatorContext,
-    jones_array: &Array3<Jones<f32>>,
-    flag_array: &Array3<bool>,
+    jones_array: ArrayView3<Jones<f32>>,
+    weight_array: ArrayView4<f32>,
+    flag_array: ArrayView4<bool>,
     mwalib_timestep_range: &Range<usize>,
     mwalib_coarse_chan_range: &Range<usize>,
     mwalib_baseline_idxs: &[usize],
@@ -263,36 +284,19 @@ pub fn write_ms<T: AsRef<Path>>(
 ) -> Result<(), IOError> {
     trace!("start write_ms to {:?}", path.as_ref());
 
-    let phase_centre = phase_centre.unwrap_or(RADec::from_mwalib_phase_or_pointing(&context.metafits_context));
+    let phase_centre = phase_centre
+        .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&context.metafits_context));
     let mut ms_writer = MeasurementSetWriter::new(path, phase_centre, array_pos);
 
     ms_writer
         .initialize_from_mwalib(context, mwalib_timestep_range, mwalib_coarse_chan_range)
         .unwrap();
 
-    let jones_shape = jones_array.shape();
-    let flag_shape = flag_array.shape();
-    let num_pols = context.metafits_context.num_visibility_pols;
-    assert_eq!(jones_shape[0], flag_shape[0]);
-    assert_eq!(jones_shape[1], flag_shape[1]);
-    assert_eq!(jones_shape[2], flag_shape[2]);
-
-    // TODO: this will change with averaging.
-    let weight_factor = get_weight_factor(context) as f32;
-    let weight_array = Array4::from_shape_fn(
-        (flag_shape[0], flag_shape[1], flag_shape[2], num_pols),
-        |_| weight_factor,
-    );
-    let flag_array_expanded = Array4::from_shape_fn(
-        (flag_shape[0], flag_shape[1], flag_shape[2], num_pols),
-        |(t, f, b, _)| *flag_array.get((t, f, b)).unwrap(),
-    );
-
     ms_writer
         .write_vis_mwalib(
             jones_array.view(),
             weight_array.view(),
-            flag_array_expanded.view(),
+            flag_array.view(),
             context,
             mwalib_timestep_range,
             mwalib_coarse_chan_range,
@@ -310,7 +314,11 @@ pub fn write_ms<T: AsRef<Path>>(
 /// Tests which require the use of the aoflagger feature
 mod tests_aoflagger {
     use crate::{
-        context_to_jones_array, flags::flag_jones_array_existing, get_antenna_flags,
+        context_to_jones_array,
+        flags::{
+            expand_flag_array, flag_jones_array_existing, flag_to_weight_array, get_antenna_flags,
+            get_baseline_flags, get_weight_factor,
+        },
         get_flaggable_timesteps, init_flag_array, write_uvfits,
     };
     use aoflagger_sys::cxx_aoflagger_new;
@@ -362,9 +370,12 @@ mod tests_aoflagger {
         // Prepare our flagmasks with known bad antennae
         let flag_array = init_flag_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            Some(get_antenna_flags(&context)),
+            img_timestep_range.clone(),
+            img_coarse_chan_range.clone(),
+            None,
+            None,
+            None,
+            Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
         );
 
         // generate an array of jones matrices
@@ -373,7 +384,8 @@ mod tests_aoflagger {
             &img_timestep_range,
             &img_coarse_chan_range,
             Some(flag_array),
-        );
+        )
+        .unwrap();
 
         // use the default strategy file location for MWA
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
@@ -387,13 +399,18 @@ mod tests_aoflagger {
             true,
         );
 
+        let weight_factor = get_weight_factor(&context);
+        let flag_array = expand_flag_array(flag_array.view(), 4);
+        let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+
         // write the visibilities to disk as .uvfits
 
         write_uvfits(
             uvfits_out.as_path(),
             &context,
-            &jones_array,
-            &flag_array,
+            jones_array.view(),
+            weight_array.view(),
+            flag_array.view(),
             &img_timestep_range,
             &img_coarse_chan_range,
             &baseline_idxs,
