@@ -87,6 +87,8 @@
 //!     &baseline_idxs,
 //!     None,
 //!     None,
+//!     1,
+//!     1,
 //! ).unwrap();
 //! ```
 //!

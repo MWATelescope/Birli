@@ -53,7 +53,7 @@ example:
 
 This is a synthetic observation based off [obs id 1196175296](http://ws.mwatelescope.org/observation/obs/?obs_id=1196175296), limited to two coarse channels, two batches, two scans per batch and two fine channels per coarse to allow for the smallest possible set of files which could be representative of an observation for testing purposes.
 
-The observation values are filled with unique positive 32-bit float values, increasing monotonically in order of their position in the file. When reading the visibilities, the order and sign of these values is dificult to predict because of the quirks of legacy Ord correlator gpubox file format. so a CSV dump of the visibilities is provided in hex and decimal. 
+The observation values are filled with unique positive 32-bit float values, increasing monotonically in order of their position in the file. When reading the visibilities, the order and sign of these values is dificult to predict because of the quirks of legacy Ord correlator gpubox file format. so a CSV dump of the visibilities is provided in hex and decimal.
 
 Because this observation only contains a subset of the channels of a real observation, an additional "cotter friendly" metafits file is provided, with `FINECHAN`, `BANDWDTH` and `NCHANS` set to values that will prevent cotter from segfaulting when reading the files, however Cotter does not correctly calculate the sky frequencies for this partial observation.
 
@@ -61,7 +61,7 @@ Additional "adjusted" gpufits files were generated from this set in order to tes
 
 ## 1247842824 - Flags
 
-This is a subset of [obs id 1247842824](http://ws.mwatelescope.org/observation/obs/?obs_id=1247842824), limited to one coarse channel, 1 batch, two scans per batch and two fine channels per coarse to allow for the smallest possible set of files which could be representative of an observation for testing RFI flagging. 
+This is a subset of [obs id 1247842824](http://ws.mwatelescope.org/observation/obs/?obs_id=1247842824), limited to one coarse channel, 1 batch, two scans per batch and two fine channels per coarse to allow for the smallest possible set of files which could be representative of an observation for testing RFI flagging.
 
 Because this observation only contains a subset of the channels of a real observation, an additional "cotter friendly" metafits file is provided, with `FINECHAN`, `BANDWDTH` and `NCHANS` set to values that will prevent cotter from segfaulting when reading the files, however Cotter does not correctly calculate the sky frequencies for this partial observation.
 
@@ -69,7 +69,23 @@ Because this observation only contains a subset of the channels of a real observ
 
 This is the full [obs id 1254670392](http://ws.mwatelescope.org/observation/obs/?obs_id=1254670392), which is averaged to 2s / 40kHz. Because it is nice and small, all channels fit inside the repository, and a partial CSV dump of the uvfits visibilities is used to test UVFits and corrections, however the uvfits files themselves are too large.
 
+Because the file cuts off 2 scans in, a fixed version of the metafits file was made for better comparison with cotter.
+
+```python
+>>> import os
+>>> os.getcwd()
+'/home/dev/Birli/tests/data/1254670392_avg'
+>>> from astropy.io import fits
+>>> meta_fits = fits.open("1254670392.metafits")
+>>> meta_fits[0].header["NSCANS"]
+4
+>>> meta_fits[0].header["NSCANS"] = 2
+>>> meta_fits.writeto("1254670392.fixed.metafits")
+```
+
 ## Generating test files
+
+warning: the following line needs to be patched out in Cotter for this to work. https://github.com/MWATelescope/cotter/blob/b60b633b6b4b11bc5c84162bd0058a24d98f650c/gpufilereader.cpp#L195
 
 ```bash
 python3 tests/data/generate_test_data.py | tee generate.log
@@ -116,7 +132,7 @@ python3 tests/data/adjust_gpufits.py \
 #   --corr-type=MWA_ORD --timestep-limit=1 --empty-data
 
 
-# Cotter flags on 1196175296_mwa_ord with generic flagging 
+# Cotter flags on 1196175296_mwa_ord with generic flagging
 cotter \
   -m tests/data/1196175296_mwa_ord/1196175296.cotter.metafits \
   -o "tests/data/1196175296_mwa_ord/FlagfileCotterGeneric%%.mwaf" \
@@ -344,6 +360,9 @@ cotter \
   -m tests/data/1247842824_flags/1247842824.cotter.metafits \
   -o tests/data/1247842824_flags/1247842824.uvfits \
   -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
   -noantennapruning \
   -nocablelength \
   -noflagautos \
@@ -359,8 +378,12 @@ cotter \
   | tee cotter-1247842824-uvfits.log
 # Cotter uvfits on 1254670392_avg with MWA flagging, no corrections
 cotter \
-  -m tests/data/1254670392_avg/1254670392.metafits \
+  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
   -o tests/data/1254670392_avg/1254670392.cotter.none.uvfits \
+  -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
   -noantennapruning \
   -nocablelength \
   -nogeom \
@@ -374,8 +397,12 @@ cotter \
   | tee cotter-1254670392-uvfits-none.log
 # Cotter uvfits on 1254670392_avg with MWA flagging, cable corrections only
 cotter \
-  -m tests/data/1254670392_avg/1254670392.metafits \
+  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
   -o tests/data/1254670392_avg/1254670392.cotter.cable.uvfits \
+  -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
   -noantennapruning \
   -nogeom \
   -noflagautos \
@@ -388,8 +415,12 @@ cotter \
   | tee cotter-1254670392-uvfits-cable.log
 # Cotter uvfits on 1254670392_avg with MWA flagging, geometric corrections only
 cotter \
-  -m tests/data/1254670392_avg/1254670392.metafits \
+  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
   -o tests/data/1254670392_avg/1254670392.cotter.geom.uvfits \
+  -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
   -noantennapruning \
   -nocablelength \
   -noflagautos \
@@ -402,19 +433,45 @@ cotter \
   | tee cotter-1254670392-uvfits-geom.log
 # Cotter uvfits on 1254670392_avg with MWA flagging, both geometric and cable corrections
 cotter \
-  -m tests/data/1254670392_avg/1254670392.metafits \
+  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
   -o tests/data/1254670392_avg/1254670392.cotter.corrected.uvfits \
+  -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
   -noantennapruning \
   -noflagautos \
   -noflagdcchannels \
   -nosbgains \
   -sbpassband tests/data/subband-passband-32ch-unitary.txt \
   -nostats \
-  -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
+  -flag-strategy /usr/share/aoflagger/strategies/mwa-default.lua \
   tests/data/1254670392_avg/1254670392*gpubox*.fits \
   | tee cotter-1254670392-uvfits-corrected.log
+# Cotter uvfits on 1254670392_avg with MWA flagging, no corrections and 4s/160kHz averaging
+cotter \
+  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
+  -o tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.uvfits \
+  -allowmissing \
+  -edgewidth 0 \
+  -endflag 0 \
+  -initflag 0 \
+  -noantennapruning \
+  -nocablelength \
+  -nogeom \
+  -noflagautos \
+  -noflagdcchannels \
+  -nosbgains \
+  -sbpassband tests/data/subband-passband-32ch-unitary.txt \
+  -nostats \
+  -flag-strategy /usr/share/aoflagger/strategies/mwa-default.lua \
+  -timeres 4 \
+  -freqres 160 \
+  tests/data/1254670392_avg/1254670392*gpubox*.fits \
+  | tee cotter-1254670392-uvfits-none-avg_4s_160khz.log
 
 # dump metafits files
+# python -m pip install -r tests/data/requirements.txt
 for i in \
   1196175296_mwa_ord/1196175296.metafits \
   1247842824_flags/1247842824.metafits \
@@ -455,10 +512,11 @@ for i in \
   1196175296_mwa_ord/1196175296.uvfits \
   1247842824_flags/1247842824.uvfits \
   1254670392_avg/1254670392.cotter.none.uvfits \
+  1254670392_avg/1254670392.cotter.none.avg_4s_160khz.uvfits \
   1254670392_avg/1254670392.cotter.cable.uvfits \
   1254670392_avg/1254670392.cotter.geom.uvfits \
   1254670392_avg/1254670392.cotter.corrected.uvfits
-do 
+do
   python3 tests/data/dump_uvfits.py "tests/data/$i" \
     --timestep-limit=12 --baseline-limit=12 \
     --dump-csv "tests/data/$i.csv" --dump-mode vis-weight \

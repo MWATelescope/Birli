@@ -1,7 +1,7 @@
 -> hdus.info():
 Filename: tests/data/1254670392_avg/1254670392.cotter.none.uvfits
 No.    Name      Ver    Type      Cards   Dimensions   Format
-  0  PRIMARY       1 GroupsHDU       93   (3, 4, 768, 1, 1)   float32   33024 Groups  5 Parameters
+  0  PRIMARY       1 GroupsHDU       94   (3, 4, 768, 1, 1)   float32   16512 Groups  5 Parameters
   1  AIPS AN       1 BinTableHDU     52   128R x 11C   [8A, 3D, 1J, 1J, 1E, 1A, 1E, 3E, 1A, 1E, 3E]   
 
 VISIBILITIES
@@ -18,7 +18,7 @@ NAXIS6  =                    1 / length of data axis 6
 EXTEND  =                    T / FITS dataset may contain extensions            
 GROUPS  =                    T / random group records are present               
 PCOUNT  =                    5 / number of random group parameters              
-GCOUNT  =                33024 / number of random groups                        
+GCOUNT  =                16512 / number of random groups                        
 COMMENT   FITS (Flexible Image Transport System) format is defined in 'Astronomy
 COMMENT   and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H 
 BSCALE  =                   1.                                                  
@@ -66,40 +66,44 @@ TELESCOP= 'MWA     '
 INSTRUME= 'MWA     '                                                            
 HISTORY AIPS WTSCAL =  1.0                                                      
 COMMENT Created by Cotter MWA preprocessor                                      
-COMMENT Cmdline: cotter "-m" "tests/data/1254670392_avg/1254670392.metafits" "-o
-COMMENT " "tests/data/1254670392_avg/1254670392.cotter.none.uvfits" "-noantennap
-COMMENT runing" "-nocablelength" "-nogeom" "-noflagautos" "-noflagdcchannels" "-
-COMMENT nosbgains" "-sbpassband" "tests/data/subband-passband-32ch-unitary.txt" 
-COMMENT "-nostats" "-flag-strategy" "/usr/local/share/aoflagger/strategies/mwa-d
-COMMENT efault.lua" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox0
-COMMENT 1_00.fits" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox02
-COMMENT _00.fits" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox03_
-COMMENT 00.fits" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox04_0
-COMMENT 0.fits" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox05_00
-COMMENT .fits" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox06_00.
-COMMENT fits" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox07_00.f
-COMMENT its" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox08_00.fi
-COMMENT ts" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox09_00.fit
-COMMENT s" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox10_00.fits
-COMMENT " "tests/data/1254670392_avg/1254670392_20191009153257_gpubox11_00.fits"
-COMMENT  "tests/data/1254670392_avg/1254670392_20191009153257_gpubox12_00.fits" 
-COMMENT "tests/data/1254670392_avg/1254670392_20191009153257_gpubox13_00.fits" "
-COMMENT tests/data/1254670392_avg/1254670392_20191009153257_gpubox14_00.fits" "t
-COMMENT ests/data/1254670392_avg/1254670392_20191009153257_gpubox15_00.fits" "te
-COMMENT sts/data/1254670392_avg/1254670392_20191009153257_gpubox16_00.fits" "tes
-COMMENT ts/data/1254670392_avg/1254670392_20191009153257_gpubox17_00.fits" "test
-COMMENT s/data/1254670392_avg/1254670392_20191009153257_gpubox18_00.fits" "tests
-COMMENT /data/1254670392_avg/1254670392_20191009153257_gpubox19_00.fits" "tests/
-COMMENT data/1254670392_avg/1254670392_20191009153257_gpubox20_00.fits" "tests/d
-COMMENT ata/1254670392_avg/1254670392_20191009153257_gpubox21_00.fits" "tests/da
-COMMENT ta/1254670392_avg/1254670392_20191009153257_gpubox22_00.fits" "tests/dat
-COMMENT a/1254670392_avg/1254670392_20191009153257_gpubox23_00.fits" "tests/data
-COMMENT /1254670392_avg/1254670392_20191009153257_gpubox24_00.fits"             
+COMMENT Cmdline: cotter "-m" "tests/data/1254670392_avg/1254670392.fixed.metafit
+COMMENT s" "-o" "tests/data/1254670392_avg/1254670392.cotter.none.uvfits" "-allo
+COMMENT wmissing" "-edgewidth" "0" "-endflag" "0" "-initflag" "0" "-noantennapru
+COMMENT ning" "-nocablelength" "-nogeom" "-noflagautos" "-noflagdcchannels" "-no
+COMMENT sbgains" "-sbpassband" "tests/data/subband-passband-32ch-unitary.txt" "-
+COMMENT nostats" "-flag-strategy" "/usr/local/share/aoflagger/strategies/mwa-def
+COMMENT ault.lua" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_
+COMMENT 00.fits" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox02_0
+COMMENT 0.fits" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox03_00
+COMMENT .fits" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox04_00.
+COMMENT fits" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox05_00.f
+COMMENT its" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox06_00.fi
+COMMENT ts" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox07_00.fit
+COMMENT s" "tests/data/1254670392_avg/1254670392_20191009153257_gpubox08_00.fits
+COMMENT " "tests/data/1254670392_avg/1254670392_20191009153257_gpubox09_00.fits"
+COMMENT  "tests/data/1254670392_avg/1254670392_20191009153257_gpubox10_00.fits" 
+COMMENT "tests/data/1254670392_avg/1254670392_20191009153257_gpubox11_00.fits" "
+COMMENT tests/data/1254670392_avg/1254670392_20191009153257_gpubox12_00.fits" "t
+COMMENT ests/data/1254670392_avg/1254670392_20191009153257_gpubox13_00.fits" "te
+COMMENT sts/data/1254670392_avg/1254670392_20191009153257_gpubox14_00.fits" "tes
+COMMENT ts/data/1254670392_avg/1254670392_20191009153257_gpubox15_00.fits" "test
+COMMENT s/data/1254670392_avg/1254670392_20191009153257_gpubox16_00.fits" "tests
+COMMENT /data/1254670392_avg/1254670392_20191009153257_gpubox17_00.fits" "tests/
+COMMENT data/1254670392_avg/1254670392_20191009153257_gpubox18_00.fits" "tests/d
+COMMENT ata/1254670392_avg/1254670392_20191009153257_gpubox19_00.fits" "tests/da
+COMMENT ta/1254670392_avg/1254670392_20191009153257_gpubox20_00.fits" "tests/dat
+COMMENT a/1254670392_avg/1254670392_20191009153257_gpubox21_00.fits" "tests/data
+COMMENT /1254670392_avg/1254670392_20191009153257_gpubox22_00.fits" "tests/data/
+COMMENT 1254670392_avg/1254670392_20191009153257_gpubox23_00.fits" "tests/data/1
+COMMENT 254670392_avg/1254670392_20191009153257_gpubox24_00.fits"               
 FIBRFACT= '2.1     '           / Fiber velocity factor                          
 METAVER = '        '           / METAFITS version number                        
 MWAPYVER= '4.5     '           / MWAPY version number                           
 COTVER  = '2020-08-10'         / Cotter version                                 
--> data.shape (33024,)
+-> data.shape (16512,)
+aggregate info
+-> vis peak 50734.25
+-> 2 mjds from 2458766.147870362 to 2458766.147893518
 
 ANTENNA INFO
 

@@ -274,9 +274,9 @@ def dump_uvfits_data_to_csv(
         if dump_mode in ["cloud-compare"]:
             row_dict['ts_mjd'] = row_dict['ts_frac']
 
-        row_dict['u'] = row['UU'],
-        row_dict['v'] = row['VV'],
-        row_dict['w'] = row['WW'],
+        row_dict['u'] = row['UU']
+        row_dict['v'] = row['VV']
+        row_dict['w'] = row['WW']
 
         row_data = row.data
 
@@ -414,3 +414,4 @@ def main(argv):
 
 if __name__ == '__main__':
     main(sys.argv[1:])
+

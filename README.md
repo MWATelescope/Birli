@@ -318,8 +318,8 @@ In this example, we use the aoflagger subcommand to:
 ```bash
 birli \
   -m tests/data/1254670392_avg/1254670392.metafits \
-  -u "/tmp/Flagfile.Birli.MWA.%%.mwaf" \
-  -f "/tmp/1254670392.birli.uvfits" \
+  -f "/tmp/Flagfile.Birli.MWA.%%.mwaf" \
+  -u "/tmp/1254670392.birli.uvfits" \
   tests/data/1254670392_avg/1254670392_*gpubox*.fits
 ```
 

@@ -956,7 +956,8 @@ dependencies = [
 
 [[package]]
 name = "marlu"
-version = "0.3.0"
+version = "0.3.1"
+source = "git+https://github.com/MWATelescope/Marlu.git?branch=averaging#3a4a426d0ad35f997373c06a27251abb24562c2e"
 dependencies = [
  "cfg-if",
  "erfa-sys",
