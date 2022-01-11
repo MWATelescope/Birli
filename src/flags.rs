@@ -8,22 +8,23 @@ use crate::{
         BirliError::{NoCommonCoarseChans, NoCommonTimesteps, NoProvidedTimesteps},
     },
     io::error::IOError,
-    ndarray::{Array, Array3, Array4, ArrayView, ArrayView3, Axis, Dimension, Zip},
+    ndarray::{Array, Array3, Array4, ArrayView, ArrayView3, Dimension, Zip},
     FlagFileSet,
 };
 use cfg_if::cfg_if;
 use log::trace;
-use marlu::{mwalib::CorrelatorContext, rayon::prelude::*};
+use marlu::mwalib::CorrelatorContext;
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
         use crate::{
-            flag_baseline_view_to_flagmask, jones_baseline_view_to_imageset
+            flag_baseline_view_to_flagmask, jones_baseline_view_to_imageset,
+            ndarray::Axis
         };
         use aoflagger_sys::{CxxAOFlagger, CxxFlagMask, UniquePtr, flagmask_or,
             flagmask_set};
         use indicatif::{ProgressBar, ProgressStyle};
-        use marlu::Jones;
+        use marlu::{Jones, rayon::prelude::*};
     }
 }
 
@@ -258,13 +259,15 @@ pub fn get_baseline_flags(context: &CorrelatorContext, antenna_flags: &[bool]) -
 #[allow(clippy::too_many_arguments)]
 pub fn init_flag_array(
     context: &CorrelatorContext,
-    mwalib_timestep_range: Range<usize>,
-    mwalib_coarse_chan_range: Range<usize>,
+    mwalib_timestep_range: &Range<usize>,
+    mwalib_coarse_chan_range: &Range<usize>,
     timestep_flags: Option<&[bool]>,
     coarse_chan_flags: Option<&[bool]>,
     fine_chan_flags: Option<&[bool]>,
     baseline_flags: Option<&[bool]>,
 ) -> Array3<bool> {
+    let mwalib_timestep_range = mwalib_timestep_range.clone();
+    let mwalib_coarse_chan_range = mwalib_coarse_chan_range.clone();
     let num_timesteps_total = context.num_timesteps;
     let num_timesteps = mwalib_timestep_range.len();
     let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
@@ -530,8 +533,8 @@ pub fn flag_jones_array(
 /// // Prepare our flagmasks with known bad antennae
 /// let flag_array = init_flag_array(
 ///     &context,
-///     img_timestep_range.clone(),
-///     img_coarse_chan_range.clone(),
+///     &img_timestep_range,
+///     &img_coarse_chan_range,
 ///     None,
 ///     None,
 ///     None,
@@ -708,8 +711,8 @@ mod tests {
 
         let mut flag_array = init_flag_array(
             &context,
-            img_timestep_range,
-            img_coarse_chan_range.clone(),
+            &img_timestep_range,
+            &img_coarse_chan_range,
             None,
             None,
             None,
@@ -968,8 +971,8 @@ mod tests_aoflagger {
 
         let existing_flag_array = init_flag_array(
             &context,
-            img_timestep_range,
-            img_coarse_chan_range,
+            &img_timestep_range,
+            &img_coarse_chan_range,
             None,
             None,
             None,
