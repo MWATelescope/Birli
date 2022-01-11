@@ -126,12 +126,17 @@ pub struct UvfitsWriter {
 impl UvfitsWriter {
     /// Create a new uvfits file at the specified path.
     ///
-    /// This will destroy any existing uvfits file at that path
+    /// This will destroy any existing uvfits file at that path.
+    ///
+    /// If you have a [`mwalib::CorrelatorContext`], then it would be more
+    /// convenient to use the `from_mwalib` method.
     ///
     /// `num_timesteps`, `num_baselines` and `num_chans` are the number of
-    /// timesteps, baselines and channels in this uvfits file respectively.
+    /// timesteps, baselines and channels in this uvfits file respectively. This
+    /// is counted after averaging.
     ///
-    /// `start_epoch` can be calculated from GPS Time using the hifitime library, e.g.
+    /// `start_epoch` is a [`hifitime::Epoch`] at the start of the first scan,
+    /// and can be calculated from GPS Time using the hifitime library, e.g.
     ///
     /// ```rust
     /// use marlu::time;
@@ -201,6 +206,10 @@ impl UvfitsWriter {
         let mut naxes = [0, 3, 4, num_chans as i64, 1, 1];
         let num_group_params = 5;
         let total_num_rows = num_timesteps * num_baselines;
+        debug_assert!(
+            total_num_rows > 0,
+            "num_timesteps * num_baselines must be > 0"
+        );
         trace!("setting group params in fits file ({:?})", &path.as_ref());
         unsafe {
             fitsio_sys::ffphpr(
@@ -361,22 +370,30 @@ impl UvfitsWriter {
         mwalib_baseline_idxs: &[usize],
         array_pos: Option<LatLngHeight>,
         phase_centre: Option<RADec>,
+        avg_time: usize,
+        avg_freq: usize,
     ) -> Result<Self, UvfitsWriteError> {
         let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-        let num_img_coarse_chans = mwalib_coarse_chan_range.len();
-        let num_img_chans = fine_chans_per_coarse * num_img_coarse_chans;
-        let first_gps_time =
+        let first_gps_time_s =
             context.timesteps[mwalib_timestep_range.start].gps_time_ms as f64 / 1000.0;
-        let start_epoch = time::gps_to_epoch(first_gps_time);
+        let start_epoch = time::gps_to_epoch(first_gps_time_s);
         let phase_centre = phase_centre
             .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&context.metafits_context));
-        let centre_freq_chan = num_img_chans / 2;
-        // Get the first coarse chan index, and multiply by number of fine chans per coarse
-        // then add the centre_freq_chan which will give us the centre index (of all fine channels).
-        let img_centre_fine_chan_idx: usize =
-            mwalib_coarse_chan_range.start * fine_chans_per_coarse + centre_freq_chan;
-        let centre_freq_hz =
-            context.metafits_context.metafits_fine_chan_freqs_hz[img_centre_fine_chan_idx];
+
+        // TODO: move these calculations into Marlu context.
+        let pre_avg_start_chan_idx = mwalib_coarse_chan_range.start * fine_chans_per_coarse;
+        let pre_avg_end_chan_idx = mwalib_coarse_chan_range.end * fine_chans_per_coarse;
+        let pre_avg_selected_frequencies = &context.metafits_context.metafits_fine_chan_freqs_hz
+            [pre_avg_start_chan_idx..pre_avg_end_chan_idx];
+        let pre_avg_fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz as f64;
+
+        let avg_frequencies: Vec<f64> = pre_avg_selected_frequencies
+            .chunks(avg_freq)
+            .map(|chunk| chunk.iter().sum::<f64>() / chunk.len() as f64)
+            .collect();
+        let avg_centre_chan = avg_frequencies.len() / 2;
+        let avg_centre_freq_hz = avg_frequencies[avg_centre_chan];
+        let avg_fine_chan_width_hz = pre_avg_fine_chan_width_hz * avg_freq as f64;
 
         let obs_name = context.metafits_context.obs_name.clone();
         let field_name = match obs_name.rsplit_once("_") {
@@ -384,15 +401,17 @@ impl UvfitsWriter {
             None => obs_name.as_str(),
         };
 
+        let num_timesteps = (mwalib_timestep_range.len() as f64 / avg_time as f64).ceil() as usize;
+
         Self::new(
             path,
-            mwalib_timestep_range.len(),
+            num_timesteps,
             mwalib_baseline_idxs.len(),
-            num_img_chans,
+            avg_frequencies.len(),
             start_epoch,
-            context.metafits_context.corr_fine_chan_width_hz as f64,
-            centre_freq_hz,
-            centre_freq_chan,
+            avg_fine_chan_width_hz,
+            avg_centre_freq_hz,
+            avg_centre_chan,
             phase_centre,
             Some(field_name),
             array_pos,
@@ -812,6 +831,8 @@ impl UvfitsWriter {
         mwalib_timestep_range: &Range<usize>,
         mwalib_coarse_chan_range: &Range<usize>,
         mwalib_baseline_idxs: &[usize],
+        avg_time: usize,
+        avg_freq: usize,
     ) -> Result<(), IOError> {
         let expanded_flag_array = expand_flag_array(flag_array.view(), 4);
         let weight_factor = get_weight_factor(context);
@@ -824,6 +845,8 @@ impl UvfitsWriter {
             mwalib_timestep_range,
             mwalib_coarse_chan_range,
             mwalib_baseline_idxs,
+            avg_time,
+            avg_freq,
         )
     }
 }
@@ -838,11 +861,14 @@ impl WriteableVis for UvfitsWriter {
         &mut self,
         jones_array: ArrayView3<Jones<f32>>,
         weight_array: ArrayView4<f32>,
-        flag_array: ArrayView4<bool>,
+        // TODO: make flags optional, we don't actually use them.
+        _flag_array: ArrayView4<bool>,
         context: &CorrelatorContext,
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
         baseline_idxs: &[usize],
+        avg_time: usize,
+        avg_freq: usize,
     ) -> Result<(), IOError> {
         let mut uvfits = self.open()?;
 
@@ -858,45 +884,37 @@ impl WriteableVis for UvfitsWriter {
                 received: format!("{:?}", weight_dims),
             });
         }
-        let flag_dims = flag_array.dim();
-        if flag_dims != (jones_dims.0, jones_dims.1, jones_dims.2, 4) {
-            return Err(IOError::BadArrayShape {
-                argument: "flag_array".into(),
-                function: "UvfitsWriter::write_vis_mwalib".into(),
-                expected: format!("{:?}", (jones_dims.0, jones_dims.1, jones_dims.2, 4)),
-                received: format!("{:?}", flag_dims),
-            });
-        }
 
-        let num_img_timesteps = timestep_range.len();
-        assert_eq!(num_img_timesteps, jones_dims.0);
+        let num_sel_timesteps = timestep_range.len();
+        let num_avg_timesteps = (num_sel_timesteps as f64 / avg_time as f64).ceil() as usize;
+        debug_assert_eq!(num_avg_timesteps, jones_dims.0);
 
-        let num_img_coarse_chans = coarse_chan_range.len();
-        let num_img_chans = fine_chans_per_coarse * num_img_coarse_chans;
-        assert_eq!(num_img_coarse_chans * fine_chans_per_coarse, jones_dims.1);
+        let num_sel_coarse_chans = coarse_chan_range.len();
+        let num_sel_chans = fine_chans_per_coarse * num_sel_coarse_chans;
+        let num_avg_chans = (num_sel_chans as f64 / avg_freq as f64).ceil() as usize;
+        debug_assert_eq!(num_avg_chans, jones_dims.1);
 
         let num_baselines = baseline_idxs.len();
-        assert_eq!(num_baselines, jones_dims.2);
+        debug_assert_eq!(num_baselines, jones_dims.2);
 
-        assert_eq!(self.total_num_rows, num_img_timesteps * num_baselines);
+        debug_assert_eq!(self.total_num_rows, num_avg_timesteps * num_baselines);
 
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
-        let img_timesteps = &context.timesteps[timestep_range.clone()];
-        let img_baselines = baseline_idxs
+        // the gps start times [seconds] of all the timesteps that went into the averaged timesteps
+        let sel_gps_times_s = context.timesteps[timestep_range.clone()]
             .iter()
-            .map(|&idx| {
-                context
-                    .metafits_context
-                    .baselines
-                    .get(idx)
-                    .unwrap()
-                    .to_owned()
-            })
+            .map(|t| t.gps_time_ms as f64 / 1000.0);
+        // the gps start times [seconds] of all the averageed timesteps
+        let avg_gps_times_s: Vec<f64> = sel_gps_times_s.step_by(avg_time).collect();
+
+        let sel_baselines = baseline_idxs
+            .iter()
+            .map(|&idx| context.metafits_context.baselines[idx].clone())
             .collect::<Vec<_>>();
 
-        // Weights are normalized so that default res of 10 kHz, 1s has weight of "1" per sample
-        let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
+        let integration_time_s =
+            avg_time as f64 * context.metafits_context.corr_int_time_ms as f64 / 1000.0;
 
         // Create a progress bar to show the writing status
         let write_progress = indicatif::ProgressBar::new(self.total_num_rows as u64);
@@ -909,14 +927,14 @@ impl WriteableVis for UvfitsWriter {
         );
         write_progress.set_message("write uv vis");
 
-        let mut vis: Vec<f32> = vec![0.0; 12 * num_img_chans];
+        // temporary vector to hold visiblity data, avoids heap allocation
+        let mut vis: Vec<f32> = vec![0.0; 12 * num_avg_chans];
 
-        for (timestep, jones_timestep_view, weight_timestep_view) in izip!(
-            img_timesteps.iter(),
+        for (gps_time_s, jones_timestep_view, weight_timestep_view) in izip!(
+            avg_gps_times_s.iter(),
             jones_array.outer_iter(),
             weight_array.outer_iter()
         ) {
-            let gps_time_s = timestep.gps_time_ms as f64 / 1000.0;
             let epoch = time::gps_to_epoch(gps_time_s + integration_time_s / 2.0);
 
             let prec_info = precess_time(
@@ -929,7 +947,7 @@ impl WriteableVis for UvfitsWriter {
             let tiles_xyz_precessed = prec_info.precess_xyz_parallel(&tiles_xyz_geod);
 
             for (baseline, jones_baseline_view, weight_baseline_view) in izip!(
-                img_baselines.iter(),
+                sel_baselines.iter(),
                 jones_timestep_view.axis_iter(Axis(1)),
                 weight_timestep_view.axis_iter(Axis(1))
             ) {
@@ -979,92 +997,9 @@ impl WriteableVis for UvfitsWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use marlu::time;
-    use tempfile::NamedTempFile;
-
-    #[test]
-    // Make a tiny uvfits file. The result has been verified by CASA's
-    // "importuvfits" function.
-    fn test_new_uvfits_is_sensible() {
-        let tmp_uvfits_file = NamedTempFile::new().unwrap();
-        let num_timesteps = 1;
-        let num_baselines = 3;
-        let num_chans = 2;
-        let obsid = 1065880128;
-        let start_epoch = time::gps_to_epoch(obsid as f64);
-
-        let mut u = UvfitsWriter::new(
-            tmp_uvfits_file.path(),
-            num_timesteps,
-            num_baselines,
-            num_chans,
-            start_epoch,
-            40e3,
-            170e6,
-            3,
-            RADec::new_degrees(0.0, 60.0),
-            Some("test"),
-            None,
-        )
-        .unwrap();
-
-        let mut f = u.open().unwrap();
-        for _timestep_index in 0..num_timesteps {
-            for baseline_index in 0..num_baselines {
-                let (tile1, tile2) = match baseline_index {
-                    0 => (0, 1),
-                    1 => (0, 2),
-                    2 => (1, 2),
-                    _ => unreachable!(),
-                };
-
-                u.write_vis_row(
-                    &mut f,
-                    UVW::default(),
-                    tile1,
-                    tile2,
-                    start_epoch,
-                    (baseline_index..baseline_index + num_chans)
-                        .into_iter()
-                        .map(|int| int as f32)
-                        .collect::<Vec<_>>()
-                        .as_slice(),
-                )
-                .unwrap();
-            }
-        }
-
-        let names = ["Tile1", "Tile2", "Tile3"];
-        let positions: Vec<XyzGeodetic> = (0..names.len())
-            .into_iter()
-            .map(|i| XyzGeodetic {
-                x: i as f64,
-                y: i as f64 * 2.0,
-                z: i as f64 * 3.0,
-            })
-            .collect();
-        u.write_uvfits_antenna_table(&names, &positions).unwrap();
-    }
-}
-#[cfg(test)]
-#[cfg(feature = "aoflagger")]
-/// Tests which require the use of the aoflagger feature
-mod tests_aoflagger {
-    use super::*;
-    use marlu::{
-        constants::{
-            COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
-        },
-        mwalib::{
-            _get_fits_col, _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
-            get_fits_col, get_required_fits_key, CorrelatorContext,
-        },
-    };
     use tempfile::NamedTempFile;
 
     use float_cmp::{approx_eq, F32Margin, F64Margin};
-
-    use crate::{approx::assert_abs_diff_eq, get_flaggable_timesteps};
 
     use fitsio::{
         errors::check_status as fits_check_status,
@@ -1072,19 +1007,59 @@ mod tests_aoflagger {
     };
 
     use crate::{
-        context_to_jones_array, flags::flag_jones_array_existing, get_antenna_flags,
-        init_flag_array,
+        approx::assert_abs_diff_eq,
+        context_to_jones_array, get_flaggable_timesteps, init_flag_array,
+        marlu::{
+            averaging::average_visibilities,
+            constants::{
+                COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
+            },
+            mwalib::{
+                _get_fits_col, _get_required_fits_key, _open_fits, _open_hdu, fits_open,
+                fits_open_hdu, get_fits_col, get_required_fits_key,
+            },
+            time,
+        },
     };
-    use aoflagger_sys::cxx_aoflagger_new;
 
     // TODO: dedup this from lib.rs
-    fn get_mwa_ord_context() -> CorrelatorContext {
+    pub fn get_mwa_ord_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
         let gpufits_paths = vec![
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
             "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
             "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
+        ];
+        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+    }
+    pub(crate) fn get_1254670392_avg_context() -> CorrelatorContext {
+        let metafits_path = "tests/data/1254670392_avg/1254670392.metafits";
+        let gpufits_paths = [
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox02_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox03_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox04_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox05_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox06_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox07_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox08_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox09_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox10_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox11_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox12_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox13_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox14_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox15_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox16_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox17_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox18_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox19_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox20_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox21_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox22_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox23_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox24_00.fits",
         ];
         CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
     }
@@ -1112,6 +1087,7 @@ mod tests_aoflagger {
             }
         };
     }
+    pub(crate) use assert_short_string_keys_eq;
 
     macro_rules! assert_f32_string_keys_eq {
         ($keys:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr) => {
@@ -1142,6 +1118,7 @@ mod tests_aoflagger {
             }
         };
     }
+    pub(crate) use assert_f32_string_keys_eq;
 
     macro_rules! assert_table_column_descriptions_match {
         ( $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr ) => {
@@ -1176,6 +1153,7 @@ mod tests_aoflagger {
             }
         };
     }
+    pub(crate) use assert_table_column_descriptions_match;
 
     macro_rules! assert_table_string_column_values_match {
         ( $col_names:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr ) => {
@@ -1199,6 +1177,7 @@ mod tests_aoflagger {
             }
         };
     }
+    pub(crate) use assert_table_string_column_values_match;
 
     macro_rules! assert_table_f64_column_values_match {
         ( $col_names:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr ) => {
@@ -1224,6 +1203,7 @@ mod tests_aoflagger {
             }
         };
     }
+    pub(crate) use assert_table_f64_column_values_match;
 
     macro_rules! assert_table_vector_f64_column_values_match {
         ( $col_descriptions:expr, $col_info:expr, $row_len:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr ) => {
@@ -1289,8 +1269,12 @@ mod tests_aoflagger {
             }
         };
     }
+    pub(crate) use assert_table_vector_f64_column_values_match;
 
-    fn assert_uvfits_primary_header_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
+    pub(crate) fn assert_uvfits_primary_header_eq(
+        left_fptr: &mut FitsFile,
+        right_fptr: &mut FitsFile,
+    ) {
         let mut _left_primary_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
         let mut _right_primary_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
 
@@ -1334,7 +1318,7 @@ mod tests_aoflagger {
         );
     }
 
-    fn assert_uvfits_ant_header_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
+    pub(crate) fn assert_uvfits_ant_header_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
         let mut _left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
         let mut _right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
 
@@ -1367,7 +1351,7 @@ mod tests_aoflagger {
         );
     }
 
-    pub fn get_group_column_description(
+    pub(crate) fn get_group_column_description(
         fptr: &mut FitsFile,
         hdu: &FitsHdu,
     ) -> Result<Vec<String>, crate::mwalib::FitsError> {
@@ -1405,8 +1389,9 @@ mod tests_aoflagger {
             }
         };
     }
+    pub(crate) use assert_group_column_descriptions_match;
 
-    fn assert_uvfits_vis_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
+    pub(crate) fn assert_uvfits_vis_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
         let mut _left_vis_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
         let mut _right_vis_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
 
@@ -1492,7 +1477,7 @@ mod tests_aoflagger {
             }
 
             unsafe {
-                // ffgpve = fits_read_img_flt
+                // ffgpve = fits_read_sel_flt
                 fitsio_sys::ffgpve(
                     left_fptr.as_raw(),    /* I - FITS file pointer                       */
                     1 + row_idx as i64,    /* I - group to read (1 = 1st group)           */
@@ -1505,7 +1490,7 @@ mod tests_aoflagger {
                 );
                 fits_check_status(status).unwrap();
 
-                // ffgpve = fits_read_img_flt
+                // ffgpve = fits_read_sel_flt
                 fitsio_sys::ffgpve(
                     right_fptr.as_raw(),    /* I - FITS file pointer                       */
                     1 + row_idx as i64,     /* I - group to read (1 = 1st group)           */
@@ -1532,7 +1517,7 @@ mod tests_aoflagger {
         }
     }
 
-    fn assert_uvfits_ant_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
+    pub(crate) fn assert_uvfits_ant_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
         let mut _left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
         let mut _right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
 
@@ -1585,19 +1570,19 @@ mod tests_aoflagger {
     }
 
     #[test]
-    fn uvfits_from_mwalib_matches_cotter_header() {
+    pub(crate) fn uvfits_from_mwalib_matches_cotter_header() {
         let context = get_mwa_ord_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
         // let tmp_uvfits_file = Path::new("tests/data/test_header.uvfits");
 
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = context.common_coarse_chan_indices.clone();
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-        let img_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        let sel_timestep_range =
+            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+        let sel_coarse_chan_idxs = context.common_coarse_chan_indices.clone();
+        let sel_coarse_chan_range =
+            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
+        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 
         let array_pos = Some(LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -1608,11 +1593,13 @@ mod tests_aoflagger {
         let u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            &img_baseline_idxs,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            &sel_baseline_idxs,
             array_pos,
             None,
+            1,
+            1,
         )
         .unwrap();
 
@@ -1629,92 +1616,67 @@ mod tests_aoflagger {
     }
 
     #[test]
-    #[cfg(feature = "aoflagger")]
-    fn uvfits_tables_from_mwalib_matches_cotter() {
-        use crate::flags::get_baseline_flags;
-
-        let context = get_mwa_ord_context();
-
+    // Make a tiny uvfits file. The result has been verified by CASA's
+    // "importuvfits" function.
+    fn test_new_uvfits_is_sensible() {
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
+        let num_timesteps = 1;
+        let num_baselines = 3;
+        let num_chans = 2;
+        let obsid = 1065880128;
+        let start_epoch = time::gps_to_epoch(obsid as f64);
 
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-        let img_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-
-        let array_pos = Some(LatLngHeight {
-            longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
-            latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
-            height_metres: COTTER_MWA_HEIGHT_METRES,
-        });
-
-        let mut u = UvfitsWriter::from_mwalib(
+        let mut u = UvfitsWriter::new(
             tmp_uvfits_file.path(),
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            &img_baseline_idxs,
-            array_pos,
+            num_timesteps,
+            num_baselines,
+            num_chans,
+            start_epoch,
+            40e3,
+            170e6,
+            3,
+            RADec::new_degrees(0.0, 60.0),
+            Some("test"),
             None,
         )
         .unwrap();
 
-        let aoflagger = unsafe { cxx_aoflagger_new() };
+        let mut f = u.open().unwrap();
+        for _timestep_index in 0..num_timesteps {
+            for baseline_index in 0..num_baselines {
+                let (tile1, tile2) = match baseline_index {
+                    0 => (0, 1),
+                    1 => (0, 2),
+                    2 => (1, 2),
+                    _ => unreachable!(),
+                };
 
-        // Prepare our flagmasks with known bad antennae
-        let flag_array = init_flag_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            None,
-            None,
-            None,
-            Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
-        );
+                u.write_vis_row(
+                    &mut f,
+                    UVW::default(),
+                    tile1,
+                    tile2,
+                    start_epoch,
+                    (baseline_index..baseline_index + num_chans)
+                        .into_iter()
+                        .map(|int| int as f32)
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                )
+                .unwrap();
+            }
+        }
 
-        let (jones_array, flag_array) = context_to_jones_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            Some(flag_array),
-        )
-        .unwrap();
-
-        let strategy_path = &aoflagger.FindStrategyFileMWA();
-
-        let flag_array = flag_jones_array_existing(
-            &aoflagger,
-            strategy_path,
-            &jones_array,
-            Some(flag_array),
-            true,
-        );
-
-        u.write_jones_flags(
-            &context,
-            &jones_array,
-            &flag_array,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            &img_baseline_idxs,
-        )
-        .unwrap();
-
-        u.write_ants_from_mwalib(&context.metafits_context).unwrap();
-
-        let cotter_uvfits_path = Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
-
-        let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
-        let mut cotter_fptr = fits_open!(&cotter_uvfits_path).unwrap();
-
-        assert_uvfits_primary_header_eq(&mut birli_fptr, &mut cotter_fptr);
-        assert_uvfits_vis_table_eq(&mut birli_fptr, &mut cotter_fptr);
-        assert_uvfits_ant_header_eq(&mut birli_fptr, &mut cotter_fptr);
-        assert_uvfits_ant_table_eq(&mut birli_fptr, &mut cotter_fptr);
+        let names = ["Tile1", "Tile2", "Tile3"];
+        let positions: Vec<XyzGeodetic> = (0..names.len())
+            .into_iter()
+            .map(|i| XyzGeodetic {
+                x: i as f64,
+                y: i as f64 * 2.0,
+                z: i as f64 * 3.0,
+            })
+            .collect();
+        u.write_uvfits_antenna_table(&names, &positions).unwrap();
     }
 
     /// This test ensures center frequencies are calculated correctly.
@@ -1725,14 +1687,14 @@ mod tests_aoflagger {
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
 
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-        let img_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(sel_timestep_idxs.len(), 4);
+        let sel_timestep_range =
+            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let sel_coarse_chan_range =
+            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
+        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 
         let array_pos = Some(LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -1743,19 +1705,21 @@ mod tests_aoflagger {
         let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            &img_baseline_idxs,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            &sel_baseline_idxs,
             array_pos,
             None,
+            1,
+            1,
         )
         .unwrap();
 
         // Prepare our flagmasks with known bad antennae
         let flag_array = init_flag_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
             None,
             None,
             None,
@@ -1764,8 +1728,8 @@ mod tests_aoflagger {
 
         let (jones_array, flag_array) = context_to_jones_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
             Some(flag_array),
         )
         .unwrap();
@@ -1774,9 +1738,11 @@ mod tests_aoflagger {
             &context,
             &jones_array,
             &flag_array,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            &img_baseline_idxs,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            &sel_baseline_idxs,
+            1,
+            1,
         )
         .unwrap();
 
@@ -1785,11 +1751,120 @@ mod tests_aoflagger {
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
 
         let expected_center_freq = 229760000.;
+        let expected_fine_chan_width = 640000.;
 
         let birli_vis_hdu = fits_open_hdu!(&mut birli_fptr, 0).unwrap();
         let birli_vis_freq: f64 =
             get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "CRVAL4").unwrap();
         assert_abs_diff_eq!(birli_vis_freq, expected_center_freq);
+        let birli_vis_width: f64 =
+            get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "CDELT4").unwrap();
+        assert_abs_diff_eq!(birli_vis_width, expected_fine_chan_width);
+        let birli_ant_hdu = fits_open_hdu!(&mut birli_fptr, 1).unwrap();
+        let birli_ant_freq: f64 =
+            get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FREQ").unwrap();
+        assert_abs_diff_eq!(birli_ant_freq, expected_center_freq);
+    }
+
+    /// This test ensures center frequencies are calculated correctly with frequency averaging.
+    /// See: https://github.com/MWATelescope/Birli/issues/6
+    #[test]
+    fn avg_center_frequencies() {
+        let context = get_mwa_ord_context();
+
+        let tmp_uvfits_file = NamedTempFile::new().unwrap();
+
+        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(sel_timestep_idxs.len(), 4);
+        let sel_timestep_range =
+            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let sel_coarse_chan_range =
+            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
+        assert_eq!(sel_coarse_chan_range.len(), 2);
+        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+
+        let array_pos = Some(LatLngHeight {
+            longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
+            latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
+            height_metres: COTTER_MWA_HEIGHT_METRES,
+        });
+
+        let (avg_time, avg_freq) = (1, 2);
+
+        let mut u = UvfitsWriter::from_mwalib(
+            tmp_uvfits_file.path(),
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            &sel_baseline_idxs,
+            array_pos,
+            None,
+            avg_time,
+            avg_freq,
+        )
+        .unwrap();
+
+        // Prepare our flagmasks with known bad antennae
+        let flag_array = init_flag_array(
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let (jones_array, flag_array) = context_to_jones_array(
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            Some(flag_array),
+        )
+        .unwrap();
+
+        let num_pols = context.metafits_context.num_visibility_pols;
+        let flag_array = expand_flag_array(flag_array.view(), num_pols);
+        let weight_factor = get_weight_factor(&context);
+        let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+
+        let (jones_array, weight_array, flag_array) = average_visibilities(
+            jones_array.view(),
+            weight_array.view(),
+            flag_array.view(),
+            avg_time,
+            avg_freq,
+        )
+        .unwrap();
+
+        u.write_vis_mwalib(
+            jones_array.view(),
+            weight_array.view(),
+            flag_array.view(),
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            &sel_baseline_idxs,
+            avg_time,
+            avg_freq,
+        )
+        .unwrap();
+
+        u.write_ants_from_mwalib(&context.metafits_context).unwrap();
+
+        let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
+
+        let expected_center_freq = (229760000. + 230400000.) / 2.;
+        let expected_fine_chan_width = 1280000.;
+
+        let birli_vis_hdu = fits_open_hdu!(&mut birli_fptr, 0).unwrap();
+        let birli_vis_freq: f64 =
+            get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "CRVAL4").unwrap();
+        assert_abs_diff_eq!(birli_vis_freq, expected_center_freq);
+        let birli_vis_width: f64 =
+            get_required_fits_key!(&mut birli_fptr, &birli_vis_hdu, "CDELT4").unwrap();
+        assert_abs_diff_eq!(birli_vis_width, expected_fine_chan_width);
         let birli_ant_hdu = fits_open_hdu!(&mut birli_fptr, 1).unwrap();
         let birli_ant_freq: f64 =
             get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FREQ").unwrap();
@@ -1805,14 +1880,14 @@ mod tests_aoflagger {
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
 
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-        let img_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(sel_timestep_idxs.len(), 4);
+        let sel_timestep_range =
+            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let sel_coarse_chan_range =
+            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
+        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 
         let array_pos = Some(LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -1823,18 +1898,20 @@ mod tests_aoflagger {
         let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            &img_baseline_idxs,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            &sel_baseline_idxs,
             array_pos,
             None,
+            1,
+            1,
         )
         .unwrap();
 
         let flag_array = init_flag_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
             None,
             None,
             None,
@@ -1843,8 +1920,8 @@ mod tests_aoflagger {
 
         let (jones_array, flag_array) = context_to_jones_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
             Some(flag_array),
         )
         .unwrap();
@@ -1853,9 +1930,11 @@ mod tests_aoflagger {
             &context,
             &jones_array,
             &flag_array,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            &img_baseline_idxs,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            &sel_baseline_idxs,
+            1,
+            1,
         )
         .unwrap();
 
@@ -2060,5 +2139,232 @@ mod tests_aoflagger {
         let birli_ant_freqid: i32 =
             get_required_fits_key!(&mut birli_fptr, &birli_ant_hdu, "FREQID").unwrap();
         assert_eq!(birli_ant_freqid, -1);
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "aoflagger")]
+/// Tests which require the use of the aoflagger feature
+mod tests_aoflagger {
+    use super::*;
+    use marlu::averaging::average_visibilities;
+    use tempfile::NamedTempFile;
+    use tests::{
+        assert_uvfits_ant_header_eq, assert_uvfits_ant_table_eq, assert_uvfits_primary_header_eq,
+        assert_uvfits_vis_table_eq, get_1254670392_avg_context, get_mwa_ord_context,
+    };
+
+    use crate::{
+        context_to_jones_array,
+        flags::flag_jones_array_existing,
+        get_antenna_flags, get_flaggable_timesteps, init_flag_array,
+        marlu::{
+            constants::{
+                COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
+            },
+            mwalib::{_open_fits, fits_open},
+        },
+    };
+    use aoflagger_sys::cxx_aoflagger_new;
+
+    #[test]
+    fn uvfits_tables_from_mwalib_matches_cotter() {
+        use crate::flags::get_baseline_flags;
+
+        let context = get_mwa_ord_context();
+
+        let tmp_uvfits_file = NamedTempFile::new().unwrap();
+
+        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(sel_timestep_idxs.len(), 4);
+        let sel_timestep_range =
+            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let sel_coarse_chan_range =
+            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
+        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+
+        let array_pos = Some(LatLngHeight {
+            longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
+            latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
+            height_metres: COTTER_MWA_HEIGHT_METRES,
+        });
+
+        let mut u = UvfitsWriter::from_mwalib(
+            tmp_uvfits_file.path(),
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            &sel_baseline_idxs,
+            array_pos,
+            None,
+            1,
+            1,
+        )
+        .unwrap();
+
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+
+        // Prepare our flagmasks with known bad antennae
+        let flag_array = init_flag_array(
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            None,
+            None,
+            None,
+            Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
+        );
+
+        let (jones_array, flag_array) = context_to_jones_array(
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            Some(flag_array),
+        )
+        .unwrap();
+
+        let strategy_path = &aoflagger.FindStrategyFileMWA();
+
+        let flag_array = flag_jones_array_existing(
+            &aoflagger,
+            strategy_path,
+            &jones_array,
+            Some(flag_array),
+            true,
+        );
+
+        u.write_jones_flags(
+            &context,
+            &jones_array,
+            &flag_array,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            &sel_baseline_idxs,
+            1,
+            1,
+        )
+        .unwrap();
+
+        u.write_ants_from_mwalib(&context.metafits_context).unwrap();
+
+        let cotter_uvfits_path = Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
+
+        let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
+        let mut cotter_fptr = fits_open!(&cotter_uvfits_path).unwrap();
+
+        assert_uvfits_primary_header_eq(&mut birli_fptr, &mut cotter_fptr);
+        assert_uvfits_vis_table_eq(&mut birli_fptr, &mut cotter_fptr);
+        assert_uvfits_ant_header_eq(&mut birli_fptr, &mut cotter_fptr);
+        assert_uvfits_ant_table_eq(&mut birli_fptr, &mut cotter_fptr);
+    }
+
+    #[test]
+    fn uvfits_tables_from_mwalib_matches_cotter_avg_2s_40khz() {
+        use crate::flags::get_baseline_flags;
+
+        let context = get_1254670392_avg_context();
+
+        let tmp_uvfits_file = NamedTempFile::new().unwrap();
+
+        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        let sel_timestep_range =
+            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let sel_coarse_chan_range =
+            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
+        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+
+        let array_pos = Some(LatLngHeight {
+            longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
+            latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
+            height_metres: COTTER_MWA_HEIGHT_METRES,
+        });
+
+        let (avg_time, avg_freq) = (2, 4);
+
+        let mut u = UvfitsWriter::from_mwalib(
+            tmp_uvfits_file.path(),
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            &sel_baseline_idxs,
+            array_pos,
+            None,
+            avg_time,
+            avg_freq,
+        )
+        .unwrap();
+
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+
+        // Prepare our flagmasks with known bad antennae
+        let flag_array = init_flag_array(
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            None,
+            None,
+            None,
+            Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
+        );
+
+        let (jones_array, flag_array) = context_to_jones_array(
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            Some(flag_array),
+        )
+        .unwrap();
+
+        let strategy_path = &aoflagger.FindStrategyFileMWA();
+
+        let flag_array = flag_jones_array_existing(
+            &aoflagger,
+            strategy_path,
+            &jones_array,
+            Some(flag_array),
+            true,
+        );
+
+        let num_pols = context.metafits_context.num_visibility_pols;
+        let flag_array = expand_flag_array(flag_array.view(), num_pols);
+        let weight_factor = get_weight_factor(&context);
+        let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+
+        let (jones_array, weight_array, flag_array) = average_visibilities(
+            jones_array.view(),
+            weight_array.view(),
+            flag_array.view(),
+            avg_time,
+            avg_freq,
+        )
+        .unwrap();
+
+        u.write_vis_mwalib(
+            jones_array.view(),
+            weight_array.view(),
+            flag_array.view(),
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            &sel_baseline_idxs,
+            avg_time,
+            avg_freq,
+        )
+        .unwrap();
+
+        u.write_ants_from_mwalib(&context.metafits_context).unwrap();
+
+        let cotter_uvfits_path =
+            Path::new("tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.uvfits");
+
+        let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
+        let mut cotter_fptr = fits_open!(&cotter_uvfits_path).unwrap();
+
+        assert_uvfits_primary_header_eq(&mut birli_fptr, &mut cotter_fptr);
+        assert_uvfits_vis_table_eq(&mut birli_fptr, &mut cotter_fptr);
+        assert_uvfits_ant_header_eq(&mut birli_fptr, &mut cotter_fptr);
+        assert_uvfits_ant_table_eq(&mut birli_fptr, &mut cotter_fptr);
     }
 }

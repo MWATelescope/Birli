@@ -87,7 +87,6 @@ fn bench_context_to_jones_array_mwax_half_1247842824(crt: &mut Criterion) {
     let timestep_range = timestep_idxs[0]..timestep_idxs[timestep_idxs.len() - 1] + 1;
     let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
     let coarse_chan_range = coarse_chan_idxs[0]..coarse_chan_idxs[coarse_chan_idxs.len() - 1] + 1;
-    // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
     crt.bench_function("context_to_jones_array - mwax_half_1247842824", |bch| {
         bch.iter(|| {
             context_to_jones_array(
@@ -106,7 +105,6 @@ fn bench_context_to_jones_array_ord_half_1196175296(crt: &mut Criterion) {
     let timestep_range = timestep_idxs[0]..timestep_idxs[timestep_idxs.len() - 1] + 1;
     let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
     let coarse_chan_range = coarse_chan_idxs[0]..coarse_chan_idxs[coarse_chan_idxs.len() - 1] + 1;
-    // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
     crt.bench_function("context_to_jones_array - ord_half_1196175296", |bch| {
         bch.iter(|| {
             context_to_jones_array(
@@ -122,16 +120,16 @@ fn bench_context_to_jones_array_ord_half_1196175296(crt: &mut Criterion) {
 fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
     let context = get_context_mwax_half_1247842824();
 
-    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+    let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
 
-    let img_timestep_range =
-        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let img_coarse_chan_range =
-        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+    let sel_timestep_range =
+        *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+    let sel_coarse_chan_range =
+        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 
     let (mut jones_array, _) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+        context_to_jones_array(&context, &sel_timestep_range, &sel_coarse_chan_range, None)
             .unwrap();
 
     crt.bench_function("correct_cable_lengths - mwax_half_1247842824", |bch| {
@@ -139,7 +137,7 @@ fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
             correct_cable_lengths(
                 black_box(&context),
                 black_box(&mut jones_array),
-                black_box(&img_coarse_chan_range),
+                black_box(&sel_coarse_chan_range),
             )
         })
     });
@@ -148,23 +146,23 @@ fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
 fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
     let context = get_context_ord_half_1196175296();
 
-    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+    let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
 
-    let img_timestep_range =
-        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let img_coarse_chan_range =
-        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+    let sel_timestep_range =
+        *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+    let sel_coarse_chan_range =
+        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 
     let (mut jones_array, _) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+        context_to_jones_array(&context, &sel_timestep_range, &sel_coarse_chan_range, None)
             .unwrap();
     crt.bench_function("correct_cable_lengths - ord_half_1196175296", |bch| {
         bch.iter(|| {
             correct_cable_lengths(
                 black_box(&context),
                 black_box(&mut jones_array),
-                black_box(&img_coarse_chan_range),
+                black_box(&sel_coarse_chan_range),
             )
         })
     });
@@ -176,12 +174,12 @@ fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
 
     let img_timestep_range =
         *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let img_coarse_chan_range =
-        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+    let sel_coarse_chan_range =
+        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 
     let (mut jones_array, _) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+        context_to_jones_array(&context, &img_timestep_range, &sel_coarse_chan_range, None)
             .unwrap();
     crt.bench_function("correct_geometry - mwax_half_1247842824", |bch| {
         bch.iter(|| {
@@ -189,7 +187,7 @@ fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
                 black_box(&context),
                 black_box(&mut jones_array),
                 black_box(&img_timestep_range),
-                black_box(&img_coarse_chan_range),
+                black_box(&sel_coarse_chan_range),
                 None,
                 None,
             );
@@ -203,12 +201,12 @@ fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
 
     let img_timestep_range =
         *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let img_coarse_chan_range =
-        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+    let sel_coarse_chan_range =
+        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 
     let (mut jones_array, _) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+        context_to_jones_array(&context, &img_timestep_range, &sel_coarse_chan_range, None)
             .unwrap();
     crt.bench_function("correct_geometry - ord_half_1196175296", |bch| {
         bch.iter(|| {
@@ -216,7 +214,7 @@ fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
                 black_box(&context),
                 black_box(&mut jones_array),
                 black_box(&img_timestep_range),
-                black_box(&img_coarse_chan_range),
+                black_box(&sel_coarse_chan_range),
                 None,
                 None,
             );
@@ -230,14 +228,14 @@ fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
 
     let img_timestep_range =
         *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let img_coarse_chan_range =
-        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+    let sel_coarse_chan_range =
+        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 
     let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
     let (jones_array, flag_array) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+        context_to_jones_array(&context, &img_timestep_range, &sel_coarse_chan_range, None)
             .unwrap();
 
     let tmp_dir = tempdir().unwrap();
@@ -256,10 +254,12 @@ fn bench_uvfits_output_1254670392_avg_none(crt: &mut Criterion) {
                 black_box(weight_array.view()),
                 black_box(flag_array.view()),
                 black_box(&img_timestep_range),
-                black_box(&img_coarse_chan_range),
+                black_box(&sel_coarse_chan_range),
                 black_box(&img_baseline_idxs),
                 None,
                 None,
+                1,
+                1,
             )
             .unwrap();
         });
@@ -272,14 +272,14 @@ fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
 
     let img_timestep_range =
         *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let img_coarse_chan_range =
-        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+    let sel_coarse_chan_range =
+        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 
     let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
     let (jones_array, flag_array) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+        context_to_jones_array(&context, &img_timestep_range, &sel_coarse_chan_range, None)
             .unwrap();
 
     let tmp_dir = tempdir().unwrap();
@@ -298,10 +298,12 @@ fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
                 black_box(weight_array.view()),
                 black_box(flag_array.view()),
                 black_box(&img_timestep_range),
-                black_box(&img_coarse_chan_range),
+                black_box(&sel_coarse_chan_range),
                 black_box(&img_baseline_idxs),
                 None,
                 None,
+                1,
+                1,
             )
             .unwrap();
         });
@@ -314,14 +316,14 @@ fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
 
     let img_timestep_range =
         *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let img_coarse_chan_range =
-        *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+    let sel_coarse_chan_range =
+        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 
     let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
     let (jones_array, flag_array) =
-        context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
+        context_to_jones_array(&context, &img_timestep_range, &sel_coarse_chan_range, None)
             .unwrap();
 
     let tmp_dir = tempdir().unwrap();
@@ -340,10 +342,12 @@ fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
                 black_box(weight_array.view()),
                 black_box(flag_array.view()),
                 black_box(&img_timestep_range),
-                black_box(&img_coarse_chan_range),
+                black_box(&sel_coarse_chan_range),
                 black_box(&img_baseline_idxs),
                 None,
                 None,
+                1,
+                1,
             )
             .unwrap();
         });

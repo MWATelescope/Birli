@@ -1,7 +1,7 @@
 use birli::{
     flags::{
-        expand_flag_array, flag_to_weight_array, get_baseline_flags, get_coarse_chan_range_flags,
-        get_timestep_range_flags, get_weight_factor,
+        expand_flag_array, flag_to_weight_array, get_baseline_flags, get_coarse_chan_flags,
+        get_coarse_chan_range, get_timestep_flags, get_timestep_range, get_weight_factor,
     },
     io::write_ms,
 };
@@ -387,6 +387,10 @@ pub fn show_param_info(
     //     info!("-> selected:    {:?}", baseline_idxs);
     //     info!("-> flags:    {:?}", baseline_flag_idxs);
     // }
+
+    // TODO: show:
+    // - estimated memory consumption
+    // - free memory with https://docs.rs/sys-info/latest/sys_info/fn.mem_info.html
 }
 
 fn main_with_args<I, T>(args: I)
@@ -534,8 +538,10 @@ where
     let context =
         CorrelatorContext::new(&metafits_path, &fits_paths).expect("unable to get mwalib context");
     debug!("mwalib correlator context:\n{}", &context);
-    let (coarse_chan_range, mut coarse_chan_flags) = get_coarse_chan_range_flags(&context).unwrap();
-    let (timestep_range, mut timestep_flags) = get_timestep_range_flags(&context).unwrap();
+    let coarse_chan_range = get_coarse_chan_range(&context).unwrap();
+    let mut coarse_chan_flags = get_coarse_chan_flags(&context);
+    let timestep_range = get_timestep_range(&context).unwrap();
+    let mut timestep_flags = get_timestep_flags(&context);
     let mut antenna_flags = get_antenna_flags(&context);
     let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
     let mut fine_chan_flags = vec![false; context.metafits_context.num_corr_fine_chans_per_coarse];
@@ -729,12 +735,6 @@ where
         "no-flag-dc",
         // "no-flag-metafits",
         // "flag-antennae",
-
-        // averaging
-        "avg-time-res",
-        "avg-time-factor",
-        "avg-freq-res",
-        "avg-freq-factor",
     ] {
         if matches.is_present(unimplemented_option) {
             panic!("option not yet implemented: --{}", unimplemented_option);
@@ -863,6 +863,8 @@ where
             &baseline_idxs,
             Some(array_pos),
             Some(phase_centre),
+            avg_time,
+            avg_freq,
         )
         .expect("unable to write uvfits");
     }

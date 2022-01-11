@@ -64,6 +64,8 @@ pub trait WriteableVis: Sync + Send {
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
         baseline_idxs: &[usize],
+        avg_time: usize,
+        avg_freq: usize,
     ) -> Result<(), IOError>;
 }
 
@@ -139,6 +141,8 @@ pub trait WriteableVis: Sync + Send {
 ///     &baseline_idxs,
 ///     None,
 ///     None,
+///     1,
+///     1,
 /// )
 /// .unwrap();
 /// ```
@@ -159,6 +163,8 @@ pub fn write_uvfits<T: AsRef<Path>>(
     mwalib_baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
+    avg_time: usize,
+    avg_freq: usize,
 ) -> Result<(), IOError> {
     trace!("start write_uvfits to {:?}", path.as_ref());
 
@@ -170,6 +176,8 @@ pub fn write_uvfits<T: AsRef<Path>>(
         mwalib_baseline_idxs,
         array_pos,
         phase_centre,
+        avg_time,
+        avg_freq,
     )?;
 
     uvfits_writer.write_vis_mwalib(
@@ -180,6 +188,8 @@ pub fn write_uvfits<T: AsRef<Path>>(
         mwalib_timestep_range,
         mwalib_coarse_chan_range,
         mwalib_baseline_idxs,
+        avg_time,
+        avg_freq,
     )?;
 
     uvfits_writer.write_ants_from_mwalib(&context.metafits_context)?;
@@ -416,6 +426,8 @@ mod tests_aoflagger {
             &baseline_idxs,
             None,
             None,
+            1,
+            1,
         )
         .unwrap();
 
