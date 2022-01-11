@@ -743,8 +743,8 @@ where
 
     let flag_array = init_flag_array(
         &context,
-        timestep_range.clone(),
-        coarse_chan_range.clone(),
+        &timestep_range,
+        &coarse_chan_range,
         Some(&timestep_flags),
         Some(&coarse_chan_flags),
         Some(&fine_chan_flags),

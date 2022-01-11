@@ -826,8 +826,8 @@ mod tests {
 
         let mut flag_array = init_flag_array(
             &context,
-            img_timestep_range,
-            img_coarse_chan_range,
+            &img_timestep_range,
+            &img_coarse_chan_range,
             None,
             None,
             None,

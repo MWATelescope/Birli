@@ -52,8 +52,8 @@
 //! // Prepare our flagmasks with known bad antennae
 //! let flag_array = init_flag_array(
 //!     &context,
-//!     img_timestep_range.clone(),
-//!     img_coarse_chan_range.clone(),
+//!     &img_timestep_range,
+//!     &img_coarse_chan_range,
 //!     None,
 //!     None,
 //!     None,
@@ -106,7 +106,11 @@ use crossbeam_utils::thread;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use log::{trace, warn};
-use ndarray::ArrayView2;
+cfg_if! {
+    if #[cfg(feature = "aoflagger")] {
+        use ndarray::ArrayView2;
+    }
+}
 use std::ops::Range;
 
 pub mod io;

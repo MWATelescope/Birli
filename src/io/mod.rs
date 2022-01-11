@@ -370,8 +370,8 @@ mod tests_aoflagger {
         // Prepare our flagmasks with known bad antennae
         let flag_array = init_flag_array(
             &context,
-            img_timestep_range.clone(),
-            img_coarse_chan_range.clone(),
+            &img_timestep_range,
+            &img_coarse_chan_range,
             None,
             None,
             None,
