@@ -6,15 +6,18 @@ RUN apt-get update \
     && apt-get install -y \
         aoflagger-dev \
         build-essential \
+        clang \
         curl \
         git \
         jq \
+        lcov \
         libcfitsio-dev \
         liberfa-dev \
         libssl-dev \
         pkg-config \
         unzip \
-        zip
+        zip \
+
 RUN test -z "$DEBUG" || ( \
         apt-get install -y vim gdb \
     )
