@@ -9,7 +9,6 @@ use cfg_if::cfg_if;
 use clap::{app_from_crate, arg, AppSettings, ValueHint::FilePath};
 use log::{debug, info, trace};
 use marlu::{
-    averaging::average_visibilities,
     precession::{precess_time, PrecessionInfo},
     time::gps_millis_to_epoch,
     RADec,
@@ -419,6 +418,9 @@ where
                 .help_heading("INPUT")
                 .value_hint(FilePath)
                 .required(true),
+            // arg!(--"time-sel" "Timestep index range to select")
+            //     .value_names(&["MIN", "MAX"])
+            //     .required(false),
 
             // flagging options
             // -> timesteps
@@ -541,6 +543,27 @@ where
     let coarse_chan_range = get_coarse_chan_range(&context).unwrap();
     let mut coarse_chan_flags = get_coarse_chan_flags(&context);
     let timestep_range = get_timestep_range(&context).unwrap();
+    // = match matches.values_of("time-sel") {
+    //     Some(mut values) => {
+    //         if let (Some(from), Some(to)) = (values.next(), values.next()) {
+    //             let from = from.parse::<usize>().expect("cannot parse --time-sel from");
+    //             debug_assert!(
+    //                 from > 0 && from < context.num_timesteps,
+    //                 "invalid --time-sel from"
+    //             );
+    //             let to = to.parse::<usize>().expect("cannot parse --time-sel to");
+    //             debug_assert!(
+    //                 to > 0 && to < context.num_timesteps,
+    //                 "invalid --time-sel to"
+    //             );
+    //             from..to + 1
+    //         } else {
+    //             panic!("invalid --time-sel <from> <to>");
+    //         }
+    //     }
+    //     _ => get_timestep_range(&context).unwrap(),
+    // };
+
     let mut timestep_flags = get_timestep_flags(&context);
     let mut antenna_flags = get_antenna_flags(&context);
     let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
@@ -831,24 +854,9 @@ where
 
     // perform averaging
     let num_pols = context.metafits_context.num_visibility_pols;
-    let mut flag_array = expand_flag_array(flag_array.view(), num_pols);
+    let flag_array = expand_flag_array(flag_array.view(), num_pols);
     let weight_factor = get_weight_factor(&context);
-    let mut weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
-
-    if avg_time != 1 || avg_freq != 1 {
-        let (avg_jones_array, avg_weight_array, avg_flag_array) = average_visibilities(
-            jones_array.view(),
-            weight_array.view(),
-            flag_array.view(),
-            avg_time,
-            avg_freq,
-        )
-        .unwrap();
-
-        jones_array = avg_jones_array;
-        weight_array = avg_weight_array;
-        flag_array = avg_flag_array;
-    }
+    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
     // output uvfits
     if let Some(uvfits_out) = matches.value_of("uvfits-out") {
@@ -882,6 +890,8 @@ where
             &baseline_idxs,
             Some(array_pos),
             Some(phase_centre),
+            avg_time,
+            avg_freq,
         )
         .expect("unable to write ms");
     }
@@ -1213,11 +1223,10 @@ mod tests_aoflagger {
             let exp_group_params = ["u", "v", "w", "baseline", "timestep"]
                 .iter()
                 .map(|key| {
-                    record
-                        .get(indices[&key.to_string()])
-                        .unwrap()
+                    let value = &record[indices[&key.to_string()]];
+                    value
                         .parse::<f64>()
-                        .unwrap()
+                        .unwrap_or_else(|_| panic!("unable to parse {} -> {}", key, value))
                 })
                 .collect::<Vec<_>>();
 

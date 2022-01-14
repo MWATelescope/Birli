@@ -16,6 +16,7 @@ use indicatif::ProgressStyle;
 use itertools::izip;
 use log::{trace, warn};
 use marlu::{
+    average_chunk_for_pols_f64,
     constants::VEL_C,
     erfa_sys,
     erfa_sys::ERFA_DJM0,
@@ -28,7 +29,8 @@ use marlu::{
 
 use crate::{
     flags::{expand_flag_array, flag_to_weight_array, get_weight_factor},
-    ndarray::{Array3, ArrayView3, ArrayView4, Axis},
+    marlu::num_complex::Complex,
+    ndarray::{s, Array, Array3, ArrayView3, ArrayView4, Axis},
 };
 
 use super::{
@@ -834,7 +836,10 @@ impl UvfitsWriter {
         avg_time: usize,
         avg_freq: usize,
     ) -> Result<(), IOError> {
-        let expanded_flag_array = expand_flag_array(flag_array.view(), 4);
+        let num_pols = context.metafits_context.num_visibility_pols;
+        let expanded_flag_array = expand_flag_array(flag_array.view(), num_pols);
+        // let flag_shape = flag_array.shape();
+        // let expanded_flag_array = flag_array.broadcast((flag_shape[0], flag_shape[1], flag_shape[2], num_pols)).unwrap();
         let weight_factor = get_weight_factor(context);
         let weight_array = flag_to_weight_array(expanded_flag_array.view(), weight_factor);
         self.write_vis_mwalib(
@@ -874,9 +879,29 @@ impl WriteableVis for UvfitsWriter {
 
         let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
+        let num_sel_timesteps = timestep_range.len();
+        let num_avg_timesteps = (num_sel_timesteps as f64 / avg_time as f64).ceil() as usize;
+
+        let num_sel_coarse_chans = coarse_chan_range.len();
+        let num_sel_chans = fine_chans_per_coarse * num_sel_coarse_chans;
+        let num_avg_chans = (num_sel_chans as f64 / avg_freq as f64).ceil() as usize;
+
+        let num_baselines = baseline_idxs.len();
+
+        let num_pols = context.metafits_context.num_visibility_pols;
+
+        let expected_dims = (num_sel_timesteps, num_sel_chans, num_baselines);
         let jones_dims = jones_array.dim();
+        if jones_dims != expected_dims {
+            return Err(IOError::BadArrayShape {
+                argument: "jones_array".into(),
+                function: "UvfitsWriter::write_vis_mwalib".into(),
+                expected: format!("{:?}", expected_dims),
+                received: format!("{:?}", jones_dims),
+            });
+        }
         let weight_dims = weight_array.dim();
-        if weight_dims != (jones_dims.0, jones_dims.1, jones_dims.2, 4) {
+        if weight_dims != (jones_dims.0, jones_dims.1, jones_dims.2, num_pols) {
             return Err(IOError::BadArrayShape {
                 argument: "weight_array".into(),
                 function: "UvfitsWriter::write_vis_mwalib".into(),
@@ -885,36 +910,24 @@ impl WriteableVis for UvfitsWriter {
             });
         }
 
-        let num_sel_timesteps = timestep_range.len();
-        let num_avg_timesteps = (num_sel_timesteps as f64 / avg_time as f64).ceil() as usize;
-        debug_assert_eq!(num_avg_timesteps, jones_dims.0);
-
-        let num_sel_coarse_chans = coarse_chan_range.len();
-        let num_sel_chans = fine_chans_per_coarse * num_sel_coarse_chans;
-        let num_avg_chans = (num_sel_chans as f64 / avg_freq as f64).ceil() as usize;
-        debug_assert_eq!(num_avg_chans, jones_dims.1);
-
-        let num_baselines = baseline_idxs.len();
-        debug_assert_eq!(num_baselines, jones_dims.2);
-
         debug_assert_eq!(self.total_num_rows, num_avg_timesteps * num_baselines);
 
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
-        // the gps start times [seconds] of all the timesteps that went into the averaged timesteps
-        let sel_gps_times_s = context.timesteps[timestep_range.clone()]
+        // the gps start times [seconds] of all the selected timesteps
+        let sel_gps_times_ms: Vec<f64> = context.timesteps[timestep_range.clone()]
             .iter()
-            .map(|t| t.gps_time_ms as f64 / 1000.0);
-        // the gps start times [seconds] of all the averageed timesteps
-        let avg_gps_times_s: Vec<f64> = sel_gps_times_s.step_by(avg_time).collect();
+            .map(|t| t.gps_time_ms as f64 / 1000.0)
+            .collect();
 
         let sel_baselines = baseline_idxs
             .iter()
             .map(|&idx| context.metafits_context.baselines[idx].clone())
             .collect::<Vec<_>>();
 
-        let integration_time_s =
-            avg_time as f64 * context.metafits_context.corr_int_time_ms as f64 / 1000.0;
+        // integration time [seconds] before averaging
+        let int_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
+        let avg_int_time_s = avg_time as f64 * int_time_s;
 
         // Create a progress bar to show the writing status
         let write_progress = indicatif::ProgressBar::new(self.total_num_rows as u64);
@@ -928,14 +941,23 @@ impl WriteableVis for UvfitsWriter {
         write_progress.set_message("write uv vis");
 
         // temporary vector to hold visiblity data, avoids heap allocation
-        let mut vis: Vec<f32> = vec![0.0; 12 * num_avg_chans];
+        let mut tmp_vis: Vec<f32> = vec![0.0; 12 * num_avg_chans];
 
-        for (gps_time_s, jones_timestep_view, weight_timestep_view) in izip!(
-            avg_gps_times_s.iter(),
-            jones_array.outer_iter(),
-            weight_array.outer_iter()
+        // this doesn't actually get written, it's just used by the average_chunk_for_pols_f64! macro to
+        // determine if a pol is all flagged for a given chunk.
+        let mut tmp_flags: Vec<bool> = vec![false; 4];
+        let fake_flag_chunk = Array::from_elem((avg_time, avg_freq, 4), false);
+
+        // the result of averging a chunk
+        let mut avg_jones: Jones<f32> = Jones::default();
+        let mut avg_weight = Array::from_elem(4, 0.0);
+
+        for (gps_times_chunk_s, jones_timestep_chunk, weight_timestep_chunk) in izip!(
+            sel_gps_times_ms.chunks(avg_time),
+            jones_array.axis_chunks_iter(Axis(0), avg_time),
+            weight_array.axis_chunks_iter(Axis(0), avg_time),
         ) {
-            let epoch = time::gps_to_epoch(gps_time_s + integration_time_s / 2.0);
+            let epoch = time::gps_to_epoch(gps_times_chunk_s[0] + avg_int_time_s / 2.0);
 
             let prec_info = precess_time(
                 self.phase_centre,
@@ -946,10 +968,10 @@ impl WriteableVis for UvfitsWriter {
 
             let tiles_xyz_precessed = prec_info.precess_xyz_parallel(&tiles_xyz_geod);
 
-            for (baseline, jones_baseline_view, weight_baseline_view) in izip!(
+            for (baseline, jones_baseline_chunk, weight_baseline_chunk) in izip!(
                 sel_baselines.iter(),
-                jones_timestep_view.axis_iter(Axis(1)),
-                weight_timestep_view.axis_iter(Axis(1))
+                jones_timestep_chunk.axis_iter(Axis(2)),
+                weight_timestep_chunk.axis_iter(Axis(2))
             ) {
                 let ant1_idx = baseline.ant1_index;
                 let ant2_idx = baseline.ant2_index;
@@ -961,28 +983,41 @@ impl WriteableVis for UvfitsWriter {
                 // MWA/CASA/AOFlagger visibility order is XX,XY,YX,YY
                 // UVFits visibility order is XX,YY,XY,YX
 
-                izip!(
-                    jones_baseline_view.iter(),
-                    weight_baseline_view.iter(),
-                    vis.chunks_exact_mut(12)
-                )
-                .for_each(|(jones, &weight, vis_chunk)| {
+                for (jones_chunk, weight_chunk, vis_chunk) in izip!(
+                    jones_baseline_chunk.axis_chunks_iter(Axis(1), avg_freq),
+                    weight_baseline_chunk.axis_chunks_iter(Axis(1), avg_freq),
+                    tmp_vis.chunks_exact_mut(12)
+                ) {
+                    if avg_time == 1 && avg_freq == 1 {
+                        avg_jones = jones_chunk[[0, 0]];
+                        avg_weight.assign(&weight_chunk.slice(s!(0, 0, ..)));
+                    } else {
+                        average_chunk_for_pols_f64!(
+                            jones_chunk,
+                            weight_chunk,
+                            fake_flag_chunk,
+                            avg_jones,
+                            avg_weight,
+                            tmp_flags
+                        );
+                    }
                     // TODO: something a little prettier
-                    vis_chunk[0] = jones[0].re;
-                    vis_chunk[1] = jones[0].im;
-                    vis_chunk[2] = weight;
-                    vis_chunk[3] = jones[3].re;
-                    vis_chunk[4] = jones[3].im;
-                    vis_chunk[5] = weight;
-                    vis_chunk[6] = jones[1].re;
-                    vis_chunk[7] = jones[1].im;
-                    vis_chunk[8] = weight;
-                    vis_chunk[9] = jones[2].re;
-                    vis_chunk[10] = jones[2].im;
-                    vis_chunk[11] = weight;
-                });
+                    vis_chunk[0] = avg_jones[0].re;
+                    vis_chunk[1] = avg_jones[0].im;
+                    vis_chunk[2] = avg_weight[0];
+                    vis_chunk[3] = avg_jones[3].re;
+                    vis_chunk[4] = avg_jones[3].im;
+                    vis_chunk[5] = avg_weight[3];
+                    vis_chunk[6] = avg_jones[1].re;
+                    vis_chunk[7] = avg_jones[1].im;
+                    vis_chunk[8] = avg_weight[1];
+                    vis_chunk[9] = avg_jones[2].re;
+                    vis_chunk[10] = avg_jones[2].im;
+                    vis_chunk[11] = avg_weight[2];
+                    // dbg!(&write_progress.position(), &jones_chunk, &jones_chunk.len(), &weight_chunk, &avg_jones, &avg_weight, &vis_chunk);
+                }
 
-                self.write_vis_row(&mut uvfits, uvw, ant1_idx, ant2_idx, epoch, &vis)?;
+                self.write_vis_row(&mut uvfits, uvw, ant1_idx, ant2_idx, epoch, &tmp_vis)?;
 
                 write_progress.inc(1);
             }
@@ -1010,7 +1045,6 @@ mod tests {
         approx::assert_abs_diff_eq,
         context_to_jones_array, get_flaggable_timesteps, init_flag_array,
         marlu::{
-            averaging::average_visibilities,
             constants::{
                 COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
             },
@@ -1829,15 +1863,6 @@ mod tests {
         let weight_factor = get_weight_factor(&context);
         let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
-        let (jones_array, weight_array, flag_array) = average_visibilities(
-            jones_array.view(),
-            weight_array.view(),
-            flag_array.view(),
-            avg_time,
-            avg_freq,
-        )
-        .unwrap();
-
         u.write_vis_mwalib(
             jones_array.view(),
             weight_array.view(),
@@ -2147,7 +2172,6 @@ mod tests {
 /// Tests which require the use of the aoflagger feature
 mod tests_aoflagger {
     use super::*;
-    use marlu::averaging::average_visibilities;
     use tempfile::NamedTempFile;
     use tests::{
         assert_uvfits_ant_header_eq, assert_uvfits_ant_table_eq, assert_uvfits_primary_header_eq,
@@ -2163,7 +2187,7 @@ mod tests_aoflagger {
                 COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
             },
             mwalib::{_open_fits, fits_open},
-        },
+        }, get_baseline_flags,
     };
     use aoflagger_sys::cxx_aoflagger_new;
 
@@ -2261,7 +2285,6 @@ mod tests_aoflagger {
 
     #[test]
     fn uvfits_tables_from_mwalib_matches_cotter_avg_2s_40khz() {
-        use crate::flags::get_baseline_flags;
 
         let context = get_1254670392_avg_context();
 
@@ -2331,15 +2354,6 @@ mod tests_aoflagger {
         let flag_array = expand_flag_array(flag_array.view(), num_pols);
         let weight_factor = get_weight_factor(&context);
         let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
-
-        let (jones_array, weight_array, flag_array) = average_visibilities(
-            jones_array.view(),
-            weight_array.view(),
-            flag_array.view(),
-            avg_time,
-            avg_freq,
-        )
-        .unwrap();
 
         u.write_vis_mwalib(
             jones_array.view(),
