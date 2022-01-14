@@ -259,7 +259,8 @@ pub fn write_uvfits<T: AsRef<Path>>(
 /// let flag_array = expand_flag_array(flag_array.view(), num_pols);
 /// let weight_factor = get_weight_factor(&context);
 /// let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
-///
+/// // time and frequency averaging
+/// let (avg_time, avg_freq) = (1, 1);
 /// write_ms(
 ///     ms_out.as_path(),
 ///     &context,
@@ -271,6 +272,8 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///     &baseline_idxs,
 ///     None,
 ///     None,
+///     avg_time,
+///     avg_freq,
 /// )
 /// .unwrap();
 /// ```
@@ -291,6 +294,8 @@ pub fn write_ms<T: AsRef<Path>>(
     mwalib_baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
+    avg_time: usize,
+    avg_freq: usize,
 ) -> Result<(), IOError> {
     trace!("start write_ms to {:?}", path.as_ref());
 
@@ -311,6 +316,8 @@ pub fn write_ms<T: AsRef<Path>>(
             mwalib_timestep_range,
             mwalib_coarse_chan_range,
             mwalib_baseline_idxs,
+            avg_time,
+            avg_freq,
         )
         .unwrap();
 
