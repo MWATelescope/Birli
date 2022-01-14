@@ -145,11 +145,11 @@ args = ["test"]
 
 [tasks.test_ignored]
 command = "cargo"
-args = ["test", "--", "--ignored"]
+args = ["test", "--", "--ignored", "--release"]
 
 [tasks.test_no_default]
 command = "cargo"
-args = ["test", "--no-default-features"]
+args = ["test", "--no-default-features", "--release"]
 
 [tasks.ci]
 dependencies = [
