@@ -866,7 +866,7 @@ impl WriteableVis for UvfitsWriter {
         &mut self,
         jones_array: ArrayView3<Jones<f32>>,
         weight_array: ArrayView4<f32>,
-        // TODO: make flags optional, we don't actually use them.
+        // TODO: make flags optional, they're only used for ms, not uvfits.
         _flag_array: ArrayView4<bool>,
         context: &CorrelatorContext,
         timestep_range: &Range<usize>,
@@ -1067,6 +1067,8 @@ mod tests {
         ];
         CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
     }
+
+    #[allow(dead_code)]
     pub(crate) fn get_1254670392_avg_context() -> CorrelatorContext {
         let metafits_path = "tests/data/1254670392_avg/1254670392.metafits";
         let gpufits_paths = [
@@ -1305,6 +1307,7 @@ mod tests {
     }
     pub(crate) use assert_table_vector_f64_column_values_match;
 
+    #[allow(dead_code)]
     pub(crate) fn assert_uvfits_primary_header_eq(
         left_fptr: &mut FitsFile,
         right_fptr: &mut FitsFile,
@@ -1352,6 +1355,7 @@ mod tests {
         );
     }
 
+    #[allow(dead_code)]
     pub(crate) fn assert_uvfits_ant_header_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
         let mut _left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
         let mut _right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
@@ -1385,6 +1389,7 @@ mod tests {
         );
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_group_column_description(
         fptr: &mut FitsFile,
         hdu: &FitsHdu,
@@ -1399,6 +1404,7 @@ mod tests {
         Ok(result)
     }
 
+    #[allow(dead_code)]
     macro_rules! assert_group_column_descriptions_match {
         ( $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr ) => {
             match (
@@ -1425,6 +1431,7 @@ mod tests {
     }
     pub(crate) use assert_group_column_descriptions_match;
 
+    #[allow(dead_code)]
     pub(crate) fn assert_uvfits_vis_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
         let mut _left_vis_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
         let mut _right_vis_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
@@ -1551,6 +1558,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn assert_uvfits_ant_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
         let mut _left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
         let mut _right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
@@ -2181,13 +2189,13 @@ mod tests_aoflagger {
     use crate::{
         context_to_jones_array,
         flags::flag_jones_array_existing,
-        get_antenna_flags, get_flaggable_timesteps, init_flag_array,
+        get_antenna_flags, get_baseline_flags, get_flaggable_timesteps, init_flag_array,
         marlu::{
             constants::{
                 COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
             },
             mwalib::{_open_fits, fits_open},
-        }, get_baseline_flags,
+        },
     };
     use aoflagger_sys::cxx_aoflagger_new;
 
@@ -2285,7 +2293,6 @@ mod tests_aoflagger {
 
     #[test]
     fn uvfits_tables_from_mwalib_matches_cotter_avg_2s_40khz() {
-
         let context = get_1254670392_avg_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
