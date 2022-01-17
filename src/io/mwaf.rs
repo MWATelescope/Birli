@@ -330,7 +330,6 @@ impl FlagFileSet {
             flag_array.axis_chunks_iter(Axis(1), fine_chans_per_coarse),
             write_progress
         )
-        .into_iter()
         {
             match self.gpubox_fptrs.get_mut(&gpubox_id) {
                 None => {
