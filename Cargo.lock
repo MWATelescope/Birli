@@ -881,10 +881,11 @@ dependencies = [
 
 [[package]]
 name = "marlu"
-version = "0.2.3"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b436f1e99cbc8204f1f6077a96226fe91b7611d1671a84d7ef4e3d7334a903e"
+checksum = "b0e735caaedb4cfc7eb108a48033a215a15b536b61a18e0a4b50e3acbb40e1bb"
 dependencies = [
+ "cfg-if",
  "erfa-sys",
  "flate2",
  "hifitime",
@@ -893,6 +894,7 @@ dependencies = [
  "log",
  "mwalib",
  "ndarray",
+ "num-complex",
  "num-traits",
  "rayon",
  "rubbl_casatables",
