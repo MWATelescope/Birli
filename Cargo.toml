@@ -32,9 +32,7 @@ env_logger = "0.9"
 indicatif = { version = "0.16", features = ["rayon"] }
 itertools = "0.10"
 log = "0.4"
-# marlu = "0.3.2"
-# marlu = { path = "../Marlu" }
-marlu = { git = "https://github.com/MWATelescope/Marlu.git", branch = "averaging"}
+marlu = "0.3.2"
 regex = "1.4"
 thiserror = "1.0"
 prettytable-rs = "0.8.0"
