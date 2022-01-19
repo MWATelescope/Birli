@@ -51,8 +51,7 @@ jobs:
           zip -0 ccov.zip `find . \( -name "birli*.gc*" \) -print`
           grcov ccov.zip -s . -t lcov --llvm --branch \
             --ignore-not-existing --ignore "/*" \
-            --excl-br-line "^.*((debug_)?assert(_eq|_ne|_abs_diff_(eq|ne))?!|#\[derive\()" \
-            --excl-br-line "^.*(debug|error|info|log|trace|warn)!" \
+            --excl-br-line "^.*(((debug_)?assert(_eq|_ne|_abs_diff_(eq|ne))?|debug|error|info|log|trace|warn)!|#\[derive\()" \
             -o coverage/coverage.lcov
 
       - name: Upload reports to codecov.io
