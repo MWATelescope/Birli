@@ -304,7 +304,7 @@ pub fn write_ms<T: AsRef<Path>>(
     let mut ms_writer = MeasurementSetWriter::new(path, phase_centre, array_pos);
 
     ms_writer
-        .initialize_from_mwalib(context, mwalib_timestep_range, mwalib_coarse_chan_range)
+        .initialize_from_mwalib(context, mwalib_timestep_range, mwalib_coarse_chan_range, avg_time, avg_freq)
         .unwrap();
 
     ms_writer

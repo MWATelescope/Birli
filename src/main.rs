@@ -67,11 +67,6 @@ pub fn show_param_info(
         info!("Pointing centre:      {}", &pointing_centre);
     }
 
-    let antenna_flag_idxs: Vec<usize> = antenna_flags
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
-        .collect();
     let coarse_chan_flag_idxs: Vec<usize> = coarse_chan_flags
         .iter()
         .enumerate()
@@ -355,22 +350,16 @@ pub fn show_param_info(
         ant_table.add_row(row);
     }
 
-    let show_ant_table = true;
-
-    info!(
+    debug!(
         "Antenna details (all={}, flag={}):{}",
         context.metafits_context.num_ants,
-        antenna_flag_idxs.len(),
-        if show_ant_table {
-            format!("\n{}", ant_table)
-        } else {
-            "".into()
-        }
+        antenna_flags
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
+            .count(),
+        format!("\n{}", ant_table)
     );
-
-    if !show_ant_table {
-        info!("-> flagged:    {:?}", antenna_flag_idxs);
-    }
 
     // let show_baseline_table = false;
 
@@ -484,6 +473,7 @@ where
             arg!(--"no-geometric-delay" "Do not perform geometric corrections")
                 .alias("no-geom"),
             arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's"),
+            arg!(--"dry-run" "Just print the summary and exit"),
 
             // averaging
             arg!(--"avg-time-res" <SECONDS> "Time resolution of averaged data")
@@ -743,6 +733,11 @@ where
         avg_freq,
     );
 
+    if matches.is_present("dry-run") {
+        info!("Dry run. No files will be written.");
+        return;
+    }
+
     for unimplemented_option in &[
         // Flagging
         "flag-init",
@@ -936,10 +931,13 @@ mod tests {
 mod tests_aoflagger {
 
     use super::main_with_args;
-    use birli::io::mwaf::FlagFileSet;
+    use approx::abs_diff_eq;
+    use birli::{io::mwaf::FlagFileSet, Complex};
+    use csv::StringRecord;
     use fitsio::errors::check_status as fits_check_status;
     use float_cmp::{approx_eq, F32Margin, F64Margin};
     use itertools::izip;
+    use lazy_static::lazy_static;
     use lexical::parse;
     use marlu::{
         fitsio, fitsio_sys,
@@ -947,6 +945,7 @@ mod tests_aoflagger {
             CorrelatorContext, _get_required_fits_key, _open_fits, _open_hdu, fits_open,
             fits_open_hdu, get_required_fits_key,
         },
+        rubbl_casatables::{Table, TableOpenMode},
     };
     use regex::Regex;
     use std::{
@@ -1127,6 +1126,14 @@ mod tests_aoflagger {
         (metafits_path, gpufits_paths)
     }
 
+    lazy_static! {
+        static ref COMPLEX_REGEX: Regex = Regex::new(format!(
+                r"^(?P<only_real>{0})$|^(?P<only_imag>{0})j$|^\((?P<complex_real>{0})\+?(?P<complex_imag>{0})j\)$",
+                r"-?[\d\.]+(e-?\d+)?"
+            ).as_str()
+        ).unwrap();
+    }
+
     fn compare_uvfits_with_csv(
         uvfits_path: PathBuf,
         expected_csv_path: PathBuf,
@@ -1150,30 +1157,9 @@ mod tests_aoflagger {
 
         let headers = expected_reader.headers().unwrap();
 
-        let mut remaining_keys: HashSet<_> =
-            ["timestep", "baseline", "u", "v", "w", "pol", "type", "0"]
-                .iter()
-                .map(|x| String::from(*x))
-                .collect();
-        let mut indices = BTreeMap::<String, usize>::new();
+        let keys = ["timestep", "baseline", "u", "v", "w", "pol", "type", "0"];
 
-        for (idx, cell) in headers.iter().enumerate() {
-            let mut remove: Option<String> = None;
-            for key in remaining_keys.iter() {
-                if cell == key {
-                    indices.insert(String::from(cell), idx);
-                    remove = Some(key.clone());
-                    break;
-                }
-            }
-            if let Some(key) = remove {
-                remaining_keys.remove(&key);
-            }
-        }
-
-        if !remaining_keys.is_empty() {
-            panic!("not all keys found: {:?}", remaining_keys);
-        }
+        let indices = parse_csv_headers(headers, &keys);
 
         let freq_start_header = indices.get("0").unwrap().to_owned();
         // let freq_end
@@ -1199,19 +1185,9 @@ mod tests_aoflagger {
         assert!(vis_len > 0);
 
         let mut status = 0;
-        let mut obs_idx = 0;
+        let mut row_idx = 0;
         let mut obs_vis: Vec<f32> = vec![0.0; vis_len];
         let mut obs_group_params: Vec<f64> = vec![0.0; pcount];
-
-        let float_regex = r"-?[\d\.]+(e-?\d+)?";
-        //let complex_regex = r"^(?P<real>-?[\d\.]+)|(?P<imag>[\+-]?[\d\.]+j)|\(?(?P<real>-?[\d\.]+)?(?P<imag>[\+-]?[\d\.]+j)?\)?$").unwrap();
-
-        let complex_regex =
-            Regex::new(format!(
-                r"^(?P<only_real>{0})$|^(?P<only_imag>{0})j$|^\((?P<complex_real>{0})\+?(?P<complex_imag>{0})j\)$",
-                float_regex
-            ).as_str()
-        ).unwrap();
 
         let pol_order = vec!["xx", "yy", "xy", "yx"];
         assert_eq!(num_pols, pol_order.len());
@@ -1241,13 +1217,15 @@ mod tests_aoflagger {
                 continue;
             }
 
+            let mut match_found = false;
+
             // iterate over rows in the uvfits file until we find an approximate match on timestep / baseline
-            while obs_idx < vis_len {
+            while row_idx < vis_len {
                 unsafe {
                     // ffggpe = fits_read_grppar_flt
                     fitsio_sys::ffggpd(
                         fptr.as_raw(),                 /* I - FITS file pointer                       */
-                        1 + obs_idx as i64, /* I - group to read (1 = 1st group)           */
+                        1 + row_idx as i64, /* I - group to read (1 = 1st group)           */
                         1,                  /* I - first vector element to read (1 = 1st)  */
                         pcount as i64,      /* I - number of values to read                */
                         obs_group_params.as_mut_ptr(), /* O - array of values that are returned       */
@@ -1275,6 +1253,8 @@ mod tests_aoflagger {
                 );
 
                 if time_match && baseline_match {
+                    match_found = true;
+
                     // Assert that the group params are equal
                     for (param_idx, (obs_group_param, exp_group_param)) in
                         izip!(obs_group_params.iter(), exp_group_params.iter()).enumerate()
@@ -1288,7 +1268,7 @@ mod tests_aoflagger {
                             ),
                             "cells don't match in param {}, row {}. {:?} != {:?}",
                             param_idx,
-                            obs_idx,
+                            row_idx,
                             obs_group_params,
                             exp_group_params
                         );
@@ -1298,30 +1278,8 @@ mod tests_aoflagger {
                         .iter()
                         .skip(freq_start_header)
                         .flat_map(|cell| {
-                            let captures = complex_regex.captures(cell).unwrap();
-                            // let complex_real = captures.name("complex_real");
-                            // let complex_imag = captures.name("complex_imag");
-                            // let only_real = captures.name("only_real");
-                            // let only_imag = captures.name("only_imag");
-                            let (real, imag) = match (
-                                captures.name("complex_real"),
-                                captures.name("complex_imag"),
-                                captures.name("only_real"),
-                                captures.name("only_imag"),
-                            ) {
-                                (Some(real), Some(imag), _, _) => (
-                                    parse::<f32, _>(real.as_str()).unwrap(),
-                                    parse::<f32, _>(imag.as_str()).unwrap(),
-                                ),
-                                (None, None, Some(real), None) => {
-                                    (parse::<f32, _>(real.as_str()).unwrap(), 0.0)
-                                }
-                                (None, None, None, Some(imag)) => {
-                                    (0.0, parse::<f32, _>(imag.as_str()).unwrap())
-                                }
-                                _ => panic!("can't parse complex {}", cell),
-                            };
-                            vec![real, imag].into_iter()
+                            let complex = parse_complex(cell);
+                            vec![complex.re, complex.im].into_iter()
                         })
                         .collect();
 
@@ -1334,7 +1292,7 @@ mod tests_aoflagger {
                         // ffgpve = fits_read_img_flt
                         fitsio_sys::ffgpve(
                             fptr.as_raw(),        /* I - FITS file pointer                       */
-                            1 + obs_idx as i64,   /* I - group to read (1 = 1st group)           */
+                            1 + row_idx as i64,   /* I - group to read (1 = 1st group)           */
                             1,                    /* I - first vector element to read (1 = 1st)  */
                             obs_vis.len() as i64, /* I - number of values to read                */
                             0.0,                  /* I - value for undefined pixels              */
@@ -1353,7 +1311,6 @@ mod tests_aoflagger {
                         .flat_map(|chunk| {
                             chunk.chunks(floats_per_pol).skip(pol_idx).take(1).flat_map(
                                 |complex_flag| {
-                                    // complex_flag[0..2].iter()
                                     let conjugate = vec![complex_flag[0], -complex_flag[1]];
                                     conjugate
                                 },
@@ -1369,7 +1326,7 @@ mod tests_aoflagger {
                             "cells don't match (obs {} != exp {}) in row {} (bl {} ts {}), pol {} ({}), vis index {}. \nobserved: {:?} != \nexpected: {:?}",
                             obs_val,
                             exp_val,
-                            obs_idx,
+                            row_idx,
                             exp_group_params[3],
                             exp_group_params[4],
                             pol,
@@ -1382,9 +1339,296 @@ mod tests_aoflagger {
                     break;
                 }
 
-                obs_idx += 1;
+                row_idx += 1;
+            }
+            if !match_found {
+                panic!(
+                    "unable to find matching row for time={}, baseline={}",
+                    exp_group_params[4], exp_group_params[3]
+                );
             }
         }
+    }
+
+    fn compare_ms_with_csv(ms_path: PathBuf, expected_csv_path: PathBuf, vis_margin: F32Margin) {
+        // Check both files are present
+        assert!(ms_path.exists());
+        assert!(expected_csv_path.exists());
+        // Check both files are not empty
+        assert!(ms_path.metadata().unwrap().len() > 0);
+        assert!(expected_csv_path.metadata().unwrap().len() > 0);
+
+        // Parse our expected CSV header
+        // let expected_file = File::open(expected_csv_path).unwrap();
+        let mut expected_reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .flexible(true)
+            .trim(csv::Trim::All)
+            .from_path(expected_csv_path)
+            .unwrap();
+
+        let headers = expected_reader.headers().unwrap();
+        let keys = ["time", "ant1", "ant2", "u", "v", "w", "pol", "type", "0"];
+        let indices = parse_csv_headers(headers, &keys);
+
+        let freq_start_header = indices.get("0").unwrap().to_owned();
+
+        // Test the ms file has been correctly populated.
+        let mut main_table = Table::open(&ms_path, TableOpenMode::Read).unwrap();
+        let num_rows = main_table.n_rows();
+        // dbg!(num_rows);
+        let data_tabledesc = main_table.get_col_desc("DATA").unwrap();
+        let data_shape = data_tabledesc.shape().unwrap();
+        // let num_freqs = data_shape[0] as usize;
+        let num_pols = data_shape[1] as usize;
+
+        let mut row_idx = 0;
+        let mut mjds_seen = HashSet::<u64>::new();
+
+        let pol_order = vec!["xx", "xy", "yx", "yy"];
+        debug_assert_eq!(num_pols, pol_order.len());
+
+        for record in expected_reader.records().filter_map(|result| match result {
+            Ok(record) => Some(record),
+            Err(err) => panic!("{:?}", err),
+        }) {
+            let exp_baseline: (usize, usize) = (
+                record[indices["ant1"]].parse().unwrap(),
+                record[indices["ant2"]].parse().unwrap(),
+            );
+
+            let exp_uvw: Vec<f64> = vec![
+                record[indices["u"]].parse().unwrap(),
+                record[indices["v"]].parse().unwrap(),
+                record[indices["w"]].parse().unwrap(),
+            ];
+
+            let exp_mjd: f64 = record[indices["time"]].parse().unwrap();
+
+            // Skip autos
+            if exp_baseline.0 == exp_baseline.1 {
+                continue;
+            }
+
+            let mut match_found = false;
+
+            // iterate over rows in the ms file until we find an approximate match on timestep / baseline
+            while row_idx < num_rows {
+                // main_table.read_row(&mut row, row_idx).unwrap();
+
+                let obs_mjd = main_table
+                    .get_cell::<f64>("TIME_CENTROID", row_idx)
+                    .unwrap();
+                mjds_seen.insert((obs_mjd * 10.).round() as u64);
+                // dbg!(exp_mjd, obs_mjd);
+                let time_match =
+                    approx_eq!(f64, exp_mjd, obs_mjd, F64Margin::default().epsilon(1e-5));
+
+                let obs_baseline = (
+                    main_table.get_cell::<i32>("ANTENNA1", row_idx).unwrap() as usize,
+                    main_table.get_cell::<i32>("ANTENNA2", row_idx).unwrap() as usize,
+                );
+
+                let baseline_match = exp_baseline == obs_baseline as (usize, usize);
+
+                if time_match && baseline_match {
+                    match_found = true;
+
+                    let obs_uvw = main_table.get_cell_as_vec::<f64>("UVW", row_idx).unwrap();
+                    for (uvw_idx, (obs_uvw, exp_uvw)) in
+                        izip!(obs_uvw.iter(), exp_uvw.iter()).enumerate()
+                    {
+                        assert!(
+                            approx_eq!(f64, *obs_uvw, *exp_uvw, F64Margin::default().epsilon(1e-5)),
+                            "cells don't match in UVW[{}], row {}. {:?} != {:?}",
+                            uvw_idx,
+                            row_idx,
+                            obs_uvw,
+                            exp_uvw
+                        );
+                    }
+
+                    let rec_type = record.get(indices[&String::from("type")]).unwrap();
+                    let pol = record.get(indices[&String::from("pol")]).unwrap();
+                    let pol_idx = pol_order.iter().position(|x| *x == pol).unwrap();
+
+                    match rec_type {
+                        "vis" => {
+                            let exp_pol_vis: Vec<Complex<f32>> = record
+                                .iter()
+                                .skip(freq_start_header)
+                                .map(parse_complex)
+                                .collect();
+
+                            let obs_vis = main_table
+                                .get_cell_as_vec::<Complex<f32>>("DATA", row_idx)
+                                .unwrap();
+                            let obs_pol_vis = obs_vis
+                                .into_iter()
+                                .skip(pol_idx)
+                                .step_by(num_pols)
+                                .collect::<Vec<_>>();
+
+                            debug_assert_eq!(obs_pol_vis.len(), exp_pol_vis.len());
+
+                            for (vis_idx, (&obs_val, &exp_val)) in
+                                izip!(obs_pol_vis.iter(), exp_pol_vis.iter()).enumerate()
+                            {
+                                assert!(
+                                    abs_diff_eq!(obs_val, exp_val, epsilon = vis_margin.epsilon),
+                                    "visibility arrays don't match (obs {} != exp {}) in row {} (bl {:?} ts {}), pol {} ({}), vis index {}. \nobserved: {:?} != \nexpected: {:?}",
+                                    obs_val,
+                                    exp_val,
+                                    row_idx,
+                                    exp_baseline,
+                                    exp_mjd,
+                                    pol,
+                                    pol_idx,
+                                    vis_idx,
+                                    &obs_pol_vis,
+                                    &exp_pol_vis
+                                );
+                            }
+                        }
+                        "weight" => {
+                            let exp_pol_weight: Vec<f32> = record
+                                .iter()
+                                .skip(freq_start_header)
+                                .map(|x| x.parse::<f32>().unwrap())
+                                .collect();
+
+                            let obs_weight = main_table
+                                .get_cell_as_vec::<f32>("WEIGHT_SPECTRUM", row_idx)
+                                .unwrap();
+
+                            let obs_pol_weight = obs_weight
+                                .into_iter()
+                                .skip(pol_idx)
+                                .step_by(num_pols)
+                                .collect::<Vec<_>>();
+
+                            debug_assert_eq!(obs_pol_weight.len(), exp_pol_weight.len());
+
+                            for (weight_idx, (&obs_val, &exp_val)) in
+                                izip!(obs_pol_weight.iter(), exp_pol_weight.iter()).enumerate()
+                            {
+                                assert!(
+                                    abs_diff_eq!(obs_val, exp_val, epsilon = vis_margin.epsilon),
+                                    "weight arrays don't match (obs {} != exp {}) in row {} (bl {:?} ts {}), pol {} ({}), weight index {}. \nobserved: {:?} != \nexpected: {:?}",
+                                    obs_val,
+                                    exp_val,
+                                    row_idx,
+                                    exp_baseline,
+                                    exp_mjd,
+                                    pol,
+                                    pol_idx,
+                                    weight_idx,
+                                    &obs_pol_weight,
+                                    &exp_pol_weight
+                                );
+                            }
+                        }
+                        "flag" => {
+                            let exp_pol_flag: Vec<bool> = record
+                                .iter()
+                                .skip(freq_start_header)
+                                .map(|x| x.to_lowercase().parse::<bool>().unwrap())
+                                .collect();
+
+                            let obs_flag =
+                                main_table.get_cell_as_vec::<bool>("FLAG", row_idx).unwrap();
+
+                            let obs_pol_flag = obs_flag
+                                .into_iter()
+                                .skip(pol_idx)
+                                .step_by(num_pols)
+                                .collect::<Vec<_>>();
+
+                            debug_assert_eq!(obs_pol_flag.len(), exp_pol_flag.len());
+
+                            for (flag_idx, (&obs_val, &exp_val)) in
+                                izip!(obs_pol_flag.iter(), exp_pol_flag.iter()).enumerate()
+                            {
+                                assert!(
+                                    obs_val == exp_val,
+                                    "flag arrays don't match (obs {} != exp {}) in row {} (bl {:?} ts {}), pol {} ({}), flag index {}. \nobserved: {:?} != \nexpected: {:?}",
+                                    obs_val,
+                                    exp_val,
+                                    row_idx,
+                                    exp_baseline,
+                                    exp_mjd,
+                                    pol,
+                                    pol_idx,
+                                    flag_idx,
+                                    &obs_pol_flag,
+                                    &exp_pol_flag
+                                );
+                            }
+                        }
+                        _ => panic!("unexpected record type: {}", rec_type),
+                    }
+
+                    break;
+                }
+
+                row_idx += 1;
+            }
+            if !match_found {
+                panic!(
+                    "unable to find matching row for time={}, baseline={:?}, mjds_seen={:?}",
+                    exp_mjd,
+                    exp_baseline,
+                    mjds_seen
+                        .iter()
+                        .map(|&x| (x as f64) / 10.)
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    fn parse_complex(cell: &str) -> Complex<f32> {
+        let captures = COMPLEX_REGEX.captures(cell).unwrap();
+        let (real, imag) = match (
+            captures.name("complex_real"),
+            captures.name("complex_imag"),
+            captures.name("only_real"),
+            captures.name("only_imag"),
+        ) {
+            (Some(real), Some(imag), _, _) => (
+                parse::<f32, _>(real.as_str()).unwrap(),
+                parse::<f32, _>(imag.as_str()).unwrap(),
+            ),
+            (None, None, Some(real), None) => (parse::<f32, _>(real.as_str()).unwrap(), 0.0),
+            (None, None, None, Some(imag)) => (0.0, parse::<f32, _>(imag.as_str()).unwrap()),
+            _ => panic!("can't parse complex {}", cell),
+        };
+        Complex::new(real, imag)
+    }
+
+    fn parse_csv_headers(headers: &StringRecord, keys: &[&str]) -> BTreeMap<String, usize> {
+        let mut remaining_keys: HashSet<_> = keys.iter().map(|x| String::from(*x)).collect();
+        let mut indices = BTreeMap::<String, usize>::new();
+
+        for (idx, cell) in headers.iter().enumerate() {
+            let mut remove: Option<String> = None;
+            for key in remaining_keys.iter() {
+                if cell == key {
+                    indices.insert(String::from(cell), idx);
+                    remove = Some(key.clone());
+                    break;
+                }
+            }
+            if let Some(key) = remove {
+                remaining_keys.remove(&key);
+            }
+        }
+
+        if !remaining_keys.is_empty() {
+            panic!("not all keys found: {:?}", remaining_keys);
+        }
+
+        indices
     }
 
     #[test]
@@ -1506,15 +1750,42 @@ mod tests_aoflagger {
         );
     }
 
+    /// Test generated with:
+    ///
+    /// ```bash
+    /// cotter \
+    ///   -m tests/data/1254670392_avg/1254670392.fixed.metafits \
+    ///   -o tests/data/1254670392_avg/1254670392.cotter.corrected.ms \
+    ///   -allowmissing \
+    ///   -edgewidth 0 \
+    ///   -endflag 0 \
+    ///   -initflag 0 \
+    ///   -noantennapruning \
+    ///   -noflagautos \
+    ///   -noflagdcchannels \
+    ///   -nosbgains \
+    ///   -sbpassband tests/data/subband-passband-32ch-unitary.txt \
+    ///   -nostats \
+    ///   -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
+    ///   tests/data/1254670392_avg/1254670392*gpubox*.fits
+    /// ```
+    ///
+    /// then the following casa commands:
+    ///
+    /// ```python
+    /// tb.open('tests/data/1254670392_avg/1254670392.cotter.corrected.ms/')
+    /// start_time = 5077351977
+    /// exec(open('tests/data/casa_dump_ms.py').read())
+    /// ```
     #[test]
-    fn test_1254670392_avg_ms_both() {
+    fn test_1254670392_avg_ms_corrected() {
         let tmp_dir = tempdir().unwrap();
         let ms_path = tmp_dir.path().join("1254670392.ms");
 
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
-        // let expected_csv_path =
-        //     PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.corrected.ms.csv");
+        let expected_csv_path =
+            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.corrected.ms.csv");
 
         let mut args = vec![
             "birli",
@@ -1528,19 +1799,77 @@ mod tests_aoflagger {
 
         main_with_args(&args);
 
-        // TODO: finish this test.
+        compare_ms_with_csv(
+            ms_path,
+            expected_csv_path,
+            F32Margin::default().epsilon(1e-3),
+        );
+    }
 
-        // let ms_path =
-        //     PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.corrected.ms");
-        // compare_ms_with_csv(
-        //     ms_path,
-        //     expected_csv_path,
-        //     F32Margin::default().epsilon(1e-4),
-        // );
+    /// Test generated with:
+    ///
+    /// ```bash
+    /// cotter \
+    ///   -m tests/data/1254670392_avg/1254670392.fixed.metafits \
+    ///   -o tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.ms \
+    ///   -allowmissing \
+    ///   -edgewidth 0 \
+    ///   -endflag 0 \
+    ///   -initflag 0 \
+    ///   -noantennapruning \
+    ///   -nocablelength \
+    ///   -nogeom \
+    ///   -noflagautos \
+    ///   -noflagdcchannels \
+    ///   -nosbgains \
+    ///   -sbpassband tests/data/subband-passband-32ch-unitary.txt \
+    ///   -nostats \
+    ///   -flag-strategy /usr/share/aoflagger/strategies/mwa-default.lua \
+    ///   -timeres 4 \
+    ///   -freqres 160 \
+    ///   tests/data/1254670392_avg/1254670392*gpubox*.fits
+    /// ```
+    ///
+    /// then the following casa commands:
+    ///
+    /// ```python
+    /// tb.open('tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.ms/')
+    /// exec(open('tests/data/casa_dump_ms.py').read())
+    /// ```
+    #[test]
+    fn test_1254670392_avg_ms_none_avg_4s_160khz() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("1254670392.ms");
 
-        // for (
-        //     idx,
-        //     timestep
-        // )
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let expected_csv_path =
+            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.ms.csv");
+
+        env_logger::try_init().unwrap_or(());
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-M",
+            ms_path.to_str().unwrap(),
+            "--emulate-cotter",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--avg-time-res",
+            "4",
+            "--avg-freq-res",
+            "160",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+
+        compare_ms_with_csv(
+            ms_path,
+            expected_csv_path,
+            F32Margin::default().epsilon(1e-7),
+        );
     }
 }

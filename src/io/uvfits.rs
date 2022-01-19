@@ -67,7 +67,7 @@ fn rust_strings_to_c_strings<T: AsRef<str>>(
 /// handle more than 255 antennas (up to 2048). This is backwards compatible
 /// with the standard UVFITS convention. Antenna indices start at 1.
 // Shamelessly copied from the RTS, originally written by Randall Wayth.
-fn encode_uvfits_baseline(ant1: usize, ant2: usize) -> usize {
+pub fn encode_uvfits_baseline(ant1: usize, ant2: usize) -> usize {
     if ant2 > 255 {
         ant1 * 2048 + ant2 + 65_536
     } else {
@@ -78,7 +78,7 @@ fn encode_uvfits_baseline(ant1: usize, ant2: usize) -> usize {
 /// Decode a uvfits baseline into the antennas that formed it. Antenna indices
 /// start at 1.
 #[allow(dead_code)]
-fn decode_uvfits_baseline(bl: usize) -> (usize, usize) {
+pub fn decode_uvfits_baseline(bl: usize) -> (usize, usize) {
     if bl < 65_535 {
         let ant2 = bl % 256;
         let ant1 = (bl - ant2) / 256;
