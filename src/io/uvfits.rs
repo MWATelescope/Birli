@@ -2306,7 +2306,7 @@ mod tests_aoflagger {
     }
 
     #[test]
-    fn uvfits_tables_from_mwalib_matches_cotter_avg_2s_40khz() {
+    fn uvfits_tables_from_mwalib_matches_cotter_avg_4s_160khz() {
         let context = get_1254670392_avg_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
