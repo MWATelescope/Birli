@@ -64,7 +64,7 @@ fn get_context_1254670392_avg() -> CorrelatorContext {
     let test_path = Path::new(&test_dir);
     let vis_path = test_path.join("1254670392_vis");
     let metafits_path = vis_path
-        .join("1254670392.metafits")
+        .join("1254670392.fixed.metafits")
         .to_str()
         .unwrap()
         .to_owned();

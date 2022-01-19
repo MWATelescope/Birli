@@ -1,7 +1,7 @@
 -> hdus.info():
 Filename: tests/data/1247842824_flags/1247842824.uvfits
 No.    Name      Ver    Type      Cards   Dimensions   Format
-  0  PRIMARY       1 GroupsHDU       71   (3, 4, 128, 1, 1)   float32   16512 Groups  5 Parameters
+  0  PRIMARY       1 GroupsHDU       72   (3, 4, 3072, 1, 1)   float32   16512 Groups  5 Parameters
   1  AIPS AN       1 BinTableHDU     52   128R x 11C   [8A, 3D, 1J, 1J, 1E, 1A, 1E, 3E, 1A, 1E, 3E]   
 
 VISIBILITIES
@@ -12,7 +12,7 @@ NAXIS   =                    6 / number of data axes
 NAXIS1  =                    0 / length of data axis 1                          
 NAXIS2  =                    3 / length of data axis 2                          
 NAXIS3  =                    4 / length of data axis 3                          
-NAXIS4  =                  128 / length of data axis 4                          
+NAXIS4  =                 3072 / length of data axis 4                          
 NAXIS5  =                    1 / length of data axis 5                          
 NAXIS6  =                    1 / length of data axis 6                          
 EXTEND  =                    T / FITS dataset may contain extensions            
@@ -49,7 +49,7 @@ CRPIX3  =                   1.
 CTYPE4  = 'FREQ    '                                                            
 CRVAL4  =           1.4784E+08                                                  
 CDELT4  =               10000.                                                  
-CRPIX4  =                  65.                                                  
+CRPIX4  =                1537.                                                  
 CTYPE5  = 'RA      '                                                            
 CRVAL5  =              252.788                                                  
 CRPIX5  =                   1.                                                  
@@ -66,18 +66,22 @@ TELESCOP= 'MWA     '
 INSTRUME= 'MWA     '                                                            
 HISTORY AIPS WTSCAL =  1.0                                                      
 COMMENT Created by Cotter MWA preprocessor                                      
-COMMENT Cmdline: cotter "-m" "tests/data/1247842824_flags/1247842824.cotter.meta
-COMMENT fits" "-o" "tests/data/1247842824_flags/1247842824.uvfits" "-allowmissin
-COMMENT g" "-noantennapruning" "-nocablelength" "-noflagautos" "-noflagdcchannel
-COMMENT s" "-nogeom" "-nosbgains" "-sbpassband" "tests/data/subband-passband-128
-COMMENT ch-unitary.txt" "-nostats" "-sbcount" "1" "-sbstart" "1" "-flag-strategy
-COMMENT " "/usr/local/share/aoflagger/strategies/mwa-default.lua" "tests/data/12
-COMMENT 47842824_flags/1247842824_20190722150008_gpubox01_00.fits"              
+COMMENT Cmdline: /home/dev/cotter/build/cotter "-m" "tests/data/1247842824_flags
+COMMENT /1247842824.metafits" "-o" "tests/data/1247842824_flags/1247842824.uvfit
+COMMENT s" "-allowmissing" "-edgewidth" "0" "-endflag" "0" "-initflag" "0" "-noa
+COMMENT ntennapruning" "-nocablelength" "-noflagautos" "-noflagdcchannels" "-nog
+COMMENT eom" "-nosbgains" "-sbpassband" "tests/data/subband-passband-3072ch-unit
+COMMENT ary.txt" "-nostats" "-sbcount" "1" "-sbstart" "1" "-flag-strategy" "/usr
+COMMENT /local/share/aoflagger/strategies/mwa-default.lua" "tests/data/124784282
+COMMENT 4_flags/1247842824_20190722150008_gpubox01_00.fits"                     
 FIBRFACT= '2.0     '           / Fiber velocity factor                          
 METAVER = '        '           / METAFITS version number                        
 MWAPYVER= '4.5     '           / MWAPY version number                           
 COTVER  = '2020-08-10'         / Cotter version                                 
 -> data.shape (16512,)
+aggregate info
+-> vis peak 103283.0
+-> 2 mjds from 2458687.125086814 to 2458687.1250983775
 
 ANTENNA INFO
 
@@ -120,7 +124,7 @@ ARRAYX  =    -2559453.29059553
 ARRAYY  =     5095371.73544116                                                  
 ARRAYZ  =    -2849056.77357178                                                  
 FREQ    =           1.4784E+08                                                  
-GSTIA0  =     299.461288535808                                                  
+GSTIA0  =     299.461288535807                                                  
 DEGPDY  =              360.985                                                  
 RDATE   = '2019-07-22T00:00:00.0'                                               
 POLARX  =                   0.                                                  

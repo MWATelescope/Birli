@@ -104,6 +104,21 @@ brew install -f erfa--2.0.0.catalina.bottle.1.tar.gz
 linux_alias = "linux_install_deps"
 mac_alias = "mac_install_deps"
 
+[tasks.linux_check_deps]
+script = """
+#!/bin/bash
+unset mod_versions
+declare -A mod_versions
+mod_versions[cfitsio]=3.49
+mod_versions[erfa]=1.7.1
+for mod_name in "${!mod_versions[@]}"
+do
+  min_version=${mod_versions[$mod_name]}
+  pkg-config --atleast-version=${min_version} ${mod_name} \
+    || echo "${mod_name} out of date. Needs ${min_version}, has " $(pkg-config --modversion ${mod_name})
+done
+"""
+
 [tasks.check]
 command = "cargo"
 args = ["check"]
@@ -141,11 +156,11 @@ dependencies = ["clean"]
 
 [tasks.test]
 command = "cargo"
-args = ["test"]
+args = ["test", "--release"]
 
 [tasks.test_ignored]
 command = "cargo"
-args = ["test", "--", "--ignored", "--release"]
+args = ["test", "--release", "--", "--ignored"]
 
 [tasks.test_no_default]
 command = "cargo"

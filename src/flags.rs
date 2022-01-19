@@ -8,7 +8,7 @@ use crate::{
         BirliError::{NoCommonCoarseChans, NoCommonTimesteps, NoProvidedTimesteps},
     },
     io::error::IOError,
-    ndarray::{Array, Array3, Array4, ArrayView, ArrayView3, Dimension, Zip},
+    ndarray::{Array, Array3, Array4, ArrayView, ArrayView3, Dimension},
     FlagFileSet,
 };
 use cfg_if::cfg_if;
@@ -814,15 +814,7 @@ pub fn flag_to_weight_array<D>(flag_array: ArrayView<bool, D>, weight_factor: f6
 where
     D: Dimension,
 {
-    let mut weight_array = Array::from_elem(flag_array.dim(), 0.0_f32);
-
-    Zip::from(&mut weight_array)
-        .and(&flag_array)
-        .par_for_each(|weight, &flag| {
-            *weight = if flag { -weight_factor } else { weight_factor } as f32;
-        });
-
-    weight_array
+    Array::from_elem(flag_array.dim(), weight_factor as f32)
 }
 
 #[cfg(test)]
