@@ -162,6 +162,7 @@ dependencies = [
  "glob",
  "indicatif",
  "itertools",
+ "lazy_static",
  "lexical",
  "log",
  "marlu",
@@ -956,9 +957,9 @@ dependencies = [
 
 [[package]]
 name = "marlu"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0e735caaedb4cfc7eb108a48033a215a15b536b61a18e0a4b50e3acbb40e1bb"
+checksum = "b3c77013700391e4429f8350a3c934565d4894c5197838d516a21aa47f94e2f2"
 dependencies = [
  "cfg-if",
  "erfa-sys",
