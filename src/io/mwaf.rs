@@ -329,8 +329,7 @@ impl FlagFileSet {
             gpubox_ids,
             flag_array.axis_chunks_iter(Axis(1), fine_chans_per_coarse),
             write_progress
-        )
-        {
+        ) {
             match self.gpubox_fptrs.get_mut(&gpubox_id) {
                 None => {
                     return Err(InvalidGpuBox {
