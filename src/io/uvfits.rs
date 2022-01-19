@@ -24,7 +24,8 @@ use marlu::{
     hifitime::Epoch,
     mwalib::{CorrelatorContext, MetafitsContext},
     precession::*,
-    time, Jones, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
+    time::{self, gps_millis_to_epoch},
+    Jones, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
 };
 
 use crate::{
@@ -838,8 +839,6 @@ impl UvfitsWriter {
     ) -> Result<(), IOError> {
         let num_pols = context.metafits_context.num_visibility_pols;
         let expanded_flag_array = expand_flag_array(flag_array.view(), num_pols);
-        // let flag_shape = flag_array.shape();
-        // let expanded_flag_array = flag_array.broadcast((flag_shape[0], flag_shape[1], flag_shape[2], num_pols)).unwrap();
         let weight_factor = get_weight_factor(context);
         let weight_array = flag_to_weight_array(expanded_flag_array.view(), weight_factor);
         self.write_vis_mwalib(
@@ -866,8 +865,7 @@ impl WriteableVis for UvfitsWriter {
         &mut self,
         jones_array: ArrayView3<Jones<f32>>,
         weight_array: ArrayView4<f32>,
-        // TODO: make flags optional, they're only used for ms, not uvfits.
-        _flag_array: ArrayView4<bool>,
+        flag_array: ArrayView4<bool>,
         context: &CorrelatorContext,
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
@@ -915,9 +913,9 @@ impl WriteableVis for UvfitsWriter {
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
         // the gps start times [seconds] of all the selected timesteps
-        let sel_gps_times_ms: Vec<f64> = context.timesteps[timestep_range.clone()]
+        let sel_gps_times_ms: Vec<u64> = context.timesteps[timestep_range.clone()]
             .iter()
-            .map(|t| t.gps_time_ms as f64 / 1000.0)
+            .map(|t| t.gps_time_ms)
             .collect();
 
         let sel_baselines = baseline_idxs
@@ -926,8 +924,9 @@ impl WriteableVis for UvfitsWriter {
             .collect::<Vec<_>>();
 
         // integration time [seconds] before averaging
-        let int_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
-        let avg_int_time_s = avg_time as f64 * int_time_s;
+        let int_time_ms = context.metafits_context.corr_int_time_ms as u64;
+        let avg_int_time_ms = avg_time as u64 * int_time_ms;
+        let half_avg_int_time_ms = avg_int_time_ms / 2;
 
         // Create a progress bar to show the writing status
         let write_progress = indicatif::ProgressBar::new(self.total_num_rows as u64);
@@ -943,35 +942,38 @@ impl WriteableVis for UvfitsWriter {
         // temporary vector to hold visiblity data, avoids heap allocation
         let mut tmp_vis: Vec<f32> = vec![0.0; 12 * num_avg_chans];
 
-        // this doesn't actually get written, it's just used by the average_chunk_for_pols_f64! macro to
-        // determine if a pol is all flagged for a given chunk.
-        let mut tmp_flags: Vec<bool> = vec![false; 4];
-        let fake_flag_chunk = Array::from_elem((avg_time, avg_freq, 4), false);
-
         // the result of averging a chunk
         let mut avg_jones: Jones<f32> = Jones::default();
         let mut avg_weight = Array::from_elem(4, 0.0);
+        let mut avg_flag = Array::from_elem(4, false);
 
-        for (gps_times_chunk_s, jones_timestep_chunk, weight_timestep_chunk) in izip!(
+        for (
+            gps_times_chunk_ms,
+            jones_timestep_chunk,
+            weight_timestep_chunk,
+            flag_timestep_chunk,
+        ) in izip!(
             sel_gps_times_ms.chunks(avg_time),
             jones_array.axis_chunks_iter(Axis(0), avg_time),
             weight_array.axis_chunks_iter(Axis(0), avg_time),
+            flag_array.axis_chunks_iter(Axis(0), avg_time),
         ) {
-            let epoch = time::gps_to_epoch(gps_times_chunk_s[0] + avg_int_time_s / 2.0);
+            let midpoint_epoch = gps_millis_to_epoch(gps_times_chunk_ms[0] + half_avg_int_time_ms);
 
             let prec_info = precess_time(
                 self.phase_centre,
-                epoch,
+                midpoint_epoch,
                 self.array_pos.longitude_rad,
                 self.array_pos.latitude_rad,
             );
 
             let tiles_xyz_precessed = prec_info.precess_xyz_parallel(&tiles_xyz_geod);
 
-            for (baseline, jones_baseline_chunk, weight_baseline_chunk) in izip!(
+            for (baseline, jones_baseline_chunk, weight_baseline_chunk, flag_baseline_chunk) in izip!(
                 sel_baselines.iter(),
                 jones_timestep_chunk.axis_iter(Axis(2)),
-                weight_timestep_chunk.axis_iter(Axis(2))
+                weight_timestep_chunk.axis_iter(Axis(2)),
+                flag_timestep_chunk.axis_iter(Axis(2)),
             ) {
                 let ant1_idx = baseline.ant1_index;
                 let ant2_idx = baseline.ant2_index;
@@ -983,24 +985,29 @@ impl WriteableVis for UvfitsWriter {
                 // MWA/CASA/AOFlagger visibility order is XX,XY,YX,YY
                 // UVFits visibility order is XX,YY,XY,YX
 
-                for (jones_chunk, weight_chunk, vis_chunk) in izip!(
+                for (jones_chunk, weight_chunk, flag_chunk, vis_chunk) in izip!(
                     jones_baseline_chunk.axis_chunks_iter(Axis(1), avg_freq),
                     weight_baseline_chunk.axis_chunks_iter(Axis(1), avg_freq),
+                    flag_baseline_chunk.axis_chunks_iter(Axis(1), avg_freq),
                     tmp_vis.chunks_exact_mut(12)
                 ) {
                     if avg_time == 1 && avg_freq == 1 {
                         avg_jones = jones_chunk[[0, 0]];
-                        avg_weight.assign(&weight_chunk.slice(s!(0, 0, ..)));
+                        avg_weight.assign(&weight_chunk.slice(s![0, 0, ..]));
+                        avg_flag.assign(&flag_chunk.slice(s![0, 0, ..]));
                     } else {
                         average_chunk_for_pols_f64!(
                             jones_chunk,
                             weight_chunk,
-                            fake_flag_chunk,
+                            flag_chunk,
                             avg_jones,
                             avg_weight,
-                            tmp_flags
+                            avg_flag
                         );
                     }
+                    izip!(avg_weight.iter_mut(), avg_flag.iter())
+                        .for_each(|(w, f)| *w = if *f { -*w } else { *w });
+
                     // TODO: something a little prettier
                     vis_chunk[0] = avg_jones[0].re;
                     vis_chunk[1] = avg_jones[0].im;
@@ -1017,7 +1024,14 @@ impl WriteableVis for UvfitsWriter {
                     // dbg!(&write_progress.position(), &jones_chunk, &jones_chunk.len(), &weight_chunk, &avg_jones, &avg_weight, &vis_chunk);
                 }
 
-                self.write_vis_row(&mut uvfits, uvw, ant1_idx, ant2_idx, epoch, &tmp_vis)?;
+                self.write_vis_row(
+                    &mut uvfits,
+                    uvw,
+                    ant1_idx,
+                    ant2_idx,
+                    midpoint_epoch,
+                    &tmp_vis,
+                )?;
 
                 write_progress.inc(1);
             }
@@ -1070,7 +1084,7 @@ mod tests {
 
     #[allow(dead_code)]
     pub(crate) fn get_1254670392_avg_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1254670392_avg/1254670392.metafits";
+        let metafits_path = "tests/data/1254670392_avg/1254670392.fixed.metafits";
         let gpufits_paths = [
             "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
             "tests/data/1254670392_avg/1254670392_20191009153257_gpubox02_00.fits",

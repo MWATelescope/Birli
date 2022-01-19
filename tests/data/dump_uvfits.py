@@ -273,6 +273,8 @@ def dump_uvfits_data_to_csv(
 
         if dump_mode in ["cloud-compare"]:
             row_dict['ts_mjd'] = row_dict['ts_frac']
+        else:
+            row_dict['bl_idx'] = baseline
 
         row_dict['u'] = row['UU']
         row_dict['v'] = row['VV']

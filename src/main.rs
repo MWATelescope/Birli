@@ -1096,7 +1096,7 @@ mod tests_aoflagger {
     }
 
     fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
-        let metafits_path = "tests/data/1254670392_avg/1254670392.metafits";
+        let metafits_path = "tests/data/1254670392_avg/1254670392.fixed.metafits";
         let gpufits_paths = [
             "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
             "tests/data/1254670392_avg/1254670392_20191009153257_gpubox02_00.fits",
@@ -1192,6 +1192,9 @@ mod tests_aoflagger {
         let pol_order = vec!["xx", "yy", "xy", "yx"];
         assert_eq!(num_pols, pol_order.len());
 
+        let time_resolution = 1. / 1_000_000.;
+        let mut times_seen = HashSet::<u64>::new();
+
         for record in expected_reader.records().filter_map(|result| match result {
             Ok(record) => Some(record),
             Err(err) => panic!("{:?}", err),
@@ -1212,10 +1215,8 @@ mod tests_aoflagger {
             }
 
             let rec_type = record.get(indices[&String::from("type")]).unwrap();
-
-            if rec_type != "vis" {
-                continue;
-            }
+            let pol = record.get(indices[&String::from("pol")]).unwrap();
+            let pol_idx = pol_order.iter().position(|x| *x == pol).unwrap();
 
             let mut match_found = false;
 
@@ -1238,19 +1239,17 @@ mod tests_aoflagger {
                     *value += pzero
                 }
 
+                times_seen.insert((obs_group_params[4] / time_resolution).round() as u64);
+
                 let time_match = approx_eq!(
                     f64,
                     exp_group_params[4],
                     obs_group_params[4],
-                    F64Margin::default().epsilon(1e-1)
+                    F64Margin::default().epsilon(1e-5)
                 );
 
-                let baseline_match = approx_eq!(
-                    f64,
-                    exp_group_params[3],
-                    obs_group_params[3],
-                    F64Margin::default().epsilon(1e-1)
-                );
+                let baseline_match =
+                    exp_group_params[3].round() as i32 == obs_group_params[3].round() as i32;
 
                 if time_match && baseline_match {
                     match_found = true;
@@ -1274,20 +1273,6 @@ mod tests_aoflagger {
                         );
                     }
 
-                    let exp_pol_vis: Vec<_> = record
-                        .iter()
-                        .skip(freq_start_header)
-                        .flat_map(|cell| {
-                            let complex = parse_complex(cell);
-                            vec![complex.re, complex.im].into_iter()
-                        })
-                        .collect();
-
-                    assert_eq!(
-                        num_fine_freq_chans * num_pols * floats_per_complex,
-                        exp_pol_vis.len() * num_pols
-                    );
-
                     unsafe {
                         // ffgpve = fits_read_img_flt
                         fitsio_sys::ffgpve(
@@ -1303,39 +1288,97 @@ mod tests_aoflagger {
                     };
                     fits_check_status(status).unwrap();
 
-                    let pol = record.get(indices[&String::from("pol")]).unwrap();
-                    let pol_idx = pol_order.iter().position(|x| *x == pol).unwrap();
+                    match rec_type {
+                        "vis" => {
+                            let exp_pol_vis: Vec<_> = record
+                                .iter()
+                                .skip(freq_start_header)
+                                .flat_map(|cell| {
+                                    let complex = parse_complex(cell);
+                                    vec![complex.re, complex.im].into_iter()
+                                })
+                                .collect();
 
-                    let obs_pol_vis: Vec<_> = obs_vis
-                        .chunks(floats_per_pol * num_pols)
-                        .flat_map(|chunk| {
-                            chunk.chunks(floats_per_pol).skip(pol_idx).take(1).flat_map(
-                                |complex_flag| {
-                                    let conjugate = vec![complex_flag[0], -complex_flag[1]];
-                                    conjugate
-                                },
-                            )
-                        })
-                        .collect();
+                            debug_assert_eq!(
+                                num_fine_freq_chans * num_pols * floats_per_complex,
+                                exp_pol_vis.len() * num_pols
+                            );
 
-                    for (vis_idx, (&obs_val, &exp_val)) in
-                        izip!(obs_pol_vis.iter(), exp_pol_vis.iter()).enumerate()
-                    {
-                        assert!(
-                            approx_eq!(f32, obs_val, exp_val, vis_margin),
-                            "cells don't match (obs {} != exp {}) in row {} (bl {} ts {}), pol {} ({}), vis index {}. \nobserved: {:?} != \nexpected: {:?}",
-                            obs_val,
-                            exp_val,
-                            row_idx,
-                            exp_group_params[3],
-                            exp_group_params[4],
-                            pol,
-                            pol_idx,
-                            vis_idx,
-                            &obs_pol_vis,
-                            &exp_pol_vis
-                        );
+                            let obs_pol_vis: Vec<_> = obs_vis
+                                .chunks(floats_per_pol * num_pols)
+                                .flat_map(|chunk| {
+                                    chunk.chunks(floats_per_pol).skip(pol_idx).take(1).flat_map(
+                                        |complex_flag| {
+                                            let conjugate = vec![complex_flag[0], -complex_flag[1]];
+                                            conjugate
+                                        },
+                                    )
+                                })
+                                .collect();
+
+                            for (vis_idx, (&obs_val, &exp_val)) in
+                                izip!(obs_pol_vis.iter(), exp_pol_vis.iter()).enumerate()
+                            {
+                                assert!(
+                                    approx_eq!(f32, obs_val, exp_val, vis_margin),
+                                    "visibility cells don't match (obs {} != exp {}) in row {} (bl {} ts {}), pol {} ({}), vis index {}. \nobserved: {:?} != \nexpected: {:?}",
+                                    obs_val,
+                                    exp_val,
+                                    row_idx,
+                                    exp_group_params[3],
+                                    exp_group_params[4],
+                                    pol,
+                                    pol_idx,
+                                    vis_idx,
+                                    &obs_pol_vis,
+                                    &exp_pol_vis
+                                );
+                            }
+                        }
+                        "weight" => {
+                            let exp_pol_weight: Vec<f32> = record
+                                .iter()
+                                .skip(freq_start_header)
+                                .map(|cell| cell.parse().unwrap())
+                                .collect();
+
+                            debug_assert_eq!(num_fine_freq_chans, exp_pol_weight.len());
+
+                            let obs_pol_weight: Vec<_> = obs_vis
+                                .chunks(floats_per_pol * num_pols)
+                                .flat_map(|chunk| {
+                                    chunk
+                                        .chunks(floats_per_pol)
+                                        .skip(pol_idx)
+                                        .take(1)
+                                        .map(|complex_flag| complex_flag[2])
+                                })
+                                .collect();
+
+                            for (weight_idx, (&obs_val, &exp_val)) in
+                                izip!(obs_pol_weight.iter(), exp_pol_weight.iter()).enumerate()
+                            {
+                                assert!(
+                                    approx_eq!(f32, obs_val, exp_val, F32Margin::default()),
+                                    "cells don't match (obs {} != exp {}) in row {} (bl {} ts {}), pol {} ({}), weight index {}. \nobserved: {:?} != \nexpected: {:?}",
+                                    obs_val,
+                                    exp_val,
+                                    row_idx,
+                                    exp_group_params[3],
+                                    exp_group_params[4],
+                                    pol,
+                                    pol_idx,
+                                    weight_idx,
+                                    &obs_pol_weight,
+                                    &exp_pol_weight
+                                );
+                            }
+                        }
+                        _ => {
+                            panic!("unexpected record type {}", rec_type);
+                        }
                     }
+
                     break;
                 }
 
@@ -1343,8 +1386,13 @@ mod tests_aoflagger {
             }
             if !match_found {
                 panic!(
-                    "unable to find matching row for time={}, baseline={}",
-                    exp_group_params[4], exp_group_params[3]
+                    "unable to find matching row for time={}, baseline={:?}, times_seen={:?}",
+                    exp_group_params[4],
+                    exp_group_params[3],
+                    times_seen
+                        .iter()
+                        .map(|&x| (x as f64) * time_resolution)
+                        .collect::<Vec<_>>()
                 );
             }
         }
@@ -1633,8 +1681,9 @@ mod tests_aoflagger {
 
     #[test]
     fn test_1254670392_avg_uvfits_no_corrections() {
-        let tmp_dir = tempdir().unwrap();
-        let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
+        // let tmp_dir = tempdir().unwrap();
+        // let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
+        let uvfits_path: PathBuf = "tests/data/1254670392_avg/1254670392.birli.none.uvfits".into();
 
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
@@ -1654,7 +1703,7 @@ mod tests_aoflagger {
         args.extend_from_slice(&gpufits_paths);
 
         main_with_args(&args);
-        // let uvfits_path = PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.none.uvfits");
+
         compare_uvfits_with_csv(uvfits_path, expected_csv_path, F32Margin::default());
     }
 
@@ -1774,7 +1823,6 @@ mod tests_aoflagger {
     ///
     /// ```python
     /// tb.open('tests/data/1254670392_avg/1254670392.cotter.corrected.ms/')
-    /// start_time = 5077351977
     /// exec(open('tests/data/casa_dump_ms.py').read())
     /// ```
     #[test]

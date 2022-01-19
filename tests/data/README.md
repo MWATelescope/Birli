@@ -69,7 +69,7 @@ Because this observation only contains a subset of the channels of a real observ
 
 This is the full [obs id 1254670392](http://ws.mwatelescope.org/observation/obs/?obs_id=1254670392), which is averaged to 2s / 40kHz. Because it is nice and small, all channels fit inside the repository, and a partial CSV dump of the uvfits visibilities is used to test UVFits and corrections, however the uvfits files themselves are too large.
 
-Because the file cuts off 2 scans in, a fixed version of the metafits file was made for better comparison with cotter.
+Because the file cuts off 2 scans in, and has all antennae flagged, a fixed version of the metafits file was made for better comparison with cotter.
 
 ```python
 >>> import os
@@ -80,7 +80,9 @@ Because the file cuts off 2 scans in, a fixed version of the metafits file was m
 >>> meta_fits[0].header["NSCANS"]
 4
 >>> meta_fits[0].header["NSCANS"] = 2
->>> meta_fits.writeto("1254670392.fixed.metafits")
+>>> for row in meta_fits[1].data:
+...   row['Flag'] = 0
+>>> meta_fits.writeto("1254670392.fixed.metafits", overwrite=True)
 ```
 
 ## Generating test files
@@ -476,7 +478,8 @@ for i in \
   1196175296_mwa_ord/1196175296.metafits \
   1247842824_flags/1247842824.metafits \
   1297526432_mwax/1297526432.metafits \
-  1254670392_avg/1254670392.metafits
+  1254670392_avg/1254670392.metafits \
+  1254670392_avg/1254670392.fixed.metafits
 do
   python3 tests/data/dump_metafits.py "tests/data/$i" | tee "tests/data/$i.txt"
 done
@@ -511,6 +514,7 @@ done
 for i in \
   1196175296_mwa_ord/1196175296.uvfits \
   1247842824_flags/1247842824.uvfits \
+  1254670392_avg/1254670392.cotter.none.uvfits \
   1254670392_avg/1254670392.cotter.none.uvfits \
   1254670392_avg/1254670392.cotter.none.avg_4s_160khz.uvfits \
   1254670392_avg/1254670392.cotter.cable.uvfits \
