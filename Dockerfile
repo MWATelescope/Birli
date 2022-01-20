@@ -16,7 +16,7 @@ RUN apt-get update \
         libssl-dev \
         pkg-config \
         unzip \
-        zip \
+        zip
 
 RUN test -z "$DEBUG" || ( \
         apt-get install -y vim gdb \
