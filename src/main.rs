@@ -634,7 +634,7 @@ where
     //     let init_seconds = seconds_str.parse::<f64>().unwrap();
     //     // init_steps = todo!();
     // }
-    if let Some(timesteps) = matches.values_of("flag-timesteps") {
+    if let Some(timesteps) = matches.values_of("flag-times") {
         for value in timesteps {
             if let Ok(timestep_idx) = value.parse::<usize>() {
                 timestep_flags[timestep_idx] = true;
@@ -769,7 +769,7 @@ where
     }
 
     for untested_option in &[
-        "flag-timesteps",
+        "flag-times",
         "flag-coarse-chans",
         "flag-fine-chans",
         "no-flag-metafits",
