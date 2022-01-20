@@ -1,5 +1,12 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.3.0 (2022-01-20)
+
+- [EOR-5] Spectral and temporal averaging.
+- add untested options for basic flagging and phase centre configuration.
+- display human-readable information how the input channels and timesteps will be processed.
+- Update Marlu
+
 # Version 0.2.1 (2021-12-15)
 
 - upgrade ndarray and marlu for better ms writing performance.
@@ -24,7 +31,7 @@
 
 # Version 0.1.8 (2021-08-26)
 
-- [EOR-32] replace aoflagger::imageset with `ndarray::Array3<Jones>` wherever possible. 
+- [EOR-32] replace aoflagger::imageset with `ndarray::Array3<Jones>` wherever possible.
 - use `mwa_rust_core` for positional and Jones
 - use mwalib::get_fine_chan_freqs_hz_array
 
