@@ -7,7 +7,7 @@ use birli::{
 };
 use cfg_if::cfg_if;
 use clap::{app_from_crate, arg, AppSettings, ValueHint::FilePath};
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 use marlu::{
     precession::{precess_time, PrecessionInfo},
     time::gps_millis_to_epoch,
@@ -413,61 +413,61 @@ where
 
             // flagging options
             // -> timesteps
-            arg!(--"flag-init" <SECONDS> "Flag <SECONDS> after first common timestep (quack time)")
+            arg!(--"flag-init" <SECONDS> "[WIP] Flag <SECONDS> after first common time (quack time)")
                 .alias("--quack-time")
                 .help_heading("FLAGGING")
                 .required(false),
-            arg!(--"flag-init-steps" <COUNT> "Flag <COUNT> timesteps after first common timestep")
+            arg!(--"flag-init-steps" <COUNT> "[WIP] Flag <COUNT> steps after first common time")
                 .help_heading("FLAGGING")
                 .required(false)
                 .conflicts_with("flag-init"),
-            arg!(--"flag-end" <SECONDS> "Flag seconds before the last provided timestep")
+            arg!(--"flag-end" <SECONDS> "[WIP] Flag seconds before the last provided time")
                 .help_heading("FLAGGING")
                 .required(false),
-            arg!(--"flag-end-steps" <COUNT> "Flag <COUNT> timesteps before the last provided timestep")
+            arg!(--"flag-end-steps" <COUNT> "[WIP] Flag <COUNT> steps before the last provided")
                 .help_heading("FLAGGING")
                 .required(false)
                 .conflicts_with("flag-end"),
-            arg!(--"flag-timesteps" <STEPS>... "Flag additional timestep indices")
+            arg!(--"flag-times" <STEPS>... "[WIP] Flag additional time steps")
                 .help_heading("FLAGGING")
                 .multiple_values(true)
                 .required(false),
             // -> channels
-            arg!(--"flag-coarse-chans" <CHANS> ... "Flag additional coarse channel indices")
+            arg!(--"flag-coarse-chans" <CHANS> ... "[WIP] Flag additional coarse chan indices")
                 .help_heading("FLAGGING")
                 .multiple_values(true)
                 .required(false),
-            arg!(--"flag-edge-width" <KHZ> "Flag bandwidth [kHz] on either end of each coarse channel")
+            arg!(--"flag-edge-width" <KHZ> "[WIP] Flag bandwidth [kHz] at the ends of each coarse chan")
                 .help_heading("FLAGGING")
                 .required(false),
-            arg!(--"flag-edge-chans" <COUNT> "Flag <COUNT> fine channels on the ends of each coarse")
+            arg!(--"flag-edge-chans" <COUNT> "[WIP] Flag <COUNT> fine chans on the ends of each coarse")
                 .help_heading("FLAGGING")
                 .conflicts_with("flag-edge-width")
                 .required(false),
-            arg!(--"flag-fine-chans" <CHANS>... "Flag fine channel indices in each coarse channel")
+            arg!(--"flag-fine-chans" <CHANS>... "[WIP] Flag fine chan indices in each coarse chan")
                 .help_heading("FLAGGING")
                 .multiple_values(true)
                 .required(false),
-            arg!(--"flag-dc" "Force flagging of DC centre channels")
+            arg!(--"flag-dc" "[WIP] Force flagging of DC centre chans")
                 .help_heading("FLAGGING")
                 .required(false),
-            arg!(--"no-flag-dc" "Do not flag DC centre channels")
+            arg!(--"no-flag-dc" "[WIP] Do not flag DC centre chans")
                 .help_heading("FLAGGING")
                 .required(false),
             // -> antennae
-            arg!(--"no-flag-metafits" "Ignore antenna flags in metafits")
+            arg!(--"no-flag-metafits" "[WIP] Ignore antenna flags in metafits")
                 .help_heading("FLAGGING")
                 .required(false),
-            arg!(--"flag-antennae" <ANTS>... "Flag antenna indices")
+            arg!(--"flag-antennae" <ANTS>... "[WIP] Flag antenna indices")
                 .help_heading("FLAGGING")
                 .multiple_values(true)
                 .required(false),
 
             // corrections
-            arg!(--"phase-centre" "Override Phase centre from metafits (degrees)")
+            arg!(--"phase-centre" "[WIP] Override Phase centre from metafits (degrees)")
                 .value_names(&["RA", "DEC"])
                 .required(false),
-            arg!(--"pointing-centre" "Use pointing instead phase centre")
+            arg!(--"pointing-centre" "[WIP] Use pointing instead phase centre")
                 .conflicts_with("phase-centre"),
             arg!(--"no-cable-delay" "Do not perform cable length corrections"),
             arg!(--"no-geometric-delay" "Do not perform geometric corrections")
@@ -739,23 +739,35 @@ where
     }
 
     for unimplemented_option in &[
-        // Flagging
         "flag-init",
         "flag-init-steps",
         "flag-end",
         "flag-end-steps",
-        // "flag-timesteps",
-        "flag-coarse-chans",
         "flag-edge-width",
         "flag-edge-chans",
         "flag-fine-chans",
         "flag-dc",
         "no-flag-dc",
-        // "no-flag-metafits",
-        // "flag-antennae",
     ] {
         if matches.is_present(unimplemented_option) {
             panic!("option not yet implemented: --{}", unimplemented_option);
+        }
+    }
+
+    for untested_option in &[
+        "flag-timesteps",
+        "flag-coarse-chans",
+        "flag-fine-chans",
+        "no-flag-metafits",
+        "flag-antennae",
+        "phase-centre",
+        "pointing-centre",
+    ] {
+        if matches.is_present(untested_option) {
+            warn!(
+                "option does not have full test coverage, use with caution: --{}",
+                untested_option
+            );
         }
     }
 
@@ -1909,6 +1921,44 @@ mod tests_aoflagger {
             "4",
             "--avg-freq-res",
             "160",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+
+        compare_ms_with_csv(
+            ms_path,
+            expected_csv_path,
+            F32Margin::default().epsilon(1e-7),
+        );
+    }
+
+    /// Same as above but with factors instead of resolution
+    #[test]
+    fn test_1254670392_avg_ms_none_avg_4s_160khz_factors() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("1254670392.ms");
+
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let expected_csv_path =
+            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.ms.csv");
+
+        env_logger::try_init().unwrap_or(());
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-M",
+            ms_path.to_str().unwrap(),
+            "--emulate-cotter",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--avg-time-factor",
+            "2",
+            "--avg-freq-factor",
+            "4",
         ];
         args.extend_from_slice(&gpufits_paths);
 
