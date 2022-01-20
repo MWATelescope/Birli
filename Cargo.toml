@@ -21,6 +21,9 @@ exclude = ["tests/*", ".vscode/*", ".github/*", ".talismanrc"]
 [features]
 default = ["aoflagger"]
 aoflagger = ["aoflagger_sys"]
+erfa-static = ["marlu/erfa-static"]
+cfitsio-static = ["marlu/cfitsio-static"]
+all-static = ["erfa-static", "cfitsio-static"]
 
 [dependencies]
 aoflagger_sys = { version = "0.1.*", optional = true }
