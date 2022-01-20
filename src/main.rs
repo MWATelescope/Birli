@@ -669,6 +669,10 @@ where
     //     // init_steps = todo!();
     // }
 
+    // ///////// //
+    // Averaging //
+    // ///////// //
+
     let int_time_s = context.metafits_context.corr_int_time_ms as f64 / 1e3;
 
     let avg_time: usize = match (
@@ -678,13 +682,16 @@ where
         (Some(_), Some(_)) => {
             panic!("you can't use --avg-time-factor and --avg-time-res at the same time");
         }
-        (Some(factor_str), None) => factor_str
-            .parse()
-            .expect("unable to parse --avg-time-factor"),
+        (Some(factor_str), None) => factor_str.parse().unwrap_or_else(|_| {
+            panic!(
+                "unable to parse --avg-time-factor \"{}\" as an unsigned integer",
+                factor_str
+            )
+        }),
         (_, Some(res_str)) => {
-            let res = res_str
-                .parse::<f64>()
-                .expect("unable to parse --avg-time-res");
+            let res = res_str.parse::<f64>().unwrap_or_else(|_| {
+                panic!("unable to parse --avg-time-res \"{}\" as a float", res_str)
+            });
             let ratio = res / int_time_s;
             debug_assert!(ratio.is_finite() && ratio >= 1.0 && ratio.fract() < 1e-6);
             ratio.round() as _
@@ -701,13 +708,16 @@ where
         (Some(_), Some(_)) => {
             panic!("you can't use --avg-freq-factor and --avg-freq-res at the same time");
         }
-        (Some(factor_str), None) => factor_str
-            .parse()
-            .expect("unable to parse --avg-freq-factor"),
+        (Some(factor_str), None) => factor_str.parse().unwrap_or_else(|_| {
+            panic!(
+                "unable to parse --avg-freq-factor \"{}\" as an unsigned integer",
+                factor_str
+            )
+        }),
         (_, Some(res_str)) => {
-            let res = res_str
-                .parse::<f64>()
-                .expect("unable to parse --avg-freq-res");
+            let res = res_str.parse::<f64>().unwrap_or_else(|_| {
+                panic!("unable to parse --avg-freq-res \"{}\" as a float", res_str)
+            });
             let ratio = res / fine_chan_width_khz;
             debug_assert!(ratio.is_finite() && ratio >= 1.0 && ratio.fract() < 1e-6);
             ratio.round() as _
@@ -716,6 +726,10 @@ where
     };
 
     let baseline_flags = get_baseline_flags(&context, &antenna_flags);
+
+    // ///////// //
+    // Show info //
+    // ///////// //
 
     show_param_info(
         &context,

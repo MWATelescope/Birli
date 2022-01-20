@@ -195,34 +195,6 @@ gdb --args /app/target/debug/birli ${YOUR_BIRLI_ARGS}
 # > run
 ```
 
-### the trait bound `Jones<f32>: AbsDiffEq<_>` is not satisfied
-
-if you see an error that looks like this:
-
-```txt
-error[E0277]: the trait bound `Jones<f32>: AbsDiffEq<_>` is not satisfied
-    --> src/corrections.rs:1029:9
-     |
-1029 | /         assert_abs_diff_eq!(
-1030 | |             *jones_array.get((3, 3, 1)).unwrap(),
-1031 | |             &Jones::from([
-1032 | |                 Complex::new(rot_1_xx_3_3_re, rot_1_xx_3_3_im),
-...    |
-1036 | |             ])
-1037 | |         );
-     | |__________^ the trait `AbsDiffEq<_>` is not implemented for `Jones<f32>`
-     |
-     = note: this error originates in the macro `abs_diff_eq` (in Nightly builds, run with -Z macro-backtrace for more info)
-```
-
-try
-
-```bash
-cargo update
-cargo update -p approx:0.5.0 --precise 0.4.0
-cargo update -p ndarray:0.15.3 --precise 0.14.0
-```
-
 ## Usage
 
 `birli -h`
@@ -232,12 +204,13 @@ USAGE:
     birli [OPTIONS] --metafits <PATH> <PATHS>...
 
 OPTIONS:
+        --dry-run                    Just print the summary and exit
         --emulate-cotter             Use Cotter's array position, not MWAlib's
     -h, --help                       Print help information
         --no-cable-delay             Do not perform cable length corrections
         --no-geometric-delay         Do not perform geometric corrections
-        --phase-centre <RA> <DEC>    Override Phase centre from metafits (degrees)
-        --pointing-centre            Use pointing instead phase centre
+        --phase-centre <RA> <DEC>    [WIP] Override Phase centre from metafits (degrees)
+        --pointing-centre            [WIP] Use pointing instead phase centre
     -V, --version                    Print version information
 
 INPUT:
@@ -245,10 +218,19 @@ INPUT:
     <PATHS>...           GPUBox files to process
 
 FLAGGING:
-        --flag-antennae <ANTS>...         Flag antenna indices
-        --flag-coarse-chans <CHANS>...    Flag additional coarse channel indices
-        --flag-timesteps <STEPS>...       Flag additional timestep indices
-        --no-flag-metafits                Ignore antenna flags in metafits
+        --flag-antennae <ANTS>...         [WIP] Flag antenna indices
+        --flag-coarse-chans <CHANS>...    [WIP] Flag additional coarse chan indices
+        --flag-dc                         [WIP] Force flagging of DC centre chans
+        --flag-edge-chans <COUNT>         [WIP] Flag <COUNT> fine chans on the ends of each coarse
+        --flag-edge-width <KHZ>           [WIP] Flag bandwidth [kHz] at the ends of each coarse chan
+        --flag-end <SECONDS>              [WIP] Flag seconds before the last provided time
+        --flag-end-steps <COUNT>          [WIP] Flag <COUNT> steps before the last provided
+        --flag-fine-chans <CHANS>...      [WIP] Flag fine chan indices in each coarse chan
+        --flag-init <SECONDS>             [WIP] Flag <SECONDS> after first common time (quack time)
+        --flag-init-steps <COUNT>         [WIP] Flag <COUNT> steps after first common time
+        --flag-times <STEPS>...           [WIP] Flag additional time steps
+        --no-flag-dc                      [WIP] Do not flag DC centre chans
+        --no-flag-metafits                [WIP] Ignore antenna flags in metafits
 
 AVERAGING:
         --avg-freq-factor <FACTOR>    Average <FACTOR> channels per averaged channel
@@ -270,6 +252,8 @@ AOFLAGGER:
 
 Note: the aoflagged options are only available when the aoflagger feature is enabled.
 
+Operations are performed in the order described by the following sections.
+
 ### Cable Delay Corrections
 
 Cable delay correction involves adjusting visibility phases to correct for the differences in electrical length of the cable between each tile and it's receiver.
@@ -284,13 +268,19 @@ A baseline's cable lengths are determined by the difference between a baseline's
 let angle = -2.0 * PI * electrical_length_m * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
 ```
 
+### RFI Flagging.
+
+By default, Birli will flag the data using the default MWA strategy in AOFlagger. You can use the
+`--no-rfi` option to disable this, or the `--aoflagger-strategy` option to proived your own strategy
+file.
+
 ### Geometric Delay Corrections (AKA Phase Tracking)
 
 Geometric correction involves adjusting visibility phases to correct for the differences in distance that light from the phase center has to travel to reach each tile.
 
 Legacy MWA correlator observations are not typically phase tracked, however MWAX observations can have phase tracking applied. The [`GEODEL`](https://wiki.mwatelescope.org/display/MP/MWAX+Metafits+Changes) card in the metafits describes what geometric delays have been applied.
 
-By default, Birli will apply geometric corrections at the phase center if they have not already been applied. It determines the observations phase center from the [`RAPHASE` and `DECPHASE`](https://wiki.mwatelescope.org/display/MP/Metafits+files) cards in the metafits. If these are not available, the pointing center cards ([`RA` and `DEC`](https://wiki.mwatelescope.org/display/MP/Metafits+files)) from the metafits are used. You can use `--no-geometric-delay` to disable this.
+By default, Birli will apply geometric corrections at the phase center if they have not already been applied. It determines the observations phase center from the [`RAPHASE` and `DECPHASE`](https://wiki.mwatelescope.org/display/MP/Metafits+files) cards in the metafits. If these are not available, the pointing center cards ([`RA` and `DEC`](https://wiki.mwatelescope.org/display/MP/Metafits+files)) from the metafits are used. You can use `--no-geometric-delay` to disable geometric corrections, as well as the `--phase-centre` and `--pointing-centre` options to override the phase center.
 
 A baseline's geometric length is determined by the w component of it's UVW fourier-space vector, after applying precession and nutation to it's tiles' positions and the phase center to the J2000 epoch, accounting for stellar aberration. Complex visibilities are phase-shifted by an angle determined by the w-component, and the channel's frequency.
 
@@ -306,13 +296,32 @@ By default, Birli will use the MWA array position from MWALib in order to calcul
 
 This flag is used as part of the tests in `src/main.rs` to validate that Birli's output matches that of Cotter to within an acceptable margin.
 
-### Example: RFI Flagging, corrections and UVFits/mwaf output
+### Averaging
+
+To average the data in time or frequency by a given whole number factor, you can provide the `--avg-time-factor`
+or `--avg-freq-factor` options. This can also be achieved with the `--avg-time-res` and
+`--avg-freq-res` options which take a duration \[seconds\] or ammount of bandwidth \[kHz\]
+respectively. This second group of options will choose the closest whole number averaging factor
+based on the resolution of the input data.
+
+### Output
+
+Birli can output visibility data to uvfits or measurement set with `--ms-out` (`-M`) or
+`--uvfits-out` (`-u`). It can also output flags for each coarse channel in .mwaf format with
+`--flag-template` (`-f`), where the `%` characters in the template argument are replaced with
+the same zero-prefixed coarse channel identifiers that are used to identify the coarse channel
+GPUBox files that the coarse channel data came from. For legacy data, use two percentage characters,
+since the coarse channel identifier is the GPUBox number. However, for MWAX data, the coarse channel
+identifier is the channel number, which needs three digits.
+
+### Example: RFI Flagging, corrections, averaging, output
 
 In this example, we use the aoflagger subcommand to:
 
 - Perform RFI flagging using the MWA-default flagging strategy
 - Perform geometric and cable length corrections
-- Output flags to .mwaf (`-f`)
+- average the data to 4 seconds, 160khz
+- disable passband correction
 - Output visibilities to .uvfits (`-u`)
 
 ```bash
@@ -320,28 +329,14 @@ birli \
   -m tests/data/1254670392_avg/1254670392.metafits \
   -f "/tmp/Flagfile.Birli.MWA.%%.mwaf" \
   -u "/tmp/1254670392.birli.uvfits" \
+  --avg-time-res 4 --avg-freq-res 160 \
   tests/data/1254670392_avg/1254670392_*gpubox*.fits
 ```
 
-Since Cotter can't output flags and uvfits at the same time, the equivalent Cotter commands would be:
+The equivalent Cotter
+commands would be:
 
 ```bash
-# output flags
-cotter \
-  -m tests/data/1254670392_avg/1254670392.metafits \
-  -o "tests/data/1247842824_flags/FlagfileCotterMWA%%.mwaf" \
-  -allowmissing \
-  -edgewidth 0 \
-  -endflag 0 \
-  -initflag 0 \
-  -noantennapruning \
-  -noflagautos \
-  -noflagdcchannels \
-  -nosbgains \
-  -sbpassband tests/data/subband-passband-128ch-unitary.txt \
-  -nostats \
-  -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
-  tests/data/1254670392_avg/1254670392_20191009153257_gpubox*.fits
 # output uvfits
 cotter \
   -m tests/data/1254670392_avg/1254670392.metafits \
@@ -356,6 +351,8 @@ cotter \
   -nosbgains \
   -sbpassband tests/data/subband-passband-128ch-unitary.txt \
   -nostats \
+  -timeres 4 \
+  -freqres 160 \
   -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
   tests/data/1254670392_avg/1254670392_20191009153257_gpubox*.fits
 ```
