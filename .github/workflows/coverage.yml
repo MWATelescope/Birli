@@ -14,47 +14,30 @@ name: Generate Coverage report
 jobs:
   coverage:
     runs-on: ubuntu-latest
-    container: mwatelescope/birli:latest
-
+    container: mwatelescope/marlu:latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
-      - name: Install nightly toolchain
-        run: |
-          rustup set profile minimal
-          rustup toolchain install nightly --component llvm-tools-preview
-          rustup default nightly
+      - uses: taiki-e/github-actions/install-rust@main
+        with:
+          toolchain: nightly-2022-01-14
+          component: llvm-tools-preview
 
-      - name: Install system and Cargo Packages
-        run: |
-          apt-get update
-          apt-get install -y lcov clang curl zip unzip libssl-dev jq liberfa-dev libcfitsio-dev
-          cargo update
-          cargo install --force cargo-make cargo-binutils grcov
-        env:
-          DEBIAN_FRONTEND: noninteractive
+      - name: install cargo-llvm-cov
+        run: cargo +nightly-2022-01-14 install cargo-llvm-cov
 
       - name: Generate test lcov coverage into coverage/ dir
-        env:
-          LD_LIBRARY_PATH: /usr/local/lib/
-          CARGO_INCREMENTAL: 0
-          RUSTFLAGS: "-Zprofile -Ccodegen-units=1 -Copt-level=0 -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort"
-          RUSTDOCFLAGS: "-Cpanic=abort"
-          LLVM_PROFILE_FILE: json5format-%m.profraw
         run: |
+          export PATH="${HOME}/.cargo/bin:${PATH}"
           mkdir -p coverage
-          cargo build
-          cargo test
-          zip -0 ccov.zip `find . \( -name "birli*.gc*" \) -print`
-          grcov ccov.zip -s . -t lcov --llvm --branch \
-            --ignore-not-existing --ignore "/*" \
-            --excl-br-line "^.*(((debug_)?assert(_eq|_ne|_abs_diff_(eq|ne))?|debug|error|info|log|trace|warn)!|#\[derive\()" \
-            -o coverage/coverage.lcov
+          cargo +nightly-2022-01-14 llvm-cov --lib --lcov --output-path coverage/coverage.lcov
+          # this uses the result of the previous run to generate a text summary
+          cargo +nightly-2022-01-14 llvm-cov --no-run
 
       - name: Upload reports to codecov.io
-        uses: codecov/codecov-action@v1
+        uses: codecov/codecov-action@v2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
