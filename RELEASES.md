@@ -1,5 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.3.1 (2022-01-21)
+
+- expose optional Marlu features
+- fix thread 'main' panicked at '`flag-timesteps`.
+
 # Version 0.3.0 (2022-01-20)
 
 - [EOR-5] Spectral and temporal averaging.
