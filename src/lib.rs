@@ -66,6 +66,7 @@
 //!     &img_timestep_range,
 //!     &img_coarse_chan_range,
 //!     Some(flag_array),
+//!     false,
 //! ).unwrap();
 //!
 //! // write the flags to disk as .mwaf
@@ -89,6 +90,7 @@
 //!     None,
 //!     1,
 //!     1,
+//!     false,
 //! ).unwrap();
 //! ```
 //!
@@ -278,7 +280,8 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 ///     &context,
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
-///     None
+///     None,
+///     false,
 /// ).unwrap();
 ///
 /// let dims_common = jones_array.dim();
@@ -288,7 +291,8 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 ///     &context,
 ///     &good_timestep_range,
 ///     &img_coarse_chan_range,
-///     None
+///     None,
+///     false,
 /// ).unwrap();
 ///
 /// let dims_good = jones_array.dim();
@@ -304,9 +308,8 @@ pub fn context_to_jones_array(
     context: &CorrelatorContext,
     mwalib_timestep_range: &Range<usize>,
     mwalib_coarse_chan_range: &Range<usize>,
-    // TODO: allow subset of baselines
-    // mwalib_baseline_idxs: &[usize],
     flag_array: Option<Array3<bool>>,
+    draw_progress: bool,
 ) -> Result<(Array3<Jones<f32>>, Array3<bool>), BirliError> {
     trace!("start context_to_jones_array");
 
@@ -346,8 +349,14 @@ pub fn context_to_jones_array(
     // A queue of errors
     let (tx_error, rx_error) = unbounded();
 
+    let draw_target = if draw_progress {
+        ProgressDrawTarget::stderr()
+    } else {
+        ProgressDrawTarget::hidden()
+    };
+
     // a progress bar containing the progress bars associated with this method
-    let multi_progress = MultiProgress::with_draw_target(ProgressDrawTarget::stderr());
+    let multi_progress = MultiProgress::with_draw_target(draw_target);
     // a vector of progress bars for the visibility reading progress of each channel.
     let read_progress: Vec<ProgressBar> = mwalib_coarse_chan_range
         .to_owned()
@@ -632,6 +641,7 @@ mod tests {
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
             None,
+            false,
         )
         .unwrap();
         let jones_array = jones_array.mapv(TestJones::from);
@@ -752,6 +762,7 @@ mod tests {
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
             None,
+            false,
         )
         .unwrap();
 
@@ -857,6 +868,7 @@ mod tests {
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
             None,
+            false,
         )
         .unwrap();
 

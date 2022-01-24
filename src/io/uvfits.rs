@@ -12,7 +12,7 @@ use std::{
 };
 
 use fitsio::{errors::check_status as fits_check_status, FitsFile};
-use indicatif::ProgressStyle;
+use indicatif::{ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use log::{trace, warn};
 use marlu::{
@@ -836,6 +836,7 @@ impl UvfitsWriter {
         mwalib_baseline_idxs: &[usize],
         avg_time: usize,
         avg_freq: usize,
+        draw_progress: bool,
     ) -> Result<(), IOError> {
         let num_pols = context.metafits_context.num_visibility_pols;
         let expanded_flag_array = expand_flag_array(flag_array.view(), num_pols);
@@ -851,6 +852,7 @@ impl UvfitsWriter {
             mwalib_baseline_idxs,
             avg_time,
             avg_freq,
+            draw_progress,
         )
     }
 }
@@ -872,6 +874,7 @@ impl WriteableVis for UvfitsWriter {
         baseline_idxs: &[usize],
         avg_time: usize,
         avg_freq: usize,
+        draw_progress: bool,
     ) -> Result<(), IOError> {
         let mut uvfits = self.open()?;
 
@@ -928,8 +931,15 @@ impl WriteableVis for UvfitsWriter {
         let avg_int_time_ms = avg_time as u64 * int_time_ms;
         let half_avg_int_time_ms = avg_int_time_ms / 2;
 
+        let draw_target = if draw_progress {
+            ProgressDrawTarget::stderr()
+        } else {
+            ProgressDrawTarget::hidden()
+        };
+
         // Create a progress bar to show the writing status
-        let write_progress = indicatif::ProgressBar::new(self.total_num_rows as u64);
+        let write_progress =
+            indicatif::ProgressBar::with_draw_target(self.total_num_rows as u64, draw_target);
         write_progress.set_style(
             ProgressStyle::default_bar()
                 .template(
@@ -1787,6 +1797,7 @@ mod tests {
             &sel_timestep_range,
             &sel_coarse_chan_range,
             Some(flag_array),
+            false,
         )
         .unwrap();
 
@@ -1799,6 +1810,7 @@ mod tests {
             &sel_baseline_idxs,
             1,
             1,
+            false,
         )
         .unwrap();
 
@@ -1877,6 +1889,7 @@ mod tests {
             &sel_timestep_range,
             &sel_coarse_chan_range,
             Some(flag_array),
+            false,
         )
         .unwrap();
 
@@ -1895,6 +1908,7 @@ mod tests {
             &sel_baseline_idxs,
             avg_time,
             avg_freq,
+            false,
         )
         .unwrap();
 
@@ -1970,6 +1984,7 @@ mod tests {
             &sel_timestep_range,
             &sel_coarse_chan_range,
             Some(flag_array),
+            false,
         )
         .unwrap();
 
@@ -1982,6 +1997,7 @@ mod tests {
             &sel_baseline_idxs,
             1,
             1,
+            false,
         )
         .unwrap();
 
@@ -2267,6 +2283,7 @@ mod tests_aoflagger {
             &sel_timestep_range,
             &sel_coarse_chan_range,
             Some(flag_array),
+            false,
         )
         .unwrap();
 
@@ -2278,6 +2295,7 @@ mod tests_aoflagger {
             &jones_array,
             Some(flag_array),
             true,
+            false,
         );
 
         u.write_jones_flags(
@@ -2289,6 +2307,7 @@ mod tests_aoflagger {
             &sel_baseline_idxs,
             1,
             1,
+            false,
         )
         .unwrap();
 
@@ -2358,6 +2377,7 @@ mod tests_aoflagger {
             &sel_timestep_range,
             &sel_coarse_chan_range,
             Some(flag_array),
+            false,
         )
         .unwrap();
 
@@ -2369,6 +2389,7 @@ mod tests_aoflagger {
             &jones_array,
             Some(flag_array),
             true,
+            false,
         );
 
         let num_pols = context.metafits_context.num_visibility_pols;
@@ -2386,6 +2407,7 @@ mod tests_aoflagger {
             &sel_baseline_idxs,
             avg_time,
             avg_freq,
+            false,
         )
         .unwrap();
 
