@@ -35,8 +35,7 @@ env_logger = "0.9"
 indicatif = { version = "0.16", features = ["rayon"] }
 itertools = "0.10"
 log = "0.4"
-# marlu = "0.3.3"
-marlu = { git = "https://github.com/MWATelescope/Marlu.git", branch="progress" }
+marlu = "0.3.4"
 lazy_static = "1.4.*"
 regex = "1.4"
 thiserror = "1.0"
