@@ -464,10 +464,10 @@ where
                 .required(false),
 
             // corrections
-            arg!(--"phase-centre" "[WIP] Override Phase centre from metafits (degrees)")
+            arg!(--"phase-centre" "Override Phase centre from metafits (degrees)")
                 .value_names(&["RA", "DEC"])
                 .required(false),
-            arg!(--"pointing-centre" "[WIP] Use pointing instead phase centre")
+            arg!(--"pointing-centre" "Use pointing instead phase centre")
                 .conflicts_with("phase-centre"),
             arg!(--"no-cable-delay" "Do not perform cable length corrections"),
             arg!(--"no-geometric-delay" "Do not perform geometric corrections")
@@ -787,8 +787,6 @@ where
         "flag-fine-chans",
         "no-flag-metafits",
         "flag-antennae",
-        "phase-centre",
-        "pointing-centre",
     ] {
         if matches.is_present(untested_option) {
             warn!(
@@ -1846,6 +1844,124 @@ mod tests_aoflagger {
             uvfits_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-4),
+        );
+    }
+
+    /// Test corrections using arbitrary phase centre.
+    /// data generated with:
+    ///
+    /// ```bash
+    /// cotter \
+    ///   -m tests/data/1254670392_avg/1254670392.fixed.metafits \
+    ///   -o tests/data/1254670392_avg/1254670392.cotter.corrected.phase0.uvfits \
+    ///   -allowmissing \
+    ///   -edgewidth 0 \
+    ///   -endflag 0 \
+    ///   -initflag 0 \
+    ///   -noantennapruning \
+    ///   -noflagautos \
+    ///   -noflagdcchannels \
+    ///   -nosbgains \
+    ///   -sbpassband tests/data/subband-passband-32ch-unitary.txt \
+    ///   -nostats \
+    ///   -centre 00h00m00.0s 00d00m00.0s \
+    ///   -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
+    ///   tests/data/1254670392_avg/1254670392*gpubox*.fits
+    /// ```
+    ///
+    /// ```bash
+    /// python tests/data/dump_uvfits.py \
+    ///     tests/data/1254670392_avg/1254670392.cotter.corrected.phase0.uvfits \
+    ///     --timestep-limit=12 --baseline-limit=12 --dump-mode=vis-only \
+    ///     --dump-csv=tests/data/1254670392_avg/1254670392.cotter.corrected.phase0.uvfits.csv
+    /// ```
+    #[test]
+    fn test_1254670392_avg_uvfits_both_phase0() {
+        let tmp_dir = tempdir().unwrap();
+        let uvfits_path = tmp_dir.path().join("1254670392.uvfits");
+
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let expected_csv_path =
+            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.corrected.phase0.uvfits.csv");
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--phase-centre",
+            "0.0",
+            "0.0",
+            "-u",
+            uvfits_path.to_str().unwrap(),
+            "--no-draw-progress",
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+        compare_uvfits_with_csv(
+            uvfits_path,
+            expected_csv_path,
+            F32Margin::default().epsilon(1e-4),
+        );
+    }
+
+    /// Test corrections using pointing centre as phase centre.
+    /// data generated with:
+    ///
+    /// ```bash
+    /// cotter \
+    ///   -m tests/data/1254670392_avg/1254670392.fixed.metafits \
+    ///   -o tests/data/1254670392_avg/1254670392.cotter.corrected.phase-point.ms \
+    ///   -allowmissing \
+    ///   -edgewidth 0 \
+    ///   -endflag 0 \
+    ///   -initflag 0 \
+    ///   -noantennapruning \
+    ///   -noflagautos \
+    ///   -noflagdcchannels \
+    ///   -nosbgains \
+    ///   -sbpassband tests/data/subband-passband-32ch-unitary.txt \
+    ///   -nostats \
+    ///   -usepcentre \
+    ///   -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
+    ///   tests/data/1254670392_avg/1254670392*gpubox*.fits
+    /// ```
+    ///
+    /// Then the following CASA commands
+    ///
+    /// ```python
+    /// tb.open('tests/data/1254670392_avg/1254670392.cotter.corrected.phase-point.ms/')
+    /// exec(open('tests/data/casa_dump_ms.py').read())
+    /// ```
+    #[test]
+    fn test_1254670392_avg_ms_phase_pointing() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("1254670392.ms");
+
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let expected_csv_path =
+            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.corrected.phase-point.ms.csv");
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--pointing-centre",
+            "-M",
+            ms_path.to_str().unwrap(),
+            "--no-draw-progress",
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+        compare_ms_with_csv(
+            ms_path,
+            expected_csv_path,
+            F32Margin::default().epsilon(2e-4),
         );
     }
 
