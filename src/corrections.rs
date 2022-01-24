@@ -4,7 +4,7 @@ use crate::{
     ndarray::{parallel::prelude::*, Array3, Axis},
     Jones,
 };
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use log::trace;
 use marlu::{
     constants::VEL_C, mwalib::CorrelatorContext, precession::precess_time, time, Complex,
@@ -53,10 +53,11 @@ use std::{f64::consts::PI, ops::Range};
 ///     &context,
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
-///     None
+///     None,
+///     false,
 /// ).unwrap();
 ///
-/// correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range);
+/// correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range, false);
 /// ```
 ///
 /// # Accuracy
@@ -77,6 +78,7 @@ pub fn correct_cable_lengths(
     mwalib_coarse_chan_range: &Range<usize>,
     // TODO: allow subset of baselines
     // mwalib_baseline_idxs: &[usize],
+    draw_progress: bool,
 ) {
     trace!("start correct_cable_lengths");
 
@@ -87,8 +89,14 @@ pub fn correct_cable_lengths(
         context.get_fine_chan_freqs_hz_array(&mwalib_coarse_chan_range.clone().collect::<Vec<_>>());
     let jones_dims = jones_array.dim();
 
+    let draw_target = if draw_progress {
+        ProgressDrawTarget::stderr()
+    } else {
+        ProgressDrawTarget::hidden()
+    };
+
     // Create a progress bar to show the status of the correction
-    let correction_progress = ProgressBar::new(jones_dims.2 as u64);
+    let correction_progress = ProgressBar::with_draw_target(jones_dims.2 as u64, draw_target);
     correction_progress.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -185,7 +193,8 @@ pub fn correct_cable_lengths(
 ///     &context,
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
-///     None
+///     None,
+///     false,
 /// ).unwrap();
 ///
 /// correct_geometry(
@@ -195,8 +204,10 @@ pub fn correct_cable_lengths(
 ///     &img_coarse_chan_range,
 ///     None,
 ///     None,
+///     false,
 /// );
 /// ```
+#[allow(clippy::too_many_arguments)]
 pub fn correct_geometry(
     context: &CorrelatorContext,
     jones_array: &mut Array3<Jones<f32>>,
@@ -206,6 +217,7 @@ pub fn correct_geometry(
     // mwalib_baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
     phase_centre_ra: Option<RADec>,
+    draw_progress: bool,
 ) {
     trace!("start correct_geometry");
 
@@ -237,7 +249,12 @@ pub fn correct_geometry(
     let tiles_xyz_geod = XyzGeodetic::get_tiles(&context.metafits_context, array_pos.latitude_rad);
 
     // Create a progress bar to show the status of the correction
-    let correction_progress = ProgressBar::new(jones_dims.0 as u64);
+    let draw_target = if draw_progress {
+        ProgressDrawTarget::stderr()
+    } else {
+        ProgressDrawTarget::hidden()
+    };
+    let correction_progress = ProgressBar::with_draw_target(jones_dims.0 as u64, draw_target);
     correction_progress.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -344,9 +361,14 @@ mod tests {
 
         // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-        let (jones_array, _) =
-            context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
-                .unwrap();
+        let (jones_array, _) = context_to_jones_array(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            None,
+            false,
+        )
+        .unwrap();
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -447,7 +469,7 @@ mod tests {
 
         // TODO: this is not great.
         let mut jones_array = jones_array.mapv(|e| Jones::from([e[0], e[1], e[2], e[3]]));
-        correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range);
+        correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range, false);
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -523,9 +545,14 @@ mod tests {
 
         // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
-        let (jones_array, _) =
-            context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
-                .unwrap();
+        let (jones_array, _) = context_to_jones_array(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            None,
+            false,
+        )
+        .unwrap();
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -627,7 +654,7 @@ mod tests {
         // FIXME: aaaaaaa
         let mut jones_array = jones_array.mapv(|e| Jones::from([e[0], e[1], e[2], e[3]]));
 
-        correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range);
+        correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range, false);
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -708,9 +735,14 @@ mod tests {
         // let phase_centre_ha = phase_centre_ra.to_hadec(lst_rad);
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
-        let (jones_array, _) =
-            context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
-                .unwrap();
+        let (jones_array, _) = context_to_jones_array(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            None,
+            false,
+        )
+        .unwrap();
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -810,6 +842,7 @@ mod tests {
             &img_coarse_chan_range,
             None,
             None,
+            false,
         );
 
         let jones_array = jones_array.mapv(TestJones::from);
@@ -896,6 +929,7 @@ mod tests {
             &img_coarse_chan_range,
             // img_baseline_idxs.as_slice(),
             None,
+            false,
         )
         .unwrap();
 
@@ -995,6 +1029,7 @@ mod tests {
             &img_coarse_chan_range,
             None,
             None,
+            false,
         );
         let jones_array = jones_array.mapv(TestJones::from);
         // there should be no difference in baseline 0

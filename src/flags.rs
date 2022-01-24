@@ -387,7 +387,8 @@ pub fn expand_flag_array(flag_array: ArrayView3<bool>, num_pols: usize) -> Array
 ///     &context,
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
-///     None
+///     None,
+///     false,
 /// ).unwrap();
 ///
 /// // use the default strategy file location for MWA
@@ -400,6 +401,7 @@ pub fn expand_flag_array(flag_array: ArrayView3<bool>, num_pols: usize) -> Array
 ///    &jones_array,
 ///    Some(flag_array),
 ///    true,
+///    false,
 /// );
 /// ```
 #[cfg(feature = "aoflagger")]
@@ -409,7 +411,10 @@ pub fn flag_jones_array_existing(
     jones_array: &Array3<Jones<f32>>,
     flag_array: Option<Array3<bool>>,
     re_apply_existing: bool,
+    draw_progress: bool,
 ) -> Array3<bool> {
+    use indicatif::ProgressDrawTarget;
+
     trace!("start flag_jones_array");
 
     let jones_shape = jones_array.dim();
@@ -422,8 +427,14 @@ pub fn flag_jones_array_existing(
         None => (false, Array3::from_elem(jones_shape, false)),
     };
 
+    let draw_target = if draw_progress {
+        ProgressDrawTarget::stderr()
+    } else {
+        ProgressDrawTarget::hidden()
+    };
+
     // The total reading progress.
-    let flag_progress = ProgressBar::new(jones_shape.2 as _)
+    let flag_progress = ProgressBar::with_draw_target(jones_shape.2 as _, draw_target)
         .with_style(
             ProgressStyle::default_bar()
                 .template(
@@ -486,7 +497,14 @@ pub fn flag_jones_array(
     strategy_filename: &str,
     jones_array: &Array3<Jones<f32>>,
 ) -> Array3<bool> {
-    flag_jones_array_existing(aoflagger, strategy_filename, jones_array, None, false)
+    flag_jones_array_existing(
+        aoflagger,
+        strategy_filename,
+        jones_array,
+        None,
+        false,
+        false,
+    )
 }
 
 /// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], a vector of
@@ -550,7 +568,8 @@ pub fn flag_jones_array(
 ///     &context,
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
-///     Some(flag_array)
+///     Some(flag_array),
+///     false,
 /// ).unwrap();
 ///
 /// // write the flags to disk as .mwaf
@@ -934,6 +953,7 @@ mod tests_aoflagger {
             &jones_array,
             Some(existing_flag_array),
             true,
+            false,
         );
 
         assert!(!existing_flag_array.get((0, 0, 0)).unwrap());
@@ -961,9 +981,14 @@ mod tests_aoflagger {
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
-        let (jones_array, _) =
-            context_to_jones_array(&context, &img_timestep_range, &img_coarse_chan_range, None)
-                .unwrap();
+        let (jones_array, _) = context_to_jones_array(
+            &context,
+            &img_timestep_range,
+            &img_coarse_chan_range,
+            None,
+            false,
+        )
+        .unwrap();
 
         let existing_flag_array = init_flag_array(
             &context,
@@ -983,6 +1008,7 @@ mod tests_aoflagger {
             &jones_array,
             Some(existing_flag_array),
             true,
+            false,
         );
 
         // test that flagged antennas are indeed flagged

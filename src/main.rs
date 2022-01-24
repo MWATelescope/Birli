@@ -474,6 +474,7 @@ where
                 .alias("no-geom"),
             arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's"),
             arg!(--"dry-run" "Just print the summary and exit"),
+            arg!(--"no-draw-progress" "do not show progress bars"),
 
             // averaging
             arg!(--"avg-time-res" <SECONDS> "Time resolution of averaged data")
@@ -752,6 +753,8 @@ where
         return;
     }
 
+    let draw_progress = !matches.is_present("no-draw-progress");
+
     for unimplemented_option in &[
         "flag-init",
         "flag-init-steps",
@@ -801,6 +804,7 @@ where
         &timestep_range,
         &coarse_chan_range,
         Some(flag_array),
+        draw_progress,
     )
     .unwrap();
 
@@ -813,7 +817,7 @@ where
             "Applying cable delays. applied: {}, desired: {}",
             cable_delays_applied, !no_cable_delays
         );
-        correct_cable_lengths(&context, &mut jones_array, &coarse_chan_range);
+        correct_cable_lengths(&context, &mut jones_array, &coarse_chan_range, false);
     } else {
         info!(
             "Skipping cable delays. applied: {}, desired: {}",
@@ -834,6 +838,7 @@ where
                     &jones_array,
                     Some(flag_array),
                     true,
+                    draw_progress,
                 );
             } else {
                 info!("skipped aoflagger");
@@ -857,6 +862,7 @@ where
                 &coarse_chan_range,
                 Some(array_pos),
                 Some(phase_centre),
+                false,
             );
         }
         (..) => {
@@ -894,6 +900,7 @@ where
             Some(phase_centre),
             avg_time,
             avg_freq,
+            draw_progress,
         )
         .expect("unable to write uvfits");
     }
@@ -913,6 +920,7 @@ where
             Some(phase_centre),
             avg_time,
             avg_freq,
+            draw_progress,
         )
         .expect("unable to write ms");
     }
@@ -1055,6 +1063,7 @@ mod tests_aoflagger {
             "birli",
             "-m",
             metafits_path,
+            "--no-draw-progress",
             "-f",
             mwaf_path_template.to_str().unwrap(),
         ];
@@ -1109,6 +1118,7 @@ mod tests_aoflagger {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-draw-progress",
             "--no-cable-delay",
             "--no-geometric-delay",
         ];
@@ -1722,6 +1732,7 @@ mod tests_aoflagger {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-draw-progress",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--emulate-cotter",
@@ -1750,6 +1761,7 @@ mod tests_aoflagger {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-draw-progress",
             "--no-geometric-delay",
             "--emulate-cotter",
         ];
@@ -1781,6 +1793,7 @@ mod tests_aoflagger {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-draw-progress",
             "--no-cable-delay",
             "--emulate-cotter",
         ];
@@ -1811,6 +1824,7 @@ mod tests_aoflagger {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-draw-progress",
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -1867,6 +1881,7 @@ mod tests_aoflagger {
             metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
+            "--no-draw-progress",
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -1928,6 +1943,7 @@ mod tests_aoflagger {
             metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
+            "--no-draw-progress",
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",
@@ -1966,6 +1982,7 @@ mod tests_aoflagger {
             metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
+            "--no-draw-progress",
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",

@@ -66,6 +66,7 @@ pub trait WriteableVis: Sync + Send {
         baseline_idxs: &[usize],
         avg_time: usize,
         avg_freq: usize,
+        draw_progress: bool,
     ) -> Result<(), IOError>;
 }
 
@@ -119,6 +120,7 @@ pub trait WriteableVis: Sync + Send {
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
 ///     None,
+///     false,
 /// ).unwrap();
 ///
 /// // write the visibilities to disk as .uvfits
@@ -143,6 +145,7 @@ pub trait WriteableVis: Sync + Send {
 ///     None,
 ///     1,
 ///     1,
+///     false,
 /// )
 /// .unwrap();
 /// ```
@@ -165,6 +168,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
     phase_centre: Option<RADec>,
     avg_time: usize,
     avg_freq: usize,
+    draw_progress: bool,
 ) -> Result<(), IOError> {
     trace!("start write_uvfits to {:?}", path.as_ref());
 
@@ -190,6 +194,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
         mwalib_baseline_idxs,
         avg_time,
         avg_freq,
+        draw_progress,
     )?;
 
     uvfits_writer.write_ants_from_mwalib(&context.metafits_context)?;
@@ -249,6 +254,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
 ///     None,
+///     false,
 /// ).unwrap();
 ///
 /// // write the visibilities to disk as .ms
@@ -274,6 +280,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///     None,
 ///     avg_time,
 ///     avg_freq,
+///     false,
 /// )
 /// .unwrap();
 /// ```
@@ -296,6 +303,7 @@ pub fn write_ms<T: AsRef<Path>>(
     phase_centre: Option<RADec>,
     avg_time: usize,
     avg_freq: usize,
+    draw_progress: bool,
 ) -> Result<(), IOError> {
     trace!("start write_ms to {:?}", path.as_ref());
 
@@ -324,6 +332,7 @@ pub fn write_ms<T: AsRef<Path>>(
             mwalib_baseline_idxs,
             avg_time,
             avg_freq,
+            draw_progress,
         )
         .unwrap();
 
@@ -407,6 +416,7 @@ mod tests_aoflagger {
             &img_timestep_range,
             &img_coarse_chan_range,
             Some(flag_array),
+            false,
         )
         .unwrap();
 
@@ -420,6 +430,7 @@ mod tests_aoflagger {
             &jones_array,
             Some(flag_array),
             true,
+            false,
         );
 
         let weight_factor = get_weight_factor(&context);
@@ -441,6 +452,7 @@ mod tests_aoflagger {
             None,
             1,
             1,
+            false,
         )
         .unwrap();
 
