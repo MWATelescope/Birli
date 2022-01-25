@@ -3,4 +3,4 @@ enum-variant-name-threshold = 3
 # cognitive-complexity-threshold = 1
 max-fn-params-bools = 3
 max-struct-bools = 3
-# msrv = "1.51.0"
+# msrv = "1.58.0"

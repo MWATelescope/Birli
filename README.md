@@ -40,7 +40,7 @@ descriptor for the speed which this library intends to deliver.
 
 ### Prerequisites
 
-- A Rust compiler with a version >= 1.51.0 - <https://www.rust-lang.org/tools/install>
+- A Rust compiler with a version >= 1.58.0 - <https://www.rust-lang.org/tools/install>
 - [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0
   (Ubuntu > 21.04: apt install aoflagger-dev)
 - [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49
