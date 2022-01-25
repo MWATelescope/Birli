@@ -8,6 +8,7 @@ use birli::{
 };
 use cfg_if::cfg_if;
 use clap::{app_from_crate, arg, AppSettings, ValueHint::FilePath};
+use itertools::Itertools;
 use log::{debug, info, trace, warn};
 use marlu::{
     io::{ms::MeasurementSetWriter, VisWritable},
@@ -563,20 +564,19 @@ where
         .value_of("max-memory")
         .map(|s| s.parse::<f64>().unwrap() * 1024.0_f64.powi(3))
         .unwrap_or(f64::INFINITY);
+    if max_memory_bytes < 1.0 {
+        panic!("--max-memory must be at least 1 Byte, not {}B", max_memory_bytes);
+    }
     let num_bytes_per_scan = context.num_timestep_coarse_chan_bytes * context.num_gpubox_files;
     let num_bytes_total = context.num_timesteps * num_bytes_per_scan;
-    let num_chunks = if max_memory_bytes < num_bytes_total as f64 {
-        let num_chunks = (num_bytes_total as f64 / max_memory_bytes).ceil() as usize;
-        info!("Using {num_chunks} chunks to operate within the memory constraint");
-        num_chunks
+    let num_timesteps_per_chunk = if max_memory_bytes < num_bytes_total as f64 {
+        if max_memory_bytes < num_bytes_per_scan as f64 {
+            panic!("--max-memory ({}B) too small to fit a single timestep ({}GiB)", max_memory_bytes, num_bytes_per_scan);
+        }
+        (max_memory_bytes / num_bytes_per_scan as f64).floor() as usize
     } else {
-        1
+        total_timestep_range.len()
     };
-    let num_timesteps_per_chunk =
-        (total_timestep_range.len() as f64 / num_chunks as f64).ceil() as usize;
-    if num_chunks > 1 {
-        info!("   {num_timesteps_per_chunk} timesteps processed per chunk");
-    }
 
     let mut timestep_flags = get_timestep_flags(&context);
     let mut antenna_flags = get_antenna_flags(&context);
@@ -847,12 +847,10 @@ where
         writer
     });
 
-    for i_chunk in 0..num_chunks {
-        if num_chunks > 1 {
-            info!("Processing chunk {i_chunk}");
-        }
-        let timestep_range = (i_chunk * num_timesteps_per_chunk)
-            ..((i_chunk + 1) * num_timesteps_per_chunk).min(total_timestep_range.end);
+    for mut timestep_chunk in &total_timestep_range.chunks(num_timesteps_per_chunk) {
+        let first_timestep = timestep_chunk.next().unwrap();
+        let last_timestep = timestep_chunk.last().unwrap_or(first_timestep);
+        let timestep_range: Range<usize> = first_timestep..last_timestep + 1;
         let flag_array = init_flag_array(
             &context,
             &timestep_range,
@@ -2219,7 +2217,7 @@ mod tests_aoflagger {
             "--avg-freq-factor",
             "4",
             "--max-memory",
-            "0.0000000000000000001"
+            "0.3"
         ];
         args.extend_from_slice(&gpufits_paths);
 
