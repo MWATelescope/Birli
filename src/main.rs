@@ -538,12 +538,12 @@ where
     //     Some(mut values) => {
     //         if let (Some(from), Some(to)) = (values.next(), values.next()) {
     //             let from = from.parse::<usize>().expect("cannot parse --time-sel from");
-    //             debug_assert!(
+    //             assert!(
     //                 from > 0 && from < context.num_timesteps,
     //                 "invalid --time-sel from"
     //             );
     //             let to = to.parse::<usize>().expect("cannot parse --time-sel to");
-    //             debug_assert!(
+    //             assert!(
     //                 to > 0 && to < context.num_timesteps,
     //                 "invalid --time-sel to"
     //             );
@@ -694,7 +694,12 @@ where
                 panic!("unable to parse --avg-time-res \"{}\" as a float", res_str)
             });
             let ratio = res / int_time_s;
-            debug_assert!(ratio.is_finite() && ratio >= 1.0 && ratio.fract() < 1e-6);
+            assert!(
+                ratio.is_finite() && ratio >= 1.0 && ratio.fract() < 1e-6,
+                "--avg-time-res {} must be an integer multiple of the input resolution, {}",
+                res,
+                int_time_s
+            );
             ratio.round() as _
         }
         _ => 1,
@@ -720,7 +725,12 @@ where
                 panic!("unable to parse --avg-freq-res \"{}\" as a float", res_str)
             });
             let ratio = res / fine_chan_width_khz;
-            debug_assert!(ratio.is_finite() && ratio >= 1.0 && ratio.fract() < 1e-6);
+            assert!(
+                ratio.is_finite() && ratio >= 1.0 && ratio.fract() < 1e-6,
+                "--avg-freq-res {} must be an integer multiple of the input resolution, {}",
+                res,
+                fine_chan_width_khz
+            );
             ratio.round() as _
         }
         _ => 1,
@@ -1335,7 +1345,7 @@ mod tests_aoflagger {
                                 })
                                 .collect();
 
-                            debug_assert_eq!(
+                            assert_eq!(
                                 num_fine_freq_chans * num_pols * floats_per_complex,
                                 exp_pol_vis.len() * num_pols
                             );
@@ -1378,7 +1388,7 @@ mod tests_aoflagger {
                                 .map(|cell| cell.parse().unwrap())
                                 .collect();
 
-                            debug_assert_eq!(num_fine_freq_chans, exp_pol_weight.len());
+                            assert_eq!(num_fine_freq_chans, exp_pol_weight.len());
 
                             let obs_pol_weight: Vec<_> = obs_vis
                                 .chunks(floats_per_pol * num_pols)
@@ -1470,7 +1480,7 @@ mod tests_aoflagger {
         let mut mjds_seen = HashSet::<u64>::new();
 
         let pol_order = vec!["xx", "xy", "yx", "yy"];
-        debug_assert_eq!(num_pols, pol_order.len());
+        assert_eq!(num_pols, pol_order.len());
 
         for record in expected_reader.records().filter_map(|result| match result {
             Ok(record) => Some(record),
@@ -1553,7 +1563,7 @@ mod tests_aoflagger {
                                 .step_by(num_pols)
                                 .collect::<Vec<_>>();
 
-                            debug_assert_eq!(obs_pol_vis.len(), exp_pol_vis.len());
+                            assert_eq!(obs_pol_vis.len(), exp_pol_vis.len());
 
                             for (vis_idx, (&obs_val, &exp_val)) in
                                 izip!(obs_pol_vis.iter(), exp_pol_vis.iter()).enumerate()
@@ -1591,7 +1601,7 @@ mod tests_aoflagger {
                                 .step_by(num_pols)
                                 .collect::<Vec<_>>();
 
-                            debug_assert_eq!(obs_pol_weight.len(), exp_pol_weight.len());
+                            assert_eq!(obs_pol_weight.len(), exp_pol_weight.len());
 
                             for (weight_idx, (&obs_val, &exp_val)) in
                                 izip!(obs_pol_weight.iter(), exp_pol_weight.iter()).enumerate()
@@ -1628,7 +1638,7 @@ mod tests_aoflagger {
                                 .step_by(num_pols)
                                 .collect::<Vec<_>>();
 
-                            debug_assert_eq!(obs_pol_flag.len(), exp_pol_flag.len());
+                            assert_eq!(obs_pol_flag.len(), exp_pol_flag.len());
 
                             for (flag_idx, (&obs_val, &exp_val)) in
                                 izip!(obs_pol_flag.iter(), exp_pol_flag.iter()).enumerate()

@@ -209,7 +209,7 @@ impl UvfitsWriter {
         let mut naxes = [0, 3, 4, num_chans as i64, 1, 1];
         let num_group_params = 5;
         let total_num_rows = num_timesteps * num_baselines;
-        debug_assert!(
+        assert!(
             total_num_rows > 0,
             "num_timesteps * num_baselines must be > 0"
         );
@@ -911,7 +911,7 @@ impl WriteableVis for UvfitsWriter {
             });
         }
 
-        debug_assert_eq!(self.total_num_rows, num_avg_timesteps * num_baselines);
+        assert_eq!(self.total_num_rows, num_avg_timesteps * num_baselines);
 
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
