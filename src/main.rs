@@ -2190,4 +2190,45 @@ mod tests_aoflagger {
             F32Margin::default().epsilon(1e-7),
         );
     }
+
+    /// Same as above but forcing chunks by using a small --max-memory
+    #[test]
+    fn test_1254670392_avg_ms_none_avg_4s_160khz_factors_max_mem() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("1254670392.ms");
+
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let expected_csv_path =
+            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.ms.csv");
+
+        env_logger::try_init().unwrap_or(());
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-M",
+            ms_path.to_str().unwrap(),
+            "--no-draw-progress",
+            "--emulate-cotter",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--avg-time-factor",
+            "2",
+            "--avg-freq-factor",
+            "4",
+            "--max-memory",
+            "0.0000000000000000001"
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+
+        compare_ms_with_csv(
+            ms_path,
+            expected_csv_path,
+            F32Margin::default().epsilon(1e-7),
+        );
+    }
 }
