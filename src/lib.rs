@@ -322,10 +322,27 @@ pub fn context_to_jones_array(
     let num_baselines = context.metafits_context.num_baselines;
 
     let shape = (num_timesteps, num_chans, num_baselines);
+    let num_elems = num_timesteps * num_chans * num_baselines;
 
-    let mut jones_array: Array3<Jones<f32>> = Array3::from_elem(shape, Jones::default());
+    // We need this many gibibytes to do processing (visibilities and flags).
+    let need_gib = (shape.0 * shape.1 * shape.2)
+        * (std::mem::size_of::<Jones<f32>>() + std::mem::size_of::<bool>())
+        / 1024_usize.pow(3);
 
-    let mut flag_array: Array3<bool> = if let Some(flag_array_) = flag_array {
+    let mut jones_array = {
+        let mut v = Vec::new();
+        match v.try_reserve_exact(shape.0 * shape.1 * shape.2) {
+            Ok(()) => {
+                // Make the vector's length equal to its new capacity.
+                v.resize(num_elems, Jones::default());
+                Array3::from_shape_vec(shape, v).unwrap()
+            }
+            // Instead of erroring out with how many GiB we need for *this*
+            // array, error out with how many we need total.
+            Err(_) => return Err(BirliError::InsufficientMemory { need_gib }),
+        }
+    };
+    let mut flag_array = if let Some(flag_array_) = flag_array {
         if flag_array_.dim() != shape {
             return Err(BirliError::BadArrayShape {
                 argument: "flag_array".to_string(),
@@ -336,7 +353,16 @@ pub fn context_to_jones_array(
         };
         flag_array_
     } else {
-        Array3::from_elem(shape, false)
+        let mut v = Vec::new();
+        match v.try_reserve_exact(shape.0 * shape.1 * shape.2) {
+            Ok(()) => {
+                v.resize(num_elems, false);
+                Array3::from_shape_vec(shape, v).unwrap()
+            }
+            // Instead of erroring out with how many GiB we need for *this*
+            // array, error out with how many we need total.
+            Err(_) => return Err(BirliError::InsufficientMemory { need_gib }),
+        }
     };
 
     // since we are using read_by_by basline into buffer, the visibilities are read in order:

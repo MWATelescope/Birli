@@ -43,4 +43,11 @@ pub enum BirliError {
         /// The shape that was received instead
         received: String,
     },
+
+    #[error("Insufficient memory available; need {need_gib} GiB of memory.\nPlease specify the maximum amount of memory to use.")]
+    /// Error when we asked for too much memory
+    InsufficientMemory {
+        /// The amount of memory we think we need
+        need_gib: usize,
+    },
 }
