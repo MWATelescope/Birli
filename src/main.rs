@@ -418,10 +418,13 @@ where
             arg!(--"time-sel" "[WIP] Timestep index range (inclusive) to select")
                 .value_names(&["MIN", "MAX"])
                 .required(false),
+
+            // resource limit options
             arg!(--"time-chunk" <STEPS> "[WIP] Process observation in chunks of <STEPS> timesteps.")
+                .help_heading("RESOURCE LIMITS")
                 .required(false),
-            arg!(--"max-memory" <GIBIBYTES> "[WIP] The maximum amount of memory to use")
-                .help_heading("INPUT")
+            arg!(--"max-memory" <GIBIBYTES> "[WIP] Estimate --time-chunk with <GIBIBYTES> GiB each chunk.")
+                .help_heading("RESOURCE LIMITS")
                 .required(false),
 
             // flagging options
@@ -763,6 +766,7 @@ where
         _ => 1,
     };
 
+    // validate chunk size
     if let Some(chunk_size) = num_timesteps_per_chunk {
         if chunk_size < context.num_timesteps && avg_time > 1 && chunk_size % avg_time != 0 {
             panic!(
@@ -772,6 +776,9 @@ where
                 This will result in averaging windows that are misaligned with chunking windows.",
                 chunk_size, context.num_timesteps, avg_time,
             );
+        }
+        if matches.value_of("flag-template").is_some() {
+            panic!("chunking is not supported when writing .mwaf files using --flag-template");
         }
     }
 
@@ -1187,6 +1194,62 @@ mod tests_aoflagger {
             "-m",
             metafits_path,
             "--no-draw-progress",
+            "-f",
+            mwaf_path_template.to_str().unwrap(),
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+
+        let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+
+        let gpubox_ids: Vec<usize> = context
+            .common_coarse_chan_indices
+            .iter()
+            .map(|&chan| context.coarse_chans[chan].gpubox_number)
+            .collect();
+
+        assert!(!gpubox_ids.is_empty());
+
+        let mut birli_flag_file_set = FlagFileSet::open(
+            mwaf_path_template.to_str().unwrap(),
+            &gpubox_ids,
+            context.mwa_version,
+        )
+        .unwrap();
+
+        let mut cotter_flag_file_set = FlagFileSet::open(
+            "tests/data/1247842824_flags/FlagfileCotterMWA%%.mwaf",
+            &gpubox_ids,
+            context.mwa_version,
+        )
+        .unwrap();
+
+        assert_flagsets_eq!(
+            context,
+            birli_flag_file_set,
+            cotter_flag_file_set,
+            gpubox_ids
+        );
+    }
+
+    #[test]
+    #[ignore = "chunks not supported for .mwaf"]
+    fn aoflagger_outputs_flags_chunked() {
+        let tmp_dir = tempdir().unwrap();
+        let mwaf_path_template = tmp_dir.path().join("Flagfile%%.mwaf");
+
+        let metafits_path = "tests/data/1247842824_flags/1247842824.metafits";
+        let gpufits_paths =
+            vec!["tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits"];
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--no-draw-progress",
+            "--time-chunk", "1",
             "-f",
             mwaf_path_template.to_str().unwrap(),
         ];
