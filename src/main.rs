@@ -914,6 +914,13 @@ where
         let chunk_first_timestep = timestep_chunk.next().unwrap();
         let chunk_last_timestep = timestep_chunk.last().unwrap_or(chunk_first_timestep);
         let chunk_timestep_range: Range<usize> = chunk_first_timestep..chunk_last_timestep + 1;
+        if num_timesteps_per_chunk.is_some() {
+            trace!(
+                "processing timestep chunk {:?} of {}",
+                chunk_timestep_range,
+                chunk_size
+            );
+        }
         let flag_array = init_flag_array(
             &context,
             &chunk_timestep_range,
@@ -1360,6 +1367,7 @@ mod tests_aoflagger {
         uvfits_path: PathBuf,
         expected_csv_path: PathBuf,
         vis_margin: F32Margin,
+        ignore_weights: bool,
     ) {
         // Check both files are present
         assert!(uvfits_path.exists());
@@ -1558,6 +1566,9 @@ mod tests_aoflagger {
                             }
                         }
                         "weight" => {
+                            if ignore_weights {
+                                break;
+                            }
                             let exp_pol_weight: Vec<f32> = record
                                 .iter()
                                 .skip(freq_start_header)
@@ -1924,7 +1935,37 @@ mod tests_aoflagger {
 
         main_with_args(&args);
 
-        compare_uvfits_with_csv(uvfits_path, expected_csv_path, F32Margin::default());
+        compare_uvfits_with_csv(uvfits_path, expected_csv_path, F32Margin::default(), false);
+    }
+
+    #[test]
+    fn test_1254670392_avg_uvfits_none_chunked() {
+        let tmp_dir = tempdir().unwrap();
+        let uvfits_path = tmp_dir.path().join("1254670392.none.chunked.uvfits");
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let expected_csv_path =
+            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.uvfits.csv");
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-u",
+            uvfits_path.to_str().unwrap(),
+            "--no-draw-progress",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--no-rfi",
+            "--emulate-cotter",
+            "--time-chunk",
+            "1",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+
+        compare_uvfits_with_csv(uvfits_path, expected_csv_path, F32Margin::default(), true);
     }
 
     #[test]
@@ -1956,6 +1997,7 @@ mod tests_aoflagger {
             uvfits_path,
             expected_csv_path,
             F32Margin::default().epsilon(5e-5),
+            false,
         );
     }
 
@@ -1988,6 +2030,7 @@ mod tests_aoflagger {
             uvfits_path,
             expected_csv_path,
             F32Margin::default().epsilon(5e-5),
+            false,
         );
     }
 
@@ -2019,6 +2062,7 @@ mod tests_aoflagger {
             uvfits_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-4),
+            false,
         );
     }
 
