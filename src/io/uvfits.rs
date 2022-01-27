@@ -230,14 +230,17 @@ impl UvfitsWriter {
         fits_check_status(status)?;
 
         // Finally close the file.
-        trace!("closing fits file ({:?})", &path.as_ref());
+        trace!("closing initialized fits file ({:?})", &path.as_ref());
         unsafe {
             fitsio_sys::ffclos(fptr, &mut status);
         }
         fits_check_status(status)?;
 
         // Open the fits file with rust-fitsio.
-        trace!("opening  ({:?})", &path.as_ref());
+        trace!(
+            "re-opening with rust-fitsio to set keys ({:?})",
+            &path.as_ref()
+        );
         let mut u = FitsFile::edit(&path)?;
         let hdu = u.hdu(0)?;
         hdu.write_key(&mut u, "BSCALE", 1.0)?;
@@ -463,6 +466,8 @@ impl UvfitsWriter {
                 total: self.total_num_rows,
             });
         }
+
+        trace!("opening uvfits file to write antenna table");
 
         let mut uvfits = self.open()?;
 
@@ -911,7 +916,15 @@ impl WriteableVis for UvfitsWriter {
             });
         }
 
-        assert_eq!(self.total_num_rows, num_avg_timesteps * num_baselines);
+        // the number of selected rows
+        let num_sel_rows: usize = num_avg_timesteps * num_baselines;
+        trace!(
+            "total_num_rows={}, current_num_rows={}, num_sel_rows={}",
+            self.total_num_rows,
+            self.current_num_rows,
+            num_sel_rows
+        );
+        assert!(self.total_num_rows - self.current_num_rows >= num_sel_rows);
 
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&context.metafits_context);
 
