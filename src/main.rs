@@ -107,7 +107,13 @@ pub fn show_param_info(
         );
         (
             format!("{:02}-{:02}-{:02}", y, mo, d),
-            format!("{:02}:{:02}:{:02}.{:03}", h, mi, s, ms),
+            format!(
+                "{:02}:{:02}:{:02}.{:03}",
+                h,
+                mi,
+                s,
+                (ms as f64 / 1e6).round()
+            ),
             epoch.as_mjd_utc_seconds(),
             precession_info,
         )
@@ -409,12 +415,14 @@ where
                 .help_heading("INPUT")
                 .value_hint(FilePath)
                 .required(true),
-            arg!(--"max-memory" <GIBIBYTES> "The maximum amount of memory to use")
+            arg!(--"time-sel" "[WIP] Timestep index range (inclusive) to select")
+                .value_names(&["MIN", "MAX"])
+                .required(false),
+            arg!(--"time-chunk" <STEPS> "[WIP] Process observation in chunks of <STEPS> timesteps.")
+                .required(false),
+            arg!(--"max-memory" <GIBIBYTES> "[WIP] The maximum amount of memory to use")
                 .help_heading("INPUT")
                 .required(false),
-            // arg!(--"time-sel" "Timestep index range to select")
-            //     .value_names(&["MIN", "MAX"])
-            //     .required(false),
 
             // flagging options
             // -> timesteps
@@ -538,44 +546,71 @@ where
     debug!("mwalib correlator context:\n{}", &context);
     let coarse_chan_range = get_coarse_chan_range(&context).unwrap();
     let mut coarse_chan_flags = get_coarse_chan_flags(&context);
-    let total_timestep_range = get_timestep_range(&context).unwrap();
-    // = match matches.values_of("time-sel") {
-    //     Some(mut values) => {
-    //         if let (Some(from), Some(to)) = (values.next(), values.next()) {
-    //             let from = from.parse::<usize>().expect("cannot parse --time-sel from");
-    //             assert!(
-    //                 from > 0 && from < context.num_timesteps,
-    //                 "invalid --time-sel from"
-    //             );
-    //             let to = to.parse::<usize>().expect("cannot parse --time-sel to");
-    //             assert!(
-    //                 to > 0 && to < context.num_timesteps,
-    //                 "invalid --time-sel to"
-    //             );
-    //             from..to + 1
-    //         } else {
-    //             panic!("invalid --time-sel <from> <to>");
-    //         }
-    //     }
-    //     _ => get_timestep_range(&context).unwrap(),
-    // };
-
-    let max_memory_bytes = matches
-        .value_of("max-memory")
-        .map(|s| s.parse::<f64>().unwrap() * 1024.0_f64.powi(3))
-        .unwrap_or(f64::INFINITY);
-    if max_memory_bytes < 1.0 {
-        panic!("--max-memory must be at least 1 Byte, not {}B", max_memory_bytes);
-    }
-    let num_bytes_per_scan = context.num_timestep_coarse_chan_bytes * context.num_gpubox_files;
-    let num_bytes_total = context.num_timesteps * num_bytes_per_scan;
-    let num_timesteps_per_chunk = if max_memory_bytes < num_bytes_total as f64 {
-        if max_memory_bytes < num_bytes_per_scan as f64 {
-            panic!("--max-memory ({}B) too small to fit a single timestep ({}GiB)", max_memory_bytes, num_bytes_per_scan);
+    let sel_timestep_range = match matches.values_of("time-sel") {
+        Some(mut values) => {
+            if let (Some(from), Some(to)) = (values.next(), values.next()) {
+                let from = from.parse::<usize>().expect("cannot parse --time-sel from");
+                assert!(
+                    from < context.num_timesteps,
+                    "invalid --time-sel from {}. must be < num_timesteps ({})",
+                    from,
+                    context.num_timesteps
+                );
+                let to = to.parse::<usize>().expect("cannot parse --time-sel to");
+                assert!(
+                    to >= from && to < context.num_timesteps,
+                    "invalid --time-sel from {} to {}, must be < num_timesteps ({})",
+                    from,
+                    to,
+                    context.num_timesteps
+                );
+                from..to + 1
+            } else {
+                panic!("invalid --time-sel <from> <to>, two values must be provided");
+            }
         }
-        (max_memory_bytes / num_bytes_per_scan as f64).floor() as usize
-    } else {
-        total_timestep_range.len()
+        _ => get_timestep_range(&context).unwrap(),
+    };
+
+    let num_timesteps_per_chunk: usize = match (
+        matches.value_of("time-chunk"),
+        matches.value_of("max-memory"),
+    ) {
+        (Some(_), Some(_)) => {
+            panic!("you can't use --time-chunk and --max-memory at the same time");
+        }
+        (Some(steps_str), None) => steps_str.parse().unwrap_or_else(|_| {
+            panic!(
+                "unable to parse --time-chunk \"{}\" as an unsigned integer",
+                steps_str
+            )
+        }),
+        (_, Some(mem_str)) => {
+            let max_memory_bytes = mem_str.parse::<f64>().unwrap_or_else(|_| {
+                panic!("unable to parse --max-memory \"{}\" as a float", mem_str)
+            }) * 1024.0_f64.powi(3);
+            if max_memory_bytes < 1.0 {
+                panic!(
+                    "--max-memory must be at least 1 Byte, not {}B",
+                    max_memory_bytes
+                );
+            }
+            let num_bytes_per_scan =
+                context.num_timestep_coarse_chan_bytes * context.num_gpubox_files;
+            let num_bytes_total = context.num_timesteps * num_bytes_per_scan;
+            if max_memory_bytes < num_bytes_total as f64 {
+                if max_memory_bytes < num_bytes_per_scan as f64 {
+                    panic!(
+                        "--max-memory ({}B) too small to fit a single timestep ({}GiB)",
+                        max_memory_bytes, num_bytes_per_scan
+                    );
+                }
+                (max_memory_bytes / num_bytes_per_scan as f64).floor() as usize
+            } else {
+                sel_timestep_range.len()
+            }
+        }
+        _ => sel_timestep_range.len(),
     };
 
     let mut timestep_flags = get_timestep_flags(&context);
@@ -770,7 +805,7 @@ where
         array_pos,
         phase_centre,
         &coarse_chan_range,
-        &total_timestep_range,
+        &sel_timestep_range,
         &baseline_idxs,
         &coarse_chan_flags,
         &fine_chan_flags,
@@ -810,6 +845,9 @@ where
         "flag-fine-chans",
         "no-flag-metafits",
         "flag-antennae",
+        "time-sel",
+        "time-chunk",
+        "max-memory",
     ] {
         if matches.is_present(untested_option) {
             warn!(
@@ -823,7 +861,7 @@ where
         UvfitsWriter::from_mwalib(
             uvfits_out,
             &context,
-            &total_timestep_range,
+            &sel_timestep_range,
             &coarse_chan_range,
             &baseline_idxs,
             Some(array_pos),
@@ -838,8 +876,9 @@ where
         writer
             .initialize_from_mwalib(
                 &context,
-                &total_timestep_range,
+                &sel_timestep_range,
                 &coarse_chan_range,
+                &baseline_idxs,
                 avg_time,
                 avg_freq,
             )
@@ -847,13 +886,13 @@ where
         writer
     });
 
-    for mut timestep_chunk in &total_timestep_range.chunks(num_timesteps_per_chunk) {
-        let first_timestep = timestep_chunk.next().unwrap();
-        let last_timestep = timestep_chunk.last().unwrap_or(first_timestep);
-        let timestep_range: Range<usize> = first_timestep..last_timestep + 1;
+    for mut timestep_chunk in &sel_timestep_range.chunks(num_timesteps_per_chunk) {
+        let chunk_first_timestep = timestep_chunk.next().unwrap();
+        let chunk_last_timestep = timestep_chunk.last().unwrap_or(chunk_first_timestep);
+        let chunk_timestep_range: Range<usize> = chunk_first_timestep..chunk_last_timestep + 1;
         let flag_array = init_flag_array(
             &context,
-            &timestep_range,
+            &chunk_timestep_range,
             &coarse_chan_range,
             Some(&timestep_flags),
             Some(&coarse_chan_flags),
@@ -864,7 +903,7 @@ where
         #[allow(unused_mut)]
         let (mut jones_array, mut flag_array) = context_to_jones_array(
             &context,
-            &timestep_range,
+            &chunk_timestep_range,
             &coarse_chan_range,
             Some(flag_array),
             draw_progress,
@@ -921,7 +960,7 @@ where
                 correct_geometry(
                     &context,
                     &mut jones_array,
-                    &timestep_range,
+                    &chunk_timestep_range,
                     &coarse_chan_range,
                     Some(array_pos),
                     Some(phase_centre),
@@ -956,7 +995,7 @@ where
                     weight_array.view(),
                     flag_array.view(),
                     &context,
-                    &timestep_range,
+                    &chunk_timestep_range,
                     &coarse_chan_range,
                     &baseline_idxs,
                     avg_time,
@@ -974,7 +1013,7 @@ where
                     weight_array.view(),
                     flag_array.view(),
                     &context,
-                    &timestep_range,
+                    &chunk_timestep_range,
                     &coarse_chan_range,
                     &baseline_idxs,
                     avg_time,
@@ -1619,7 +1658,6 @@ mod tests_aoflagger {
                                 .skip(pol_idx)
                                 .step_by(num_pols)
                                 .collect::<Vec<_>>();
-
                             assert_eq!(obs_pol_vis.len(), exp_pol_vis.len());
 
                             for (vis_idx, (&obs_val, &exp_val)) in
@@ -1784,10 +1822,8 @@ mod tests_aoflagger {
 
     #[test]
     fn test_1254670392_avg_uvfits_no_corrections() {
-        // let tmp_dir = tempdir().unwrap();
-        // let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
-        let uvfits_path: PathBuf = "tests/data/1254670392_avg/1254670392.birli.none.uvfits".into();
-
+        let tmp_dir = tempdir().unwrap();
+        let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
         let expected_csv_path =
@@ -2191,7 +2227,7 @@ mod tests_aoflagger {
 
     /// Same as above but forcing chunks by using a small --max-memory
     #[test]
-    fn test_1254670392_avg_ms_none_avg_4s_160khz_factors_max_mem() {
+    fn test_1254670392_avg_ms_none_avg_4s_160khz_max_mem() {
         let tmp_dir = tempdir().unwrap();
         let ms_path = tmp_dir.path().join("1254670392.ms");
 
@@ -2202,6 +2238,7 @@ mod tests_aoflagger {
 
         env_logger::try_init().unwrap_or(());
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
             "-m",
@@ -2212,16 +2249,17 @@ mod tests_aoflagger {
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",
-            "--avg-time-factor",
-            "2",
-            "--avg-freq-factor",
-            "4",
-            "--max-memory",
-            "0.3"
+            "--avg-time-factor", "2",
+            "--avg-freq-factor", "4",
+            "--time-sel", "0", "2",
+            "--time-chunk", "2",
         ];
         args.extend_from_slice(&gpufits_paths);
 
         main_with_args(&args);
+
+        let main_table = Table::open(&ms_path, TableOpenMode::Read).unwrap();
+        assert_eq!(main_table.n_rows(), 2 * 8256);
 
         compare_ms_with_csv(
             ms_path,
@@ -2229,4 +2267,6 @@ mod tests_aoflagger {
             F32Margin::default().epsilon(1e-7),
         );
     }
+
+    // todo: test when time_chunk is not a multiple of avg_time
 }

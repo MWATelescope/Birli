@@ -316,6 +316,7 @@ pub fn write_ms<T: AsRef<Path>>(
             context,
             mwalib_timestep_range,
             mwalib_coarse_chan_range,
+            mwalib_baseline_idxs,
             avg_time,
             avg_freq,
         )
