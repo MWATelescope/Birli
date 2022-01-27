@@ -572,19 +572,19 @@ where
         _ => get_timestep_range(&context).unwrap(),
     };
 
-    let num_timesteps_per_chunk: usize = match (
+    let num_timesteps_per_chunk: Option<usize> = match (
         matches.value_of("time-chunk"),
         matches.value_of("max-memory"),
     ) {
         (Some(_), Some(_)) => {
             panic!("you can't use --time-chunk and --max-memory at the same time");
         }
-        (Some(steps_str), None) => steps_str.parse().unwrap_or_else(|_| {
+        (Some(steps_str), None) => Some(steps_str.parse().unwrap_or_else(|_| {
             panic!(
                 "unable to parse --time-chunk \"{}\" as an unsigned integer",
                 steps_str
             )
-        }),
+        })),
         (_, Some(mem_str)) => {
             let max_memory_bytes = mem_str.parse::<f64>().unwrap_or_else(|_| {
                 panic!("unable to parse --max-memory \"{}\" as a float", mem_str)
@@ -605,12 +605,12 @@ where
                         max_memory_bytes, num_bytes_per_scan
                     );
                 }
-                (max_memory_bytes / num_bytes_per_scan as f64).floor() as usize
+                Some((max_memory_bytes / num_bytes_per_scan as f64).floor() as usize)
             } else {
-                sel_timestep_range.len()
+                None
             }
         }
-        _ => sel_timestep_range.len(),
+        _ => None,
     };
 
     let mut timestep_flags = get_timestep_flags(&context);
@@ -763,6 +763,18 @@ where
         _ => 1,
     };
 
+    if let Some(chunk_size) = num_timesteps_per_chunk {
+        if chunk_size < context.num_timesteps && avg_time > 1 && chunk_size % avg_time != 0 {
+            panic!(
+                "the number of timesteps per chunk (--time-chunk={} or potentially --max-memory) \
+                is smaller than the number of timesteps in the observation ({}) \
+                and is not a multiple of the temporal averaging factor --avg-time-factor={}. \
+                This will result in averaging windows that are misaligned with chunking windows.",
+                chunk_size, context.num_timesteps, avg_time,
+            );
+        }
+    }
+
     let fine_chan_width_khz = context.metafits_context.corr_fine_chan_width_hz as f64 / 1e3;
 
     let avg_freq: usize = match (
@@ -886,7 +898,12 @@ where
         writer
     });
 
-    for mut timestep_chunk in &sel_timestep_range.chunks(num_timesteps_per_chunk) {
+    let chunk_size = if let Some(steps) = num_timesteps_per_chunk {
+        steps
+    } else {
+        sel_timestep_range.len()
+    };
+    for mut timestep_chunk in &sel_timestep_range.chunks(chunk_size) {
         let chunk_first_timestep = timestep_chunk.next().unwrap();
         let chunk_last_timestep = timestep_chunk.last().unwrap_or(chunk_first_timestep);
         let chunk_timestep_range: Range<usize> = chunk_first_timestep..chunk_last_timestep + 1;
@@ -2268,5 +2285,35 @@ mod tests_aoflagger {
         );
     }
 
-    // todo: test when time_chunk is not a multiple of avg_time
+    /// test when time_chunk is not a multiple of avg_time
+    #[test]
+    #[should_panic]
+    fn test_1254670392_avg_ms_none_avg_4s_160khz_tiny_chunk() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("1254670392.ms");
+
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        env_logger::try_init().unwrap_or(());
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-M",
+            ms_path.to_str().unwrap(),
+            "--no-draw-progress",
+            "--emulate-cotter",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--avg-time-factor", "2",
+            "--avg-freq-factor", "4",
+            "--time-sel", "0", "2",
+            "--time-chunk", "1",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+    }
 }
