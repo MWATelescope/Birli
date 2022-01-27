@@ -1872,8 +1872,9 @@ mod tests_aoflagger {
 
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
-        let expected_csv_path =
-            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.corrected.phase0.uvfits.csv");
+        let expected_csv_path = PathBuf::from(
+            "tests/data/1254670392_avg/1254670392.cotter.corrected.phase0.uvfits.csv",
+        );
 
         let mut args = vec![
             "birli",
@@ -1932,8 +1933,9 @@ mod tests_aoflagger {
 
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
-        let expected_csv_path =
-            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.corrected.phase-point.ms.csv");
+        let expected_csv_path = PathBuf::from(
+            "tests/data/1254670392_avg/1254670392.cotter.corrected.phase-point.ms.csv",
+        );
 
         let mut args = vec![
             "birli",
