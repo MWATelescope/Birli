@@ -208,14 +208,20 @@ OPTIONS:
         --emulate-cotter             Use Cotter's array position, not MWAlib's
     -h, --help                       Print help information
         --no-cable-delay             Do not perform cable length corrections
+        --no-draw-progress           do not show progress bars
         --no-geometric-delay         Do not perform geometric corrections
         --phase-centre <RA> <DEC>    [WIP] Override Phase centre from metafits (degrees)
         --pointing-centre            [WIP] Use pointing instead phase centre
+        --time-sel <MIN> <MAX>       [WIP] Timestep index range (inclusive) to select
     -V, --version                    Print version information
 
 INPUT:
     -m, --metafits <PATH>    Metadata file for the observation
     <PATHS>...           GPUBox files to process
+
+RESOURCE LIMITS:
+        --max-memory <GIBIBYTES>    [WIP] Estimate --time-chunk with <GIBIBYTES> GiB each chunk.
+        --time-chunk <STEPS>        [WIP] Process observation in chunks of <STEPS> timesteps.
 
 FLAGGING:
         --flag-antennae <ANTS>...         [WIP] Flag antenna indices
