@@ -30,24 +30,16 @@ ENV RUSTUP_HOME=/opt/rust CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
 
 # Get cargo make
-RUN cargo install --force cargo-make cargo-binutils
+RUN cargo install --force cargo-make
 
 ADD . /app
 WORKDIR /app
 
 RUN cargo clean \
-    && cargo install --path . --features aoflagger --locked
-RUN test -z "$DEBUG" || (\
-        mkdir benches \
-        && touch benches/bench.rs \
-        && cargo build --features aoflagger \
-    )
+    && cargo install --path . --features aoflagger --locked $(test -z "$DEBUG" || echo "--debug")
 
 # setup the toolchain used for coverage analysis
-RUN rustup toolchain install nightly-2021-05-09 --component llvm-tools-preview --profile minimal \
-    && cargo +nightly-2021-05-09 update -p syn --precise 1.0.80 \
-    && cargo +nightly-2021-05-09 update -p proc-macro2 --precise 1.0.28 \
-    && cargo +nightly-2021-05-09 install --force cargo-make --locked --version '=0.32' \
-    && cargo +nightly-2021-05-09 install --force cargo-binutils --locked --version '=0.3.3'
+RUN rustup toolchain install nightly-2022-01-14 --component llvm-tools-preview --profile minimal \
+    && cargo +nightly-2022-01-14 install --force cargo-llvm-cov
 
 ENTRYPOINT [ "/app/target/release/birli" ]
