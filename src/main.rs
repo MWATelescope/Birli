@@ -40,6 +40,29 @@ use birli::{
     write_flags,
 };
 
+// Add build-time information from the "built" crate.
+include!(concat!(env!("OUT_DIR"), "/built.rs"));
+
+/// stolen from hyperdrive
+/// Write many info-level log lines of how this executable was compiled.
+pub fn display_build_info() {
+    match GIT_HEAD_REF {
+        Some(hr) => {
+            let dirty = GIT_DIRTY.unwrap_or(false);
+            info!(
+                "Compiled on git commit hash: {}{}",
+                GIT_COMMIT_HASH.unwrap(),
+                if dirty { " (dirty)" } else { "" }
+            );
+            info!("            git head ref: {}", hr);
+        }
+        None => info!("Compiled on git commit hash: <no git info>"),
+    }
+    info!("            {}", BUILT_TIME_UTC);
+    info!("         with compiler {}", RUSTC_VERSION);
+    info!("");
+}
+
 // TODO: fix too_many_arguments
 #[allow(clippy::too_many_arguments)]
 pub fn show_param_info(
@@ -58,6 +81,14 @@ pub fn show_param_info(
     avg_freq: usize,
     num_timesteps_per_chunk: Option<usize>,
 ) {
+    info!(
+        "{} version {}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+    );
+
+    display_build_info();
+
     info!(
         "observation name:     {}",
         context.metafits_context.obs_name
@@ -872,9 +903,9 @@ where
             let bytes_per_avg_time = bytes_per_timestep * avg_time;
             let num_bytes_total = num_sel_timesteps * bytes_per_timestep;
             if max_memory_bytes < num_bytes_total as f64 {
-                if max_memory_bytes < bytes_per_timestep as f64 {
+                if max_memory_bytes < bytes_per_avg_time as f64 {
                     panic!(
-                        "--max-memory ({} GiB) too small to fit a single averaged timestep ({} * {} = {}GiB)",
+                        "--max-memory ({} GiB) too small to fit a single averaged timestep ({} * {:.02} = {:.02} GiB)",
                         max_memory_bytes as f64 / 1024.0_f64.powi(3), avg_time, bytes_per_timestep as f64 / 1024.0_f64.powi(3), bytes_per_avg_time as f64 / 1024.0_f64.powi(3)
                     );
                 }

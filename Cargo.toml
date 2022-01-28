@@ -53,6 +53,9 @@ lexical = "6.0"
 ndarray = { version = ">=0.15.4,<0.16", features = ["approx-0_5"] }
 tempfile = "3.2"
 
+[build-dependencies]
+built = { version = "0.5.*", features = ["chrono", "git2"] }
+
 [[bench]]
 name = "bench"
 # don't use path here, it breaks things.
