@@ -2126,6 +2126,7 @@ mod tests_aoflagger {
             uvfits_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-4),
+            false,
         );
     }
 
