@@ -6,8 +6,7 @@ on:
       - '**'
     pull_request:
     branches:
-      # todo: change this back to `- 'main'` when done
-      - '**'
+      - 'main'
 
 name: Benchmarks
 
@@ -25,14 +24,9 @@ jobs:
       - name: Free disk space
         run: |
           df --human-readable
-          sudo find /tmp -name '.tmp*' ! -atime 1 -exec rm -rf {} \|\| echo "failed to rm"  \;
-          # sudo swapoff --all
-          # sudo rm --force /swapfile
+          sudo find /tmp -name '.tmp*' ! -atime 1;
           sudo apt clean
-          # docker rmi $(docker image ls --all --quiet)
-          docker system prune
-          # rm -rf "$AGENT_TOOLSDIRECTORY"
-          echo "AGENT_TOOLSDIRECTORY: $AGENT_TOOLSDIRECTORY"
+          docker system prune -f
           df --human-readable
 
       - name: Install stable toolchain
