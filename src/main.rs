@@ -642,52 +642,12 @@ where
         _ => get_timestep_range(&context).unwrap(),
     };
 
-    // TODO: express time-chunk in terms of the number of output chunks
-    let num_timesteps_per_chunk: Option<usize> = match (
-        matches.value_of("time-chunk"),
-        matches.value_of("max-memory"),
-    ) {
-        (Some(_), Some(_)) => {
-            panic!("you can't use --time-chunk and --max-memory at the same time");
-        }
-        (Some(steps_str), None) => Some(steps_str.parse().unwrap_or_else(|_| {
-            panic!(
-                "unable to parse --time-chunk \"{}\" as an unsigned integer",
-                steps_str
-            )
-        })),
-        (_, Some(mem_str)) => {
-            let max_memory_bytes = mem_str.parse::<f64>().unwrap_or_else(|_| {
-                panic!("unable to parse --max-memory \"{}\" as a float", mem_str)
-            }) * 1024.0_f64.powi(3);
-            if max_memory_bytes < 1.0 {
-                panic!(
-                    "--max-memory must be at least 1 Byte, not {}B",
-                    max_memory_bytes
-                );
-            }
-            let num_bytes_per_scan =
-                context.num_timestep_coarse_chan_bytes * context.num_gpubox_files;
-            let num_bytes_total = context.num_timesteps * num_bytes_per_scan;
-            if max_memory_bytes < num_bytes_total as f64 {
-                if max_memory_bytes < num_bytes_per_scan as f64 {
-                    panic!(
-                        "--max-memory ({}B) too small to fit a single timestep ({}GiB)",
-                        max_memory_bytes, num_bytes_per_scan
-                    );
-                }
-                Some((max_memory_bytes / num_bytes_per_scan as f64).floor() as usize)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    };
-
     let mut timestep_flags = get_timestep_flags(&context);
     let mut antenna_flags = get_antenna_flags(&context);
     let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-    let mut fine_chan_flags = vec![false; context.metafits_context.num_corr_fine_chans_per_coarse];
+    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+
+    let mut fine_chan_flags = vec![false; fine_chans_per_coarse];
 
     let array_pos = if matches.is_present("emulate-cotter") {
         info!("Using array position from Cotter.");
@@ -834,22 +794,6 @@ where
         _ => 1,
     };
 
-    // validate chunk size
-    if let Some(chunk_size) = num_timesteps_per_chunk {
-        if chunk_size < context.num_timesteps && avg_time > 1 && chunk_size % avg_time != 0 {
-            panic!(
-                "the number of timesteps per chunk (--time-chunk={} or potentially --max-memory) \
-                is smaller than the number of timesteps in the observation ({}) \
-                and is not a multiple of the temporal averaging factor --avg-time-factor={}. \
-                This will result in averaging windows that are misaligned with chunking windows.",
-                chunk_size, context.num_timesteps, avg_time,
-            );
-        }
-        if matches.value_of("flag-template").is_some() {
-            panic!("chunking is not supported when writing .mwaf files using --flag-template");
-        }
-    }
-
     let fine_chan_width_khz = context.metafits_context.corr_fine_chan_width_hz as f64 / 1e3;
 
     let avg_freq: usize = match (
@@ -880,6 +824,75 @@ where
         }
         _ => 1,
     };
+
+    let num_sel_timesteps = sel_timestep_range.len();
+    let num_sel_chans = coarse_chan_range.len() * fine_chans_per_coarse;
+    let num_sel_baselines = baseline_idxs.len();
+    let num_sel_pols = context.metafits_context.num_visibility_pols;
+    let bytes_per_timestep = num_sel_chans
+        * num_sel_baselines
+        * num_sel_pols
+        * (std::mem::size_of::<Complex<f32>>()
+            + std::mem::size_of::<f32>()
+            + std::mem::size_of::<bool>());
+
+    // TODO: express time-chunk in terms of the number of output chunks
+    let num_timesteps_per_chunk: Option<usize> = match (
+        matches.value_of("time-chunk"),
+        matches.value_of("max-memory"),
+    ) {
+        (Some(_), Some(_)) => {
+            panic!("you can't use --time-chunk and --max-memory at the same time");
+        }
+        (Some(steps_str), None) => {
+            let steps = steps_str.parse().unwrap_or_else(|_| {
+                panic!(
+                    "unable to parse --time-chunk \"{}\" as an unsigned integer",
+                    steps_str
+                )
+            });
+            if steps % avg_time != 0 {
+                panic!(
+                    "--time-chunk {} must be an integer multiple of the averaging factor, {}",
+                    steps, avg_time
+                );
+            }
+            Some(steps)
+        }
+        (_, Some(mem_str)) => {
+            let max_memory_bytes = mem_str.parse::<f64>().unwrap_or_else(|_| {
+                panic!("unable to parse --max-memory \"{}\" as a float", mem_str)
+            }) * 1024.0_f64.powi(3);
+            if max_memory_bytes < 1.0 {
+                panic!(
+                    "--max-memory must be at least 1 Byte, not {}B",
+                    max_memory_bytes
+                );
+            }
+            let bytes_per_avg_time = bytes_per_timestep * avg_time;
+            let num_bytes_total = num_sel_timesteps * bytes_per_timestep;
+            if max_memory_bytes < num_bytes_total as f64 {
+                if max_memory_bytes < bytes_per_timestep as f64 {
+                    panic!(
+                        "--max-memory ({} GiB) too small to fit a single averaged timestep ({} * {} = {}GiB)",
+                        max_memory_bytes as f64 / 1024.0_f64.powi(3), avg_time, bytes_per_timestep as f64 / 1024.0_f64.powi(3), bytes_per_avg_time as f64 / 1024.0_f64.powi(3)
+                    );
+                }
+                Some((max_memory_bytes / bytes_per_avg_time as f64).floor() as usize * avg_time)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    // validate chunk size
+    if let Some(chunk_size) = num_timesteps_per_chunk {
+        if matches.value_of("flag-template").is_some() {
+            panic!("chunking is not supported when writing .mwaf files using --flag-template");
+        }
+        info!("chunking output to {} timesteps per chunk", chunk_size);
+    }
 
     let baseline_flags = get_baseline_flags(&context, &antenna_flags);
 
