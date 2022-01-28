@@ -4,7 +4,7 @@ use birli::{
         get_coarse_chan_range, get_timestep_flags, get_timestep_range, get_weight_factor,
     },
     io::WriteableVis,
-    UvfitsWriter,
+    Complex, UvfitsWriter,
 };
 use cfg_if::cfg_if;
 use clap::{app_from_crate, arg, AppSettings, ValueHint::FilePath};
@@ -56,6 +56,7 @@ pub fn show_param_info(
     baseline_flags: &[bool],
     avg_time: usize,
     avg_freq: usize,
+    num_timesteps_per_chunk: Option<usize>,
 ) {
     info!(
         "observation name:     {}",
@@ -164,12 +165,12 @@ pub fn show_param_info(
         (quack_duration_s / int_time_s).ceil(),
         int_time_s
     );
-    let avg_timesteps = (timestep_range.len() as f64 / avg_time as f64).ceil() as usize;
+    let num_avg_timesteps = (timestep_range.len() as f64 / avg_time as f64).ceil() as usize;
     let avg_int_time_s = int_time_s * avg_time as f64;
     info!(
         "Output duration:      {:.3}s = {:3} * {:.3}s{}",
-        avg_timesteps as f64 * avg_int_time_s,
-        avg_timesteps,
+        num_avg_timesteps as f64 * avg_int_time_s,
+        num_avg_timesteps,
         avg_int_time_s,
         if avg_time != 1 {
             format!(" ({}x)", avg_time)
@@ -192,14 +193,14 @@ pub fn show_param_info(
 
     let out_bandwidth_mhz =
         coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64 * fine_chan_width_khz / 1e3;
-    let out_channel_count = (coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64
+    let num_avg_chans = (coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64
         / avg_freq as f64)
         .ceil() as usize;
     let avg_fine_chan_width_khz = fine_chan_width_khz * avg_freq as f64;
     info!(
         "Output Bandwidth:     {:.3}MHz = {:9} * {:.3}kHz{}",
         out_bandwidth_mhz,
-        out_channel_count,
+        num_avg_chans,
         avg_fine_chan_width_khz,
         if avg_freq != 1 {
             format!(" ({}x)", avg_freq)
@@ -387,6 +388,72 @@ pub fn show_param_info(
     // TODO: show:
     // - estimated memory consumption
     // - free memory with https://docs.rs/sys-info/latest/sys_info/fn.mem_info.html
+
+    let num_sel_timesteps = timestep_range.len();
+    let num_sel_chans = coarse_chan_range.len() * fine_chans_per_coarse;
+    let num_sel_baselines = baseline_idxs.len();
+    let num_sel_pols = context.metafits_context.num_visibility_pols;
+    let mem_per_timestep_gib = (num_sel_chans
+        * num_sel_baselines
+        * num_sel_pols
+        * (std::mem::size_of::<Complex<f32>>()
+            + std::mem::size_of::<f32>()
+            + std::mem::size_of::<bool>())) as f64
+        / 1024.0_f64.powi(3);
+
+    info!(
+        "Estimated memory usage per timestep =           {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>) = {:7.02} GiB",
+        num_sel_chans,
+        num_sel_baselines,
+        num_sel_pols,
+        std::mem::size_of::<Complex<f32>>(),
+        std::mem::size_of::<f32>(),
+        std::mem::size_of::<bool>(),
+        mem_per_timestep_gib,
+    );
+
+    if let Some(num_timesteps) = num_timesteps_per_chunk {
+        info!("Estimated memory per chunk          = {:5}ts * {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>) = {:7.02} GiB",
+            num_timesteps,
+            num_sel_chans,
+            num_sel_baselines,
+            num_sel_pols,
+            std::mem::size_of::<Complex<f32>>(),
+            std::mem::size_of::<f32>(),
+            std::mem::size_of::<bool>(),
+            mem_per_timestep_gib * num_timesteps as f64,
+        );
+    }
+
+    info!("Estimated memory selected           = {:5}ts * {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>) = {:7.02} GiB",
+        num_sel_timesteps,
+        num_sel_chans,
+        num_sel_baselines,
+        num_sel_pols,
+        std::mem::size_of::<Complex<f32>>(),
+        std::mem::size_of::<f32>(),
+        std::mem::size_of::<bool>(),
+        mem_per_timestep_gib * num_sel_timesteps as f64,
+    );
+
+    let avg_mem_per_timestep_gib = (num_avg_chans
+        * num_sel_baselines
+        * num_sel_pols
+        * (std::mem::size_of::<Complex<f32>>()
+            + std::mem::size_of::<f32>()
+            + std::mem::size_of::<bool>())) as f64
+        / 1024.0_f64.powi(3);
+
+    info!("Estimated output size               = {:5}ts * {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>) = {:7.02} GiB",
+        num_avg_timesteps,
+        num_avg_chans,
+        num_sel_baselines,
+        num_sel_pols,
+        std::mem::size_of::<Complex<f32>>(),
+        std::mem::size_of::<f32>(),
+        std::mem::size_of::<bool>(),
+        avg_mem_per_timestep_gib * num_avg_timesteps as f64,
+    );
 }
 
 fn main_with_args<I, T>(args: I)
@@ -834,6 +901,7 @@ where
         &baseline_flags,
         avg_time,
         avg_freq,
+        num_timesteps_per_chunk,
     );
 
     if matches.is_present("dry-run") {
@@ -916,11 +984,9 @@ where
         let chunk_last_timestep = timestep_chunk.last().unwrap_or(chunk_first_timestep);
         let chunk_timestep_range: Range<usize> = chunk_first_timestep..chunk_last_timestep + 1;
         if num_timesteps_per_chunk.is_some() {
-            trace!(
+            info!(
                 "processing timestep chunk {:?} of {:?} % {}",
-                chunk_timestep_range,
-                sel_timestep_range,
-                chunk_size
+                chunk_timestep_range, sel_timestep_range, chunk_size
             );
         }
         let flag_array = init_flag_array(
