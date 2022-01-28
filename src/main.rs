@@ -575,6 +575,7 @@ where
         _ => get_timestep_range(&context).unwrap(),
     };
 
+    // TODO: express time-chunk in terms of the number of output chunks
     let num_timesteps_per_chunk: Option<usize> = match (
         matches.value_of("time-chunk"),
         matches.value_of("max-memory"),
@@ -910,14 +911,15 @@ where
     } else {
         sel_timestep_range.len()
     };
-    for mut timestep_chunk in &sel_timestep_range.chunks(chunk_size) {
+    for mut timestep_chunk in &sel_timestep_range.clone().chunks(chunk_size) {
         let chunk_first_timestep = timestep_chunk.next().unwrap();
         let chunk_last_timestep = timestep_chunk.last().unwrap_or(chunk_first_timestep);
         let chunk_timestep_range: Range<usize> = chunk_first_timestep..chunk_last_timestep + 1;
         if num_timesteps_per_chunk.is_some() {
             trace!(
-                "processing timestep chunk {:?} of {}",
+                "processing timestep chunk {:?} of {:?} % {}",
                 chunk_timestep_range,
+                sel_timestep_range,
                 chunk_size
             );
         }
