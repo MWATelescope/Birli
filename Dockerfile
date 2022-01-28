@@ -36,10 +36,11 @@ ADD . /app
 WORKDIR /app
 
 RUN cargo clean \
-    && cargo install --path . --features aoflagger --locked $(test -z "$DEBUG" || echo "--debug")
+    && cargo install --path . --features aoflagger --locked $(test -z "$DEBUG" || echo "--debug") \
+    && cargo clean
 
 # setup the toolchain used for coverage analysis
 RUN rustup toolchain install nightly-2022-01-14 --component llvm-tools-preview --profile minimal \
     && cargo +nightly-2022-01-14 install --force cargo-llvm-cov
 
-ENTRYPOINT [ "/app/target/release/birli" ]
+ENTRYPOINT [ "/opt/cargo/bin/birli" ]
