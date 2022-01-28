@@ -371,19 +371,26 @@ total duration: 35m 13s
 
 ## Summary
 
-| bench                                              | goal  | a762a27 | ea16381 | dbdc0ee | 09abc69 | 3a5671c | ee893da | v0.1.9  |
-| -------------------------------------------------- | ----- | ------- | ------- | ------- | ------- | ------- | ------- | ------- |
-| context_to_baseline_imgsets - ord_half_1196175296  |       | 1873.5s | 729.49s | 458.65s | 172.69s | 98.537s |         |
-| context_to_baseline_imgsets - mwax_half_1247842824 |       |         | 372.64s | 226.30s | 87.029s | 51.940s |         |
-| context_to_jones_array - ord_half_1196175296       | ~300s |         |         |         |         | 64.717s | 70.697s | 57.96s  |
-| context_to_jones_array - mwax_half_1247842824      |       |         |         |         |         | 35.321s | 37.996s | 30.79s  |
-| correct_cable_lengths - ord_half_1196175296        |       |         |         |         |         | 10.543s | 18.495s | 17.30s  |
-| correct_cable_lengths - mwax_half_1247842824       |       |         |         |         |         | 6.3826s | 9.2928s | 8.78s   |
-| correct_geometry - ord_half_1196175296             |       |         |         |         |         | 650.03s | 9.5513s | 7.80s   |
-| correct_geometry - mwax_half_1247842824            |       |         |         |         |         | 252.79s | 6.5979s | 5.64s   |
-| uvfits_output - 1254670392_avg                     | ~2s   |         |         |         |         | 7.7792s | 4.8460s | 2.48s   |
-| uvfits_output - ord_half_1196175296                |       |         |         |         |         |         |         | 676.46s |
-| uvfits_output - mwax_half_1247842824               |       |         |         |         |         |         |         | 328.83s |
+| bench                                              | goal  | a762a27 | ea16381 | dbdc0ee | 09abc69 | 3a5671c | ee893da | v0.1.9  | v0.3.1 |
+| -------------------------------------------------- | ----- | ------- | ------- | ------- | ------- | ------- | ------- | ------- | ------ |
+| context_to_baseline_imgsets - ord_half_1196175296  |       | 1873.5s | 729.49s | 458.65s | 172.69s | 98.537s |         |         |
+| context_to_baseline_imgsets - mwax_half_1247842824 |       |         | 372.64s | 226.30s | 87.029s | 51.940s |         |         |
+| context_to_jones_array - ord_half_1196175296       | ~300s |         |         |         |         | 64.717s | 70.697s | 57.96s  | 54.79s |
+| context_to_jones_array - mwax_half_1247842824      |       |         |         |         |         | 35.321s | 37.996s | 30.79s  | 28.15s |
+| correct_cable_lengths - ord_half_1196175296        |       |         |         |         |         | 10.543s | 18.495s | 17.30s  | 16.51s |
+| correct_cable_lengths - mwax_half_1247842824       |       |         |         |         |         | 6.3826s | 9.2928s | 8.78s   | 8.96s  |
+| correct_geometry - ord_half_1196175296             |       |         |         |         |         | 650.03s | 9.5513s | 7.80s   | 7.06s  |
+| correct_geometry - mwax_half_1247842824            |       |         |         |         |         | 252.79s | 6.5979s | 5.64s   | 5.41s  |
+| uvfits_output - 1254670392_avg                     | ~2s   |         |         |         |         | 7.7792s | 4.8460s | 2.48s   | 5.16s  |
+| uvfits_output - ord_half_1196175296                |       |         |         |         |         |         |         | 676.46s | -      |
+| uvfits_output - mwax_half_1247842824               |       |         |         |         |         |         |         | 328.83s | -      |
+
+## simplified output only
+
+| bench                                | v0.4.0 |
+| ------------------------------------ | ------ |
+| uvfits_out - 1196175296 10 timesteps |  |
+| ms_out - 1196175296 10 timesteps |  |
 
 ## MWALib-only testing
 
@@ -397,7 +404,6 @@ total duration: 35m 13s
 | read_by_frequency - ord_half_1196175296              | 2.950 | 0.180   |
 | read_by_frequency_into_buffer - mwax_half_1247842824 | 3.019 | 0.161   |
 | read_by_frequency_into_buffer - ord_half_1196175296  | 2.889 | 0.127   |
-
 
 ## on garrawarla
 
@@ -509,8 +515,6 @@ sys     6m17.461s
 ```
 
 ## huge file:
-
-
 
 ```txt
 Running Cotter MWA preprocessing pipeline, version 4.5 (2020-08-10).
