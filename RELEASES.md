@@ -1,9 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.3.2 (unreleased)
+# Version 0.4.0 (2022-02-01)
 
-- Allow the user to specify the maximum memory
-  - Use Rust 1.58 and 2021 edition
+- Preprocess data in timestep chunks based on maximum memory or number of timesteps.
+- --time-sel selects only specific timestep indices.
+- Log info about chunks, memory, build version.
+- Use Rust 1.58 and 2021 edition
 
 # Version 0.3.1 (2022-01-21)
 

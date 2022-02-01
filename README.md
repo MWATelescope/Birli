@@ -210,8 +210,8 @@ OPTIONS:
         --no-cable-delay             Do not perform cable length corrections
         --no-draw-progress           do not show progress bars
         --no-geometric-delay         Do not perform geometric corrections
-        --phase-centre <RA> <DEC>    [WIP] Override Phase centre from metafits (degrees)
-        --pointing-centre            [WIP] Use pointing instead phase centre
+        --phase-centre <RA> <DEC>    Override Phase centre from metafits (degrees)
+        --pointing-centre            Use pointing instead phase centre
         --time-sel <MIN> <MAX>       [WIP] Timestep index range (inclusive) to select
     -V, --version                    Print version information
 
