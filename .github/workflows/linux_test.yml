@@ -1,6 +1,6 @@
 # Based on https://github.com/actions-rs/meta/blob/master/recipes/quickstart.md
 
-on: 
+on:
   push:
     tags-ignore:
       - '**'
@@ -27,27 +27,9 @@ jobs:
           sudo apt-get update \
           && sudo apt-get install -y \
             build-essential \
-            casacore-data \
-            casacore-dev \
             cmake \
             curl \
             git \
-            libblas-dev \
-            libboost-date-time-dev \
-            libboost-filesystem-dev \
-            libboost-system-dev \
-            libboost-test-dev \
-            libfftw3-dev \
-            libgsl-dev \
-            libgtkmm-3.0-dev \
-            liblapack-dev \
-            liblua5.3-dev \
-            libpng-dev \
-            libpython3-dev \
-            libssl-dev \
-            libxml2-dev \
-            pkg-config \
-            python3 \
             unzip \
             wget \
             zip
@@ -66,12 +48,13 @@ jobs:
       - name: Install Dependencies
         run: cargo make install_deps
 
-      - name: Cargo Make CI
-        run: cargo make ci
+      - name: Cargo Test
+        run: cargo test
         env:
           LD_LIBRARY_PATH: /usr/local/lib/:/usr/lib/x86_64-linux-gnu/
 
   test_no_default:
+    name: "Linux tests without aoflagger"
     runs-on: "ubuntu-20.04"
     steps:
       - name: Checkout sources
@@ -107,9 +90,8 @@ jobs:
           cargo make linux_install_cfitsio
           cargo make linux_install_erfa
 
-      - name: Cargo Test
+      - name: Cargo Test No Default
         run: |
-          cargo make update
           cargo test --no-default-features
         env:
           LD_LIBRARY_PATH: /usr/local/lib/:/usr/lib/x86_64-linux-gnu/

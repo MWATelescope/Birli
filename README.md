@@ -18,10 +18,6 @@
   <img src="https://rust-reportcard.xuri.me/badge/github.com/mwatelescope/birli" alt="rust-reportcard"></a>
 <a href="https://github.com/MWATelescope/Birli/blob/main/LICENSE">
   <img alt="Crates.io" src="https://img.shields.io/crates/l/birli"></a>
-<a href="https://deps.rs/crate/birli/">
-  <img alt="Libraries.io dependency status for GitHub repo" src="https://img.shields.io/librariesio/github/mwatelescope/birli"></a>
-<a href="">
-  <img alt="Lines of code" src="https://img.shields.io/tokei/lines/github/mwatelescope/birli"></a>
 
 </div>
 
