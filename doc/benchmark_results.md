@@ -389,8 +389,8 @@ total duration: 35m 13s
 
 | bench                                | v0.4.0 |
 | ------------------------------------ | ------ |
-| uvfits_out - 1196175296 10 timesteps |  |
-| ms_out - 1196175296 10 timesteps |  |
+| uvfits_out - 1196175296 10 timesteps | 98.52  |
+| ms_out - 1196175296 10 timesteps     | 89.74  |
 
 ## MWALib-only testing
 

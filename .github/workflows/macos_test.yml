@@ -1,6 +1,6 @@
 # Based on https://github.com/actions-rs/meta/blob/master/recipes/quickstart.md
 
-on: 
+on:
   push:
     tags-ignore:
       - '**'
@@ -34,4 +34,6 @@ jobs:
       - name: Install Dependencies
         run: cargo make install_deps
 
-      - run: cargo make ci
+      - run: cargo make test --no-default-features
+      - run: cargo make test
+
