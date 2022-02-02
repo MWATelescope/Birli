@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use marlu::{fitsio, mwalib};
+use marlu::{fitsio, mwalib, mwalib::FitsError};
 
 ///
 /// Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
@@ -130,4 +130,44 @@ pub enum IOError {
         /// The shape that was received instead
         received: String,
     },
+}
+
+#[derive(Error, Debug)]
+/// Errors that can occur when reading from a solution file
+pub enum ReadSolutionsError {
+    #[error("Tried to read calibration solutions file with an unsupported extension '{ext}'!")]
+    #[allow(missing_docs)]
+    UnsupportedExt { ext: String },
+
+    #[error(
+        "When reading {file}, expected MWAOCAL as the first 7 characters, got '{got}' instead!"
+    )]
+    #[allow(missing_docs)]
+    AndreBinaryStr { file: String, got: String },
+
+    #[error(
+        "When reading {file}, expected a value {expected} in the header, but got '{got}' instead!"
+    )]
+    #[allow(missing_docs)]
+    AndreBinaryVal {
+        file: String,
+        expected: &'static str,
+        got: String,
+    },
+
+    #[error("In file {file} key {key}, could not parse '{got}' as a number!")]
+    #[allow(missing_docs)]
+    Parse {
+        file: String,
+        key: &'static str,
+        got: String,
+    },
+
+    #[error("{0}")]
+    #[allow(missing_docs)]
+    Fits(#[from] FitsError),
+
+    #[error("IO error: {0}")]
+    #[allow(missing_docs)]
+    IO(#[from] std::io::Error),
 }

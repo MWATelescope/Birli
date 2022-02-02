@@ -2,6 +2,7 @@
 //!
 //! Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
 
+pub mod aocal;
 pub mod error;
 pub mod mwaf;
 pub mod uvfits;
