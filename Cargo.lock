@@ -161,6 +161,7 @@ dependencies = [
  "approx",
  "assert_cli",
  "built",
+ "byteorder",
  "cfg-if",
  "clap 3.0.13",
  "criterion",
