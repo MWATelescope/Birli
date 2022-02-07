@@ -121,8 +121,8 @@ pub mod io;
 pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter, write_ms, write_uvfits};
 pub mod corrections;
 pub use corrections::{correct_cable_lengths, correct_geometry};
-pub mod flags;
 pub mod calibration;
+pub mod flags;
 #[cfg(test)]
 pub use approx;
 #[cfg(test)]
@@ -137,8 +137,7 @@ pub use marlu::{
     mwalib::{fitsio, fitsio_sys, CorrelatorContext},
     ndarray,
     ndarray::{parallel::prelude::*, Array3, Axis},
-    Complex, Jones,
-    MarluVisContext
+    Complex, Jones, MarluVisContext,
 };
 #[cfg(test)]
 pub(crate) use types::TestJones;

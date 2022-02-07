@@ -8,6 +8,7 @@ use crate::{
         BirliError::{NoCommonCoarseChans, NoCommonTimesteps, NoProvidedTimesteps},
     },
     io::error::IOError,
+    ndarray::Axis,
     ndarray::{Array, Array3, Array4, ArrayView, ArrayView3, Dimension},
     FlagFileSet,
 };
@@ -19,7 +20,6 @@ cfg_if! {
     if #[cfg(feature = "aoflagger")] {
         use crate::{
             flag_baseline_view_to_flagmask, jones_baseline_view_to_imageset,
-            ndarray::Axis
         };
         use aoflagger_sys::{CxxAOFlagger, CxxFlagMask, UniquePtr, flagmask_or,
             flagmask_set};
@@ -328,9 +328,15 @@ pub fn init_flag_array(
 
 /// Expand an array into a new axis by repeating each element `size` times
 pub fn add_dimension<T>(array: ArrayView3<T>, size: usize) -> Array4<T>
-where T: std::clone::Clone {
+where
+    T: std::clone::Clone,
+{
     let shape = array.dim();
-    array.insert_axis(Axis(3)).broadcast((shape.0, shape.1, shape.2, size)).unwrap().to_owned()
+    array
+        .insert_axis(Axis(3))
+        .broadcast((shape.0, shape.1, shape.2, size))
+        .unwrap()
+        .to_owned()
 }
 
 /// Flag an ndarray of [`Jones`] visibilities, given a [`CxxAOFlagger`] instance,

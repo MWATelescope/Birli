@@ -1,10 +1,11 @@
 use birli::{
+    calibration::apply_di_calsol,
     flags::{
         add_dimension, flag_to_weight_array, get_baseline_flags, get_coarse_chan_flags,
         get_coarse_chan_range, get_timestep_flags, get_timestep_range, get_weight_factor,
     },
-    io::{WriteableVis, aocal::AOCalSols},
-    Complex, UvfitsWriter, MarluVisContext, calibration::apply_di_calsol, Axis,
+    io::{aocal::AOCalSols, WriteableVis},
+    Axis, Complex, MarluVisContext, UvfitsWriter,
 };
 use cfg_if::cfg_if;
 use clap::{app_from_crate, arg, AppSettings, ValueHint::FilePath};
@@ -1153,8 +1154,9 @@ where
                 jones_array.view_mut(),
                 weight_array.view_mut(),
                 flag_array.view_mut(),
-                marlu_context
-            ).unwrap();
+                marlu_context,
+            )
+            .unwrap();
         }
 
         // TODO: nothing actually uses the pol axis for flags and weights, so rip it out.
@@ -2619,7 +2621,7 @@ mod tests_aoflagger {
             "--no-rfi",
             "--emulate-cotter",
             "--pre-apply",
-            "tests/data/1254670392_avg/1254690096.bin"
+            "tests/data/1254670392_avg/1254690096.bin",
         ];
         args.extend_from_slice(&gpufits_paths);
 
