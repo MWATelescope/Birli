@@ -1,10 +1,10 @@
 use birli::{
     flags::{
-        expand_flag_array, flag_to_weight_array, get_baseline_flags, get_coarse_chan_flags,
+        add_dimension, flag_to_weight_array, get_baseline_flags, get_coarse_chan_flags,
         get_coarse_chan_range, get_timestep_flags, get_timestep_range, get_weight_factor,
     },
-    io::WriteableVis,
-    Complex, UvfitsWriter,
+    io::{WriteableVis, aocal::AOCalSols},
+    Complex, UvfitsWriter, MarluVisContext, calibration::apply_di_calsol, Axis,
 };
 use cfg_if::cfg_if;
 use clap::{app_from_crate, arg, AppSettings, ValueHint::FilePath};
@@ -590,6 +590,11 @@ where
             arg!(--"dry-run" "Just print the summary and exit"),
             arg!(--"no-draw-progress" "do not show progress bars"),
 
+            // calibration
+            arg!(--"pre-apply" <PATH> "Apply DI calibration solutions to the data before averaging")
+                .required(false)
+                .value_hint(FilePath),
+
             // averaging
             arg!(--"avg-time-res" <SECONDS> "Time resolution of averaged data")
                 .help_heading("AVERAGING")
@@ -1124,11 +1129,37 @@ where
                 .expect("unable to write flags");
         }
 
-        // perform averaging
+        // generate weights
         let num_pols = context.metafits_context.num_visibility_pols;
-        let flag_array = expand_flag_array(flag_array.view(), num_pols);
         let weight_factor = get_weight_factor(&context);
-        let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+        let mut weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+
+        let marlu_context = MarluVisContext::from_mwalib(
+            &context,
+            &chunk_timestep_range,
+            &coarse_chan_range,
+            &baseline_idxs,
+            avg_time,
+            avg_freq,
+        );
+
+        if let Some(calsol_file) = matches.value_of("pre-apply") {
+            let calsols = AOCalSols::read_andre_binary(calsol_file).unwrap();
+            if calsols.di_jones.dim().0 != 1 {
+                panic!("only 1 timeblock supported for calsols");
+            }
+            apply_di_calsol(
+                calsols.di_jones.index_axis(Axis(0), 0),
+                jones_array.view_mut(),
+                weight_array.view_mut(),
+                flag_array.view_mut(),
+                marlu_context
+            ).unwrap();
+        }
+
+        // TODO: nothing actually uses the pol axis for flags and weights, so rip it out.
+        let flag_array = add_dimension(flag_array.view(), num_pols);
+        let weight_array = add_dimension(weight_array.view(), num_pols);
 
         // output uvfits
         if let Some(uvfits_writer) = uvfits_writer.as_mut() {
@@ -2535,5 +2566,65 @@ mod tests_aoflagger {
         args.extend_from_slice(&gpufits_paths);
 
         main_with_args(&args);
+    }
+
+    /// Data generated with
+    ///
+    /// ```bash
+    /// cotter \
+    ///  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
+    ///  -o tests/data/1254670392_avg/1254670392.cotter.none.norfi.cal.ms \
+    ///  -allowmissing \
+    ///  -edgewidth 0 \
+    ///  -endflag 0 \
+    ///  -initflag 0 \
+    ///  -noantennapruning \
+    ///  -nocablelength \
+    ///  -norfi \
+    ///  -nogeom \
+    ///  -noflagautos \
+    ///  -noflagdcchannels \
+    ///  -nosbgains \
+    ///  -sbpassband tests/data/subband-passband-32ch-unitary.txt \
+    ///  -nostats \
+    ///  -flag-strategy /usr/share/aoflagger/strategies/mwa-default.lua \
+    ///  -full-apply tests/data/1254670392_avg/1254690096.bin \
+    ///  tests/data/1254670392_avg/*gpubox*.fits
+    /// ```
+    ///
+    /// then casa
+    ///
+    /// ```bash
+    /// tb.open('tests/data/1254670392_avg/1254670392.cotter.none.norfi.cal.ms')
+    /// exec(open('tests/data/casa_dump_ms.py').read())
+    /// ```
+    #[test]
+    fn test_1254670392_avg_ms_none_norfi_cal() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("1254670392.none.norfi.cal.ms");
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let expected_csv_path =
+            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.norfi.cal.ms.csv");
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-M",
+            ms_path.to_str().unwrap(),
+            "--no-draw-progress",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--no-rfi",
+            "--emulate-cotter",
+            "--pre-apply",
+            "tests/data/1254670392_avg/1254690096.bin"
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+
+        compare_ms_with_csv(ms_path, expected_csv_path, F32Margin::default());
     }
 }

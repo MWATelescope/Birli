@@ -1,7 +1,7 @@
 tb = locals()['tb']
 dump_path = tb.name() + ".csv"
 num_freqs = tb.getcoldesc('DATA')['shape'].tolist()[1]
-row_limit = 1000
+row_limit = locals().get('row_limit', 250)
 
 with open(dump_path, 'w') as dump:
     header = ["time", "ant1", "ant2", "u", "v", "w", "type", "pol"]
