@@ -15,7 +15,7 @@
 //!     context_to_jones_array, write_flags,
 //!     get_flaggable_timesteps, init_flag_array,
 //!     get_antenna_flags, mwalib::CorrelatorContext, write_uvfits,
-//!     expand_flag_array, get_weight_factor, flag_to_weight_array,
+//!     add_dimension, get_weight_factor, flag_to_weight_array,
 //!     get_baseline_flags,
 //! };
 //! use tempfile::tempdir;
@@ -74,7 +74,7 @@
 //! // write the visibilities to disk as .uvfits
 //!
 //! let num_pols = context.metafits_context.num_visibility_pols;
-//! let flag_array = expand_flag_array(flag_array.view(), num_pols);
+//! let flag_array = add_dimension(flag_array.view(), num_pols);
 //! let weight_factor = get_weight_factor(&context);
 //! let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 //! write_uvfits(
@@ -122,12 +122,13 @@ pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter, write_ms, write_uvfits};
 pub mod corrections;
 pub use corrections::{correct_cable_lengths, correct_geometry};
 pub mod flags;
+pub mod calibration;
 #[cfg(test)]
 pub use approx;
 #[cfg(test)]
 pub(crate) mod types;
 pub use flags::{
-    expand_flag_array, flag_to_weight_array, get_antenna_flags, get_baseline_flags,
+    add_dimension, flag_to_weight_array, get_antenna_flags, get_baseline_flags,
     get_flaggable_timesteps, get_weight_factor, init_flag_array, write_flags,
 };
 pub use marlu;
@@ -137,6 +138,7 @@ pub use marlu::{
     ndarray,
     ndarray::{parallel::prelude::*, Array3, Axis},
     Complex, Jones,
+    MarluVisContext
 };
 #[cfg(test)]
 pub(crate) use types::TestJones;
