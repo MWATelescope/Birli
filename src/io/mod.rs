@@ -86,7 +86,7 @@ pub trait WriteableVis: Sync + Send {
 ///     context_to_jones_array,
 ///     write_uvfits,
 ///     marlu::mwalib::CorrelatorContext,
-///     expand_flag_array,
+///     add_dimension,
 ///     get_weight_factor,
 ///     flag_to_weight_array
 /// };
@@ -129,7 +129,7 @@ pub trait WriteableVis: Sync + Send {
 /// let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 ///
 /// let num_pols = context.metafits_context.num_visibility_pols;
-/// let flag_array = expand_flag_array(flag_array.view(), num_pols);
+/// let flag_array = add_dimension(flag_array.view(), num_pols);
 /// let weight_factor = get_weight_factor(&context);
 /// let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 ///
@@ -220,7 +220,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///     context_to_jones_array,
 ///     write_ms,
 ///     marlu::mwalib::CorrelatorContext,
-///     expand_flag_array,
+///     add_dimension,
 ///     get_weight_factor,
 ///     flag_to_weight_array
 /// };
@@ -263,7 +263,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
 /// let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 ///
 /// let num_pols = context.metafits_context.num_visibility_pols;
-/// let flag_array = expand_flag_array(flag_array.view(), num_pols);
+/// let flag_array = add_dimension(flag_array.view(), num_pols);
 /// let weight_factor = get_weight_factor(&context);
 /// let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 /// // time and frequency averaging
@@ -350,7 +350,7 @@ mod tests_aoflagger {
     use crate::{
         context_to_jones_array,
         flags::{
-            expand_flag_array, flag_jones_array_existing, flag_to_weight_array, get_antenna_flags,
+            add_dimension, flag_jones_array_existing, flag_to_weight_array, get_antenna_flags,
             get_baseline_flags, get_weight_factor,
         },
         get_flaggable_timesteps, init_flag_array, write_uvfits,
@@ -436,7 +436,7 @@ mod tests_aoflagger {
         );
 
         let weight_factor = get_weight_factor(&context);
-        let flag_array = expand_flag_array(flag_array.view(), 4);
+        let flag_array = add_dimension(flag_array.view(), 4);
         let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
         // write the visibilities to disk as .uvfits

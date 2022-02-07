@@ -29,7 +29,7 @@ use marlu::{
 };
 
 use crate::{
-    flags::{expand_flag_array, flag_to_weight_array, get_weight_factor},
+    flags::{add_dimension, flag_to_weight_array, get_weight_factor},
     marlu::num_complex::Complex,
     ndarray::{s, Array, Array3, ArrayView3, ArrayView4, Axis},
 };
@@ -844,7 +844,7 @@ impl UvfitsWriter {
         draw_progress: bool,
     ) -> Result<(), IOError> {
         let num_pols = context.metafits_context.num_visibility_pols;
-        let expanded_flag_array = expand_flag_array(flag_array.view(), num_pols);
+        let expanded_flag_array = add_dimension(flag_array.view(), num_pols);
         let weight_factor = get_weight_factor(context);
         let weight_array = flag_to_weight_array(expanded_flag_array.view(), weight_factor);
         self.write_vis_mwalib(
@@ -1907,7 +1907,7 @@ mod tests {
         .unwrap();
 
         let num_pols = context.metafits_context.num_visibility_pols;
-        let flag_array = expand_flag_array(flag_array.view(), num_pols);
+        let flag_array = add_dimension(flag_array.view(), num_pols);
         let weight_factor = get_weight_factor(&context);
         let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
@@ -2406,7 +2406,7 @@ mod tests_aoflagger {
         );
 
         let num_pols = context.metafits_context.num_visibility_pols;
-        let flag_array = expand_flag_array(flag_array.view(), num_pols);
+        let flag_array = add_dimension(flag_array.view(), num_pols);
         let weight_factor = get_weight_factor(&context);
         let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 

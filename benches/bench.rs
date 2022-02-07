@@ -1,6 +1,6 @@
 use birli::{
     context_to_jones_array,
-    flags::{expand_flag_array, flag_to_weight_array, get_weight_factor},
+    flags::{add_dimension, flag_to_weight_array, get_weight_factor},
     io::write_uvfits,
     write_ms,
 };
@@ -75,7 +75,7 @@ fn bench_uvfits_output_1196175296_none(crt: &mut Criterion) {
     .unwrap();
 
     let weight_factor = get_weight_factor(&context);
-    let flag_array = expand_flag_array(flag_array.view(), 4);
+    let flag_array = add_dimension(flag_array.view(), 4);
     let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
     crt.bench_function(
@@ -121,7 +121,7 @@ fn bench_ms_output_1196175296_none(crt: &mut Criterion) {
     .unwrap();
 
     let weight_factor = get_weight_factor(&context);
-    let flag_array = expand_flag_array(flag_array.view(), 4);
+    let flag_array = add_dimension(flag_array.view(), 4);
     let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
     crt.bench_function(

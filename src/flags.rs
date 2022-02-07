@@ -326,13 +326,11 @@ pub fn init_flag_array(
     })
 }
 
-/// Expand a flag array of `[timestep][channel][baseline]` to `[timestep][channel][baseline][pol]`
-pub fn expand_flag_array(flag_array: ArrayView3<bool>, num_pols: usize) -> Array4<bool> {
-    let shape = flag_array.dim();
-    Array4::from_shape_fn(
-        (shape.0, shape.1, shape.2, num_pols),
-        |(ts_idx, ch_idx, bl_idx, _)| flag_array[[ts_idx, ch_idx, bl_idx]],
-    )
+/// Expand an array into a new axis by repeating each element `size` times
+pub fn add_dimension<T>(array: ArrayView3<T>, size: usize) -> Array4<T>
+where T: std::clone::Clone {
+    let shape = array.dim();
+    array.insert_axis(Axis(3)).broadcast((shape.0, shape.1, shape.2, size)).unwrap().to_owned()
 }
 
 /// Flag an ndarray of [`Jones`] visibilities, given a [`CxxAOFlagger`] instance,
