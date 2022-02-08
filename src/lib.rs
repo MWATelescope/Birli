@@ -137,7 +137,7 @@ pub use marlu::{
     mwalib::{fitsio, fitsio_sys, CorrelatorContext},
     ndarray,
     ndarray::{parallel::prelude::*, Array3, Axis},
-    Complex, Jones, MarluVisContext,
+    Complex, Jones,
 };
 #[cfg(test)]
 pub(crate) use types::TestJones;

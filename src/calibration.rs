@@ -72,14 +72,13 @@ pub fn apply_di_calsol(
         });
     }
 
-    if di_dims.1 != vis_dims.1 {
+    if (vis_dims.1 as f64 / di_dims.1 as f64).fract().abs() > 0.01 {
         return Err(CalibrationError::ChannelSizeMismatch {
             calsol_chans: di_dims.1,
             data_chans: vis_dims.1,
         });
     }
-
-    // TODO: cotter allows for n * di_dims.1 = vis_dims.1.
+    let channel_ratio = (vis_dims.1 as f64 / di_dims.1 as f64).round() as usize;
 
     // time axis
     for (mut vis_array, mut weight_array, mut flag_array) in izip!(
@@ -94,28 +93,33 @@ pub fn apply_di_calsol(
             weight_array.axis_iter_mut(Axis(1)),
             flag_array.axis_iter_mut(Axis(1)),
         ) {
-            // channel axis
-            for (&sol1, &sol2, vis, weight, flag) in izip!(
+            // channel axis (chunked by channel_ratio)
+            for (&sol1, &sol2, mut vis_chunk, mut weight_chunk, mut flag_chunk) in izip!(
                 calsols.index_axis(Axis(0), ant1_idx),
                 calsols.index_axis(Axis(0), ant2_idx),
-                vis_array.iter_mut(),
-                weight_array.iter_mut(),
-                flag_array.iter_mut(),
+                vis_array.axis_chunks_iter_mut(Axis(0), channel_ratio),
+                weight_array.axis_chunks_iter_mut(Axis(0), channel_ratio),
+                flag_array.axis_chunks_iter_mut(Axis(0), channel_ratio),
             ) {
-                // apply the calibration solution
+                // apply the calibration solution to all visibilities in the chunk
+                for (vis, weight, flag) in izip!(
+                    vis_chunk.iter_mut(),
+                    weight_chunk.iter_mut(),
+                    flag_chunk.iter_mut()
+                ) {
+                    // promote
+                    let vis_f64 = Jones::<f64>::from(*vis);
 
-                // promote
-                let vis_f64 = Jones::<f64>::from(*vis);
+                    // demote J1 * D * J2^H
+                    *vis = Jones::<f32>::from(sol1 * vis_f64 * sol2.h());
 
-                // demote J1 * D * J2^H
-                *vis = Jones::<f32>::from(sol1 * vis_f64 * sol2.h());
-
-                // if the data now contains a NaN, flag it
-                // todo: not sure about this because Cotter doesn't do it.
-                if vis.any_nan() {
-                    *flag = true;
-                    if *weight > 0. {
-                        *weight = -*weight;
+                    // if the data now contains a NaN, flag it
+                    // todo: not sure about this because Cotter doesn't do it.
+                    if vis.any_nan() {
+                        *flag = true;
+                        if *weight > 0. {
+                            *weight = -*weight;
+                        }
                     }
                 }
             }
@@ -128,13 +132,18 @@ pub fn apply_di_calsol(
 #[cfg(test)]
 mod tests {
     use approx::assert_abs_diff_eq;
-    use marlu::Complex;
 
-    use crate::types::TestJones;
+    use crate::{types::TestJones, Complex};
 
     use ndarray::{array, Array2, Array3};
 
     use super::*;
+
+    macro_rules! compare_jones {
+        ($a:expr, $b:expr) => {
+            assert_abs_diff_eq!(TestJones::<f32>::from($a), TestJones::<f32>::from($b));
+        };
+    }
 
     /// Test the calsols are correctly applied in the antenna axis.
     #[test]
@@ -158,29 +167,17 @@ mod tests {
         )
         .unwrap();
 
-        assert_abs_diff_eq!(
-            TestJones::from(vis_array[(0, 0, 0)]),
-            TestJones::from(
-                Jones::<f32>::from(calsols[(0, 0)])
-                    * (Jones::<f32>::identity() * 1.)
-                    * Jones::<f32>::from(calsols[(0, 0)].h())
-            )
+        compare_jones!(
+            vis_array[(0, 0, 0)],
+            calsols[(0, 0)] * (Jones::<f64>::identity() * 1.) * calsols[(0, 0)].h()
         );
-        assert_abs_diff_eq!(
-            TestJones::from(vis_array[(0, 0, 1)]),
-            TestJones::from(
-                Jones::<f32>::from(calsols[(0, 0)])
-                    * (Jones::<f32>::identity() * 2.)
-                    * Jones::<f32>::from(calsols[(1, 0)].h())
-            )
+        compare_jones!(
+            vis_array[(0, 0, 1)],
+            calsols[(0, 0)] * (Jones::<f64>::identity() * 2.) * calsols[(1, 0)].h()
         );
-        assert_abs_diff_eq!(
-            TestJones::from(vis_array[(0, 0, 2)]),
-            TestJones::from(
-                Jones::<f32>::from(calsols[(1, 0)])
-                    * (Jones::<f32>::identity() * 3.)
-                    * Jones::<f32>::from(calsols[(1, 0)].h())
-            )
+        compare_jones!(
+            vis_array[(0, 0, 2)],
+            calsols[(1, 0)] * (Jones::<f64>::identity() * 3.) * calsols[(1, 0)].h()
         );
     }
 
@@ -207,21 +204,54 @@ mod tests {
         )
         .unwrap();
 
-        assert_abs_diff_eq!(
-            TestJones::from(vis_array[(0, 0, 0)]),
-            TestJones::from(
-                Jones::<f32>::from(calsols[(0, 0)])
-                    * (Jones::<f32>::identity() * 2.)
-                    * Jones::<f32>::from(calsols[(0, 0)].h())
-            )
+        compare_jones!(
+            vis_array[(0, 0, 0)],
+            calsols[(0, 0)] * (Jones::<f64>::identity() * 2.) * calsols[(0, 0)].h()
         );
-        assert_abs_diff_eq!(
-            TestJones::from(vis_array[(0, 1, 0)]),
-            TestJones::from(
-                Jones::<f32>::from(calsols[(0, 1)])
-                    * (Jones::<f32>::identity() * 4.)
-                    * Jones::<f32>::from(calsols[(0, 1)].h())
-            )
+        compare_jones!(
+            vis_array[(0, 1, 0)],
+            calsols[(0, 1)] * (Jones::<f64>::identity() * 4.) * calsols[(0, 1)].h()
+        );
+    }
+
+    /// Test the calsols are correctly applied in the channel axis, when vis chans = 2 * cal chans.
+    #[test]
+    fn test_apply_calsols_chan_uneven() {
+        let sel_baselines = vec![(0, 0)];
+        let num_times = 1;
+
+        let calsols =
+            Array2::from_shape_fn((1, 2), |(_, c)| Jones::identity() * (c * 2 + 1) as f64);
+        let shape = (num_times, calsols.dim().1 * 2, sel_baselines.len());
+        let mut vis_array = Array3::from_shape_fn(shape, |(_, c, _)| {
+            Jones::<f32>::identity() * (c * 2 + 2) as f32
+        });
+        let mut flag_array = Array3::from_shape_fn(shape, |_| false);
+        let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+        apply_di_calsol(
+            calsols.view(),
+            vis_array.view_mut(),
+            weight_array.view_mut(),
+            flag_array.view_mut(),
+            &sel_baselines,
+        )
+        .unwrap();
+
+        compare_jones!(
+            vis_array[(0, 0, 0)],
+            calsols[(0, 0)] * (Jones::<f64>::identity() * 2.) * calsols[(0, 0)].h()
+        );
+        compare_jones!(
+            vis_array[(0, 1, 0)],
+            calsols[(0, 0)] * (Jones::<f64>::identity() * 4.) * calsols[(0, 0)].h()
+        );
+        compare_jones!(
+            vis_array[(0, 2, 0)],
+            calsols[(0, 1)] * (Jones::<f64>::identity() * 6.) * calsols[(0, 1)].h()
+        );
+        compare_jones!(
+            vis_array[(0, 3, 0)],
+            calsols[(0, 1)] * (Jones::<f64>::identity() * 8.) * calsols[(0, 1)].h()
         );
     }
 
@@ -247,21 +277,13 @@ mod tests {
         )
         .unwrap();
 
-        assert_abs_diff_eq!(
-            TestJones::from(vis_array[(0, 0, 0)]),
-            TestJones::from(
-                Jones::<f32>::from(calsols[(0, 0)])
-                    * (Jones::<f32>::identity() * 2.)
-                    * Jones::<f32>::from(calsols[(0, 0)].h())
-            )
+        compare_jones!(
+            vis_array[(0, 0, 0)],
+            calsols[(0, 0)] * (Jones::<f64>::identity() * 2.) * calsols[(0, 0)].h()
         );
-        assert_abs_diff_eq!(
-            TestJones::from(vis_array[(1, 0, 0)]),
-            TestJones::from(
-                Jones::<f32>::from(calsols[(0, 0)])
-                    * (Jones::<f32>::identity() * 4.)
-                    * Jones::<f32>::from(calsols[(0, 0)].h())
-            )
+        compare_jones!(
+            vis_array[(1, 0, 0)],
+            calsols[(0, 0)] * (Jones::<f64>::identity() * 4.) * calsols[(0, 0)].h()
         );
     }
 
@@ -270,24 +292,23 @@ mod tests {
     fn test_apply_calsols_real() {
         let sel_baselines = vec![(0, 1)];
 
-        // -exec p solA[solChannel]
-        // -exec p solB[solChannel]
-
-        let calsols = array![
+        let calsols: Array2<Jones<f64>> = array![
+            // -exec p solA[solChannel]
             [
-                Jones::<f64>::from([
+                Jones::from([
                     Complex::new(-0.05711880819681107, 0.8909723224701427),
                     Complex::new(0., 0.),
                     Complex::new(0., 0.),
                     Complex::new(-0.3190681285208096, 0.8975262420831493)
                 ]),
-                Jones::<f64>::from([
+                Jones::from([
                     Complex::new(-0.05790403500446751, 0.8906022388084277),
                     Complex::new(0., 0.),
                     Complex::new(0., 0.),
                     Complex::new(-0.31938558050469074, 0.8973555420886708)
                 ]),
             ],
+            // -exec p solB[solChannel]
             [
                 Jones::from([
                     Complex::new(0.7738792841865286, 0.4448506027871696),
@@ -305,15 +326,14 @@ mod tests {
         ];
         let shape = (1, calsols.dim().1, sel_baselines.len());
 
-        // -exec p dataAsDouble
         let mut vis_array = array![[
+            // -exec p dataAsDouble
             [Jones::<f32>::from([
                 Complex::new(24.25, 1.),
                 Complex::new(85.5, 81.75),
                 Complex::new(35.25, -2.),
                 Complex::new(154.5, 9.625)
             ])],
-            // {{58.25 + -67i}, {3.875 + -12.375i}, {-36 + 75.75i}, {17.375 + 75.625i}}
             [Jones::<f32>::from([
                 Complex::new(58.25, -67.),
                 Complex::new(3.875, -12.375),
@@ -321,9 +341,8 @@ mod tests {
                 Complex::new(17.375, 75.625)
             ])],
         ]];
-        // > MC2x2::ATimesB(scratch, solA[solChannel], dataAsDouble)
-        // -exec p scratch
         let exp_vis_array = array![[
+            // -exec p dataAsDouble
             [Jones::<f32>::from([
                 Complex::new(7.8246384, 17.68882),
                 Complex::new(43.610638, 81.43078),
@@ -348,13 +367,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_abs_diff_eq!(
-            TestJones::from(vis_array[(0, 0, 0)]),
-            TestJones::from(exp_vis_array[(0, 0, 0)])
-        );
-        assert_abs_diff_eq!(
-            TestJones::from(vis_array[(0, 1, 0)]),
-            TestJones::from(exp_vis_array[(0, 1, 0)])
-        );
+        compare_jones!(vis_array[(0, 0, 0)], exp_vis_array[(0, 0, 0)]);
+        compare_jones!(vis_array[(0, 1, 0)], exp_vis_array[(0, 1, 0)]);
     }
 }

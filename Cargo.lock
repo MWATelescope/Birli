@@ -1027,7 +1027,8 @@ dependencies = [
 [[package]]
 name = "marlu"
 version = "0.4.0"
-source = "git+https://github.com/MWATelescope/Marlu.git?branch=context#991dfc2b3d909f53d894b63e15dd1caff25a4fcb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d6d8d39e6833c665fd3acde10d0ec47e3af268b5e20bdca37af56c4595016b9"
 dependencies = [
  "cfg-if",
  "erfa-sys",
