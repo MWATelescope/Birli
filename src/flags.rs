@@ -339,6 +339,12 @@ where
         .to_owned()
 }
 
+/// Expand a flag array into a new axis by repeating each element `size` times
+#[deprecated(since = "0.4.1", note = "please use `add_dimension` instead")]
+pub fn expand_flag_array(array: ArrayView3<bool>, size: usize) -> Array4<bool> {
+    add_dimension(array, size)
+}
+
 /// Flag an ndarray of [`Jones`] visibilities, given a [`CxxAOFlagger`] instance,
 /// a [`CxxStrategy`] filename, returning an [`ndarray::Array3`] of boolean flags.
 ///
