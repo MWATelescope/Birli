@@ -592,7 +592,7 @@ where
             arg!(--"no-draw-progress" "do not show progress bars"),
 
             // calibration
-            arg!(--"pre-apply" <PATH> "Apply DI calibration solutions to the data before averaging")
+            arg!(--"apply-di-cal" <PATH> "Apply DI calibration solutions to the data before averaging")
                 .required(false)
                 .value_hint(FilePath),
 
@@ -1144,7 +1144,7 @@ where
             avg_freq,
         );
 
-        if let Some(calsol_file) = matches.value_of("pre-apply") {
+        if let Some(calsol_file) = matches.value_of("apply-di-cal") {
             let calsols = AOCalSols::read_andre_binary(calsol_file).unwrap();
             if calsols.di_jones.dim().0 != 1 {
                 panic!("only 1 timeblock supported for calsols");
@@ -1776,7 +1776,12 @@ mod tests_aoflagger {
         }
     }
 
-    fn compare_ms_with_csv(ms_path: PathBuf, expected_csv_path: PathBuf, vis_margin: F32Margin) {
+    fn compare_ms_with_csv(
+        ms_path: PathBuf,
+        expected_csv_path: PathBuf,
+        vis_margin: F32Margin,
+        ignore_weights: bool,
+    ) {
         // Check both files are present
         assert!(ms_path.exists());
         assert!(expected_csv_path.exists());
@@ -1919,6 +1924,9 @@ mod tests_aoflagger {
                             }
                         }
                         "weight" => {
+                            if ignore_weights {
+                                break;
+                            }
                             let exp_pol_weight: Vec<f32> = record
                                 .iter()
                                 .skip(freq_start_header)
@@ -1957,6 +1965,9 @@ mod tests_aoflagger {
                             }
                         }
                         "flag" => {
+                            if ignore_weights {
+                                break;
+                            }
                             let exp_pol_flag: Vec<bool> = record
                                 .iter()
                                 .skip(freq_start_header)
@@ -2334,6 +2345,7 @@ mod tests_aoflagger {
             ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(2e-4),
+            false,
         );
     }
 
@@ -2390,6 +2402,7 @@ mod tests_aoflagger {
             ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-3),
+            false,
         );
     }
 
@@ -2458,6 +2471,7 @@ mod tests_aoflagger {
             ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-7),
+            false,
         );
     }
 
@@ -2497,6 +2511,7 @@ mod tests_aoflagger {
             ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-7),
+            false,
         );
     }
 
@@ -2540,6 +2555,7 @@ mod tests_aoflagger {
             ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-7),
+            false,
         );
     }
 
@@ -2625,13 +2641,14 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--no-rfi",
             "--emulate-cotter",
-            "--pre-apply",
+            "--apply-di-cal",
             "tests/data/1254670392_avg/1254690096.bin",
         ];
         args.extend_from_slice(&gpufits_paths);
 
         main_with_args(&args);
 
-        compare_ms_with_csv(ms_path, expected_csv_path, F32Margin::default());
+        // ignoring weights because Cotter doesn't flag NaNs
+        compare_ms_with_csv(ms_path, expected_csv_path, F32Margin::default(), true);
     }
 }
