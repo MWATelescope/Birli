@@ -18,7 +18,7 @@ use marlu::{
     RADec,
 };
 use prettytable::{cell, format as prettyformat, row, table};
-use std::{env, ffi::OsString, fmt::Debug, ops::Range};
+use std::{collections::HashMap, env, ffi::OsString, fmt::Debug, ops::Range, time::Duration};
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
@@ -488,6 +488,20 @@ pub fn show_param_info(
     );
 }
 
+macro_rules! with_increment_duration {
+    ($durs:expr, $name:literal, $($s:stmt);+ $(;)?) => {
+        {
+            let _now = std::time::Instant::now();
+            let _res = {
+                $(
+                    $s
+                )*
+            };
+            *$durs.entry($name).or_insert(Duration::default()) += _now.elapsed();
+            _res
+        }
+    };
+}
 fn main_with_args<I, T>(args: I)
 where
     I: IntoIterator<Item = T>,
@@ -1003,32 +1017,39 @@ where
         })
         .collect::<Vec<_>>();
 
+    // used to time large operations
+    let mut durations = HashMap::<&str, Duration>::new();
+
     let mut uvfits_writer = matches.value_of("uvfits-out").map(|uvfits_out| {
-        UvfitsWriter::from_mwalib(
-            uvfits_out,
-            &context,
-            &sel_timestep_range,
-            &coarse_chan_range,
-            &baseline_idxs,
-            Some(array_pos),
-            Some(phase_centre),
-            avg_time,
-            avg_freq,
-        )
-        .expect("couldn't initialise uvfits writer")
-    });
-    let mut ms_writer = matches.value_of("ms-out").map(|ms_out| {
-        let writer = MeasurementSetWriter::new(ms_out, phase_centre, Some(array_pos));
-        writer
-            .initialize_from_mwalib(
+        with_increment_duration!(durations, "init", {
+            UvfitsWriter::from_mwalib(
+                uvfits_out,
                 &context,
                 &sel_timestep_range,
                 &coarse_chan_range,
                 &baseline_idxs,
+                Some(array_pos),
+                Some(phase_centre),
                 avg_time,
                 avg_freq,
             )
-            .unwrap();
+            .expect("couldn't initialise uvfits writer")
+        })
+    });
+    let mut ms_writer = matches.value_of("ms-out").map(|ms_out| {
+        let writer = MeasurementSetWriter::new(ms_out, phase_centre, Some(array_pos));
+        with_increment_duration!(durations, "init", {
+            writer
+                .initialize_from_mwalib(
+                    &context,
+                    &sel_timestep_range,
+                    &coarse_chan_range,
+                    &baseline_idxs,
+                    avg_time,
+                    avg_freq,
+                )
+                .unwrap();
+        });
         writer
     });
 
@@ -1058,14 +1079,18 @@ where
         );
 
         #[allow(unused_mut)]
-        let (mut jones_array, mut flag_array) = context_to_jones_array(
-            &context,
-            &chunk_timestep_range,
-            &coarse_chan_range,
-            Some(flag_array),
-            draw_progress,
-        )
-        .unwrap();
+        let (mut jones_array, mut flag_array) = with_increment_duration!(
+            durations,
+            "read",
+            context_to_jones_array(
+                &context,
+                &chunk_timestep_range,
+                &coarse_chan_range,
+                Some(flag_array),
+                draw_progress,
+            )
+            .unwrap()
+        );
 
         // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
 
@@ -1076,7 +1101,11 @@ where
                 "Applying cable delays. applied: {}, desired: {}",
                 cable_delays_applied, !no_cable_delays
             );
-            correct_cable_lengths(&context, &mut jones_array, &coarse_chan_range, false);
+            with_increment_duration!(
+                durations,
+                "correct",
+                correct_cable_lengths(&context, &mut jones_array, &coarse_chan_range, false)
+            );
         } else {
             info!(
                 "Skipping cable delays. applied: {}, desired: {}",
@@ -1091,13 +1120,19 @@ where
                     let default_strategy_filename = aoflagger.FindStrategyFileMWA();
                     let strategy_filename = matches.value_of("aoflagger-strategy").unwrap_or(&default_strategy_filename);
                     info!("flagging with strategy {}", strategy_filename);
-                    flag_array = flag_jones_array_existing(
-                        &aoflagger,
-                        strategy_filename,
-                        &jones_array,
-                        Some(flag_array),
-                        true,
-                        draw_progress,
+                    flag_array = with_increment_duration!(durations,
+
+
+
+                        "flag",
+                        flag_jones_array_existing(
+                            &aoflagger,
+                            strategy_filename,
+                            &jones_array,
+                            Some(flag_array),
+                            true,
+                            draw_progress,
+                        )
                     );
                 } else {
                     info!("skipped aoflagger");
@@ -1114,14 +1149,18 @@ where
                     "Applying geometric delays. applied: {:?}, desired: {}",
                     geometric_delays_applied, !no_geometric_delays
                 );
-                correct_geometry(
-                    &context,
-                    &mut jones_array,
-                    &chunk_timestep_range,
-                    &coarse_chan_range,
-                    Some(array_pos),
-                    Some(phase_centre),
-                    false,
+                with_increment_duration!(
+                    durations,
+                    "correct",
+                    correct_geometry(
+                        &context,
+                        &mut jones_array,
+                        &chunk_timestep_range,
+                        &coarse_chan_range,
+                        Some(array_pos),
+                        Some(phase_centre),
+                        false,
+                    )
                 );
             }
             (..) => {
@@ -1134,8 +1173,12 @@ where
 
         // output flags (before averaging)
         if let Some(flag_template) = matches.value_of("flag-template") {
-            write_flags(&context, &flag_array, flag_template, &coarse_chan_range)
-                .expect("unable to write flags");
+            with_increment_duration!(
+                durations,
+                "write",
+                write_flags(&context, &flag_array, flag_template, &coarse_chan_range)
+                    .expect("unable to write flags")
+            );
         }
 
         // generate weights
@@ -1153,18 +1196,27 @@ where
         // );
 
         if let Some(calsol_file) = matches.value_of("apply-di-cal") {
-            let calsols = AOCalSols::read_andre_binary(calsol_file).unwrap();
+            let calsols = with_increment_duration!(
+                durations,
+                "read",
+                AOCalSols::read_andre_binary(calsol_file).unwrap()
+            );
             if calsols.di_jones.dim().0 != 1 {
                 panic!("only 1 timeblock supported for calsols");
             }
-            apply_di_calsol(
-                calsols.di_jones.index_axis(Axis(0), 0),
-                jones_array.view_mut(),
-                weight_array.view_mut(),
-                flag_array.view_mut(),
-                &sel_baselines,
-            )
-            .unwrap();
+
+            with_increment_duration!(
+                durations,
+                "calibrate",
+                apply_di_calsol(
+                    calsols.di_jones.index_axis(Axis(0), 0),
+                    jones_array.view_mut(),
+                    weight_array.view_mut(),
+                    flag_array.view_mut(),
+                    &sel_baselines,
+                )
+                .unwrap()
+            );
         }
 
         // TODO: nothing actually uses the pol axis for flags and weights, so rip it out.
@@ -1173,46 +1225,62 @@ where
 
         // output uvfits
         if let Some(uvfits_writer) = uvfits_writer.as_mut() {
-            uvfits_writer
-                .write_vis_mwalib(
-                    jones_array.view(),
-                    weight_array.view(),
-                    flag_array.view(),
-                    &context,
-                    &chunk_timestep_range,
-                    &coarse_chan_range,
-                    &baseline_idxs,
-                    avg_time,
-                    avg_freq,
-                    draw_progress,
-                )
-                .expect("unable to write uvfits");
+            with_increment_duration!(
+                durations,
+                "write",
+                uvfits_writer
+                    .write_vis_mwalib(
+                        jones_array.view(),
+                        weight_array.view(),
+                        flag_array.view(),
+                        &context,
+                        &chunk_timestep_range,
+                        &coarse_chan_range,
+                        &baseline_idxs,
+                        avg_time,
+                        avg_freq,
+                        draw_progress,
+                    )
+                    .expect("unable to write uvfits")
+            );
         }
 
         // output ms
         if let Some(ms_writer) = ms_writer.as_mut() {
-            ms_writer
-                .write_vis_mwalib(
-                    jones_array.view(),
-                    weight_array.view(),
-                    flag_array.view(),
-                    &context,
-                    &chunk_timestep_range,
-                    &coarse_chan_range,
-                    &baseline_idxs,
-                    avg_time,
-                    avg_freq,
-                    draw_progress,
-                )
-                .expect("unable to write ms");
+            with_increment_duration!(
+                durations,
+                "write",
+                ms_writer
+                    .write_vis_mwalib(
+                        jones_array.view(),
+                        weight_array.view(),
+                        flag_array.view(),
+                        &context,
+                        &chunk_timestep_range,
+                        &coarse_chan_range,
+                        &baseline_idxs,
+                        avg_time,
+                        avg_freq,
+                        draw_progress,
+                    )
+                    .expect("unable to write ms")
+            );
         }
     }
 
     // Finalise the uvfits writer.
     if let Some(uvfits_writer) = uvfits_writer {
-        uvfits_writer
-            .write_ants_from_mwalib(&context.metafits_context)
-            .expect("couldn't write antenna table to uvfits");
+        with_increment_duration!(
+            durations,
+            "write",
+            uvfits_writer
+                .write_ants_from_mwalib(&context.metafits_context)
+                .expect("couldn't write antenna table to uvfits")
+        );
+    }
+
+    for (name, duration) in durations {
+        info!("{} duration: {:?}", name, duration);
     }
 }
 
