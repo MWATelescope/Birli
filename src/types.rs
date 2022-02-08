@@ -1,9 +1,16 @@
+#![allow(dead_code)]
 use marlu::num_traits::{Float, Num};
 
 pub use crate::{approx, Complex, Jones};
 
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) struct TestJones<F: Float + Num>(Jones<F>);
+
+impl<F: Float> TestJones<F> {
+    pub fn identity() -> TestJones<F> {
+        TestJones(Jones::<F>::identity())
+    }
+}
 
 impl<F: Float> From<Jones<F>> for TestJones<F> {
     #[inline]

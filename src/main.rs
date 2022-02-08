@@ -1154,7 +1154,7 @@ where
                 jones_array.view_mut(),
                 weight_array.view_mut(),
                 flag_array.view_mut(),
-                marlu_context,
+                &marlu_context.sel_baselines,
             )
             .unwrap();
         }
@@ -1503,7 +1503,7 @@ mod tests_aoflagger {
     lazy_static! {
         static ref COMPLEX_REGEX: Regex = Regex::new(format!(
                 r"^(?P<only_real>{0})$|^(?P<only_imag>{0})j$|^\((?P<complex_real>{0})\+?(?P<complex_imag>{0})j\)$",
-                r"-?[\d\.]+(e-?\d+)?"
+                r"-?(nan|inf|[\d\.]+(e-?\d+)?)"
             ).as_str()
         ).unwrap();
     }
@@ -1899,6 +1899,9 @@ mod tests_aoflagger {
                             for (vis_idx, (&obs_val, &exp_val)) in
                                 izip!(obs_pol_vis.iter(), exp_pol_vis.iter()).enumerate()
                             {
+                                if obs_val.is_nan() && exp_val.is_nan() {
+                                    continue;
+                                }
                                 assert!(
                                     abs_diff_eq!(obs_val, exp_val, epsilon = vis_margin.epsilon),
                                     "visibility arrays don't match (obs {} != exp {}) in row {} (bl {:?} ts {}), pol {} ({}), vis index {}. \nobserved: {:?} != \nexpected: {:?}",
@@ -2013,7 +2016,9 @@ mod tests_aoflagger {
     }
 
     fn parse_complex(cell: &str) -> Complex<f32> {
-        let captures = COMPLEX_REGEX.captures(cell).unwrap();
+        let captures = COMPLEX_REGEX
+            .captures(cell)
+            .unwrap_or_else(|| panic!("invalid complex number: {}", cell));
         let (real, imag) = match (
             captures.name("complex_real"),
             captures.name("complex_imag"),

@@ -37,7 +37,10 @@ impl AOCalSols {
     /// Can throw ReadSolutionsError if the file format is not valid.
     pub fn read_andre_binary<T: AsRef<Path>>(file: T) -> Result<Self, ReadSolutionsError> {
         let file_str = file.as_ref().display().to_string();
-        let mut bin_file = BufReader::new(File::open(&file)?);
+        // open the file, wrapping the IO Error in one which displays the file path
+        let mut bin_file = BufReader::new(File::open(file).map_err(|e| {
+            std::io::Error::new(e.kind(), format!("{} when accessing {}", e, file_str))
+        })?);
         // The first 7 bytes should be ASCII "MWAOCAL".
         let mwaocal_str = String::from_utf8(vec![
             bin_file.read_u8()?,
@@ -146,12 +149,15 @@ impl AOCalSols {
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_abs_diff_eq;
+
+    use crate::types::TestJones;
+
     use super::*;
 
     #[test]
     fn test_read_andre_binary() {
-        // let file = "/data/dev/1090008640_cal/1090008640.calsols.hyp.bin";
-        let file = "/data/dev/1254670392_cal/1254690096.bin";
+        let file = "tests/data/1254670392_avg/1254690096.bin";
         let sols = AOCalSols::read_andre_binary(file).unwrap();
         assert_eq!(sols.di_jones.dim(), (1, 128, 768));
 
@@ -160,44 +166,46 @@ mod tests {
         //     eprintln!("{:3}: {:?} ({:?})", chan_idx, chan_view[(0, 0)], chan_view[(0, 0)].norm_sqr());
         // }
 
-        let calsol_0_0_0 = sols.di_jones[(0, 0, 0)];
-        let calsol_0_max_0 = sols.di_jones[(0, 127, 0)];
-        let calsol_0_0_max = sols.di_jones[(0, 0, 767)];
-        let calsol_0_max_max = sols.di_jones[(0, 127, 767)];
-        assert_eq!(
-            calsol_0_0_0,
-            Jones::from([
-                Complex::new(-5.711880819681107e-2, 8.909723224701427e-1),
-                Complex::new(0.0, 0.0),
-                Complex::new(0.0, 0.0),
-                Complex::new(-3.190681285208096e-1, 8.975262420831494e-1),
+        // values from cotter debugger at breakpoint https://github.com/MWATelescope/cotter/blob/0f99a09cb21721666d2ba328ab2257484b4cd183/applysolutionswriter.cpp#L33
+
+        assert_abs_diff_eq!(
+            TestJones::from(sols.di_jones[(0, 0, 0)]),
+            // -exec p this._solutions[0 * this._nSolutionChannels + 0]
+            TestJones::from([
+                Complex::new(-0.05711880819681107, 0.8909723224701427),
+                Complex::new(0., 0.),
+                Complex::new(0., 0.),
+                Complex::new(-0.3190681285208096, 0.8975262420831494),
             ])
         );
-        assert_eq!(
-            calsol_0_max_0,
-            Jones::from([
-                Complex::new(-6.573012593247392e-1, -1.6069224007242128e-1),
-                Complex::new(0.0, 0.0),
-                Complex::new(0.0, 0.0),
-                Complex::new(-6.117273561749572e-1, -2.292172271648513e-1)
+        assert_abs_diff_eq!(
+            TestJones::from(sols.di_jones[(0, 127, 0)]),
+            // -exec p this._solutions[127 * this._nSolutionChannels + 0]
+            TestJones::from([
+                Complex::new(-0.6573012593247391, -0.16069224007242128),
+                Complex::new(0., 0.),
+                Complex::new(0., 0.),
+                Complex::new(-0.6117273561749572, -0.2292172271648513)
             ])
         );
-        assert_eq!(
-            calsol_0_0_max,
-            Jones::from([
-                Complex::new(-8.662694860974055e-1, 9.154347855961527e-1),
+        assert_abs_diff_eq!(
+            TestJones::from(sols.di_jones[(0, 0, 767)]),
+            // -exec p this._solutions[0 * this._nSolutionChannels + 767]
+            TestJones::from([
+                Complex::new(-0.8662694860974055, 0.9154347855961527),
                 Complex::new(0.0, 0.0),
                 Complex::new(0.0, 0.0),
-                Complex::new(-6.907841560791173e-1, 9.504852607301532e-1)
+                Complex::new(-0.6907841560791172, 0.9504852607301532)
             ])
         );
-        assert_eq!(
-            calsol_0_max_max,
-            Jones::from([
-                Complex::new(-9.85537320263424e-1, -2.1269260191492487e-1),
+        assert_abs_diff_eq!(
+            TestJones::from(sols.di_jones[(0, 127, 767)]),
+            // -exec p this._solutions[127 * this._nSolutionChannels + 767]
+            TestJones::from([
+                Complex::new(-0.985537320263424, -0.21269260191492487),
                 Complex::new(0.0, 0.0),
                 Complex::new(0.0, 0.0),
-                Complex::new(5.117965761905826e-1, -6.89634655264256e-1)
+                Complex::new(0.5117965761905826, -0.689634655264256)
             ])
         );
     }
