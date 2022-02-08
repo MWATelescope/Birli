@@ -5,7 +5,7 @@ use birli::{
         get_coarse_chan_range, get_timestep_flags, get_timestep_range, get_weight_factor,
     },
     io::{aocal::AOCalSols, WriteableVis},
-    Axis, Complex, MarluVisContext, UvfitsWriter,
+    Axis, Complex, UvfitsWriter,
 };
 use cfg_if::cfg_if;
 use clap::{app_from_crate, arg, AppSettings, ValueHint::FilePath};
@@ -995,6 +995,14 @@ where
         }
     }
 
+    let sel_baselines = baseline_idxs
+        .iter()
+        .map(|&idx| {
+            let baseline = &context.metafits_context.baselines[idx];
+            (baseline.ant1_index, baseline.ant2_index)
+        })
+        .collect::<Vec<_>>();
+
     let mut uvfits_writer = matches.value_of("uvfits-out").map(|uvfits_out| {
         UvfitsWriter::from_mwalib(
             uvfits_out,
@@ -1135,14 +1143,14 @@ where
         let weight_factor = get_weight_factor(&context);
         let mut weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
-        let marlu_context = MarluVisContext::from_mwalib(
-            &context,
-            &chunk_timestep_range,
-            &coarse_chan_range,
-            &baseline_idxs,
-            avg_time,
-            avg_freq,
-        );
+        // let marlu_context = MarluVisContext::from_mwalib(
+        //     &context,
+        //     &chunk_timestep_range,
+        //     &coarse_chan_range,
+        //     &baseline_idxs,
+        //     avg_time,
+        //     avg_freq,
+        // );
 
         if let Some(calsol_file) = matches.value_of("apply-di-cal") {
             let calsols = AOCalSols::read_andre_binary(calsol_file).unwrap();
@@ -1154,7 +1162,7 @@ where
                 jones_array.view_mut(),
                 weight_array.view_mut(),
                 flag_array.view_mut(),
-                &marlu_context.sel_baselines,
+                &sel_baselines,
             )
             .unwrap();
         }

@@ -19,6 +19,30 @@ impl<F: Float> From<Jones<F>> for TestJones<F> {
     }
 }
 
+impl From<Jones<f32>> for TestJones<f64> {
+    #[inline]
+    fn from(j_c32: Jones<f32>) -> Self {
+        Self::from([
+            Complex::new(j_c32[0].re as _, j_c32[0].im as _),
+            Complex::new(j_c32[1].re as _, j_c32[1].im as _),
+            Complex::new(j_c32[2].re as _, j_c32[2].im as _),
+            Complex::new(j_c32[3].re as _, j_c32[3].im as _),
+        ])
+    }
+}
+
+impl From<Jones<f64>> for TestJones<f32> {
+    #[inline]
+    fn from(j_c32: Jones<f64>) -> Self {
+        Self::from([
+            Complex::new(j_c32[0].re as _, j_c32[0].im as _),
+            Complex::new(j_c32[1].re as _, j_c32[1].im as _),
+            Complex::new(j_c32[2].re as _, j_c32[2].im as _),
+            Complex::new(j_c32[3].re as _, j_c32[3].im as _),
+        ])
+    }
+}
+
 impl<F: Float> From<[Complex<F>; 4]> for TestJones<F> {
     #[inline]
     fn from(j: [Complex<F>; 4]) -> Self {
