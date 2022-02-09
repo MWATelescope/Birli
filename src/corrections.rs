@@ -1,7 +1,7 @@
 //! Corrections that can be performed on visibility data
 
 use crate::{
-    ndarray::{parallel::prelude::*, Array3, Axis},
+    ndarray::{parallel::prelude::*, Array3, ArrayViewMut3, Axis},
     Jones,
 };
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -40,25 +40,25 @@ use std::{f64::consts::PI, ops::Range};
 /// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 ///
 /// // Determine which timesteps and coarse channels we want to use
-/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-/// let img_timestep_idxs = &context.common_timestep_indices;
+/// let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+/// let sel_timestep_idxs = &context.common_timestep_indices;
 /// let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 ///
-/// let img_timestep_range =
-///     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-/// let img_coarse_chan_range =
-///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+/// let sel_timestep_range =
+///     *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+/// let sel_coarse_chan_range =
+///     *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 ///
 /// // read visibilities out of the gpubox files
 /// let (mut jones_array, _) = context_to_jones_array(
 ///     &context,
-///     &img_timestep_range,
-///     &img_coarse_chan_range,
+///     &sel_timestep_range,
+///     &sel_coarse_chan_range,
 ///     None,
 ///     false,
 /// ).unwrap();
 ///
-/// correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range, false);
+/// correct_cable_lengths(&context, &mut jones_array, &sel_coarse_chan_range, false);
 /// ```
 ///
 /// # Accuracy
@@ -178,20 +178,20 @@ pub fn correct_cable_lengths(
 /// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 ///
 /// // Determine which timesteps and coarse channels we want to use
-/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-/// let img_timestep_idxs = &context.common_timestep_indices;
+/// let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+/// let sel_timestep_idxs = &context.common_timestep_indices;
 /// let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
 ///
-/// let img_timestep_range =
-///     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-/// let img_coarse_chan_range =
-///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+/// let sel_timestep_range =
+///     *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+/// let sel_coarse_chan_range =
+///     *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 ///
 /// // read visibilities out of the gpubox files
 /// let (mut jones_array, _) = context_to_jones_array(
 ///     &context,
-///     &img_timestep_range,
-///     &img_coarse_chan_range,
+///     &sel_timestep_range,
+///     &sel_coarse_chan_range,
 ///     None,
 ///     false,
 /// ).unwrap();
@@ -199,8 +199,8 @@ pub fn correct_cable_lengths(
 /// correct_geometry(
 ///     &context,
 ///     &mut jones_array,
-///     &img_timestep_range,
-///     &img_coarse_chan_range,
+///     &sel_timestep_range,
+///     &sel_coarse_chan_range,
 ///     None,
 ///     None,
 ///     false,
@@ -311,7 +311,6 @@ pub fn correct_geometry(
 /// The channels provided in `jones_array` should correspond to the selected coarse channel range in
 /// `sel_coarse_chan_range`, such that `jones_array.dim().1 = num_fine_chans_per_coarse * sel_coarse_chan_range.len()`
 ///
-///
 /// # Arguments
 ///
 /// - `context` - The correlator context.
@@ -325,16 +324,11 @@ pub fn correct_geometry(
 /// - the gains for the x rfinput are the same as the y rfinput for each antenna
 pub fn correct_digital_gains(
     context: &CorrelatorContext,
-    jones_array: &mut Array3<Jones<f32>>,
+    jones_array: &mut ArrayViewMut3<Jones<f32>>,
     sel_coarse_chan_range: &Range<usize>,
     // The tile index pairs for each selected baseline
     sel_baselines: &[(usize, usize)],
 ) {
-    let sel_coarse_chan_freqs_hz: Vec<_> = context.metafits_context.metafits_coarse_chans[sel_coarse_chan_range.clone()]
-        .iter()
-        .map(|coarse_chan| coarse_chan.chan_centre_hz)
-        .collect();
-
     let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
     // TODO: check that all rfinput X gains are the same as rfinput Y gains.
@@ -354,13 +348,17 @@ pub fn correct_digital_gains(
             jones_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse),
             sel_coarse_chan_range.clone()
         ) {
-            let gain1 = context.metafits_context.antennas[ant1_idx].rfinput_x.digital_gains[coarse_chan_idx];
-            let gain2 = context.metafits_context.antennas[ant2_idx].rfinput_x.digital_gains[coarse_chan_idx];
+            let gain1 = context.metafits_context.antennas[ant1_idx]
+                .rfinput_x
+                .digital_gains[coarse_chan_idx];
+            let gain2 = context.metafits_context.antennas[ant2_idx]
+                .rfinput_x
+                .digital_gains[coarse_chan_idx];
 
             // for all visibilities in the selected coarse channel, for all timesteps
             for jones in jones_array.iter_mut() {
                 // promote and divide by gain
-                let corrected = Jones::<f64>::from(*jones) / (gain1 * gain2);
+                let corrected = Jones::<f64>::from(*jones) / gain1 / gain2;
                 *jones = Jones::<f32>::from(corrected);
             }
         }
@@ -371,15 +369,19 @@ pub fn correct_digital_gains(
 mod tests {
     #![allow(clippy::float_cmp)]
 
-    use super::{correct_cable_lengths, correct_geometry, VEL_C};
+    use super::{correct_cable_lengths, correct_digital_gains, correct_geometry, VEL_C};
     use marlu::{
         hifitime::Epoch, mwalib::CorrelatorContext, precession::precess_time, Complex, Jones,
         LatLngHeight, RADec, XyzGeodetic, UVW,
     };
+    use ndarray::s;
     use std::f64::consts::PI;
 
     use crate::{
-        approx::assert_abs_diff_eq, context_to_jones_array, get_flaggable_timesteps, TestJones,
+        approx::assert_abs_diff_eq,
+        context_to_jones_array,
+        flags::{get_coarse_chan_range, get_timestep_range},
+        get_flaggable_timesteps, TestJones,
     };
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
@@ -410,22 +412,22 @@ mod tests {
     fn test_cable_length_corrections_mwax() {
         let context = get_mwax_context();
 
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(sel_timestep_idxs.len(), 4);
+        let sel_timestep_range =
+            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let sel_coarse_chan_range =
+            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 
-        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(img_coarse_chan_idxs);
+        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(sel_coarse_chan_idxs);
 
-        // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+        // let sel_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
         let (jones_array, _) = context_to_jones_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
             None,
             false,
         )
@@ -530,7 +532,7 @@ mod tests {
 
         // TODO: this is not great.
         let mut jones_array = jones_array.mapv(|e| Jones::from([e[0], e[1], e[2], e[3]]));
-        correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range, false);
+        correct_cable_lengths(&context, &mut jones_array, &sel_coarse_chan_range, false);
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -594,22 +596,22 @@ mod tests {
     fn test_cable_length_corrections_ord() {
         let context = get_mwa_ord_context();
 
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(sel_timestep_idxs.len(), 4);
+        let sel_timestep_range =
+            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let sel_coarse_chan_range =
+            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 
-        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(img_coarse_chan_idxs);
+        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(sel_coarse_chan_idxs);
 
-        // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+        // let sel_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
 
         let (jones_array, _) = context_to_jones_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
             None,
             false,
         )
@@ -715,7 +717,7 @@ mod tests {
         // FIXME: aaaaaaa
         let mut jones_array = jones_array.mapv(|e| Jones::from([e[0], e[1], e[2], e[3]]));
 
-        correct_cable_lengths(&context, &mut jones_array, &img_coarse_chan_range, false);
+        correct_cable_lengths(&context, &mut jones_array, &sel_coarse_chan_range, false);
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -779,15 +781,15 @@ mod tests {
     fn test_geometric_corrections_ord() {
         let context = get_mwa_ord_context();
 
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        assert_eq!(sel_timestep_idxs.len(), 4);
+        let sel_timestep_range =
+            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let sel_coarse_chan_range =
+            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 
-        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(img_coarse_chan_idxs);
+        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(sel_coarse_chan_idxs);
 
         let array_pos = LatLngHeight::new_mwa();
 
@@ -798,8 +800,8 @@ mod tests {
 
         let (jones_array, _) = context_to_jones_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
             None,
             false,
         )
@@ -846,7 +848,7 @@ mod tests {
         let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
 
         // timestep 0
-        let timestep_0 = &context.timesteps[img_timestep_idxs[0]];
+        let timestep_0 = &context.timesteps[sel_timestep_idxs[0]];
         let epoch_0 = Epoch::from_gpst_seconds(
             timestep_0.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
         );
@@ -859,7 +861,7 @@ mod tests {
         let phase_centre_ha_j2000_0 = prec_info_0.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
         let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
         // timestep 3
-        let timestep_3 = &context.timesteps[img_timestep_idxs[3]];
+        let timestep_3 = &context.timesteps[sel_timestep_idxs[3]];
         let epoch_3 = Epoch::from_gpst_seconds(
             timestep_3.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
         );
@@ -901,8 +903,8 @@ mod tests {
         correct_geometry(
             &context,
             &mut jones_array,
-            &img_timestep_range,
-            &img_coarse_chan_range,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
             None,
             None,
             false,
@@ -970,14 +972,14 @@ mod tests {
     fn test_geometric_corrections_mwax() {
         let context = get_mwax_context();
 
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+        let sel_timestep_range =
+            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
+        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
+        let sel_coarse_chan_range =
+            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
 
-        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(img_coarse_chan_idxs);
+        let all_freqs_hz = context.get_fine_chan_freqs_hz_array(sel_coarse_chan_idxs);
 
         let array_pos = LatLngHeight::new_mwa();
 
@@ -988,9 +990,9 @@ mod tests {
 
         let (jones_array, _) = context_to_jones_array(
             &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            // img_baseline_idxs.as_slice(),
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            // sel_baseline_idxs.as_slice(),
             None,
             false,
         )
@@ -1037,7 +1039,7 @@ mod tests {
         let integration_time_s = context.metafits_context.corr_int_time_ms as f64 / 1000.0;
 
         // timestep 0
-        let timestep_0 = &context.timesteps[img_timestep_idxs[0]];
+        let timestep_0 = &context.timesteps[sel_timestep_idxs[0]];
         let epoch_0 = Epoch::from_gpst_seconds(
             timestep_0.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
         );
@@ -1050,7 +1052,7 @@ mod tests {
         let phase_centre_ha_j2000_0 = prec_info_0.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
         let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
         // timestep 3
-        let timestep_3 = &context.timesteps[img_timestep_idxs[3]];
+        let timestep_3 = &context.timesteps[sel_timestep_idxs[3]];
         let epoch_3 = Epoch::from_gpst_seconds(
             timestep_3.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
         );
@@ -1090,8 +1092,8 @@ mod tests {
         correct_geometry(
             &context,
             &mut jones_array,
-            &img_timestep_range,
-            &img_coarse_chan_range,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
             None,
             None,
             false,
@@ -1150,6 +1152,93 @@ mod tests {
                 Complex::new(rot_1_yx_3_3_re, rot_1_yx_3_3_im),
                 Complex::new(rot_1_yy_3_3_re, rot_1_yy_3_3_im),
             ])
+        );
+    }
+
+    macro_rules! compare_jones {
+        ($a:expr, $b:expr) => {
+            assert_abs_diff_eq!(TestJones::<f32>::from($a), TestJones::<f32>::from($b));
+        };
+    }
+
+    #[test]
+    fn test_correct_digital_gains() {
+        let context = get_mwa_ord_context();
+
+        let sel_coarse_chan_range = get_coarse_chan_range(&context).unwrap();
+        let sel_timestep_range = get_timestep_range(&context).unwrap();
+
+        let (jones_array, _) = context_to_jones_array(
+            &context,
+            &sel_timestep_range,
+            &sel_coarse_chan_range,
+            // sel_baseline_idxs.as_slice(),
+            None,
+            false,
+        )
+        .unwrap();
+
+        let sel_baseline_range = 0..2;
+        let sel_baseline_idxs: Vec<usize> = sel_baseline_range.clone().collect();
+
+        let sel_baselines = sel_baseline_idxs
+            .iter()
+            .map(|&idx| {
+                let baseline = &context.metafits_context.baselines[idx];
+                (baseline.ant1_index, baseline.ant2_index)
+            })
+            .collect::<Vec<_>>();
+
+        let first_coarse_chan_idx = sel_coarse_chan_range.start;
+        let last_coarse_chan_idx = sel_coarse_chan_range.end - 1;
+        // first coarse chan, antenna 0
+        let gain_first_0 =
+            context.metafits_context.antennas[0].rfinput_x.digital_gains[first_coarse_chan_idx];
+        // first coarse chan, antenna 0
+        let gain_first_1 =
+            context.metafits_context.antennas[1].rfinput_x.digital_gains[first_coarse_chan_idx];
+        // last coarse chan, antenna 1
+        let gain_last_0 =
+            context.metafits_context.antennas[0].rfinput_x.digital_gains[last_coarse_chan_idx];
+        // last coarse chan, antenna 1
+        let gain_last_1 =
+            context.metafits_context.antennas[1].rfinput_x.digital_gains[last_coarse_chan_idx];
+
+        let max_chan = jones_array.dim().1 - 1;
+
+        // ts 0, first chan, baseline 0 (0 vs 0)
+        let jones_0_min_0 = jones_array[(0, 0, 0)];
+        // ts 0, first chan, baseline 1 (0 vs 1)
+        let jones_0_min_1 = jones_array[(0, 0, 1)];
+        // ts 0, last chan, baseline 0 (0 vs 0)
+        let jones_0_max_0 = jones_array[(0, max_chan, 0)];
+        // ts 0, last chan, baseline 1 (0 vs 1)
+        let jones_0_max_1 = jones_array[(0, max_chan, 1)];
+
+        let mut out_jones_array = jones_array.slice(s![.., .., sel_baseline_range]).to_owned();
+
+        correct_digital_gains(
+            &context,
+            &mut out_jones_array.view_mut(),
+            &sel_coarse_chan_range,
+            &sel_baselines,
+        );
+
+        compare_jones!(
+            out_jones_array[(0, 0, 0)],
+            jones_0_min_0 / ((gain_first_0 * gain_first_0) as f32)
+        );
+        compare_jones!(
+            out_jones_array[(0, 0, 1)],
+            jones_0_min_1 / ((gain_first_0 * gain_first_1) as f32)
+        );
+        compare_jones!(
+            out_jones_array[(0, max_chan, 0)],
+            jones_0_max_0 / ((gain_last_0 * gain_last_0) as f32)
+        );
+        compare_jones!(
+            out_jones_array[(0, max_chan, 1)],
+            jones_0_max_1 / ((gain_last_0 * gain_last_1) as f32)
         );
     }
 }
