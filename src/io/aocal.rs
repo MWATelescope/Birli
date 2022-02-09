@@ -9,7 +9,6 @@ use crate::{
     marlu::{
         hifitime::{Duration, Epoch},
         num_complex::Complex,
-        time::gps_to_epoch,
         Jones,
     },
     ndarray::{prelude::*, Array3},
@@ -78,13 +77,13 @@ impl AOCalSols {
         let start_time = if t.abs() < f64::EPSILON {
             None
         } else {
-            Some(gps_to_epoch(t))
+            Some(Epoch::from_gpst_seconds(t))
         };
         let t = bin_file.read_f64::<LittleEndian>()?;
         let end_time = if t.abs() < f64::EPSILON {
             None
         } else {
-            Some(gps_to_epoch(t))
+            Some(Epoch::from_gpst_seconds(t))
         };
         let mut di_jones_vec = vec![
             0.0;

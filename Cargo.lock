@@ -781,9 +781,9 @@ dependencies = [
 
 [[package]]
 name = "hifitime"
-version = "2.3.2"
+version = "3.0.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07370e857b383e84426e78ac60145d231fcf0981f0100d14d5db762b89725464"
+checksum = "cf41533f9b7103f24e6cda4dcbaf306f8c99a3c073431bea7061f11742ec9f94"
 dependencies = [
  "rand",
  "rand_distr",
@@ -1026,9 +1026,8 @@ dependencies = [
 
 [[package]]
 name = "marlu"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d6d8d39e6833c665fd3acde10d0ec47e3af268b5e20bdca37af56c4595016b9"
+version = "0.5.0"
+source = "git+https://github.com/MWATelescope/Marlu.git?branch=v0.5.0#b98e4d2926a59f195b0dda67c6afee8c3ea9f393"
 dependencies = [
  "cfg-if",
  "erfa-sys",
@@ -1097,9 +1096,9 @@ dependencies = [
 
 [[package]]
 name = "mwalib"
-version = "0.12.1"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "031bf684ce57d3a7f692023bd0f39e65d80c1321de850d57bc0a92484b9f95fe"
+checksum = "6d7c4832b4c86376fed65bcc73e1c7ff801dedd7ea4794a4baf5db991531a9b5"
 dependencies = [
  "built",
  "cbindgen",
