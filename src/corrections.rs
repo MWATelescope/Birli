@@ -8,8 +8,8 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use log::trace;
 use marlu::{
-    constants::VEL_C, mwalib::CorrelatorContext, precession::precess_time, time, Complex,
-    LatLngHeight, RADec, XyzGeodetic, UVW,
+    constants::VEL_C, hifitime::Epoch, mwalib::CorrelatorContext, precession::precess_time,
+    Complex, LatLngHeight, RADec, XyzGeodetic, UVW,
 };
 use std::{f64::consts::PI, ops::Range};
 
@@ -268,8 +268,9 @@ pub fn correct_geometry(
         .into_par_iter()
         .zip(timesteps)
         .for_each(|(mut jones_timestep_view, timestep)| {
-            let epoch =
-                time::gps_to_epoch(timestep.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0);
+            let epoch = Epoch::from_gpst_seconds(
+                timestep.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
+            );
 
             let prec_info = precess_time(
                 phase_centre_ra,
@@ -372,8 +373,8 @@ mod tests {
 
     use super::{correct_cable_lengths, correct_geometry, VEL_C};
     use marlu::{
-        mwalib::CorrelatorContext, precession::precess_time, time, Complex, Jones, LatLngHeight,
-        RADec, XyzGeodetic, UVW,
+        hifitime::Epoch, mwalib::CorrelatorContext, precession::precess_time, Complex, Jones,
+        LatLngHeight, RADec, XyzGeodetic, UVW,
     };
     use std::f64::consts::PI;
 
@@ -846,8 +847,9 @@ mod tests {
 
         // timestep 0
         let timestep_0 = &context.timesteps[img_timestep_idxs[0]];
-        let epoch_0 =
-            time::gps_to_epoch(timestep_0.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0);
+        let epoch_0 = Epoch::from_gpst_seconds(
+            timestep_0.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
+        );
         let prec_info_0 = precess_time(
             phase_centre_ra,
             epoch_0,
@@ -858,8 +860,9 @@ mod tests {
         let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
         // timestep 3
         let timestep_3 = &context.timesteps[img_timestep_idxs[3]];
-        let epoch_3 =
-            time::gps_to_epoch(timestep_3.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0);
+        let epoch_3 = Epoch::from_gpst_seconds(
+            timestep_3.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
+        );
         let prec_info_3 = precess_time(
             phase_centre_ra,
             epoch_3,
@@ -1035,8 +1038,9 @@ mod tests {
 
         // timestep 0
         let timestep_0 = &context.timesteps[img_timestep_idxs[0]];
-        let epoch_0 =
-            time::gps_to_epoch(timestep_0.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0);
+        let epoch_0 = Epoch::from_gpst_seconds(
+            timestep_0.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
+        );
         let prec_info_0 = precess_time(
             phase_centre_ra,
             epoch_0,
@@ -1047,8 +1051,9 @@ mod tests {
         let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
         // timestep 3
         let timestep_3 = &context.timesteps[img_timestep_idxs[3]];
-        let epoch_3 =
-            time::gps_to_epoch(timestep_3.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0);
+        let epoch_3 = Epoch::from_gpst_seconds(
+            timestep_3.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
+        );
         let prec_info_3 = precess_time(
             phase_centre_ra,
             epoch_3,

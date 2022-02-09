@@ -24,7 +24,6 @@ use marlu::{
     hifitime::Epoch,
     mwalib::{CorrelatorContext, MetafitsContext},
     precession::*,
-    time::{self, gps_millis_to_epoch},
     Jones, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
 };
 
@@ -142,9 +141,10 @@ impl UvfitsWriter {
     /// and can be calculated from GPS Time using the hifitime library, e.g.
     ///
     /// ```rust
-    /// use marlu::time;
+    /// # use marlu::hifitime;
+    /// use hifitime::Epoch;
     /// let first_gps_time = 1196175296.0;
-    /// let start_epoch = time::gps_to_epoch(first_gps_time);
+    /// let start_epoch = Epoch::from_gpst_seconds(first_gps_time);
     /// ```
     ///
     /// `centre_freq_hz` is center frequency of the center fine channel of the
@@ -382,7 +382,7 @@ impl UvfitsWriter {
         let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
         let first_gps_time_s =
             context.timesteps[mwalib_timestep_range.start].gps_time_ms as f64 / 1000.0;
-        let start_epoch = time::gps_to_epoch(first_gps_time_s);
+        let start_epoch = Epoch::from_gpst_seconds(first_gps_time_s);
         let phase_centre = phase_centre
             .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&context.metafits_context));
 
@@ -981,7 +981,9 @@ impl WriteableVis for UvfitsWriter {
             weight_array.axis_chunks_iter(Axis(0), avg_time),
             flag_array.axis_chunks_iter(Axis(0), avg_time),
         ) {
-            let midpoint_epoch = gps_millis_to_epoch(gps_times_chunk_ms[0] + half_avg_int_time_ms);
+            let midpoint_epoch = Epoch::from_gpst_seconds(
+                (gps_times_chunk_ms[0] + half_avg_int_time_ms) as f64 / 1e3,
+            );
 
             let prec_info = precess_time(
                 self.phase_centre,
@@ -1089,7 +1091,6 @@ mod tests {
                 _get_fits_col, _get_required_fits_key, _open_fits, _open_hdu, fits_open,
                 fits_open_hdu, get_fits_col, get_required_fits_key,
             },
-            time,
         },
     };
 
@@ -1703,7 +1704,7 @@ mod tests {
         let num_baselines = 3;
         let num_chans = 2;
         let obsid = 1065880128;
-        let start_epoch = time::gps_to_epoch(obsid as f64);
+        let start_epoch = Epoch::from_gpst_seconds(obsid as f64);
 
         let mut u = UvfitsWriter::new(
             tmp_uvfits_file.path(),

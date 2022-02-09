@@ -12,9 +12,9 @@ use clap::{app_from_crate, arg, AppSettings, ValueHint::FilePath};
 use itertools::Itertools;
 use log::{debug, info, trace, warn};
 use marlu::{
+    hifitime::Epoch,
     io::{ms::MeasurementSetWriter, VisWritable},
     precession::{precess_time, PrecessionInfo},
-    time::gps_millis_to_epoch,
     RADec,
 };
 use prettytable::{cell, format as prettyformat, row, table};
@@ -130,7 +130,7 @@ pub fn show_param_info(
         phase_centre: RADec,
         array_pos: LatLngHeight,
     ) -> (String, String, f64, PrecessionInfo) {
-        let epoch = gps_millis_to_epoch(gps_time_ms);
+        let epoch = Epoch::from_gpst_seconds(gps_time_ms as f64 / 1e3);
         let (y, mo, d, h, mi, s, ms) = epoch.as_gregorian_utc();
         let precession_info = precess_time(
             phase_centre,
@@ -241,7 +241,7 @@ pub fn show_param_info(
         }
     );
 
-    let first_epoch = gps_millis_to_epoch(context.timesteps[0].gps_time_ms);
+    let first_epoch = Epoch::from_gpst_seconds(context.timesteps[0].gps_time_ms as f64 / 1e3);
     let (y, mo, d, ..) = first_epoch.as_gregorian_utc();
 
     let mut timestep_table = table!([
