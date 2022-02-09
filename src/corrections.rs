@@ -5,6 +5,7 @@ use crate::{
     Jones,
 };
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use itertools::izip;
 use log::trace;
 use marlu::{
     constants::VEL_C, mwalib::CorrelatorContext, precession::precess_time, time, Complex,
@@ -106,7 +107,6 @@ pub fn correct_cable_lengths(
     );
     correction_progress.set_message("cable corrections");
 
-    // TODO: parallelize
     jones_array
         .axis_iter_mut(Axis(2))
         .into_par_iter()
@@ -119,7 +119,6 @@ pub fn correct_cable_lengths(
             let ant1 = &antennas[baseline.ant1_index];
             let ant2 = &antennas[baseline.ant2_index];
 
-            // TODO: I don't think this is technically in the right order
             let pol_lengths = [
                 ant2.rfinput_x.electrical_length_m - ant1.rfinput_x.electrical_length_m,
                 ant2.rfinput_y.electrical_length_m - ant1.rfinput_y.electrical_length_m,
@@ -304,6 +303,67 @@ pub fn correct_geometry(
     correction_progress.finish();
 
     trace!("end correct_geometry");
+}
+
+/// Apply corrections for digital gains for each coarse channel from values in metafits.
+///
+/// The channels provided in `jones_array` should correspond to the selected coarse channel range in
+/// `sel_coarse_chan_range`, such that `jones_array.dim().1 = num_fine_chans_per_coarse * sel_coarse_chan_range.len()`
+///
+///
+/// # Arguments
+///
+/// - `context` - The correlator context.
+/// - `jones_array` - The array of Jones matrices to be corrected, [timestep][channel][baseleine].
+/// - `sel_coarse_chan_range` - The range of mwalib coarse channels which are used in in the channel
+///     dimension of the jones array.
+///
+/// # Assumptions
+/// - the digital gains are provided in [`mwalib::Rfinput.digital_gains`] in the same order as the
+///   coarse channel indices (increasing sky frequency)
+/// - the gains for the x rfinput are the same as the y rfinput for each antenna
+pub fn correct_digital_gains(
+    context: &CorrelatorContext,
+    jones_array: &mut Array3<Jones<f32>>,
+    sel_coarse_chan_range: &Range<usize>,
+    // The tile index pairs for each selected baseline
+    sel_baselines: &[(usize, usize)],
+) {
+    let sel_coarse_chan_freqs_hz: Vec<_> = context.metafits_context.metafits_coarse_chans[sel_coarse_chan_range.clone()]
+        .iter()
+        .map(|coarse_chan| coarse_chan.chan_centre_hz)
+        .collect();
+
+    let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+
+    // TODO: check that all rfinput X gains are the same as rfinput Y gains.
+
+    // TODO: proper error handling
+    let vis_dims = jones_array.dim();
+    assert!(vis_dims.1 == sel_coarse_chan_range.len() * num_fine_chans_per_coarse);
+    assert!(vis_dims.2 == sel_baselines.len());
+
+    // iterate through the selected baselines
+    for (mut jones_array, (ant1_idx, ant2_idx)) in izip!(
+        jones_array.axis_iter_mut(Axis(2)),
+        sel_baselines.iter().cloned()
+    ) {
+        // iterate through the selected coarse channels
+        for (mut jones_array, coarse_chan_idx) in izip!(
+            jones_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse),
+            sel_coarse_chan_range.clone()
+        ) {
+            let gain1 = context.metafits_context.antennas[ant1_idx].rfinput_x.digital_gains[coarse_chan_idx];
+            let gain2 = context.metafits_context.antennas[ant2_idx].rfinput_x.digital_gains[coarse_chan_idx];
+
+            // for all visibilities in the selected coarse channel, for all timesteps
+            for jones in jones_array.iter_mut() {
+                // promote and divide by gain
+                let corrected = Jones::<f64>::from(*jones) / (gain1 * gain2);
+                *jones = Jones::<f32>::from(corrected);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
