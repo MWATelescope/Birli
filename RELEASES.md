@@ -1,5 +1,22 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.4.1 (2022-02-09)
+
+- ✨ new features:
+  - --apply-di-cal applies direction independent calibration solutions
+  - read mwa ao cal calibration solution files
+- 🙏 quality of life:
+  - add timing info to logs
+  - default to info log level
+- 🏗 api changes:
+  - deprecate expand_flag_array, use add_dimension instead
+- ➕ dependencies
+  - Bump crossbeam-utils from 0.8.6 to 0.8.7
+  - Bump clap from 3.0.13 to 3.0.14
+  - Bump approx from 0.5.0 to 0.5.1
+  - Bump crossbeam-utils from 0.8.5 to 0.8.6
+  - Bump tempfile from 3.2.0 to 3.3.0
+
 # Version 0.4.0 (2022-02-01)
 
 - Preprocess data in timestep chunks based on maximum memory or number of timesteps.
