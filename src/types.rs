@@ -22,24 +22,14 @@ impl<F: Float> From<Jones<F>> for TestJones<F> {
 impl From<Jones<f32>> for TestJones<f64> {
     #[inline]
     fn from(j_c32: Jones<f32>) -> Self {
-        Self::from([
-            Complex::new(j_c32[0].re as _, j_c32[0].im as _),
-            Complex::new(j_c32[1].re as _, j_c32[1].im as _),
-            Complex::new(j_c32[2].re as _, j_c32[2].im as _),
-            Complex::new(j_c32[3].re as _, j_c32[3].im as _),
-        ])
+        Self::from(Jones::<f64>::from(j_c32))
     }
 }
 
 impl From<Jones<f64>> for TestJones<f32> {
     #[inline]
-    fn from(j_c32: Jones<f64>) -> Self {
-        Self::from([
-            Complex::new(j_c32[0].re as _, j_c32[0].im as _),
-            Complex::new(j_c32[1].re as _, j_c32[1].im as _),
-            Complex::new(j_c32[2].re as _, j_c32[2].im as _),
-            Complex::new(j_c32[3].re as _, j_c32[3].im as _),
-        ])
+    fn from(j_c64: Jones<f64>) -> Self {
+        Self::from(Jones::<f32>::from(j_c64))
     }
 }
 
