@@ -1,5 +1,6 @@
 use birli::{
     calibration::apply_di_calsol,
+    corrections::correct_digital_gains,
     flags::{
         add_dimension, flag_to_weight_array, get_baseline_flags, get_coarse_chan_flags,
         get_coarse_chan_range, get_timestep_flags, get_timestep_range, get_weight_factor,
@@ -528,8 +529,28 @@ where
                 .help_heading("INPUT")
                 .value_hint(FilePath)
                 .required(true),
-            arg!(--"time-sel" "[WIP] Timestep index range (inclusive) to select")
+
+            // processing options
+            arg!(--"phase-centre" "Override Phase centre from metafits (degrees)")
+                .value_names(&["RA", "DEC"])
+                .required(false),
+            arg!(--"pointing-centre" "Use pointing instead phase centre")
+                .conflicts_with("phase-centre"),
+            arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's"),
+            arg!(--"dry-run" "Just print the summary and exit"),
+            arg!(--"no-draw-progress" "do not show progress bars"),
+
+            // selection options
+            // TODO make this work the same way as rust ranges. start <= x < end
+            arg!(--"sel-time" "[WIP] Timestep index range (inclusive) to select")
+                .help_heading("SELECTION")
                 .value_names(&["MIN", "MAX"])
+                .required(false),
+            arg!(--"no-sel-flagged-ants" "[WIP] Deselect flagged antennas")
+                .help_heading("SELECTION")
+                .required(false),
+            arg!(--"no-sel-autos" "[WIP] Deselect autocorrelations")
+                .help_heading("SELECTION")
                 .required(false),
 
             // resource limit options
@@ -591,6 +612,10 @@ where
                 .help_heading("FLAGGING")
                 .multiple_values(true)
                 .required(false),
+            // -> baselines
+            arg!(--"flag-autos" "[WIP] Flag auto correlations")
+                .help_heading("FLAGGING")
+                .required(false),
 
             // corrections
             arg!(--"no-cable-delay" "Do not perform cable length corrections")
@@ -599,6 +624,10 @@ where
                 .help_heading("CORRECTION")
                 .alias("no-geom"),
             arg!(--"no-digital-gains" "Do not perform digital gains corrections")
+                .help_heading("CORRECTION"),
+            arg!(--"passband" <PATH> "[WIP] Apply passband corrections from <PATH>")
+                .required(false)
+                .value_hint(FilePath)
                 .help_heading("CORRECTION"),
 
             // calibration
@@ -661,29 +690,29 @@ where
     let context =
         CorrelatorContext::new(&metafits_path, &fits_paths).expect("unable to get mwalib context");
     debug!("mwalib correlator context:\n{}", &context);
-    let coarse_chan_range = get_coarse_chan_range(&context).unwrap();
+    let sel_coarse_chan_range = get_coarse_chan_range(&context).unwrap();
     let mut coarse_chan_flags = get_coarse_chan_flags(&context);
-    let sel_timestep_range = match matches.values_of("time-sel") {
+    let sel_timestep_range = match matches.values_of("sel-time") {
         Some(mut values) => {
             if let (Some(from), Some(to)) = (values.next(), values.next()) {
-                let from = from.parse::<usize>().expect("cannot parse --time-sel from");
+                let from = from.parse::<usize>().expect("cannot parse --sel-time from");
                 assert!(
                     from < context.num_timesteps,
-                    "invalid --time-sel from {}. must be < num_timesteps ({})",
+                    "invalid --sel-time from {}. must be < num_timesteps ({})",
                     from,
                     context.num_timesteps
                 );
-                let to = to.parse::<usize>().expect("cannot parse --time-sel to");
+                let to = to.parse::<usize>().expect("cannot parse --sel-time to");
                 assert!(
                     to >= from && to < context.num_timesteps,
-                    "invalid --time-sel from {} to {}, must be < num_timesteps ({})",
+                    "invalid --sel-time from {} to {}, must be < num_timesteps ({})",
                     from,
                     to,
                     context.num_timesteps
                 );
                 from..to + 1
             } else {
-                panic!("invalid --time-sel <from> <to>, two values must be provided");
+                panic!("invalid --sel-time <from> <to>, two values must be provided");
             }
         }
         _ => get_timestep_range(&context).unwrap(),
@@ -873,7 +902,7 @@ where
     };
 
     let num_sel_timesteps = sel_timestep_range.len();
-    let num_sel_chans = coarse_chan_range.len() * fine_chans_per_coarse;
+    let num_sel_chans = sel_coarse_chan_range.len() * fine_chans_per_coarse;
     let num_sel_baselines = baseline_idxs.len();
     let num_sel_pols = context.metafits_context.num_visibility_pols;
     let bytes_per_timestep = num_sel_chans
@@ -883,7 +912,6 @@ where
             + std::mem::size_of::<f32>()
             + std::mem::size_of::<bool>());
 
-    // TODO: express time-chunk in terms of the number of output chunks
     let num_timesteps_per_chunk: Option<usize> = match (
         matches.value_of("time-chunk"),
         matches.value_of("max-memory"),
@@ -951,7 +979,7 @@ where
         &context,
         array_pos,
         phase_centre,
-        &coarse_chan_range,
+        &sel_coarse_chan_range,
         &sel_timestep_range,
         &baseline_idxs,
         &coarse_chan_flags,
@@ -974,6 +1002,7 @@ where
     for unimplemented_option in &[
         "flag-init",
         "flag-init-steps",
+        "flag-autos",
         "flag-end",
         "flag-end-steps",
         "flag-edge-width",
@@ -981,6 +1010,9 @@ where
         "flag-fine-chans",
         "flag-dc",
         "no-flag-dc",
+        "passband",
+        "no-sel-autos",
+        "no-sel-flagged-ants",
     ] {
         if matches.is_present(unimplemented_option) {
             panic!("option not yet implemented: --{}", unimplemented_option);
@@ -993,7 +1025,7 @@ where
         "flag-fine-chans",
         "no-flag-metafits",
         "flag-antennae",
-        "time-sel",
+        "sel-time",
         "time-chunk",
         "max-memory",
     ] {
@@ -1022,7 +1054,7 @@ where
                 uvfits_out,
                 &context,
                 &sel_timestep_range,
-                &coarse_chan_range,
+                &sel_coarse_chan_range,
                 &baseline_idxs,
                 Some(array_pos),
                 Some(phase_centre),
@@ -1039,7 +1071,7 @@ where
                 .initialize_from_mwalib(
                     &context,
                     &sel_timestep_range,
-                    &coarse_chan_range,
+                    &sel_coarse_chan_range,
                     &baseline_idxs,
                     avg_time,
                     avg_freq,
@@ -1067,7 +1099,7 @@ where
         let flag_array = init_flag_array(
             &context,
             &chunk_timestep_range,
-            &coarse_chan_range,
+            &sel_coarse_chan_range,
             Some(&timestep_flags),
             Some(&coarse_chan_flags),
             Some(&fine_chan_flags),
@@ -1081,7 +1113,7 @@ where
             context_to_jones_array(
                 &context,
                 &chunk_timestep_range,
-                &coarse_chan_range,
+                &sel_coarse_chan_range,
                 Some(flag_array),
                 draw_progress,
             )
@@ -1100,7 +1132,7 @@ where
             with_increment_duration!(
                 durations,
                 "correct",
-                correct_cable_lengths(&context, &mut jones_array, &coarse_chan_range, false)
+                correct_cable_lengths(&context, &mut jones_array, &sel_coarse_chan_range, false)
             );
         } else {
             info!(
@@ -1131,9 +1163,6 @@ where
                     let strategy_filename = matches.value_of("aoflagger-strategy").unwrap_or(&default_strategy_filename);
                     info!("flagging with strategy {}", strategy_filename);
                     flag_array = with_increment_duration!(durations,
-
-
-
                         "flag",
                         flag_jones_array_existing(
                             &aoflagger,
@@ -1166,7 +1195,7 @@ where
                         &context,
                         &mut jones_array,
                         &chunk_timestep_range,
-                        &coarse_chan_range,
+                        &sel_coarse_chan_range,
                         Some(array_pos),
                         Some(phase_centre),
                         false,
@@ -1186,7 +1215,7 @@ where
             with_increment_duration!(
                 durations,
                 "write",
-                write_flags(&context, &flag_array, flag_template, &coarse_chan_range)
+                write_flags(&context, &flag_array, flag_template, &sel_coarse_chan_range)
                     .expect("unable to write flags")
             );
         }
@@ -1245,7 +1274,7 @@ where
                         flag_array.view(),
                         &context,
                         &chunk_timestep_range,
-                        &coarse_chan_range,
+                        &sel_coarse_chan_range,
                         &baseline_idxs,
                         avg_time,
                         avg_freq,
@@ -1267,7 +1296,7 @@ where
                         flag_array.view(),
                         &context,
                         &chunk_timestep_range,
-                        &coarse_chan_range,
+                        &sel_coarse_chan_range,
                         &baseline_idxs,
                         avg_time,
                         avg_freq,
@@ -1544,6 +1573,7 @@ mod tests_aoflagger {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--no-cable-delay",
             "--no-geometric-delay",
