@@ -593,17 +593,13 @@ where
                 .required(false),
 
             // corrections
-            arg!(--"phase-centre" "Override Phase centre from metafits (degrees)")
-                .value_names(&["RA", "DEC"])
-                .required(false),
-            arg!(--"pointing-centre" "Use pointing instead phase centre")
-                .conflicts_with("phase-centre"),
-            arg!(--"no-cable-delay" "Do not perform cable length corrections"),
+            arg!(--"no-cable-delay" "Do not perform cable length corrections")
+                .help_heading("CORRECTION"),
             arg!(--"no-geometric-delay" "Do not perform geometric corrections")
+                .help_heading("CORRECTION")
                 .alias("no-geom"),
-            arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's"),
-            arg!(--"dry-run" "Just print the summary and exit"),
-            arg!(--"no-draw-progress" "do not show progress bars"),
+            arg!(--"no-digital-gains" "Do not perform digital gains corrections")
+                .help_heading("CORRECTION"),
 
             // calibration
             arg!(--"apply-di-cal" <PATH> "Apply DI calibration solutions to the data before averaging")
@@ -1110,6 +1106,20 @@ where
             info!(
                 "Skipping cable delays. applied: {}, desired: {}",
                 cable_delays_applied, !no_cable_delays
+            );
+        }
+
+        // perform coarse channel gain and passband corrections.
+        if !matches.is_present("no-digital-gains") {
+            with_increment_duration!(
+                durations,
+                "correct",
+                correct_digital_gains(
+                    &context,
+                    &mut jones_array,
+                    &sel_coarse_chan_range,
+                    &sel_baselines,
+                )
             );
         }
 
@@ -2165,6 +2175,7 @@ mod tests_aoflagger {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--no-cable-delay",
             "--no-geometric-delay",
@@ -2192,6 +2203,7 @@ mod tests_aoflagger {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--no-cable-delay",
             "--no-geometric-delay",
@@ -2224,6 +2236,7 @@ mod tests_aoflagger {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--no-geometric-delay",
             "--emulate-cotter",
@@ -2257,6 +2270,7 @@ mod tests_aoflagger {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--no-cable-delay",
             "--emulate-cotter",
@@ -2289,6 +2303,7 @@ mod tests_aoflagger {
             metafits_path,
             "-u",
             uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--emulate-cotter",
         ];
@@ -2348,11 +2363,12 @@ mod tests_aoflagger {
             "birli",
             "-m",
             metafits_path,
+            "-u",
+            uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--phase-centre",
             "0.0",
             "0.0",
-            "-u",
-            uvfits_path.to_str().unwrap(),
             "--no-draw-progress",
             "--emulate-cotter",
         ];
@@ -2410,9 +2426,10 @@ mod tests_aoflagger {
             "birli",
             "-m",
             metafits_path,
-            "--pointing-centre",
             "-M",
             ms_path.to_str().unwrap(),
+            "--no-digital-gains",
+            "--pointing-centre",
             "--no-draw-progress",
             "--emulate-cotter",
         ];
@@ -2469,6 +2486,7 @@ mod tests_aoflagger {
             metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--emulate-cotter",
         ];
@@ -2532,6 +2550,7 @@ mod tests_aoflagger {
             metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--emulate-cotter",
             "--no-cable-delay",
@@ -2572,6 +2591,7 @@ mod tests_aoflagger {
             metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--emulate-cotter",
             "--no-cable-delay",
@@ -2613,13 +2633,14 @@ mod tests_aoflagger {
             metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--avg-time-factor", "2",
             "--avg-freq-factor", "4",
-            "--time-sel", "0", "2",
+            "--sel-time", "0", "2",
             "--time-chunk", "2",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -2655,13 +2676,14 @@ mod tests_aoflagger {
             metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--avg-time-factor", "2",
             "--avg-freq-factor", "4",
-            "--time-sel", "0", "2",
+            "--sel-time", "0", "2",
             "--time-chunk", "1",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -2714,6 +2736,7 @@ mod tests_aoflagger {
             metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
+            "--no-digital-gains",
             "--no-draw-progress",
             "--no-cable-delay",
             "--no-geometric-delay",
@@ -2728,5 +2751,66 @@ mod tests_aoflagger {
 
         // ignoring weights because Cotter doesn't flag NaNs
         compare_ms_with_csv(ms_path, expected_csv_path, F32Margin::default(), true);
+    }
+
+    /// Data generated with
+    ///
+    /// ```bash
+    /// cotter \
+    ///  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
+    ///  -o tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.ms \
+    ///  -allowmissing \
+    ///  -edgewidth 0 \
+    ///  -endflag 0 \
+    ///  -initflag 0 \
+    ///  -noantennapruning \
+    ///  -nocablelength \
+    ///  -norfi \
+    ///  -nogeom \
+    ///  -noflagautos \
+    ///  -noflagdcchannels \
+    ///  -sbpassband tests/data/subband-passband-32ch-unitary.txt \
+    ///  -nostats \
+    ///  -flag-strategy /usr/share/aoflagger/strategies/mwa-default.lua \
+    ///  tests/data/1254670392_avg/*gpubox*.fits
+    /// ```
+    ///
+    /// then casa
+    ///
+    /// ```bash
+    /// tb.open('tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.ms')
+    /// exec(open('tests/data/casa_dump_ms.py').read())
+    /// ```
+    #[test]
+    fn test_1254670392_avg_ms_none_norfi_nodigital() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("1254670392.none.norfi.nodigital.ms");
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let expected_csv_path = PathBuf::from(
+            "tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.ms.csv",
+        );
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-M",
+            ms_path.to_str().unwrap(),
+            "--no-draw-progress",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--no-rfi",
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+        compare_ms_with_csv(
+            ms_path,
+            expected_csv_path,
+            F32Margin::default().epsilon(7e-5),
+            false,
+        );
     }
 }
