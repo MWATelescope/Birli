@@ -141,7 +141,7 @@ pub use marlu::{
 };
 #[cfg(test)]
 pub(crate) use types::TestJones;
-
+pub mod cli;
 mod error;
 pub use error::BirliError;
 
