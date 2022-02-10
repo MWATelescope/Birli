@@ -1,7 +1,7 @@
 //! Corrections that can be performed on visibility data
 
 use crate::{
-    ndarray::{parallel::prelude::*, Array3, ArrayViewMut3, Axis},
+    ndarray::{parallel::prelude::*, Array3, Axis},
     Jones,
 };
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -324,7 +324,7 @@ pub fn correct_geometry(
 /// - the gains for the x rfinput are the same as the y rfinput for each antenna
 pub fn correct_digital_gains(
     context: &CorrelatorContext,
-    jones_array: &mut ArrayViewMut3<Jones<f32>>,
+    jones_array: &mut Array3<Jones<f32>>,
     sel_coarse_chan_range: &Range<usize>,
     // The tile index pairs for each selected baseline
     sel_baselines: &[(usize, usize)],
@@ -1219,7 +1219,7 @@ mod tests {
 
         correct_digital_gains(
             &context,
-            &mut out_jones_array.view_mut(),
+            &mut out_jones_array,
             &sel_coarse_chan_range,
             &sel_baselines,
         );
