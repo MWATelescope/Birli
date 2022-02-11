@@ -369,13 +369,13 @@ pub fn correct_digital_gains(
         |(ant_idx, coarse_chan_idx)| {
             let ant = context.metafits_context.antennas[ant_idx].clone();
             let mwalib_coarse_chan_idx = sel_coarse_chan_range.start + coarse_chan_idx;
-            assert_eq!(
-                ant.rfinput_x.digital_gains[mwalib_coarse_chan_idx],
-                ant.rfinput_y.digital_gains[mwalib_coarse_chan_idx],
-                "x and y digital gains for antenna {:?} are not equal for coarse channel {}",
-                ant,
-                mwalib_coarse_chan_idx
-            );
+            // assert_eq!(
+            //     ant.rfinput_x.digital_gains[mwalib_coarse_chan_idx],
+            //     ant.rfinput_y.digital_gains[mwalib_coarse_chan_idx],
+            //     "x and y digital gains for antenna {:?} are not equal for coarse channel {}",
+            //     ant,
+            //     mwalib_coarse_chan_idx
+            // );
             (
                 ant.rfinput_x.digital_gains[mwalib_coarse_chan_idx],
                 ant.rfinput_y.digital_gains[mwalib_coarse_chan_idx],
@@ -457,14 +457,15 @@ mod tests {
         hifitime::Epoch, mwalib::CorrelatorContext, precession::precess_time, Complex, Jones,
         LatLngHeight, RADec, XyzGeodetic, UVW,
     };
-    use ndarray::s;
+    use ndarray::{s, Array2, Array3};
     use std::f64::consts::PI;
 
     use crate::{
         approx::assert_abs_diff_eq,
         context_to_jones_array,
+        corrections::_correct_digital_gains,
         flags::{get_coarse_chan_range, get_timestep_range},
-        get_flaggable_timesteps, TestJones,
+        get_flaggable_timesteps, BirliError, TestJones,
     };
 
     // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
@@ -1324,5 +1325,57 @@ mod tests {
             out_jones_array[(0, max_chan, 1)],
             jones_0_max_1 / ((gain_last_0 * gain_last_1) as f32)
         );
+    }
+
+    #[test]
+    fn test_correct_digital_gains_bad_array_shape() {
+        let context = get_mwa_ord_context();
+
+        let sel_coarse_chan_range = get_coarse_chan_range(&context).unwrap();
+
+        let mut jones_array = Array3::from_shape_fn((1, 1, 1), |_| Jones::nan());
+
+        let sel_baseline_range = 0..2;
+        let sel_baseline_idxs: Vec<usize> = sel_baseline_range.collect();
+
+        let sel_baselines = sel_baseline_idxs
+            .iter()
+            .map(|&idx| {
+                let baseline = &context.metafits_context.baselines[idx];
+                (baseline.ant1_index, baseline.ant2_index)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(matches!(
+            correct_digital_gains(
+                &context,
+                &mut jones_array,
+                &sel_coarse_chan_range,
+                &sel_baselines,
+            ),
+            Err(BirliError::BadArrayShape { .. })
+        ));
+
+        let channels =
+            sel_coarse_chan_range.len() * context.metafits_context.num_corr_fine_chans_per_coarse;
+
+        let mut jones_array = Array3::from_shape_fn((1, channels, 1), |_| Jones::nan());
+
+        assert!(matches!(
+            correct_digital_gains(
+                &context,
+                &mut jones_array,
+                &sel_coarse_chan_range,
+                &sel_baselines,
+            ),
+            Err(BirliError::BadArrayShape { .. })
+        ));
+
+        let gains = Array2::from_shape_fn((1, 1), |_| (1., 1.));
+
+        assert!(matches!(
+            _correct_digital_gains(&mut jones_array, &gains, &sel_baselines, 2),
+            Err(BirliError::BadArrayShape { .. })
+        ));
     }
 }
