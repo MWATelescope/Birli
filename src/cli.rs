@@ -676,6 +676,11 @@ where
                     .help_heading("AOFLAGGER")
                     .required(false)
             ]);
+        } else {
+            // add the --no-rfi flag anyway, but hidden.
+            app = app.args(&[
+                arg!(--"no-rfi" "Does nothing without the aoflagger feature")
+            ]);
         }
     };
 

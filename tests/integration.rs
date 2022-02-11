@@ -165,8 +165,8 @@ fn test_1254670392_avg_ms_none_norfi_nodigital() {
 mod tests_aoflagger {
     use super::*;
     use birli::{CorrelatorContext, FlagFileSet};
-    use marlu::rubbl_casatables::{Table, TableOpenMode};
     use itertools::izip;
+    use marlu::rubbl_casatables::{Table, TableOpenMode};
 
     macro_rules! assert_flagsets_eq {
         ($context:expr, $left_flagset:expr, $right_flagset:expr, $gpubox_ids:expr) => {
