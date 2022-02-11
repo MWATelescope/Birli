@@ -23,13 +23,13 @@ use marlu::{
     fitsio, fitsio_sys,
     hifitime::Epoch,
     mwalib::{CorrelatorContext, MetafitsContext},
+    num_complex::Complex,
     precession::*,
     Jones, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
 };
 
 use crate::{
     flags::{add_dimension, flag_to_weight_array, get_weight_factor},
-    marlu::num_complex::Complex,
     ndarray::{s, Array, Array3, ArrayView3, ArrayView4, Axis},
 };
 
