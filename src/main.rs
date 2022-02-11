@@ -1152,6 +1152,7 @@ where
                     &sel_coarse_chan_range,
                     &sel_baselines,
                 )
+                .expect("couldn't apply digital gains")
             );
         }
 
