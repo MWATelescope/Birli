@@ -1,7 +1,7 @@
 //! Corrections that can be performed on visibility data
 
 use crate::{
-    ndarray::{parallel::prelude::*, Array3, Axis},
+    ndarray::{parallel::prelude::*, Array2, Array3, Axis},
     Jones,
 };
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -331,12 +331,51 @@ pub fn correct_digital_gains(
 ) {
     let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
-    // TODO: check that all rfinput X gains are the same as rfinput Y gains.
-
     // TODO: proper error handling
     let vis_dims = jones_array.dim();
     assert!(vis_dims.1 == sel_coarse_chan_range.len() * num_fine_chans_per_coarse);
     assert!(vis_dims.2 == sel_baselines.len());
+
+    let gains = Array2::from_shape_fn(
+        (
+            context.metafits_context.num_ants,
+            sel_coarse_chan_range.len(),
+        ),
+        |(ant_idx, coarse_chan_idx)| {
+            let ant = context.metafits_context.antennas[ant_idx].clone();
+            let mwalib_coarse_chan_idx = sel_coarse_chan_range.start + coarse_chan_idx;
+            assert_eq!(
+                ant.rfinput_x.digital_gains[mwalib_coarse_chan_idx],
+                ant.rfinput_y.digital_gains[mwalib_coarse_chan_idx],
+                "x and y digital gains for antenna {:?} are not equal for coarse channel {}",
+                ant,
+                mwalib_coarse_chan_idx
+            );
+            (
+                ant.rfinput_x.digital_gains[mwalib_coarse_chan_idx],
+                ant.rfinput_y.digital_gains[mwalib_coarse_chan_idx],
+            )
+        },
+    );
+
+    _correct_digital_gains(
+        jones_array,
+        &gains,
+        sel_baselines,
+        num_fine_chans_per_coarse,
+    );
+}
+
+fn _correct_digital_gains(
+    jones_array: &mut Array3<Jones<f32>>,
+    gains: &Array2<(f64, f64)>,
+    sel_baselines: &[(usize, usize)],
+    num_fine_chans_per_coarse: usize,
+) {
+    // TODO: proper error handling
+    let vis_dims = jones_array.dim();
+    let gain_dims = gains.dim();
+    assert!(vis_dims.1 == gain_dims.1 * num_fine_chans_per_coarse);
 
     // iterate through the selected baselines
     for (mut jones_array, (ant1_idx, ant2_idx)) in izip!(
@@ -344,22 +383,26 @@ pub fn correct_digital_gains(
         sel_baselines.iter().cloned()
     ) {
         // iterate through the selected coarse channels
-        for (mut jones_array, coarse_chan_idx) in izip!(
+        for (mut jones_array, &(gain1x, gain1y), &(gain2x, gain2y)) in izip!(
             jones_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse),
-            sel_coarse_chan_range.clone()
+            gains.index_axis(Axis(0), ant1_idx),
+            gains.index_axis(Axis(0), ant2_idx),
         ) {
-            let gain1 = context.metafits_context.antennas[ant1_idx]
-                .rfinput_x
-                .digital_gains[coarse_chan_idx];
-            let gain2 = context.metafits_context.antennas[ant2_idx]
-                .rfinput_x
-                .digital_gains[coarse_chan_idx];
-
             // for all visibilities in the selected coarse channel, for all timesteps
             for jones in jones_array.iter_mut() {
-                // promote and divide by gain
-                let corrected = Jones::<f64>::from(*jones) / gain1 / gain2;
-                *jones = Jones::<f32>::from(corrected);
+                // promote
+                let corrected = Jones::<f64>::from(*jones);
+                // divide by gain and demote
+                *jones = Jones::<f32>::from([
+                    (corrected[0].re / gain1x / gain2x) as _,
+                    (corrected[0].im / gain1x / gain2x) as _,
+                    (corrected[1].re / gain1x / gain2y) as _,
+                    (corrected[1].im / gain1x / gain2y) as _,
+                    (corrected[2].re / gain1y / gain2x) as _,
+                    (corrected[2].im / gain1y / gain2x) as _,
+                    (corrected[3].re / gain1y / gain2y) as _,
+                    (corrected[3].im / gain1y / gain2y) as _,
+                ]);
             }
         }
     }
@@ -1194,10 +1237,10 @@ mod tests {
         // first coarse chan, antenna 0
         let gain_first_0 =
             context.metafits_context.antennas[0].rfinput_x.digital_gains[first_coarse_chan_idx];
-        // first coarse chan, antenna 0
+        // first coarse chan, antenna 1
         let gain_first_1 =
             context.metafits_context.antennas[1].rfinput_x.digital_gains[first_coarse_chan_idx];
-        // last coarse chan, antenna 1
+        // last coarse chan, antenna 0
         let gain_last_0 =
             context.metafits_context.antennas[0].rfinput_x.digital_gains[last_coarse_chan_idx];
         // last coarse chan, antenna 1
