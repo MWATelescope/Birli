@@ -2,7 +2,7 @@
 
 use crate::{
     ndarray::{parallel::prelude::*, Array2, Array3, Axis},
-    Jones,
+    BirliError, Jones,
 };
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
@@ -322,18 +322,43 @@ pub fn correct_geometry(
 /// - the digital gains are provided in [`mwalib::Rfinput.digital_gains`] in the same order as the
 ///   coarse channel indices (increasing sky frequency)
 /// - the gains for the x rfinput are the same as the y rfinput for each antenna
+///
+/// # Errors
+/// - Will throw BadArrayShape if:
+///     - `jones_array.dim().1 != num_fine_chans_per_coarse * sel_coarse_chan_range.len()
+///     - `jones_array.dim().2 != sel_baselines.len()`
 pub fn correct_digital_gains(
     context: &CorrelatorContext,
     jones_array: &mut Array3<Jones<f32>>,
     sel_coarse_chan_range: &Range<usize>,
     // The tile index pairs for each selected baseline
     sel_baselines: &[(usize, usize)],
-) {
+) -> Result<(), BirliError> {
     let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
     // TODO: proper error handling
     let vis_dims = jones_array.dim();
-    assert!(vis_dims.1 == sel_coarse_chan_range.len() * num_fine_chans_per_coarse);
+    if vis_dims.1 != sel_coarse_chan_range.len() * num_fine_chans_per_coarse {
+        return Err(BirliError::BadArrayShape {
+            argument: "sel_coarse_chan_range".into(),
+            function: "correct_digital_gains".into(),
+            expected: format!(
+                "(vis_dims.1={}) / (num_fine_chans_per_coarse={}) = {}",
+                vis_dims.1,
+                num_fine_chans_per_coarse,
+                vis_dims.1 / num_fine_chans_per_coarse
+            ),
+            received: format!("{:?}", sel_coarse_chan_range.len()),
+        });
+    }
+    if vis_dims.2 != sel_baselines.len() {
+        return Err(BirliError::BadArrayShape {
+            argument: "sel_baselines".into(),
+            function: "correct_digital_gains".into(),
+            expected: format!("vis_dims.2={}", vis_dims.2,),
+            received: format!("{:?}", sel_baselines.len()),
+        });
+    }
     assert!(vis_dims.2 == sel_baselines.len());
 
     let gains = Array2::from_shape_fn(
@@ -363,7 +388,7 @@ pub fn correct_digital_gains(
         &gains,
         sel_baselines,
         num_fine_chans_per_coarse,
-    );
+    )
 }
 
 fn _correct_digital_gains(
@@ -371,10 +396,23 @@ fn _correct_digital_gains(
     gains: &Array2<(f64, f64)>,
     sel_baselines: &[(usize, usize)],
     num_fine_chans_per_coarse: usize,
-) {
+) -> Result<(), BirliError> {
     // TODO: proper error handling
     let vis_dims = jones_array.dim();
     let gain_dims = gains.dim();
+    if vis_dims.1 != gain_dims.1 * num_fine_chans_per_coarse {
+        return Err(BirliError::BadArrayShape {
+            argument: "gains".into(),
+            function: "_correct_digital_gains".into(),
+            expected: format!(
+                "(_, n, _), where n = (vis_dims.1={}) / (num_fine_chans_per_coarse={}) = {}",
+                vis_dims.1,
+                num_fine_chans_per_coarse,
+                vis_dims.1 / num_fine_chans_per_coarse
+            ),
+            received: format!("{:?}", gain_dims),
+        });
+    }
     assert!(vis_dims.1 == gain_dims.1 * num_fine_chans_per_coarse);
 
     // iterate through the selected baselines
@@ -406,6 +444,8 @@ fn _correct_digital_gains(
             }
         }
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1265,7 +1305,8 @@ mod tests {
             &mut out_jones_array,
             &sel_coarse_chan_range,
             &sel_baselines,
-        );
+        )
+        .unwrap();
 
         compare_jones!(
             out_jones_array[(0, 0, 0)],
