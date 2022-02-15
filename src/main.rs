@@ -15,6 +15,7 @@ use log::{debug, info, trace, warn};
 use marlu::{
     hifitime::Epoch,
     io::{ms::MeasurementSetWriter, VisWritable},
+    ndarray::s,
     precession::{precess_time, PrecessionInfo},
     RADec,
 };
@@ -1086,6 +1087,37 @@ where
     } else {
         sel_timestep_range.len()
     };
+
+    let calsols = matches.value_of("apply-di-cal").map(|calsol_file| {
+        let calsols = with_increment_duration!(
+            durations,
+            "read",
+            AOCalSols::read_andre_binary(calsol_file).unwrap()
+        );
+        if calsols.di_jones.dim().0 != 1 {
+            panic!("only 1 timeblock must be supplied for calsols. Instead found {} timeblocks. dimensions {:?}", calsols.di_jones.dim().1, calsols.di_jones.dim());
+        }
+        // calsols.di_jones.index_axis_move(Axis(0), 0)
+        let calsol_chans = calsols.di_jones.dim().2;
+        if calsol_chans % context.num_coarse_chans != 0 {
+            panic!(
+                "the number of calibration solution channels must be a multiple of the number of
+                coarse channels defined in the metafits {}. Instead found {}.
+                dimensions: {:?}",
+                context.metafits_context.num_metafits_coarse_chans,
+                calsol_chans,
+                calsols.di_jones.dim());
+        }
+        let num_calsol_fine_chans_per_coarse = calsol_chans / context.num_coarse_chans;
+        calsols.di_jones
+            .index_axis(Axis(0), 0)
+            .slice(s![
+                ..,
+                (sel_coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
+                ..(sel_coarse_chan_range.end * num_calsol_fine_chans_per_coarse)]
+            ).to_owned()
+    });
+
     for mut timestep_chunk in &sel_timestep_range.clone().chunks(chunk_size) {
         let chunk_first_timestep = timestep_chunk.next().unwrap();
         let chunk_last_timestep = timestep_chunk.last().unwrap_or(chunk_first_timestep);
@@ -1235,21 +1267,12 @@ where
         //     avg_freq,
         // );
 
-        if let Some(calsol_file) = matches.value_of("apply-di-cal") {
-            let calsols = with_increment_duration!(
-                durations,
-                "read",
-                AOCalSols::read_andre_binary(calsol_file).unwrap()
-            );
-            if calsols.di_jones.dim().0 != 1 {
-                panic!("only 1 timeblock supported for calsols");
-            }
-
+        if let Some(ref calsols) = calsols {
             with_increment_duration!(
                 durations,
                 "calibrate",
                 apply_di_calsol(
-                    calsols.di_jones.index_axis(Axis(0), 0),
+                    calsols.view(),
                     jones_array.view_mut(),
                     weight_array.view_mut(),
                     flag_array.view_mut(),
@@ -2777,6 +2800,40 @@ mod tests_aoflagger {
             "tests/data/1254670392_avg/1254690096.bin",
         ];
         args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+
+        // ignoring weights because Cotter doesn't flag NaNs
+        compare_ms_with_csv(ms_path, expected_csv_path, F32Margin::default(), true);
+    }
+
+    #[test]
+    /// Handle when calibration solution is provided with 24 channels, but a subset of channels are provided
+    fn test_1254670392_avg_ms_none_norfi_cal_partial() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("1254670392.none.norfi.cal.ms");
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let expected_csv_path = PathBuf::from(
+            "tests/data/1254670392_avg/1254670392.cotter.none.norfi.cal.partial.ms.csv",
+        );
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-M",
+            ms_path.to_str().unwrap(),
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--no-rfi",
+            "--emulate-cotter",
+            "--apply-di-cal",
+            "tests/data/1254670392_avg/1254690096.bin",
+        ];
+        args.extend_from_slice(&gpufits_paths[21..]);
 
         main_with_args(&args);
 
