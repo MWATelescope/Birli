@@ -1,5 +1,14 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.5.0 (2022-02-15)
+
+- ✨ new features:
+  - [EOR-40] Correction of digital gains is enabled by default, use `--no-digital-gains` to disable it.
+- 🐛 bug fixes:
+  - fix [https://github.com/MWATelescope/Birli/issues/44](#44 - Can't apply calibration solutions to partial observation)
+- ➕ dependencies:
+  - Bump Marlu from 0.4.0 to 0.5.0
+
 # Version 0.4.1 (2022-02-09)
 
 - ✨ new features:
