@@ -336,38 +336,36 @@ identifier is the channel number, which needs three digits.
 
 The following table shows how Birli options map onto Cotter options:
 
-| **Birli**                              | **Cotter**               | **Cotter Description**
-| -------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-| \--version                             | \-version                | Output version and exit.
-| \-m                                    | --metafits/-m <filename> | Read meta data from given fits filename..
-| \-f,\-u,\-M                            | \-o <filename>           | Save output to given filename. Default is 'preprocessed.ms'. If the files' extension is .uvfits, it will be outputted in uvfits format and extension .mwaf is the flag-only format for input into the RTS.
-| \--no-rfi                              | \-norfi                  | Disable RFI detection.
-| \--aoflagger-strategy <PATH>           | \-flag-strategy <file>   | Use the specified aoflagger strategy.
-| \--no-cable-delay                      | \-nocablelength          | Do not perform cable length corrections.
-| \--no-geom                             | \-nogeom                 | Disable geometric corrections.
-| \--phase-centre <RA> <DEC>             | \-centre <ra> <dec>      | Set alternative phase centre, e.g. -centre 00h00m00.0s 00d00m00.0s.
-| \--pointing-centre                     | \-usepcentre             | Centre on pointing centre.
-| \--avg-time-res <SECONDS>              | \-timeres <s>            | Average nr of sec of timesteps together before writing to measurement set.
-| \--avg-freq-res <KHZ>                  | \-freqres <kHz>          | Average kHz bandwidth of channels together before writing to measurement set. When averaging: flagging, collecting statistics and cable length fixes are done at highest resolution. UVW positions are recalculated for new timesteps.
-| \--apply-di-cal <PATH>                 | \-full-apply <file>      | Apply a solution file before averaging. The solution file should have as many channels as the observation.
-| \--no-digital-gains                    | \-nosbgains              | Do not correct for the digital gains.
-| \--max-memory                          | \-absmem <gb>            | Use at most the given amount of memory, specified in gigabytes.
-| \--flag-channel-edge-width <kHz>       | \-edgewidth <kHz>        | Flag the given width of edge channels of each sub-band (default: 80 kHz).
-| \--flag-init <sec>                     | \-initflag <sec>         | Specify number of seconds to flag at beginning of observation (default: use QUACKTIME provided by the metafits/mwalib).
-| \--flag-times-end <sec>                | \-endflag <sec>          | Specify number of seconds to flag extra at end of observation (default: 0s).
-| \--flag-dc                             | \-flagdcchannels         | Flag the centre channel of each sub-band (currently the default).
-| \--no-flag-dc                          | \-noflagdcchannels       | Do not flag the centre channel of each sub-band.
-| \--flag-antennae <ANTS>...             | \-flagantenna <lst>      | Mark the comma-separated list of zero-indexed antennae as flagged antennae.
-| \--flag-coarse-chans <CHANS>...        | \-flagsubband <lst>      | Flag the comma-separated list of zero-indexed sub-bands.
-| \--no-sel-autos                        | \-noautos                | Do not output auto-correlations.
-| (default unless \--flag-autos)         | \-noflagautos            | Do not flag auto-correlations (default for uvfits file output).
-| (default)                              | \-nostats                | Disable collecting statistics (default for uvfits file output).
-| (default unless \--no-sel-flagged-ants)| \-noantennapruning       | Do not remove the flagged antennae.
-| (default)                              | \-allowmissing           | Do not abort when not all GPU box files are available (default is to abort).
-| (--passband <file>, default: unitary)  | \-sbpassband <file>      | Read the sub-band passband from given file instead of using default passband. (default passband does a reasonably good job)
-| (TBD)                                  | \-flagfiles <name>       | Use previously writted MWAF files to skip RFI detection. Name should have two percentage symbols (%%), which will be replaced by GPU numbers.
+| **Birli**                         | **Cotter**              | **Cotter Description**
+| --------------------------------- | ----------------------- | ------
+| `--version`                       | `-version`              | Output version and exit.
+| `-m <PATH>`                       | `-m <filename>`         | Read meta data from given fits filename.
+| `-f`,`-u`,`-M`                    | `-o <filename>`         | Save output to given filename
+| `--no-rfi`                        | `-norfi`                | Disable RFI detection.
+| `--aoflagger-strategy <PATH>`     | `-flag-strategy <file>` | Use the specified aoflagger strategy.
+| `--no-cable-delay`                | `-nocablelength`        | Do not perform cable length corrections.
+| `--no-geom`                       | `-nogeom`               | Disable geometric corrections.
+| `--phase-centre <RA> <DEC>`       | `-centre <ra> <dec>`    | Set alternative phase centre, e.g. -centre 00h00m00.0s 00d00m00.0s.
+| `--pointing-centre`               | `-usepcentre`           | Centre on pointing centre.
+| `--avg-time-res <SECONDS>`        | `-timeres <s>`          | Average nr of sec of timesteps together before writing to measurement set.
+| `--avg-freq-res <KHZ>`            | `-freqres <kHz>`        | Average kHz bandwidth of channels together before writing to measurement set.
+| `--apply-di-cal <PATH>`           | `-full-apply <file>`    | Apply a solution file before averaging.
+| `--no-digital-gains`              | `-nosbgains`            | Do not correct for the digital gains.
+| `--max-memory`                    | `-absmem <gb>`          | Use at most the given amount of memory, specified in gigabytes.
+| `--flag-channel-edge-width <kHz>` | `-edgewidth <kHz>`      | Flag the given width of edge channels of each sub-band (default: 80 kHz).
+| `--flag-init <sec>`               | `-initflag <sec>`       | Specify number of seconds to flag at beginning of observation (default: QUACK)
+| `--flag-times-end <sec>`          | `-endflag <sec>`        | Specify number of seconds to flag extra at end of observation (default: 0s).
+| `--flag-dc`                       | `-flagdcchannels`       | Flag the centre channel of each sub-band (currently the default).
+| `--no-flag-dc`                    | `-noflagdcchannels`     | Do not flag the centre channel of each sub-band.
+| `--flag-antennae <ANTS>...`       | `-flagantenna <lst>`    | Mark the comma-separated list of zero-indexed antennae as flagged antennae.
+| `--flag-coarse-chans <CHANS>...`  | `-flagsubband <lst>`    | Flag the comma-separated list of zero-indexed sub-bands.
+| `--no-sel-autos`                  | `-noautos`              | Do not output auto-correlations.
+| (not `--flag-autos`)              | `-noflagautos`          | Do not flag auto-correlations (default for uvfits file output).
+| (default)                         | `-nostats`              | Disable collecting statistics (default for uvfits file output).
+| (not `--no-sel-flagged-ants`)     | `-noantennapruning`     | Do not remove the flagged antennae.
+| (default)                         | `-allowmissing`         | Do not abort when not all GPU box files are available (default is to abort).
 
-Birli will eventually perform all the same default preprocessing steps as Cotter when no flags are provided. The exception is that we have not yet implemented passband correction, flagging of edge / centre fine channels / quack timesteps / auto-correlations, pruning of flagged antennas. This means that `birli <in/out args>` is equivalent to:
+Birli will eventually perform all the same default preprocessing steps as Cotter when no flags are provided. The exceptions are that we have not yet implemented flagging of edge / centre fine channels / quack timesteps / auto-correlations, pruning of flagged antennas. This means that `birli <in/out args>` is equivalent to:
 
 ```bash
  cotter \
@@ -378,14 +376,13 @@ Birli will eventually perform all the same default preprocessing steps as Cotter
   -noantennapruning \
   -noflagautos \
   -noflagdcchannels \
-  -nosbgains \
-  -sbpassband <unitary passband file> \
   -nostats \
   -flag-strategy <mwa default aoflagger strategy>
   <in/out args>
 ```
 
-There is no intention of replicating the following options Birli at this point, but feel free to open an issue if these are important to you.:
+There is no intention of replicating the following options Birli at this point, so please open an issue if these are important to you:
+
 - Coarse channel selection (`-sbcount`, `-sbstart`): This can be done by simply changing which coarse channel files are given in the CLI arguments)
 - Dysco compression (`-use-dysco`, `-dysco-config`)
 - Manual metadata specification (`-a`, `-h`, `-i`): This information is readily available from metafits.
@@ -396,6 +393,8 @@ There is no intention of replicating the following options Birli at this point, 
 - `-noalign`: gpuboxes are always aligned.
 - CPU limit (`-j`): Birli uses crossbeam for concurrency which intelligency uses the compute resources available. Strict resource limits can be achieved with cgroups.
 - Memory percentage limit (`-mem`): Only `-absmem` is supported. Determining memory limits on HPC systems is unreliable, so we recommend manually specifying a memory limit instead.
+- `-sbpassband <file>`
+- `-flagfiles <name>` apply existing flags
 
 ### Example: RFI Flagging, corrections, averaging, output
 
@@ -459,14 +458,3 @@ acknowledge the Wajarri Yamatji people as the traditional owners of the Observat
 This repo is approved by...
 
 <img src="https://github.com/MWATelescope/Birli/raw/main/img/CIRA_Rust_Evangelism_Strike_Force.png" height="200px" alt="CIRA Rust Evangelism Strike Force logo">
-
-## Release Checklist
-
-- [ ] pipeline is green
-- [ ] update `RELEASES.md`
-- [ ] update `package.version` in `Cargo.toml`
-- [ ] `cargo make pre_commit`
-- [ ] commit (include Cargo.toml)
-- [ ] `git tag -a $tag -m $tag`
-- [ ] `git push`
-- [ ] `git push --tags`

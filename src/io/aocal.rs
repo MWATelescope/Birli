@@ -131,7 +131,7 @@ impl AOCalSols {
                         let start: Epoch = s + i_timeblock as f64
                             * Duration::from_f64(
                                 average_duration_per_timeblock,
-                                hifitime::TimeUnit::Second,
+                                hifitime::Unit::Second,
                             );
                         start_timestamps.push(start);
                     }
