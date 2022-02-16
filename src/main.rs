@@ -1,15 +1,16 @@
 use birli::{
     calibration::apply_di_calsol,
-    corrections::correct_digital_gains,
+    corrections::{correct_digital_gains, correct_pfb_gains},
     flags::{
         add_dimension, flag_to_weight_array, get_baseline_flags, get_coarse_chan_flags,
         get_coarse_chan_range, get_timestep_flags, get_timestep_range, get_weight_factor,
     },
     io::{aocal::AOCalSols, WriteableVis},
+    pfb_gains::PFB_LEVINE_2022_200HZ,
     Axis, Complex, UvfitsWriter,
 };
 use cfg_if::cfg_if;
-use clap::{app_from_crate, arg, AppSettings, ValueHint::FilePath};
+use clap::{app_from_crate, arg, AppSettings, PossibleValue, ValueHint::FilePath};
 use itertools::Itertools;
 use log::{debug, info, trace, warn};
 use marlu::{
@@ -548,11 +549,9 @@ where
                 .value_names(&["MIN", "MAX"])
                 .required(false),
             arg!(--"no-sel-flagged-ants" "[WIP] Deselect flagged antennas")
-                .help_heading("SELECTION")
-                .required(false),
+                .help_heading("SELECTION"),
             arg!(--"no-sel-autos" "[WIP] Deselect autocorrelations")
-                .help_heading("SELECTION")
-                .required(false),
+                .help_heading("SELECTION"),
 
             // resource limit options
             arg!(--"time-chunk" <STEPS> "[WIP] Process observation in chunks of <STEPS> timesteps.")
@@ -600,23 +599,19 @@ where
                 .multiple_values(true)
                 .required(false),
             arg!(--"flag-dc" "[WIP] Force flagging of DC centre chans")
-                .help_heading("FLAGGING")
-                .required(false),
+                .help_heading("FLAGGING"),
             arg!(--"no-flag-dc" "[WIP] Do not flag DC centre chans")
-                .help_heading("FLAGGING")
-                .required(false),
+                .help_heading("FLAGGING"),
             // -> antennae
             arg!(--"no-flag-metafits" "[WIP] Ignore antenna flags in metafits")
-                .help_heading("FLAGGING")
-                .required(false),
+                .help_heading("FLAGGING"),
             arg!(--"flag-antennae" <ANTS>... "[WIP] Flag antenna indices")
                 .help_heading("FLAGGING")
                 .multiple_values(true)
                 .required(false),
             // -> baselines
             arg!(--"flag-autos" "[WIP] Flag auto correlations")
-                .help_heading("FLAGGING")
-                .required(false),
+                .help_heading("FLAGGING"),
 
             // corrections
             arg!(--"no-cable-delay" "Do not perform cable length corrections")
@@ -626,13 +621,20 @@ where
                 .alias("no-geom"),
             arg!(--"no-digital-gains" "Do not perform digital gains corrections")
                 .help_heading("CORRECTION"),
-            arg!(--"passband" <PATH> "[WIP] Apply passband corrections from <PATH>")
+            arg!(--"pfb-gains" <TYPE> "Type of PFB pfb filter gains correction to apply")
                 .required(false)
-                .value_hint(FilePath)
+                .possible_values([
+                    PossibleValue::new("none").help("No pfb gains correction (unitary)"),
+                    // PossibleValue::new("cotter")
+                    //     .help("linear interpolate _sb128ChannelSubbandValue2014FromMemo from subbandpassband.cpp in Cotter")
+                    PossibleValue::new("levine2022")
+                        .help("see: PFB_Levine_2022_200Hz in src/pfb_gains.rs"),
+                ])
+                .default_value("levine2022")
                 .help_heading("CORRECTION"),
 
             // calibration
-            arg!(--"apply-di-cal" <PATH> "Apply DI calibration solutions to the data before averaging")
+            arg!(--"apply-di-cal" <PATH> "Apply DI calibration solutions before averaging")
                 .required(false)
                 .value_hint(FilePath),
 
@@ -1118,6 +1120,12 @@ where
             ).to_owned()
     });
 
+    let pfb_gains = match matches.value_of("pfb-gains") {
+        Some("none") => None,
+        None | Some("levine2022") => Some(PFB_LEVINE_2022_200HZ),
+        Some(option) => panic!("unknown option for --pfb-gains: {}", option),
+    };
+
     for mut timestep_chunk in &sel_timestep_range.clone().chunks(chunk_size) {
         let chunk_first_timestep = timestep_chunk.next().unwrap();
         let chunk_last_timestep = timestep_chunk.last().unwrap_or(chunk_first_timestep);
@@ -1185,6 +1193,15 @@ where
                     &sel_baselines,
                 )
                 .expect("couldn't apply digital gains")
+            );
+        }
+
+        if let Some(pfb_gains) = pfb_gains {
+            with_increment_duration!(
+                durations,
+                "correct",
+                correct_pfb_gains(&mut jones_array, pfb_gains, fine_chans_per_coarse)
+                    .expect("couldn't apply pfb gains")
             );
         }
 
@@ -1363,13 +1380,11 @@ mod tests {
     use super::main_with_args;
 
     #[test]
-    #[ignore = "flaky"]
     fn main_with_version_doesnt_crash() {
         main_with_args(&["birli", "--version"]);
     }
 
     #[test]
-    #[ignore = "flaky"]
     fn forked_main_with_version_prints_version() {
         let pkg_name = env!("CARGO_PKG_NAME");
         let pkg_version = env!("CARGO_PKG_VERSION");
