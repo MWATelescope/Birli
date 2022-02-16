@@ -321,7 +321,6 @@ pub fn correct_geometry(
 /// # Assumptions
 /// - the digital gains are provided in [`mwalib::Rfinput.digital_gains`] in the same order as the
 ///   coarse channel indices (increasing sky frequency)
-/// - the gains for the x rfinput are the same as the y rfinput for each antenna
 ///
 /// # Errors
 /// - Will throw BadArrayShape if:
@@ -331,12 +330,10 @@ pub fn correct_digital_gains(
     context: &CorrelatorContext,
     jones_array: &mut Array3<Jones<f32>>,
     sel_coarse_chan_range: &Range<usize>,
-    // The tile index pairs for each selected baseline
     sel_baselines: &[(usize, usize)],
 ) -> Result<(), BirliError> {
     let num_fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
 
-    // TODO: proper error handling
     let vis_dims = jones_array.dim();
     if vis_dims.1 != sel_coarse_chan_range.len() * num_fine_chans_per_coarse {
         return Err(BirliError::BadArrayShape {
@@ -369,13 +366,6 @@ pub fn correct_digital_gains(
         |(ant_idx, coarse_chan_idx)| {
             let ant = context.metafits_context.antennas[ant_idx].clone();
             let mwalib_coarse_chan_idx = sel_coarse_chan_range.start + coarse_chan_idx;
-            // assert_eq!(
-            //     ant.rfinput_x.digital_gains[mwalib_coarse_chan_idx],
-            //     ant.rfinput_y.digital_gains[mwalib_coarse_chan_idx],
-            //     "x and y digital gains for antenna {:?} are not equal for coarse channel {}",
-            //     ant,
-            //     mwalib_coarse_chan_idx
-            // );
             (
                 ant.rfinput_x.digital_gains[mwalib_coarse_chan_idx],
                 ant.rfinput_y.digital_gains[mwalib_coarse_chan_idx],
@@ -448,16 +438,86 @@ fn _correct_digital_gains(
     Ok(())
 }
 
+/// Correct for pfb filter gains in each coarse channel by scaling coarse_band_gains to fit a coarse band.
+///
+/// # Arguments
+///
+/// - `jones_array` - The array of Jones matrices to be corrected, [timestep][channel][baseleine].
+/// - `coarse_band_gains` - a slice of gains to be applied to each coarse channel.
+/// - `num_fine_chans_per_coarse` - The number of fine channels in each coarse.
+///
+/// # Errors
+///
+/// Will throw `BirliError::BadArrayShape` if:
+/// - The length of the channel axis in `jones_array` is not a multiple of num_fine_chans_per_coarse.
+/// - The length of the coarse band gains is not a multiple of num_fine_chans_per_coarse, or vice versa.
+pub fn correct_pfb_gains(
+    jones_array: &mut Array3<Jones<f32>>,
+    coarse_band_gains: &[f64],
+    num_fine_chans_per_coarse: usize,
+) -> Result<(), BirliError> {
+    if jones_array.dim().1 % num_fine_chans_per_coarse != 0 {
+        return Err(BirliError::BadArrayShape {
+            argument: "jones_array".into(),
+            function: "correct_pfb_gains".into(),
+            expected: format!(
+                "(_, n, _), where n is a multiple of num_fine_chans_per_coarse={}",
+                num_fine_chans_per_coarse
+            ),
+            received: format!("{:?}", jones_array.dim()),
+        });
+    };
+
+    let fscrunch = if num_fine_chans_per_coarse % coarse_band_gains.len() == 0 {
+        num_fine_chans_per_coarse / coarse_band_gains.len()
+    } else {
+        return Err(BirliError::BadArrayShape {
+            argument: "coarse_band_gains".into(),
+            function: "correct_pfb_gains".into(),
+            expected: format!(
+                "n, where n is a multiple of num_fine_chans_per_coarse={}",
+                num_fine_chans_per_coarse
+            ),
+            received: format!("{:?}", coarse_band_gains.len()),
+        });
+    };
+
+    let scrunched_gains: Vec<f64> = if fscrunch == 1 {
+        coarse_band_gains.to_vec()
+    } else {
+        coarse_band_gains
+            .chunks(fscrunch)
+            .map(|gains_chunk| gains_chunk.iter().sum::<f64>() / (gains_chunk.len() as f64))
+            .collect()
+    };
+
+    for mut jones_array in jones_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse) {
+        for (mut jones_array, &gain) in
+            izip!(jones_array.axis_iter_mut(Axis(1)), scrunched_gains.iter())
+        {
+            for jones in jones_array.iter_mut() {
+                let jones_f64 = Jones::<f64>::from(*jones);
+                *jones = Jones::<f32>::from(jones_f64 / gain);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::float_cmp)]
 
-    use super::{correct_cable_lengths, correct_digital_gains, correct_geometry, VEL_C};
+    use super::{
+        correct_cable_lengths, correct_digital_gains, correct_geometry, correct_pfb_gains, VEL_C,
+    };
+    use itertools::izip;
     use marlu::{
         hifitime::Epoch, mwalib::CorrelatorContext, precession::precess_time, Complex, Jones,
         LatLngHeight, RADec, XyzGeodetic, UVW,
     };
-    use ndarray::{s, Array2, Array3};
+    use ndarray::{s, Array2, Array3, Axis};
     use std::f64::consts::PI;
 
     use crate::{
@@ -1377,5 +1437,34 @@ mod tests {
             _correct_digital_gains(&mut jones_array, &gains, &sel_baselines, 2),
             Err(BirliError::BadArrayShape { .. })
         ));
+    }
+
+    #[test]
+    fn test_correct_pfb_gains() {
+        let num_fine_chans_per_coarse = 2;
+        // 2 coarse channels
+        let mut jones_array: Array3<Jones<f32>> =
+            Array3::from_shape_fn((2, 4, 2), |_| Jones::identity());
+        let coarse_band_gains = vec![0.1, 0.2];
+
+        correct_pfb_gains(
+            &mut jones_array,
+            &coarse_band_gains,
+            num_fine_chans_per_coarse,
+        )
+        .unwrap();
+
+        let expected: [Jones<f32>; 4] = [
+            Jones::identity() / 0.1,
+            Jones::identity() / 0.2,
+            Jones::identity() / 0.1,
+            Jones::identity() / 0.2,
+        ];
+
+        for (&expected, actuals) in izip!(expected.iter(), jones_array.axis_iter(Axis(1))) {
+            for actual in actuals.iter() {
+                compare_jones!(*expected, *actual);
+            }
+        }
     }
 }
