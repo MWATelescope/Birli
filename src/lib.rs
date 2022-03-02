@@ -200,15 +200,12 @@ macro_rules! _write_hdu_buffer_to_jones_view {
                 jones_baseline_view.outer_iter_mut(),
                 hdu_baseline_chunk.chunks($floats_per_chan)
             ) {
-                // Sanity check that our ndarray view is a single cell.
-                assert_eq!(jones_chan_view.ndim(), 0);
-                let jones = Jones::from([
+                jones_chan_view[()] = Jones::from([
                     Complex::new(hdu_chan_chunk[0], hdu_chan_chunk[1]),
                     Complex::new(hdu_chan_chunk[2], hdu_chan_chunk[3]),
                     Complex::new(hdu_chan_chunk[4], hdu_chan_chunk[5]),
                     Complex::new(hdu_chan_chunk[6], hdu_chan_chunk[7]),
                 ]);
-                jones_chan_view.fill(jones);
             }
         }
     };
