@@ -1379,9 +1379,12 @@ where
         );
     }
 
+    let mut duration_sum = Duration::ZERO;
     for (name, duration) in durations {
         info!("{} duration: {:?}", name, duration);
+        duration_sum += duration;
     }
+    info!("total duration: {:?}", duration_sum);
 }
 
 fn main() {
