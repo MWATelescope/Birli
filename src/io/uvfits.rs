@@ -402,7 +402,7 @@ impl UvfitsWriter {
         let avg_fine_chan_width_hz = pre_avg_fine_chan_width_hz * avg_freq as f64;
 
         let obs_name = context.metafits_context.obs_name.clone();
-        let field_name = match obs_name.rsplit_once("_") {
+        let field_name = match obs_name.rsplit_once('_') {
             Some((field_name, _)) => field_name,
             None => obs_name.as_str(),
         };

@@ -158,7 +158,7 @@ impl FlagFileSet {
         let gpubox_filenames =
             FlagFileSet::get_gpubox_filenames(mwa_version, filename_template, gpubox_ids)?;
         for (gpubox_id, fits_filename) in gpubox_filenames.into_iter() {
-            match FitsFile::create(Path::new(&fits_filename.to_string())).open() {
+            match FitsFile::create(Path::new(&fits_filename)).open() {
                 Ok(fptr) => {
                     gpubox_fptrs.insert(gpubox_id, fptr);
                 }
@@ -192,7 +192,7 @@ impl FlagFileSet {
         let gpubox_filenames =
             FlagFileSet::get_gpubox_filenames(mwa_version, filename_template, gpubox_ids)?;
         for (gpubox_id, fits_filename) in gpubox_filenames.into_iter() {
-            match FitsFile::open(Path::new(&fits_filename.to_string())) {
+            match FitsFile::open(Path::new(&fits_filename)) {
                 Ok(fptr) => {
                     gpubox_fptrs.insert(gpubox_id, fptr);
                 }
