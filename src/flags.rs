@@ -314,9 +314,9 @@ pub fn init_flag_array(
         .iter()
         .flat_map(|coarse_chan_flag| {
             if *coarse_chan_flag {
-                fine_chan_flags.to_vec()
+                vec![true; fine_chan_flags.len()]
             } else {
-                vec![false; fine_chan_flags.len()]
+                fine_chan_flags.to_vec()
             }
         })
         .collect();
