@@ -6,7 +6,8 @@ use birli::{
         get_coarse_chan_range, get_timestep_flags, get_timestep_range, get_weight_factor,
     },
     io::{aocal::AOCalSols, WriteableVis},
-    pfb_gains::PFB_LEVINE_2022_200HZ,
+    mwalib::MWAVersion,
+    pfb_gains::{PFB_COTTER_2014_10KHZ, PFB_LEVINE_2022_200HZ},
     Axis, Complex, UvfitsWriter,
 };
 use cfg_if::cfg_if;
@@ -548,6 +549,10 @@ where
                 .help_heading("SELECTION")
                 .value_names(&["MIN", "MAX"])
                 .required(false),
+            arg!(--"sel-ants" <ANTS>... "[WIP] Antenna to select")
+                .help_heading("SELECTION")
+                .multiple_values(true)
+                .required(false),
             arg!(--"no-sel-flagged-ants" "[WIP] Deselect flagged antennas")
                 .help_heading("SELECTION"),
             arg!(--"no-sel-autos" "[WIP] Deselect autocorrelations")
@@ -602,6 +607,7 @@ where
                 .help_heading("FLAGGING"),
             arg!(--"no-flag-dc" "[WIP] Do not flag DC centre chans")
                 .help_heading("FLAGGING"),
+            // TODO: rename to antennas
             // -> antennae
             arg!(--"no-flag-metafits" "[WIP] Ignore antenna flags in metafits")
                 .help_heading("FLAGGING"),
@@ -625,8 +631,12 @@ where
                 .required(false)
                 .possible_values([
                     PossibleValue::new("none").help("No pfb gains correction (unitary)"),
-                    // PossibleValue::new("cotter")
-                    //     .help("linear interpolate _sb128ChannelSubbandValue2014FromMemo from subbandpassband.cpp in Cotter")
+                    PossibleValue::new("cotter")
+                        .help(
+                            "_sb128ChannelSubbandValue2014FromMemo from
+                            subbandpassband.cpp in Cotter. Can only be used with resolutions of
+                            n * 10kHz"
+                        ),
                     PossibleValue::new("levine2022")
                         .help("see: PFB_Levine_2022_200Hz in src/pfb_gains.rs"),
                 ])
@@ -1010,12 +1020,11 @@ where
         "flag-end-steps",
         "flag-edge-width",
         "flag-edge-chans",
-        "flag-fine-chans",
         "flag-dc",
         "no-flag-dc",
-        "passband",
         "no-sel-autos",
         "no-sel-flagged-ants",
+        "sel-ants",
     ] {
         if matches.is_present(unimplemented_option) {
             panic!("option not yet implemented: --{}", unimplemented_option);
@@ -1121,8 +1130,9 @@ where
     });
 
     let pfb_gains = match matches.value_of("pfb-gains") {
-        Some("none") => None,
-        None | Some("levine2022") => Some(PFB_LEVINE_2022_200HZ),
+        None | Some("none") => None,
+        Some("levine2022") => Some(PFB_LEVINE_2022_200HZ),
+        Some("cotter") => Some(PFB_COTTER_2014_10KHZ),
         Some(option) => panic!("unknown option for --pfb-gains: {}", option),
     };
 
@@ -1159,7 +1169,6 @@ where
             )
             .unwrap()
         );
-
         // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
 
         let no_cable_delays = matches.is_present("no-cable-delay");
@@ -1181,8 +1190,9 @@ where
             );
         }
 
-        // perform coarse channel gain and passband corrections.
+        // perform coarse channel gain corrections
         if !matches.is_present("no-digital-gains") {
+            info!("correcting digital gains");
             with_increment_duration!(
                 durations,
                 "correct",
@@ -1196,11 +1206,20 @@ where
             );
         }
 
+        // perform pfb passband gain corrections
         if let Some(pfb_gains) = pfb_gains {
+            info!("correcting pfb gains");
+            let is_mwax = match context.metafits_context.mwa_version {
+                Some(MWAVersion::CorrMWAXv2) => true,
+                Some(MWAVersion::CorrLegacy) => false,
+                Some(MWAVersion::CorrOldLegacy) => false,
+                Some(ver) => panic!("unknown mwa version: {}", ver),
+                None => panic!("unknown mwa version"),
+            };
             with_increment_duration!(
                 durations,
                 "correct",
-                correct_pfb_gains(&mut jones_array, pfb_gains, fine_chans_per_coarse)
+                correct_pfb_gains(&mut jones_array, pfb_gains, fine_chans_per_coarse, is_mwax)
                     .expect("couldn't apply pfb gains")
             );
         }
@@ -1223,6 +1242,7 @@ where
                             draw_progress,
                         )
                     );
+                    // TODO: log flag occupancy before / after flagging
                 } else {
                     info!("skipped aoflagger");
                 }
@@ -1502,6 +1522,8 @@ mod tests_aoflagger {
             "-m",
             metafits_path,
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "-f",
             mwaf_path_template.to_str().unwrap(),
         ];
@@ -1557,6 +1579,8 @@ mod tests_aoflagger {
             "-m",
             metafits_path,
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--time-chunk", "1",
             "-f",
             mwaf_path_template.to_str().unwrap(),
@@ -1614,6 +1638,8 @@ mod tests_aoflagger {
             uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--no-cable-delay",
             "--no-geometric-delay",
         ];
@@ -1964,7 +1990,6 @@ mod tests_aoflagger {
         // Test the ms file has been correctly populated.
         let mut main_table = Table::open(&ms_path, TableOpenMode::Read).unwrap();
         let num_rows = main_table.n_rows();
-        // dbg!(num_rows);
         let data_tabledesc = main_table.get_col_desc("DATA").unwrap();
         let data_shape = data_tabledesc.shape().unwrap();
         // let num_freqs = data_shape[0] as usize;
@@ -2008,7 +2033,6 @@ mod tests_aoflagger {
                     .get_cell::<f64>("TIME_CENTROID", row_idx)
                     .unwrap();
                 mjds_seen.insert((obs_mjd * 10.).round() as u64);
-                // dbg!(exp_mjd, obs_mjd);
                 let time_match =
                     approx_eq!(f64, exp_mjd, obs_mjd, F64Margin::default().epsilon(1e-5));
 
@@ -2246,6 +2270,8 @@ mod tests_aoflagger {
             uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--emulate-cotter",
@@ -2274,6 +2300,8 @@ mod tests_aoflagger {
             uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--no-rfi",
@@ -2307,10 +2335,12 @@ mod tests_aoflagger {
             uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--no-geometric-delay",
             "--emulate-cotter",
         ];
-        args.extend_from_slice(&gpufits_paths);
+        args.extend_from_slice(&gpufits_paths[..1]);
 
         main_with_args(&args);
         // let uvfits_path = PathBuf::from("/mnt/data/1254670392_vis/1254670392.birli.cable.uvfits");
@@ -2341,6 +2371,8 @@ mod tests_aoflagger {
             uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--no-cable-delay",
             "--emulate-cotter",
         ];
@@ -2374,6 +2406,8 @@ mod tests_aoflagger {
             uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -2439,6 +2473,8 @@ mod tests_aoflagger {
             "0.0",
             "0.0",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -2500,6 +2536,8 @@ mod tests_aoflagger {
             "--no-digital-gains",
             "--pointing-centre",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -2557,6 +2595,8 @@ mod tests_aoflagger {
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -2621,6 +2661,8 @@ mod tests_aoflagger {
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",
@@ -2662,6 +2704,8 @@ mod tests_aoflagger {
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",
@@ -2704,6 +2748,8 @@ mod tests_aoflagger {
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",
@@ -2747,6 +2793,8 @@ mod tests_aoflagger {
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",
@@ -2807,6 +2855,8 @@ mod tests_aoflagger {
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--no-rfi",
@@ -2841,6 +2891,8 @@ mod tests_aoflagger {
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
+            "--pfb-gains",
+            "none",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--no-rfi",
@@ -2861,7 +2913,7 @@ mod tests_aoflagger {
     /// ```bash
     /// cotter \
     ///  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
-    ///  -o tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.ms \
+    ///  -o tests/data/1254670392_avg/1254670392.cotter.none.norfi.nopfb.ms \
     ///  -allowmissing \
     ///  -edgewidth 0 \
     ///  -endflag 0 \
@@ -2881,9 +2933,72 @@ mod tests_aoflagger {
     /// then casa
     ///
     /// ```bash
+    /// tb.open('tests/data/1254670392_avg/1254670392.cotter.none.norfi.nopfb.ms')
+    /// exec(open('tests/data/casa_dump_ms.py').read())
+    /// ```
+    #[test]
+    fn test_1254670392_avg_ms_none_norfi_nopfb() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("1254670392.none.norfi.nopfb.ms");
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let expected_csv_path =
+            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.norfi.nopfb.ms.csv");
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-M",
+            ms_path.to_str().unwrap(),
+            "--no-draw-progress",
+            "--pfb-gains",
+            "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--no-rfi",
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+        compare_ms_with_csv(
+            ms_path,
+            expected_csv_path,
+            F32Margin::default().epsilon(7e-5),
+            false,
+        );
+    }
+
+    /// Data generated with
+    ///
+    /// ```bash
+    /// cotter \
+    ///  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
+    ///  -o tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.ms \
+    ///  -allowmissing \
+    ///  -edgewidth 0 \
+    ///  -endflag 0 \
+    ///  -initflag 0 \
+    ///  -noantennapruning \
+    ///  -nocablelength \
+    ///  -norfi \
+    ///  -nogeom \
+    ///  -noflagautos \
+    ///  -noflagdcchannels \
+    ///  -nosbgains \
+    ///  -nostats \
+    ///  -flag-strategy /usr/share/aoflagger/strategies/mwa-default.lua \
+    ///  tests/data/1254670392_avg/*gpubox*.fits
+    /// ```
+    ///
+    /// then casa
+    ///
+    /// ```bash
     /// tb.open('tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.ms')
     /// exec(open('tests/data/casa_dump_ms.py').read())
     /// ```
+    #[ignore = "Cotter doesn't correctly average passband gains"]
     #[test]
     fn test_1254670392_avg_ms_none_norfi_nodigital() {
         let tmp_dir = tempdir().unwrap();
@@ -2904,6 +3019,9 @@ mod tests_aoflagger {
             "--no-cable-delay",
             "--no-geometric-delay",
             "--no-rfi",
+            "--no-digital-gains",
+            "--pfb-gains",
+            "cotter",
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -2912,7 +3030,72 @@ mod tests_aoflagger {
         compare_ms_with_csv(
             ms_path,
             expected_csv_path,
-            F32Margin::default().epsilon(7e-5),
+            F32Margin::default().epsilon(1e-3),
+            false,
+        );
+    }
+
+    /// Data generated with
+    ///
+    /// ```bash
+    /// cotter \
+    ///  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
+    ///  -o tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.pfb-cotter-40.ms \
+    ///  -allowmissing \
+    ///  -edgewidth 0 \
+    ///  -endflag 0 \
+    ///  -initflag 0 \
+    ///  -noantennapruning \
+    ///  -nocablelength \
+    ///  -norfi \
+    ///  -nogeom \
+    ///  -noflagautos \
+    ///  -noflagdcchannels \
+    ///  -nosbgains \
+    ///  -sbpassband tests/data/subband-passband-32ch-cotter.txt \
+    ///  -nostats \
+    ///  -flag-strategy /usr/share/aoflagger/strategies/mwa-default.lua \
+    ///  tests/data/1254670392_avg/*gpubox*.fits
+    /// ```
+    ///
+    /// then casa
+    ///
+    /// ```bash
+    /// tb.open('tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.pfb-cotter-40.ms')
+    /// exec(open('tests/data/casa_dump_ms.py').read())
+    /// ```
+    #[test]
+    fn test_1254670392_avg_ms_none_norfi_nodigital_pfb_cotter_40() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("1254670392.none.norfi.nodigital.ms");
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let expected_csv_path = PathBuf::from(
+            "tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.pfb-cotter-40.ms.csv",
+        );
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-M",
+            ms_path.to_str().unwrap(),
+            "--no-draw-progress",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--no-rfi",
+            "--no-digital-gains",
+            "--pfb-gains",
+            "cotter",
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        main_with_args(&args);
+        compare_ms_with_csv(
+            ms_path,
+            expected_csv_path,
+            F32Margin::default().epsilon(1e-2),
             false,
         );
     }

@@ -107,6 +107,7 @@ pub fn correct_cable_lengths(
     );
     correction_progress.set_message("cable corrections");
 
+    // TODO: his whole thing is pretty inelegant, needs a re-do.
     jones_array
         .axis_iter_mut(Axis(2))
         .into_par_iter()
@@ -438,7 +439,8 @@ fn _correct_digital_gains(
     Ok(())
 }
 
-/// Correct for pfb filter gains in each coarse channel by scaling coarse_band_gains to fit a coarse band.
+/// Correct for pfb bandpass shape in each coarse channel by scaling coarse_band_gains to fit a
+/// coarse band.
 ///
 /// # Arguments
 ///
@@ -455,7 +457,18 @@ pub fn correct_pfb_gains(
     jones_array: &mut Array3<Jones<f32>>,
     coarse_band_gains: &[f64],
     num_fine_chans_per_coarse: usize,
+    mwax: bool,
 ) -> Result<(), BirliError> {
+    // # TODO: rename correct_passband_gains
+    if num_fine_chans_per_coarse == 0 {
+        return Err(BirliError::BadArrayShape {
+            argument: "jones_array".into(),
+            function: "num_fine_chans_per_coarse".into(),
+            expected: "a number greater than zero".into(),
+            received: format!("{:?}", num_fine_chans_per_coarse),
+        });
+    }
+
     if jones_array.dim().1 % num_fine_chans_per_coarse != 0 {
         return Err(BirliError::BadArrayShape {
             argument: "jones_array".into(),
@@ -468,8 +481,8 @@ pub fn correct_pfb_gains(
         });
     };
 
-    let fscrunch = if num_fine_chans_per_coarse % coarse_band_gains.len() == 0 {
-        num_fine_chans_per_coarse / coarse_band_gains.len()
+    let fscrunch = if coarse_band_gains.len() % num_fine_chans_per_coarse == 0 {
+        coarse_band_gains.len() / num_fine_chans_per_coarse
     } else {
         return Err(BirliError::BadArrayShape {
             argument: "coarse_band_gains".into(),
@@ -482,14 +495,7 @@ pub fn correct_pfb_gains(
         });
     };
 
-    let scrunched_gains: Vec<f64> = if fscrunch == 1 {
-        coarse_band_gains.to_vec()
-    } else {
-        coarse_band_gains
-            .chunks(fscrunch)
-            .map(|gains_chunk| gains_chunk.iter().sum::<f64>() / (gains_chunk.len() as f64))
-            .collect()
-    };
+    let scrunched_gains = scrunch_gains(coarse_band_gains, fscrunch, mwax);
 
     for mut jones_array in jones_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse) {
         for (mut jones_array, &gain) in
@@ -505,12 +511,114 @@ pub fn correct_pfb_gains(
     Ok(())
 }
 
+/// - a scrunched channel contains fscrunch times the bandwidth of the ultrafine channel.
+///
+/// example with 12 ultrafine channels:
+/// fscrunch|0| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |0|
+/// --------|-|---|---|---|---|---|---|---|---|---|---|---|-|
+/// 2 (e->e)| 0*|   1   |   2   |   3   |   4   |   5   | 0*|
+/// 3 (o->e)|  0* |     1     |     2     |     3     |  0* |
+/// 4 (e->o)|       0       |       1       |       2       |
+///
+/// example with 15 ultrafine channels:
+/// fscrunch|0| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |0|
+/// --------|-|---|---|---|---|---|---|---|---|---|---|---|---|---|---| |
+/// 3 (o->o)|     0*    |     1     |     2     |     3     |     4     |
+/// 5 (o->o)|           0       |         1         |         2         |
+
+pub fn scrunch_gains(ultrafine_gains: &[f64], fscrunch: usize, mwax: bool) -> Vec<f64> {
+    let scrunched_length = ultrafine_gains.len() / fscrunch;
+    if fscrunch == 1 {
+        ultrafine_gains.to_vec()
+    } else if !mwax {
+        ultrafine_gains
+            .chunks(fscrunch)
+            .map(|gains_chunk| gains_chunk.iter().sum::<f64>() / (fscrunch as f64))
+            .collect()
+    } else {
+        // in mwax, for an even number of scrunched channels, a given scrunched channel `n`:
+        // - is centered on ultrafine channel `n * fscrunch`.
+        // - contains power from the center channel, and some power from channels within
+        //   `(fscrunch - 1) / 2` channels of the centre, wrapping around the coarse channel
+        //
+        // Scrunched channel zero will contain an equal amount power from the low and high ends of
+        // the coarse channel.
+
+        // in mwax, for an odd number of scrunched channels, a given scrunched channel `n`:
+        // - contains half the power of ultrafine channel `n * fscrunch`.
+        // - contains all of the power from ultrafine channels `n * fscrunch + (1..n-1)`
+        // - contains half the power from ultrafine channel `n * fscrunch + n`
+        // - centered on ultrafine channel `(n + 1/2) * fscrunch`.s
+        //
+        // Scrunched channel zero will contain an equal amount power from the low and high ends of
+        // the coarse channel.
+        // Here we use a cycle iterator, and calculate the first ultrafine channel which contributes
+        // to scrunched channel zero, `first_zeroth_channel`.
+
+        // get the relative index and weight of the window of ultrafine channels that contribute to a scrunched channel.
+        #[rustfmt::skip]
+        let window_offset_weights: Vec<(i32, f64)> = match (scrunched_length % 2, fscrunch % 2) {
+            // even channels, even fscrunch: window length is fscrunch + 1, half-weighted edges
+            (0, 0) => (0..fscrunch + 1)
+                .map(|w| (
+                    (w as i32 - fscrunch as i32 / 2),
+                    (if w == 0 || w == fscrunch { 0.5 } else { 1. }) / fscrunch as f64,
+                ))
+                .collect(),
+            // even channels, odd fscrunch: window length is fscrunch, equal weights
+            (0, 1) => (0..fscrunch)
+                .map(|w| (
+                    (w as i32 - (fscrunch as i32 - 1) / 2),
+                    1. / fscrunch as f64
+                ))
+                .collect(),
+            // odd channels: window length is fscrunch + 1, half-weighted edges
+            (1, _) => (0..fscrunch + 1)
+                .map(|w| (
+                    (w as i32),
+                    (if w == 0 || w == fscrunch { 0.5 } else { 1. }) / fscrunch as f64,
+                ))
+                .collect(),
+            // odd channels, odd fscrunch: window length is fscrunch + 1, half-weighted edges
+            // (1, 1) => (0..fscrunch + 1).map(|w| (
+            //     (w as i32),
+            //     (if w == 0 || w == fscrunch { 0.5 } else { 1. }) / fscrunch as f64
+            // )).collect(),
+            (_, _) => unreachable!(),
+        };
+        if scrunched_length % 2 == 0 {
+            // sanity check: centre symmetric indices should sum to zero, weights should sum to one
+            assert_eq!(
+                window_offset_weights
+                    .iter()
+                    .fold((0, 0.), |(sum_o, sum_w), (o, w)| { (sum_o + o, sum_w + w) }),
+                (0, 1.)
+            );
+        }
+        // apply the weights to calculate the scrunched gains
+        (0..scrunched_length)
+            .map(|scrunched_chan| {
+                window_offset_weights
+                    .iter()
+                    .fold(0., |acc, &(offset, weight)| {
+                        // rem_euclid is basically mod but it correctly wraps around with negative numbers.
+                        let ultrafine_chan = (((fscrunch * scrunched_chan) as i32 + offset)
+                            .rem_euclid(ultrafine_gains.len() as i32))
+                            as usize;
+                        acc + ultrafine_gains[ultrafine_chan] * weight
+                    })
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::float_cmp)]
 
     use super::{
         correct_cable_lengths, correct_digital_gains, correct_geometry, correct_pfb_gains, VEL_C,
+        _correct_digital_gains, scrunch_gains
     };
     use itertools::izip;
     use marlu::{
@@ -523,7 +631,6 @@ mod tests {
     use crate::{
         approx::assert_abs_diff_eq,
         context_to_jones_array,
-        corrections::_correct_digital_gains,
         flags::{get_coarse_chan_range, get_timestep_range},
         get_flaggable_timesteps, BirliError, TestJones,
     };
@@ -1440,6 +1547,92 @@ mod tests {
     }
 
     #[test]
+    fn test_scrunch_gains_legacy() {
+        let base: i32 = 2;
+        let ultrafine_gains: Vec<f64> = (0..30).map(|x| (base.pow(x)) as _).collect();
+        let expected_gains: Vec<f64> = (0..15)
+            .map(|x| ((base.pow(2 * x)) + (base.pow(2 * x + 1))) as f64 / 2.)
+            .collect();
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 2, false);
+        assert_eq!(scrunched_gains, expected_gains);
+    }
+
+    #[test]
+    fn test_scrunch_gains_mwax_even_scrunch_even_channels() {
+        let base: i32 = 2;
+        let ultrafine_gains: Vec<f64> = (0..12).map(|x| (base.pow(x)) as _).collect();
+        let expected_gains: Vec<f64> = (0..12 / 2)
+            .map(|x| -> f64 {
+                let left = ultrafine_gains
+                    [(2 * x as i32 - 1).rem_euclid(ultrafine_gains.len() as i32) as usize]
+                    as f64;
+                let center = ultrafine_gains[2 * x as usize] as f64;
+                let right = ultrafine_gains[(2 * x + 1) as usize] as f64;
+                (left / 4. + center / 2. + right / 4.) as f64
+            })
+            .collect();
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 2, true);
+        assert_eq!(scrunched_gains, expected_gains);
+    }
+
+    #[test]
+    fn test_scrunch_gains_mwax_odd_scrunch_even_channels() {
+        let base: i32 = 2;
+        let ultrafine_gains: Vec<f64> = (0..12).map(|x| (base.pow(x)) as _).collect();
+        let expected_gains: Vec<f64> = (0..12 / 3)
+            .map(|x| -> f64 {
+                let left = ultrafine_gains
+                    [(3 * x as i32 - 1).rem_euclid(ultrafine_gains.len() as i32) as usize]
+                    as f64;
+                let center = ultrafine_gains[3 * x] as f64;
+                let right = ultrafine_gains[3 * x + 1] as f64;
+                (left / 3. + center / 3. + right / 3.) as f64
+            })
+            .collect();
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, true);
+        assert_eq!(scrunched_gains, expected_gains);
+    }
+
+    #[test]
+    fn test_scrunch_gains_mwax_even_scrunch_odd_channels() {
+        let base: i32 = 2;
+        let ultrafine_gains: Vec<f64> = (0..12).map(|x| (base.pow(x)) as _).collect();
+        let expected_gains: Vec<f64> = (0..12 / 4)
+            .map(|x| -> f64 {
+                let left = ultrafine_gains[4 * x] as f64;
+                let center1 = ultrafine_gains[4 * x + 1] as f64;
+                let center2 = ultrafine_gains[4 * x + 2] as f64;
+                let center3 = ultrafine_gains[4 * x + 3] as f64;
+                let right = ultrafine_gains
+                    [(4 * x as i32 + 4).rem_euclid(ultrafine_gains.len() as i32) as usize]
+                    as f64;
+                (left / 8. + center1 / 4. + center2 / 4. + center3 / 4. + right / 8.) as f64
+            })
+            .collect();
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 4, true);
+        assert_eq!(scrunched_gains, expected_gains);
+    }
+
+    #[test]
+    fn test_scrunch_gains_mwax_odd_scrunch_odd_channels() {
+        let base: i32 = 2;
+        let ultrafine_gains: Vec<f64> = (0..15).map(|x| (base.pow(x)) as _).collect();
+        let expected_gains: Vec<f64> = (0..15 / 3)
+            .map(|x| -> f64 {
+                let left = ultrafine_gains[3 * x] as f64;
+                let center1 = ultrafine_gains[3 * x + 1] as f64;
+                let center2 = ultrafine_gains[3 * x + 2] as f64;
+                let right = ultrafine_gains
+                    [(3 * x as i32 + 3).rem_euclid(ultrafine_gains.len() as i32) as usize]
+                    as f64;
+                (left / 6. + center1 / 3. + center2 / 3. + right / 6.) as f64
+            })
+            .collect();
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, true);
+        assert_eq!(scrunched_gains, expected_gains);
+    }
+
+    #[test]
     fn test_correct_pfb_gains() {
         let num_fine_chans_per_coarse = 2;
         // 2 coarse channels
@@ -1451,6 +1644,7 @@ mod tests {
             &mut jones_array,
             &coarse_band_gains,
             num_fine_chans_per_coarse,
+            false,
         )
         .unwrap();
 
@@ -1459,6 +1653,66 @@ mod tests {
             Jones::identity() / 0.2,
             Jones::identity() / 0.1,
             Jones::identity() / 0.2,
+        ];
+
+        for (&expected, actuals) in izip!(expected.iter(), jones_array.axis_iter(Axis(1))) {
+            for actual in actuals.iter() {
+                compare_jones!(*expected, *actual);
+            }
+        }
+    }
+
+    #[test]
+    fn test_correct_pfb_gains_good_fscrunch() {
+        let num_fine_chans_per_coarse = 2;
+        // 2 coarse channels
+        let mut jones_array: Array3<Jones<f32>> =
+            Array3::from_shape_fn((2, 4, 2), |_| Jones::identity());
+        let coarse_band_gains = vec![0.1, 0.2, 0.3, 0.4];
+
+        correct_pfb_gains(
+            &mut jones_array,
+            &coarse_band_gains,
+            num_fine_chans_per_coarse,
+            false,
+        )
+        .unwrap();
+
+        let expected: [Jones<f32>; 4] = [
+            Jones::identity() / 0.15,
+            Jones::identity() / 0.35,
+            Jones::identity() / 0.15,
+            Jones::identity() / 0.35,
+        ];
+
+        for (&expected, actuals) in izip!(expected.iter(), jones_array.axis_iter(Axis(1))) {
+            for actual in actuals.iter() {
+                compare_jones!(*expected, *actual);
+            }
+        }
+    }
+
+    #[test]
+    fn test_correct_pfb_gains_high_fscrunch() {
+        let num_fine_chans_per_coarse = 2;
+        // 2 coarse channels
+        let mut jones_array: Array3<Jones<f32>> =
+            Array3::from_shape_fn((2, 4, 2), |_| Jones::identity());
+        let coarse_band_gains = vec![0.1, 0.2, 0.3, 100., 0.5, 0.6, 0.7, 100.];
+
+        correct_pfb_gains(
+            &mut jones_array,
+            &coarse_band_gains,
+            num_fine_chans_per_coarse,
+            false,
+        )
+        .unwrap();
+
+        let expected: [Jones<f32>; 4] = [
+            Jones::identity() / 25.15,
+            Jones::identity() / 25.45,
+            Jones::identity() / 25.15,
+            Jones::identity() / 25.45,
         ];
 
         for (&expected, actuals) in izip!(expected.iter(), jones_array.axis_iter(Axis(1))) {
