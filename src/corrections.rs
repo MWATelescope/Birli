@@ -617,8 +617,8 @@ mod tests {
     #![allow(clippy::float_cmp)]
 
     use super::{
-        correct_cable_lengths, correct_digital_gains, correct_geometry, correct_pfb_gains, VEL_C,
-        _correct_digital_gains, scrunch_gains
+        _correct_digital_gains, correct_cable_lengths, correct_digital_gains, correct_geometry,
+        correct_pfb_gains, scrunch_gains, VEL_C,
     };
     use itertools::izip;
     use marlu::{
