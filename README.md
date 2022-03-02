@@ -336,34 +336,34 @@ identifier is the channel number, which needs three digits.
 
 The following table shows how Birli options map onto Cotter options:
 
-| **Birli**                         | **Cotter**              | **Cotter Description**
-| --------------------------------- | ----------------------- | ------
-| `--version`                       | `-version`              | Output version and exit.
-| `-m <PATH>`                       | `-m <filename>`         | Read meta data from given fits filename.
-| `-f`,`-u`,`-M`                    | `-o <filename>`         | Save output to given filename
-| `--no-rfi`                        | `-norfi`                | Disable RFI detection.
-| `--aoflagger-strategy <PATH>`     | `-flag-strategy <file>` | Use the specified aoflagger strategy.
-| `--no-cable-delay`                | `-nocablelength`        | Do not perform cable length corrections.
-| `--no-geom`                       | `-nogeom`               | Disable geometric corrections.
-| `--phase-centre <RA> <DEC>`       | `-centre <ra> <dec>`    | Set alternative phase centre, e.g. -centre 00h00m00.0s 00d00m00.0s.
-| `--pointing-centre`               | `-usepcentre`           | Centre on pointing centre.
-| `--avg-time-res <SECONDS>`        | `-timeres <s>`          | Average nr of sec of timesteps together before writing to measurement set.
-| `--avg-freq-res <KHZ>`            | `-freqres <kHz>`        | Average kHz bandwidth of channels together before writing to measurement set.
-| `--apply-di-cal <PATH>`           | `-full-apply <file>`    | Apply a solution file before averaging.
-| `--no-digital-gains`              | `-nosbgains`            | Do not correct for the digital gains.
-| `--max-memory`                    | `-absmem <gb>`          | Use at most the given amount of memory, specified in gigabytes.
-| `--flag-channel-edge-width <kHz>` | `-edgewidth <kHz>`      | Flag the given width of edge channels of each sub-band (default: 80 kHz).
-| `--flag-init <sec>`               | `-initflag <sec>`       | Specify number of seconds to flag at beginning of observation (default: QUACK)
-| `--flag-times-end <sec>`          | `-endflag <sec>`        | Specify number of seconds to flag extra at end of observation (default: 0s).
-| `--flag-dc`                       | `-flagdcchannels`       | Flag the centre channel of each sub-band (currently the default).
-| `--no-flag-dc`                    | `-noflagdcchannels`     | Do not flag the centre channel of each sub-band.
-| `--flag-antennae <ANTS>...`       | `-flagantenna <lst>`    | Mark the comma-separated list of zero-indexed antennae as flagged antennae.
-| `--flag-coarse-chans <CHANS>...`  | `-flagsubband <lst>`    | Flag the comma-separated list of zero-indexed sub-bands.
-| `--no-sel-autos`                  | `-noautos`              | Do not output auto-correlations.
-| (not `--flag-autos`)              | `-noflagautos`          | Do not flag auto-correlations (default for uvfits file output).
-| (default)                         | `-nostats`              | Disable collecting statistics (default for uvfits file output).
-| (not `--no-sel-flagged-ants`)     | `-noantennapruning`     | Do not remove the flagged antennae.
-| (default)                         | `-allowmissing`         | Do not abort when not all GPU box files are available (default is to abort).
+| **Birli**                           | **Cotter**              | **Cotter Description**
+| ----------------------------------- | ----------------------- | ------
+| `--version`                         | `-version`              | Output version and exit.
+| `-m <PATH>`                         | `-m <filename>`         | Read meta data from given fits filename.
+| `-f`,`-u`,`-M`                      | `-o <filename>`         | Save output to given filename
+| `--no-rfi`                          | `-norfi`                | Disable RFI detection.
+| `--aoflagger-strategy <PATH>`       | `-flag-strategy <file>` | Use the specified aoflagger strategy.
+| `--no-cable-delay`                  | `-nocablelength`        | Do not perform cable length corrections.
+| `--no-geom`                         | `-nogeom`               | Disable geometric corrections.
+| `--phase-centre <RA> <DEC>`         | `-centre <ra> <dec>`    | Set alternative phase centre, e.g. -centre 00h00m00.0s 00d00m00.0s.
+| `--pointing-centre`                 | `-usepcentre`           | Centre on pointing centre.
+| `--avg-time-res <SECONDS>`          | `-timeres <s>`          | Average nr of sec of timesteps together before writing to measurement set.
+| `--avg-freq-res <KHZ>`              | `-freqres <kHz>`        | Average kHz bandwidth of channels together before writing to measurement set.
+| `--apply-di-cal <PATH>`             | `-full-apply <file>`    | Apply a solution file before averaging.
+| `--no-digital-gains`                | `-nosbgains`            | Do not correct for the digital gains.
+| `--max-memory` (WIP)                | `-absmem <gb>`          | Use at most the given amount of memory, specified in gigabytes.
+| `--flag-edge-width <kHz>` (WIP)     | `-edgewidth <kHz>`      | Flag the given width of edge channels of each sub-band (default: 80 kHz).
+| `--flag-init <sec>` (WIP)           | `-initflag <sec>`       | Specify number of seconds to flag at beginning of observation (default: QUACK)
+| `--flag-end <sec>` (WIP)            | `-endflag <sec>`        | Specify number of seconds to flag extra at end of observation (default: 0s).
+| `--flag-dc` (WIP)                   | `-flagdcchannels`       | Flag the centre channel of each sub-band (currently the default).
+| `--no-flag-dc` (WIP)                | `-noflagdcchannels`     | Do not flag the centre channel of each sub-band.
+| `--flag-antennae <ANTS>...` (WIP)   | `-flagantenna <lst>`    | Mark the comma-separated list of zero-indexed antennae as flagged antennae.
+| `--flag-coarse-chans <CHANS>` (WIP) | `-flagsubband <lst>`    | Flag the comma-separated list of zero-indexed sub-bands.
+| `--no-sel-autos` (WIP)              | `-noautos`              | Do not output auto-correlations.
+| (not `--flag-autos`)                | `-noflagautos`          | Do not flag auto-correlations (default for uvfits file output).
+| (default)                           | `-nostats`              | Disable collecting statistics (default for uvfits file output).
+| (not `--no-sel-flagged-ants`, WIP)  | `-noantennapruning`     | Do not remove the flagged antennae.
+| (default)                           | `-allowmissing`         | Do not abort when not all GPU box files are available (default is to abort).
 
 Birli will eventually perform all the same default preprocessing steps as Cotter when no flags are provided. The exceptions are that we have not yet implemented flagging of edge / centre fine channels / quack timesteps / auto-correlations, pruning of flagged antennas. This means that `birli <in/out args>` is equivalent to:
 
