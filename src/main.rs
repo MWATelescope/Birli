@@ -1,13 +1,13 @@
 use birli::{
     calibration::apply_di_calsol,
-    corrections::{correct_digital_gains, correct_pfb_gains},
+    corrections::{correct_coarse_passband_gains, correct_digital_gains},
     flags::{
         add_dimension, flag_to_weight_array, get_baseline_flags, get_coarse_chan_flags,
         get_coarse_chan_range, get_timestep_flags, get_timestep_range, get_weight_factor,
     },
     io::{aocal::AOCalSols, WriteableVis},
     mwalib::MWAVersion,
-    pfb_gains::{PFB_COTTER_2014_10KHZ, PFB_LEVINE_2022_200HZ},
+    passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
     Axis, Complex, UvfitsWriter,
 };
 use cfg_if::cfg_if;
@@ -627,20 +627,21 @@ where
                 .alias("no-geom"),
             arg!(--"no-digital-gains" "Do not perform digital gains corrections")
                 .help_heading("CORRECTION"),
-            arg!(--"pfb-gains" <TYPE> "Type of PFB pfb filter gains correction to apply")
+            arg!(--"passband-gains" <TYPE> "Type of PFB passband filter gains correction to apply")
                 .required(false)
                 .possible_values([
-                    PossibleValue::new("none").help("No pfb gains correction (unitary)"),
+                    PossibleValue::new("none").help("No passband gains correction (unitary)"),
                     PossibleValue::new("cotter")
                         .help(
                             "_sb128ChannelSubbandValue2014FromMemo from
                             subbandpassband.cpp in Cotter. Can only be used with resolutions of
                             n * 10kHz"
                         ),
-                    PossibleValue::new("levine2022")
-                        .help("see: PFB_Levine_2022_200Hz in src/pfb_gains.rs"),
+                    PossibleValue::new("jake")
+                        .help("see: PFB_JAKE_2022_200HZ in src/passband_gains.rs"),
                 ])
-                .default_value("levine2022")
+                .default_value("jake")
+                .alias("pfb-gains")
                 .help_heading("CORRECTION"),
 
             // calibration
@@ -1129,11 +1130,11 @@ where
             ).to_owned()
     });
 
-    let pfb_gains = match matches.value_of("pfb-gains") {
+    let passband_gains = match matches.value_of("passband-gains") {
         None | Some("none") => None,
-        Some("levine2022") => Some(PFB_LEVINE_2022_200HZ),
+        Some("jake") => Some(PFB_JAKE_2022_200HZ),
         Some("cotter") => Some(PFB_COTTER_2014_10KHZ),
-        Some(option) => panic!("unknown option for --pfb-gains: {}", option),
+        Some(option) => panic!("unknown option for --passband-gains: {}", option),
     };
 
     for mut timestep_chunk in &sel_timestep_range.clone().chunks(chunk_size) {
@@ -1206,8 +1207,12 @@ where
             );
         }
 
+        // generate weights
+        let weight_factor = get_weight_factor(&context);
+        let mut weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+
         // perform pfb passband gain corrections
-        if let Some(pfb_gains) = pfb_gains {
+        if let Some(passband_gains) = passband_gains {
             info!("correcting pfb gains");
             let is_mwax = match context.metafits_context.mwa_version {
                 Some(MWAVersion::CorrMWAXv2) => true,
@@ -1219,8 +1224,14 @@ where
             with_increment_duration!(
                 durations,
                 "correct",
-                correct_pfb_gains(&mut jones_array, pfb_gains, fine_chans_per_coarse, is_mwax)
-                    .expect("couldn't apply pfb gains")
+                correct_coarse_passband_gains(
+                    &mut jones_array,
+                    &mut weight_array,
+                    passband_gains,
+                    fine_chans_per_coarse,
+                    is_mwax
+                )
+                .expect("couldn't apply coarse pfb passband gains")
             );
         }
 
@@ -1290,11 +1301,6 @@ where
             );
         }
 
-        // generate weights
-        let num_pols = context.metafits_context.num_visibility_pols;
-        let weight_factor = get_weight_factor(&context);
-        let mut weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
-
         // let marlu_context = MarluVisContext::from_mwalib(
         //     &context,
         //     &chunk_timestep_range,
@@ -1320,6 +1326,7 @@ where
         }
 
         // TODO: nothing actually uses the pol axis for flags and weights, so rip it out.
+        let num_pols = context.metafits_context.num_visibility_pols;
         let flag_array = add_dimension(flag_array.view(), num_pols);
         let weight_array = add_dimension(weight_array.view(), num_pols);
 
