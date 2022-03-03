@@ -439,31 +439,36 @@ fn _correct_digital_gains(
     Ok(())
 }
 
-/// Correct for pfb bandpass shape in each coarse channel by scaling coarse_band_gains to fit a
-/// coarse band.
+/// Correct for coarse pfb bandpass shape in each coarse channel by scaling passband_gains to
+/// fit the coarse band.
 ///
 /// # Arguments
 ///
 /// - `jones_array` - The array of Jones matrices to be corrected, [timestep][channel][baseleine].
-/// - `coarse_band_gains` - a slice of gains to be applied to each coarse channel.
+/// - `weight_array` - The array of weights to be corrected, same dimensions are `jones_array`.
+/// - `passband_gains` - a slice of gains to be applied to each coarse channel.
 /// - `num_fine_chans_per_coarse` - The number of fine channels in each coarse.
+/// - `mwax` - Whether to emulate the MWAX correlator (true) or legacy (false)
 ///
 /// # Errors
 ///
 /// Will throw `BirliError::BadArrayShape` if:
+/// - `num_fine_chans_per_coarse` is zero
 /// - The length of the channel axis in `jones_array` is not a multiple of num_fine_chans_per_coarse.
+/// - `jones_array` and `weight_array` have different shapes.
 /// - The length of the coarse band gains is not a multiple of num_fine_chans_per_coarse, or vice versa.
-pub fn correct_pfb_gains(
+pub fn correct_coarse_passband_gains(
     jones_array: &mut Array3<Jones<f32>>,
-    coarse_band_gains: &[f64],
+    weight_array: &mut Array3<f32>,
+    passband_gains: &[f64],
     num_fine_chans_per_coarse: usize,
     mwax: bool,
 ) -> Result<(), BirliError> {
     // # TODO: rename correct_passband_gains
     if num_fine_chans_per_coarse == 0 {
         return Err(BirliError::BadArrayShape {
-            argument: "jones_array".into(),
-            function: "num_fine_chans_per_coarse".into(),
+            argument: "num_fine_chans_per_coarse".into(),
+            function: "correct_coarse_passband_gains".into(),
             expected: "a number greater than zero".into(),
             received: format!("{:?}", num_fine_chans_per_coarse),
         });
@@ -472,7 +477,7 @@ pub fn correct_pfb_gains(
     if jones_array.dim().1 % num_fine_chans_per_coarse != 0 {
         return Err(BirliError::BadArrayShape {
             argument: "jones_array".into(),
-            function: "correct_pfb_gains".into(),
+            function: "correct_coarse_passband_gains".into(),
             expected: format!(
                 "(_, n, _), where n is a multiple of num_fine_chans_per_coarse={}",
                 num_fine_chans_per_coarse
@@ -481,29 +486,44 @@ pub fn correct_pfb_gains(
         });
     };
 
-    let fscrunch = if coarse_band_gains.len() % num_fine_chans_per_coarse == 0 {
-        coarse_band_gains.len() / num_fine_chans_per_coarse
+    if weight_array.dim() != jones_array.dim() {
+        return Err(BirliError::BadArrayShape {
+            argument: "weight_array".into(),
+            function: "correct_coarse_passband_gains".into(),
+            expected: format!("same as jones_array.dim()={:?}", jones_array.dim()),
+            received: format!("{:?}", weight_array.dim()),
+        });
+    };
+
+    let fscrunch = if passband_gains.len() % num_fine_chans_per_coarse == 0 {
+        passband_gains.len() / num_fine_chans_per_coarse
     } else {
         return Err(BirliError::BadArrayShape {
-            argument: "coarse_band_gains".into(),
-            function: "correct_pfb_gains".into(),
+            argument: "passband_gains".into(),
+            function: "correct_coarse_passband_gains".into(),
             expected: format!(
                 "n, where n is a multiple of num_fine_chans_per_coarse={}",
                 num_fine_chans_per_coarse
             ),
-            received: format!("{:?}", coarse_band_gains.len()),
+            received: format!("{:?}", passband_gains.len()),
         });
     };
 
-    let scrunched_gains = scrunch_gains(coarse_band_gains, fscrunch, mwax);
+    let scrunched_gains = scrunch_gains(passband_gains, fscrunch, mwax);
 
-    for mut jones_array in jones_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse) {
-        for (mut jones_array, &gain) in
-            izip!(jones_array.axis_iter_mut(Axis(1)), scrunched_gains.iter())
-        {
-            for jones in jones_array.iter_mut() {
+    for (mut jones_array, mut weight_array) in izip!(
+        jones_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse),
+        weight_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse),
+    ) {
+        for (mut jones_array, mut weight_array, &gain) in izip!(
+            jones_array.axis_iter_mut(Axis(1)),
+            weight_array.axis_iter_mut(Axis(1)),
+            scrunched_gains.iter()
+        ) {
+            for (jones, weight) in izip!(jones_array.iter_mut(), weight_array.iter_mut()) {
                 let jones_f64 = Jones::<f64>::from(*jones);
                 *jones = Jones::<f32>::from(jones_f64 / gain);
+                *weight = (gain * (*weight as f64)) as f32;
             }
         }
     }
@@ -511,21 +531,27 @@ pub fn correct_pfb_gains(
     Ok(())
 }
 
-/// - a scrunched channel contains fscrunch times the bandwidth of the ultrafine channel.
+/// Given a set of gains for each ultrafine channel, compute the gains for each fine channel,
+/// is if these were averaged by given correlator type.
 ///
-/// example with 12 ultrafine channels:
+/// # Averaging
+///
+/// a scrunched channel contains fscrunch times the bandwidth of the ultrafine channel.
+///
+/// MWAX example with 12 ultrafine channels:
 /// fscrunch|0| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |0|
 /// --------|-|---|---|---|---|---|---|---|---|---|---|---|-|
 /// 2 (e->e)| 0*|   1   |   2   |   3   |   4   |   5   | 0*|
 /// 3 (o->e)|  0* |     1     |     2     |     3     |  0* |
 /// 4 (e->o)|       0       |       1       |       2       |
 ///
-/// example with 15 ultrafine channels:
+/// MWAX example with 15 ultrafine channels:
 /// fscrunch|0| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |0|
 /// --------|-|---|---|---|---|---|---|---|---|---|---|---|---|---|---| |
 /// 3 (o->o)|     0*    |     1     |     2     |     3     |     4     |
 /// 5 (o->o)|           0       |         1         |         2         |
-
+///
+/// For more details see: https://wiki.mwatelescope.org/display/MP/MWA+Fine+Channel+Centre+Frequencies
 pub fn scrunch_gains(ultrafine_gains: &[f64], fscrunch: usize, mwax: bool) -> Vec<f64> {
     let scrunched_length = ultrafine_gains.len() / fscrunch;
     if fscrunch == 1 {
@@ -617,8 +643,8 @@ mod tests {
     #![allow(clippy::float_cmp)]
 
     use super::{
-        _correct_digital_gains, correct_cable_lengths, correct_digital_gains, correct_geometry,
-        correct_pfb_gains, scrunch_gains, VEL_C,
+        _correct_digital_gains, correct_cable_lengths, correct_coarse_passband_gains,
+        correct_digital_gains, correct_geometry, scrunch_gains, VEL_C,
     };
     use itertools::izip;
     use marlu::{
@@ -1633,92 +1659,159 @@ mod tests {
     }
 
     #[test]
-    fn test_correct_pfb_gains() {
+    fn test_correct_coarse_passband_gains() {
         let num_fine_chans_per_coarse = 2;
         // 2 coarse channels
         let mut jones_array: Array3<Jones<f32>> =
             Array3::from_shape_fn((2, 4, 2), |_| Jones::identity());
-        let coarse_band_gains = vec![0.1, 0.2];
+        let mut weight_array: Array3<f32> = Array3::from_shape_fn((2, 4, 2), |_| 1.0);
+        let passband_gains = vec![0.1, 0.2];
 
-        correct_pfb_gains(
+        correct_coarse_passband_gains(
             &mut jones_array,
-            &coarse_band_gains,
+            &mut weight_array,
+            &passband_gains,
             num_fine_chans_per_coarse,
             false,
         )
         .unwrap();
 
-        let expected: [Jones<f32>; 4] = [
-            Jones::identity() / 0.1,
-            Jones::identity() / 0.2,
-            Jones::identity() / 0.1,
-            Jones::identity() / 0.2,
-        ];
+        let exp_gains = [0.1, 0.2, 0.1, 0.2];
 
-        for (&expected, actuals) in izip!(expected.iter(), jones_array.axis_iter(Axis(1))) {
-            for actual in actuals.iter() {
-                compare_jones!(*expected, *actual);
+        for (&exp_gain, jones_array, weight_array) in izip!(
+            exp_gains.iter(),
+            jones_array.axis_iter(Axis(1)),
+            weight_array.axis_iter(Axis(1))
+        ) {
+            for (&jones, &weight) in izip!(jones_array.iter(), weight_array.iter()) {
+                compare_jones!(Jones::identity() / exp_gain, jones);
+                assert_eq!(exp_gain, weight);
             }
         }
     }
 
     #[test]
-    fn test_correct_pfb_gains_good_fscrunch() {
+    fn test_correct_coarse_passband_gains_good_fscrunch() {
         let num_fine_chans_per_coarse = 2;
         // 2 coarse channels
         let mut jones_array: Array3<Jones<f32>> =
             Array3::from_shape_fn((2, 4, 2), |_| Jones::identity());
-        let coarse_band_gains = vec![0.1, 0.2, 0.3, 0.4];
+        let mut weight_array: Array3<f32> = Array3::from_shape_fn((2, 4, 2), |_| 1.0);
+        let passband_gains = vec![0.1, 0.2, 0.3, 0.4];
 
-        correct_pfb_gains(
+        correct_coarse_passband_gains(
             &mut jones_array,
-            &coarse_band_gains,
+            &mut weight_array,
+            &passband_gains,
             num_fine_chans_per_coarse,
             false,
         )
         .unwrap();
 
-        let expected: [Jones<f32>; 4] = [
-            Jones::identity() / 0.15,
-            Jones::identity() / 0.35,
-            Jones::identity() / 0.15,
-            Jones::identity() / 0.35,
-        ];
+        // TODO: actually test weights
 
-        for (&expected, actuals) in izip!(expected.iter(), jones_array.axis_iter(Axis(1))) {
-            for actual in actuals.iter() {
-                compare_jones!(*expected, *actual);
+        let exp_gains = [0.15, 0.35, 0.15, 0.35];
+
+        for (&exp_gain, jones_array, weight_array) in izip!(
+            exp_gains.iter(),
+            jones_array.axis_iter(Axis(1)),
+            weight_array.axis_iter(Axis(1))
+        ) {
+            for (&jones, &weight) in izip!(jones_array.iter(), weight_array.iter()) {
+                compare_jones!(Jones::identity() / exp_gain, jones);
+                assert_eq!(exp_gain, weight);
             }
         }
     }
 
     #[test]
-    fn test_correct_pfb_gains_high_fscrunch() {
+    fn test_correct_coarse_passband_gains_high_fscrunch() {
         let num_fine_chans_per_coarse = 2;
         // 2 coarse channels
         let mut jones_array: Array3<Jones<f32>> =
             Array3::from_shape_fn((2, 4, 2), |_| Jones::identity());
-        let coarse_band_gains = vec![0.1, 0.2, 0.3, 100., 0.5, 0.6, 0.7, 100.];
+        let mut weight_array: Array3<f32> = Array3::from_shape_fn((2, 4, 2), |_| 1.0);
+        let passband_gains = vec![0.1, 0.2, 0.3, 100., 0.5, 0.6, 0.7, 100.];
 
-        correct_pfb_gains(
+        correct_coarse_passband_gains(
             &mut jones_array,
-            &coarse_band_gains,
+            &mut weight_array,
+            &passband_gains,
             num_fine_chans_per_coarse,
             false,
         )
         .unwrap();
 
-        let expected: [Jones<f32>; 4] = [
-            Jones::identity() / 25.15,
-            Jones::identity() / 25.45,
-            Jones::identity() / 25.15,
-            Jones::identity() / 25.45,
-        ];
+        let exp_gains = [25.15, 25.45, 25.15, 25.45];
 
-        for (&expected, actuals) in izip!(expected.iter(), jones_array.axis_iter(Axis(1))) {
-            for actual in actuals.iter() {
-                compare_jones!(*expected, *actual);
+        for (&exp_gain, jones_array, weight_array) in izip!(
+            exp_gains.iter(),
+            jones_array.axis_iter(Axis(1)),
+            weight_array.axis_iter(Axis(1))
+        ) {
+            for (&jones, &weight) in izip!(jones_array.iter(), weight_array.iter()) {
+                compare_jones!(Jones::identity() / exp_gain, jones);
+                assert_eq!(exp_gain, weight);
             }
         }
+    }
+
+    #[test]
+    fn test_correct_coarse_passband_gains_bad_array_shape() {
+        let num_fine_chans_per_coarse = 2;
+        let mut jones_array: Array3<Jones<f32>> =
+            Array3::from_shape_fn((2, 4, 2), |_| Jones::identity());
+        let mut weight_array: Array3<f32> = Array3::from_shape_fn((2, 4, 2), |_| 1.0);
+        let passband_gains = vec![0.1, 0.2, 0.3, 100., 0.5, 0.6, 0.7, 100.];
+
+        // test num_fine_chans_per_coarse=0
+        assert!(matches!(
+            correct_coarse_passband_gains(
+                &mut jones_array,
+                &mut weight_array,
+                &passband_gains,
+                0,
+                false,
+            ),
+            Err(BirliError::BadArrayShape { .. })
+        ));
+
+        // test bad jones array shape
+        assert!(matches!(
+            correct_coarse_passband_gains(
+                &mut jones_array,
+                &mut weight_array,
+                &passband_gains,
+                3,
+                false,
+            ),
+            Err(BirliError::BadArrayShape { .. })
+        ));
+
+        // test weight_array dimension mismatch with jones_array
+        let mut bad_weight_array: Array3<f32> = Array3::from_shape_fn((2, 4, 3), |_| 1.0);
+        assert!(matches!(
+            correct_coarse_passband_gains(
+                &mut jones_array,
+                &mut bad_weight_array,
+                &passband_gains,
+                num_fine_chans_per_coarse,
+                false,
+            ),
+            Err(BirliError::BadArrayShape { .. })
+        ));
+
+        // test bad gain shape
+        let bad_passband_gains = vec![0.1, 0.2, 0.3];
+        assert!(matches!(
+            correct_coarse_passband_gains(
+                &mut jones_array,
+                &mut weight_array,
+                &bad_passband_gains,
+                num_fine_chans_per_coarse,
+                false,
+            ),
+            Err(BirliError::BadArrayShape { .. })
+        ));
     }
 }

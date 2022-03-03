@@ -131,7 +131,7 @@ pub use flags::{
     add_dimension, flag_to_weight_array, get_antenna_flags, get_baseline_flags,
     get_flaggable_timesteps, get_weight_factor, init_flag_array, write_flags,
 };
-pub mod pfb_gains;
+pub mod passband_gains;
 pub use marlu;
 pub use marlu::{
     mwalib,
