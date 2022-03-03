@@ -11,7 +11,7 @@ use birli::{
     Axis, Complex, UvfitsWriter,
 };
 use cfg_if::cfg_if;
-use clap::{app_from_crate, arg, AppSettings, PossibleValue, ValueHint::FilePath};
+use clap::{arg, command, PossibleValue, ValueHint::FilePath};
 use itertools::Itertools;
 use log::{debug, info, trace, warn};
 use marlu::{
@@ -516,10 +516,10 @@ where
 
     // TODO: fix this
     #[allow(unused_mut)]
-    let mut app = app_from_crate!()
-        .setting(AppSettings::SubcommandPrecedenceOverArg)
-        .setting(AppSettings::ArgRequiredElseHelp)
-        .unset_setting(AppSettings::NextLineHelp)
+    let mut app = command!()
+        .subcommand_precedence_over_arg(true)
+        .arg_required_else_help(true)
+        .next_line_help(false)
         .about("Preprocess Murchison Widefield Array MetaFITS and GPUFITS data \
             into usable astronomy formats.")
         .args(&[
