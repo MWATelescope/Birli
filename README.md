@@ -200,7 +200,7 @@ USAGE:
     birli [OPTIONS] --metafits <PATH> <PATHS>...
 
 OPTIONS:
-        --apply-di-cal <PATH>        Apply DI calibration solutions to the data before averaging
+        --apply-di-cal <PATH>        Apply DI calibration solutions before averaging
         --dry-run                    Just print the summary and exit
         --emulate-cotter             Use Cotter's array position, not MWAlib's
     -h, --help                       Print help information
@@ -216,6 +216,7 @@ INPUT:
 SELECTION:
         --no-sel-autos            [WIP] Deselect autocorrelations
         --no-sel-flagged-ants     [WIP] Deselect flagged antennas
+        --sel-ants <ANTS>...      [WIP] Antenna to select
         --sel-time <MIN> <MAX>    [WIP] Timestep index range (inclusive) to select
 
 RESOURCE LIMITS:
@@ -239,10 +240,11 @@ FLAGGING:
         --no-flag-metafits                [WIP] Ignore antenna flags in metafits
 
 CORRECTION:
-        --no-cable-delay        Do not perform cable length corrections
-        --no-digital-gains      Do not perform digital gains corrections
-        --no-geometric-delay    Do not perform geometric corrections
-        --passband <PATH>       [WIP] Apply passband corrections from <PATH>
+        --no-cable-delay           Do not perform cable length corrections
+        --no-digital-gains         Do not perform digital gains corrections
+        --no-geometric-delay       Do not perform geometric corrections
+        --passband-gains <TYPE>    Type of PFB passband filter gains correction to apply [default:
+                                   jake] [possible values: none, cotter, jake]
 
 AVERAGING:
         --avg-freq-factor <FACTOR>    Average <FACTOR> channels per averaged channel
@@ -279,6 +281,16 @@ A baseline's cable lengths are determined by the difference between a baseline's
 ```rust
 let angle = -2.0 * PI * electrical_length_m * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
 ```
+
+### Digital Gain Corrections
+
+Each input in the raw data is scaled by a factor for each coarse channel. This is defined in the metafits primary hdu in the Gains column. Birli corrects these digital gains by default, you can disable this with `--no-digital-gains`
+
+### Coarse PFB Passband Corrections
+
+Adjust each coarse channel within a fine channel to correct for the shape of the pfb passband curve. Birli will apply the gains defined in the mwa wiki [on pfb gains](https://wiki.mwatelescope.org/display/MP/RRI+Receiver+PFB+Filter)   by default. They can be disabled with `--passband-gains none`. Another option is to emulate Cotter's `_sb128ChannelSubbandValue2014FromMemo` from `subbandpassband.cpp`, sometimes referred to as Levine Gains. Since these gains were computed at the base legacy correlator resolution of 10KHz, they will not work on all MWAX resolutions. Cotter's implementation of this functionality is slightly different, in that it does not include the channel from the gains when scaling. It's not clear if this is a bug or a feature.
+
+When applying pfb gains to an observation that is not at the same resolution as the gains, the gains need to be averaged to fit the data, and the exact details of this averaging depends on the correlator type. For more dtails, see the mwa wiki on [averaging fine channels](https://wiki.mwatelescope.org/display/MP/MWA+Fine+Channel+Centre+Frequencies)
 
 ### RFI Flagging.
 
@@ -430,8 +442,6 @@ cotter \
   -noantennapruning \
   -noflagautos \
   -noflagdcchannels \
-  -nosbgains \
-  -sbpassband tests/data/subband-passband-128ch-unitary.txt \
   -nostats \
   -timeres 4 \
   -freqres 160 \

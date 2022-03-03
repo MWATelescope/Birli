@@ -1,5 +1,12 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.5.1 (2022-03-03)
+
+- ✨ new features:
+  - [EOR-71] Correction of coarse pfb passband gains is enabled by default, use `--passband-gains none` to disable it.
+- 🙏 quality of life:
+  - shows the total time elapsed at the end.
+
 # Version 0.5.0 (2022-02-15)
 
 - ✨ new features:
