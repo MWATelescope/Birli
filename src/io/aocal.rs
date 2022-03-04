@@ -17,6 +17,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use marlu::hifitime;
 
 /// All of the relevant information contained within an MWAOCAL .bin file.
+#[derive(Clone)]
 pub struct AOCalSols {
     /// a three dimensional array of jones matrix calibration solutions with
     /// dimensions `[timestep][tile][frequency]`
