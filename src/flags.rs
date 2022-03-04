@@ -21,7 +21,7 @@ cfg_if! {
         use crate::{
             flag_baseline_view_to_flagmask, jones_baseline_view_to_imageset,
         };
-        use aoflagger_sys::{CxxAOFlagger, CxxFlagMask, UniquePtr, flagmask_or,
+        use aoflagger_sys::{CxxAOFlagger, flagmask_or,
             flagmask_set};
         use indicatif::{ProgressBar, ProgressStyle};
         use marlu::{Jones, rayon::prelude::*};
@@ -151,10 +151,6 @@ pub fn get_coarse_chan_range(context: &CorrelatorContext) -> Result<Range<usize>
 ///
 /// A channel is flagged if it appears in the metafits, but is not provided.
 ///
-/// # Errors
-///
-/// - Can throw NoCommonCoarseChannels if the common coarse channel range is empty.
-///
 pub fn get_coarse_chan_flags(context: &CorrelatorContext) -> Vec<bool> {
     let provided_indices = &context.provided_coarse_chan_indices;
 
@@ -192,7 +188,7 @@ pub fn get_timestep_range(context: &CorrelatorContext) -> Result<Range<usize>, B
 /// Produce a vector of flags for all known timesteps.
 ///
 /// A timestep is flagged if it appears in the metafits, but is not provided.
-pub fn get_timestep_flags(context: &CorrelatorContext) -> Vec<bool> {
+pub fn get_timestep_flags(context: &CorrelatorContext, flag_idxs: Option<Vec<usize>>) -> Vec<bool> {
     let provided_indices = &context.provided_timestep_indices;
 
     let mut flags = vec![false; context.num_timesteps];
@@ -200,6 +196,10 @@ pub fn get_timestep_flags(context: &CorrelatorContext) -> Vec<bool> {
         if !provided_indices.contains(&idx) {
             *flag = true;
         }
+    }
+
+    for idx in flag_idxs.unwrap_or_default() {
+        flags[idx] = true;
     }
 
     flags
@@ -393,7 +393,7 @@ pub fn expand_flag_array(array: ArrayView3<bool>, size: usize) -> Array4<bool> {
 ///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 ///
 /// // read visibilities out of the gpubox files
-/// let (jones_array, flag_array) = context_to_jones_array(
+/// let (jones_array, mut flag_array) = context_to_jones_array(
 ///     &context,
 ///     &img_timestep_range,
 ///     &img_coarse_chan_range,
@@ -405,11 +405,11 @@ pub fn expand_flag_array(array: ArrayView3<bool>, size: usize) -> Array4<bool> {
 /// let strategy_filename = &aoflagger.FindStrategyFileMWA();
 ///
 /// // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
-/// let flag_array = flag_jones_array_existing(
+/// flag_jones_array_existing(
 ///    &aoflagger,
 ///    &strategy_filename,
 ///    &jones_array,
-///    Some(flag_array),
+///    &mut flag_array,
 ///    true,
 ///    false,
 /// );
@@ -419,23 +419,15 @@ pub fn flag_jones_array_existing(
     aoflagger: &CxxAOFlagger,
     strategy_filename: &str,
     jones_array: &Array3<Jones<f32>>,
-    flag_array: Option<Array3<bool>>,
+    flag_array: &mut Array3<bool>,
     re_apply_existing: bool,
     draw_progress: bool,
-) -> Array3<bool> {
+) {
     use indicatif::ProgressDrawTarget;
 
     trace!("start flag_jones_array");
 
     let jones_shape = jones_array.dim();
-
-    let (flags_provided, mut flag_array) = match flag_array {
-        Some(flag_array) => {
-            assert_eq!(flag_array.dim(), jones_shape);
-            (true, flag_array)
-        }
-        None => (false, Array3::from_elem(jones_shape, false)),
-    };
 
     let draw_target = if draw_progress {
         ProgressDrawTarget::stderr()
@@ -461,22 +453,17 @@ pub fn flag_jones_array_existing(
         .zip(flag_array.axis_iter_mut(Axis(2)))
         .for_each(|(jones_baseline_view, mut flag_baseine_view)| {
             let imgset = jones_baseline_view_to_imageset(aoflagger, &jones_baseline_view).unwrap();
-            let mut flagmask: UniquePtr<CxxFlagMask>;
             let flag_strategy = aoflagger.LoadStrategyFile(&strategy_filename.to_string());
             let flag_baseline_view_immutable = flag_baseine_view.view();
-            if flags_provided {
-                // This lets us pass in our mutable flag array view to something not expecting a mutable.
-                flagmask = flag_baseline_view_to_flagmask(aoflagger, &flag_baseline_view_immutable)
-                    .unwrap();
-                let new_flagmask = flag_strategy.RunExisting(&imgset, &flagmask);
+            // This lets us pass in our mutable flag array view to something not expecting a mutable.
+            let mut flagmask =
+                flag_baseline_view_to_flagmask(aoflagger, &flag_baseline_view_immutable).unwrap();
+            let new_flagmask = flag_strategy.RunExisting(&imgset, &flagmask);
 
-                if re_apply_existing {
-                    flagmask_or(&mut flagmask, &new_flagmask);
-                } else {
-                    flagmask_set(&mut flagmask, &new_flagmask);
-                }
+            if re_apply_existing {
+                flagmask_or(&mut flagmask, &new_flagmask);
             } else {
-                flagmask = flag_strategy.Run(&imgset);
+                flagmask_set(&mut flagmask, &new_flagmask);
             }
             let flag_buf = flagmask.Buffer();
             let stride = flagmask.HorizontalStride();
@@ -496,8 +483,6 @@ pub fn flag_jones_array_existing(
 
     flag_progress.finish();
     trace!("end flag_jones_array");
-
-    flag_array
 }
 
 /// Shorthand for [`flag_jones_array_existing`] with `flag_array` as None.
@@ -507,14 +492,16 @@ pub fn flag_jones_array(
     strategy_filename: &str,
     jones_array: &Array3<Jones<f32>>,
 ) -> Array3<bool> {
+    let mut flag_array = Array3::from_elem(jones_array.dim(), false);
     flag_jones_array_existing(
         aoflagger,
         strategy_filename,
         jones_array,
-        None,
+        &mut flag_array,
         false,
         false,
-    )
+    );
+    flag_array
 }
 
 /// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], a vector of
@@ -957,11 +944,11 @@ mod tests_aoflagger {
         let mut existing_flag_array = Array3::from_elem((width, height, num_baselines), false);
         existing_flag_array[[existing_x, existing_y, existing_bl]] = true;
 
-        let existing_flag_array = flag_jones_array_existing(
+        flag_jones_array_existing(
             &aoflagger,
             &strategy_filename,
             &jones_array,
-            Some(existing_flag_array),
+            &mut existing_flag_array,
             true,
             false,
         );
@@ -1000,7 +987,7 @@ mod tests_aoflagger {
         )
         .unwrap();
 
-        let existing_flag_array = init_flag_array(
+        let mut existing_flag_array = init_flag_array(
             &context,
             &img_timestep_range,
             &img_coarse_chan_range,
@@ -1012,11 +999,11 @@ mod tests_aoflagger {
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
 
-        let existing_flag_array = flag_jones_array_existing(
+        flag_jones_array_existing(
             &aoflagger,
             strategy_filename,
             &jones_array,
-            Some(existing_flag_array),
+            &mut existing_flag_array,
             true,
             false,
         );
