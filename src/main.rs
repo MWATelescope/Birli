@@ -1,14 +1,20 @@
 use birli::{
-    calibration::apply_di_calsol,
-    corrections::{correct_coarse_passband_gains, correct_digital_gains},
+    context_to_jones_array,
     flags::{
         add_dimension, flag_to_weight_array, get_baseline_flags, get_coarse_chan_flags,
         get_coarse_chan_range, get_timestep_flags, get_timestep_range, get_weight_factor,
     },
+    get_antenna_flags, init_flag_array,
     io::{aocal::AOCalSols, WriteableVis},
-    mwalib::MWAVersion,
+    marlu::{
+        constants::{
+            COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
+        },
+        mwalib::{CorrelatorContext, GeometricDelaysApplied},
+        LatLngHeight,
+    },
     passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
-    Axis, Complex, UvfitsWriter,
+    with_increment_duration, write_flags, Axis, Complex, PreprocessContext, UvfitsWriter,
 };
 use cfg_if::cfg_if;
 use clap::{arg, command, PossibleValue, ValueHint::FilePath};
@@ -22,29 +28,13 @@ use marlu::{
     RADec,
 };
 use prettytable::{cell, format as prettyformat, row, table};
-use std::{collections::HashMap, env, ffi::OsString, fmt::Debug, ops::Range, time::Duration};
+use std::{collections::HashMap, env, ffi::OsString, fmt::Debug, time::Duration};
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
-        use birli::{
-            flags::flag_jones_array_existing,
-        };
         use aoflagger_sys::{cxx_aoflagger_new};
     }
 }
-use birli::{
-    context_to_jones_array, correct_cable_lengths, correct_geometry, get_antenna_flags,
-    init_flag_array,
-    marlu::{
-        constants::{
-            COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
-        },
-        mwalib::{CorrelatorContext, GeometricDelaysApplied},
-        LatLngHeight,
-    },
-    write_flags,
-};
-
 // Add build-time information from the "built" crate.
 include!(concat!(env!("OUT_DIR"), "/built.rs"));
 
@@ -71,12 +61,8 @@ pub fn display_build_info() {
 // TODO: fix too_many_arguments
 #[allow(clippy::too_many_arguments)]
 pub fn show_param_info(
-    context: &CorrelatorContext,
-    array_pos: LatLngHeight,
-    phase_centre: RADec,
-    coarse_chan_range: &Range<usize>,
-    timestep_range: &Range<usize>,
-    baseline_idxs: &[usize],
+    corr_ctx: &CorrelatorContext,
+    prep_ctx: &PreprocessContext,
     coarse_chan_flags: &[bool],
     fine_chan_flags: &[bool],
     timestep_flags: &[bool],
@@ -96,13 +82,13 @@ pub fn show_param_info(
 
     info!(
         "observation name:     {}",
-        context.metafits_context.obs_name
+        corr_ctx.metafits_context.obs_name
     );
 
-    info!("Array position:       {}", &array_pos);
-    info!("Phase centre:         {}", &phase_centre);
-    let pointing_centre = RADec::from_mwalib_tile_pointing(&context.metafits_context);
-    if pointing_centre != phase_centre {
+    info!("Array position:       {}", &prep_ctx.array_pos);
+    info!("Phase centre:         {}", &prep_ctx.phase_centre);
+    let pointing_centre = RADec::from_mwalib_tile_pointing(&corr_ctx.metafits_context);
+    if pointing_centre != prep_ctx.phase_centre {
         info!("Pointing centre:      {}", &pointing_centre);
     }
 
@@ -157,51 +143,52 @@ pub fn show_param_info(
     }
 
     let (sched_start_date, sched_start_time, sched_start_mjd_s, sched_start_prec) = time_details(
-        context.metafits_context.sched_start_gps_time_ms,
-        phase_centre,
-        array_pos,
+        corr_ctx.metafits_context.sched_start_gps_time_ms,
+        prep_ctx.phase_centre,
+        prep_ctx.array_pos,
     );
     info!(
         "Scheduled start:      {} {} UTC, unix={:.3}, gps={:.3}, mjd={:.3}, lmst={:7.4}°, lmst2k={:7.4}°, lat2k={:7.4}°",
         sched_start_date, sched_start_time,
-        context.metafits_context.sched_start_unix_time_ms as f64 / 1e3,
-        context.metafits_context.sched_start_gps_time_ms as f64 / 1e3,
+        corr_ctx.metafits_context.sched_start_unix_time_ms as f64 / 1e3,
+        corr_ctx.metafits_context.sched_start_gps_time_ms as f64 / 1e3,
         sched_start_mjd_s,
         sched_start_prec.lmst.to_degrees(),
         sched_start_prec.lmst_j2000.to_degrees(),
         sched_start_prec.array_latitude_j2000.to_degrees(),
     );
     let (sched_end_date, sched_end_time, sched_end_mjd_s, sched_end_prec) = time_details(
-        context.metafits_context.sched_end_gps_time_ms,
-        phase_centre,
-        array_pos,
+        corr_ctx.metafits_context.sched_end_gps_time_ms,
+        prep_ctx.phase_centre,
+        prep_ctx.array_pos,
     );
     info!(
         "Scheduled end:        {} {} UTC, unix={:.3}, gps={:.3}, mjd={:.3}, lmst={:7.4}°, lmst2k={:7.4}°, lat2k={:7.4}°",
         sched_end_date, sched_end_time,
-        context.metafits_context.sched_end_unix_time_ms as f64 / 1e3,
-        context.metafits_context.sched_end_gps_time_ms as f64 / 1e3,
+        corr_ctx.metafits_context.sched_end_unix_time_ms as f64 / 1e3,
+        corr_ctx.metafits_context.sched_end_gps_time_ms as f64 / 1e3,
         sched_end_mjd_s,
         sched_end_prec.lmst.to_degrees(),
         sched_end_prec.lmst_j2000.to_degrees(),
         sched_end_prec.array_latitude_j2000.to_degrees(),
     );
-    let int_time_s = context.metafits_context.corr_int_time_ms as f64 / 1e3;
-    let sched_duration_s = context.metafits_context.sched_duration_ms as f64 / 1e3;
+    let int_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1e3;
+    let sched_duration_s = corr_ctx.metafits_context.sched_duration_ms as f64 / 1e3;
     info!(
         "Scheduled duration:   {:.3}s = {:3} * {:.3}s",
         sched_duration_s,
         (sched_duration_s / int_time_s).ceil(),
         int_time_s
     );
-    let quack_duration_s = context.metafits_context.quack_time_duration_ms as f64 / 1e3;
+    let quack_duration_s = corr_ctx.metafits_context.quack_time_duration_ms as f64 / 1e3;
     info!(
         "Quack duration:       {:.3}s = {:3} * {:.3}s",
         quack_duration_s,
         (quack_duration_s / int_time_s).ceil(),
         int_time_s
     );
-    let num_avg_timesteps = (timestep_range.len() as f64 / avg_time as f64).ceil() as usize;
+    let num_avg_timesteps =
+        (prep_ctx.sel_timestep_range.len() as f64 / avg_time as f64).ceil() as usize;
     let avg_int_time_s = int_time_s * avg_time as f64;
     info!(
         "Output duration:      {:.3}s = {:3} * {:.3}s{}",
@@ -215,21 +202,23 @@ pub fn show_param_info(
         }
     );
 
-    let total_bandwidth_mhz = context.metafits_context.obs_bandwidth_hz as f64 / 1e6;
-    let fine_chan_width_khz = context.metafits_context.corr_fine_chan_width_hz as f64 / 1e3;
-    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+    let total_bandwidth_mhz = corr_ctx.metafits_context.obs_bandwidth_hz as f64 / 1e6;
+    let fine_chan_width_khz = corr_ctx.metafits_context.corr_fine_chan_width_hz as f64 / 1e3;
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 
     info!(
         "Scheduled Bandwidth:  {:.3}MHz = {:3} * {:3} * {:.3}kHz",
         total_bandwidth_mhz,
-        context.metafits_context.num_metafits_coarse_chans,
+        corr_ctx.metafits_context.num_metafits_coarse_chans,
         fine_chans_per_coarse,
         fine_chan_width_khz
     );
 
-    let out_bandwidth_mhz =
-        coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64 * fine_chan_width_khz / 1e3;
-    let num_avg_chans = (coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64
+    let out_bandwidth_mhz = prep_ctx.sel_coarse_chan_range.len() as f64
+        * fine_chans_per_coarse as f64
+        * fine_chan_width_khz
+        / 1e3;
+    let num_avg_chans = (prep_ctx.sel_coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64
         / avg_freq as f64)
         .ceil() as usize;
     let avg_fine_chan_width_khz = fine_chan_width_khz * avg_freq as f64;
@@ -245,7 +234,7 @@ pub fn show_param_info(
         }
     );
 
-    let first_epoch = Epoch::from_gpst_seconds(context.timesteps[0].gps_time_ms as f64 / 1e3);
+    let first_epoch = Epoch::from_gpst_seconds(corr_ctx.timesteps[0].gps_time_ms as f64 / 1e3);
     let (y, mo, d, ..) = first_epoch.as_gregorian_utc();
 
     let mut timestep_table = table!([
@@ -261,17 +250,21 @@ pub fn show_param_info(
     ]);
     timestep_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
 
-    let provided_timestep_indices = context.provided_timestep_indices.clone();
-    let common_timestep_indices = context.common_timestep_indices.clone();
-    let common_good_timestep_indices = context.common_good_timestep_indices.clone();
-    for (timestep_idx, timestep) in context.timesteps.iter().enumerate() {
+    let provided_timestep_indices = corr_ctx.provided_timestep_indices.clone();
+    let common_timestep_indices = corr_ctx.common_timestep_indices.clone();
+    let common_good_timestep_indices = corr_ctx.common_good_timestep_indices.clone();
+    for (timestep_idx, timestep) in corr_ctx.timesteps.iter().enumerate() {
         let provided = provided_timestep_indices.contains(&timestep_idx);
-        let selected = timestep_range.contains(&timestep_idx);
+        let selected = prep_ctx.sel_timestep_range.contains(&timestep_idx);
         let common = common_timestep_indices.contains(&timestep_idx);
         let good = common_good_timestep_indices.contains(&timestep_idx);
         let flagged = timestep_flag_idxs.contains(&timestep_idx);
 
-        let (_, time, ..) = time_details(timestep.gps_time_ms, phase_centre, array_pos);
+        let (_, time, ..) = time_details(
+            timestep.gps_time_ms,
+            prep_ctx.phase_centre,
+            prep_ctx.array_pos,
+        );
         let row = row![r =>
             format!("ts{}:", timestep_idx),
             time,
@@ -290,11 +283,11 @@ pub fn show_param_info(
 
     info!(
         "Timestep details (all={}, provided={}, common={}, good={}, select={}, flag={}):{}",
-        context.num_timesteps,
-        context.num_provided_timesteps,
-        context.num_common_timesteps,
-        context.num_common_good_timesteps,
-        timestep_range.len(),
+        corr_ctx.num_timesteps,
+        corr_ctx.num_provided_timesteps,
+        corr_ctx.num_common_timesteps,
+        corr_ctx.num_common_good_timesteps,
+        prep_ctx.sel_timestep_range.len(),
         timestep_flag_idxs.len(),
         if show_timestep_table {
             format!("\n{}", timestep_table)
@@ -303,10 +296,13 @@ pub fn show_param_info(
         }
     );
     if !show_timestep_table {
-        info!("-> provided:    {:?}", context.provided_timestep_indices);
-        info!("-> common:      {:?}", context.common_timestep_indices);
-        info!("-> common good: {:?}", context.common_good_timestep_indices);
-        info!("-> selected:    {:?}", timestep_range);
+        info!("-> provided:    {:?}", corr_ctx.provided_timestep_indices);
+        info!("-> common:      {:?}", corr_ctx.common_timestep_indices);
+        info!(
+            "-> common good: {:?}",
+            corr_ctx.common_good_timestep_indices
+        );
+        info!("-> selected:    {:?}", prep_ctx.sel_timestep_range);
     }
 
     let mut coarse_chan_table = table!([
@@ -323,12 +319,12 @@ pub fn show_param_info(
     ]);
     coarse_chan_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
     // coarse_chan_table
-    let provided_coarse_chan_indices = context.provided_coarse_chan_indices.clone();
-    let common_coarse_chan_indices = context.common_coarse_chan_indices.clone();
-    let common_good_coarse_chan_indices = context.common_good_coarse_chan_indices.clone();
-    for (chan_idx, chan) in context.coarse_chans.iter().enumerate() {
+    let provided_coarse_chan_indices = corr_ctx.provided_coarse_chan_indices.clone();
+    let common_coarse_chan_indices = corr_ctx.common_coarse_chan_indices.clone();
+    let common_good_coarse_chan_indices = corr_ctx.common_good_coarse_chan_indices.clone();
+    for (chan_idx, chan) in corr_ctx.coarse_chans.iter().enumerate() {
         let provided = provided_coarse_chan_indices.contains(&chan_idx);
-        let selected = coarse_chan_range.contains(&chan_idx);
+        let selected = prep_ctx.sel_coarse_chan_range.contains(&chan_idx);
         let common = common_coarse_chan_indices.contains(&chan_idx);
         let good = common_good_coarse_chan_indices.contains(&chan_idx);
         let flagged = coarse_chan_flag_idxs.contains(&chan_idx);
@@ -351,23 +347,26 @@ pub fn show_param_info(
 
     info!(
         "Coarse channel details (metafits={}, provided={}, common={}, good={}, select={}, flag={}):{}",
-        context.num_coarse_chans,
-        context.num_provided_coarse_chans,
-        context.num_common_coarse_chans,
-        context.num_common_good_coarse_chans,
-        coarse_chan_range.len(),
+        corr_ctx.num_coarse_chans,
+        corr_ctx.num_provided_coarse_chans,
+        corr_ctx.num_common_coarse_chans,
+        corr_ctx.num_common_good_coarse_chans,
+        prep_ctx.sel_coarse_chan_range.len(),
         coarse_chan_flag_idxs.len(),
         if show_coarse_chan_table { format!("\n{}", coarse_chan_table) } else { "".into() }
     );
 
     if !show_coarse_chan_table {
-        info!("-> provided:    {:?}", context.provided_coarse_chan_indices);
-        info!("-> common:      {:?}", context.common_coarse_chan_indices);
+        info!(
+            "-> provided:    {:?}",
+            corr_ctx.provided_coarse_chan_indices
+        );
+        info!("-> common:      {:?}", corr_ctx.common_coarse_chan_indices);
         info!(
             "-> common good: {:?}",
-            context.common_good_coarse_chan_indices
+            corr_ctx.common_good_coarse_chan_indices
         );
-        info!("-> selected:    {:?}", coarse_chan_range);
+        info!("-> selected:    {:?}", prep_ctx.sel_coarse_chan_range);
     }
 
     let mut ant_table = table!([
@@ -381,7 +380,7 @@ pub fn show_param_info(
     ]);
     ant_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
 
-    for (ant_idx, ant) in context.metafits_context.antennas.iter().enumerate() {
+    for (ant_idx, ant) in corr_ctx.metafits_context.antennas.iter().enumerate() {
         let flagged = *antenna_flags.get(ant_idx).unwrap_or(&false);
         let row = row![r =>
             format!("ant{}:", ant_idx),
@@ -397,7 +396,7 @@ pub fn show_param_info(
 
     debug!(
         "Antenna details (all={}, flag={}):{}",
-        context.metafits_context.num_ants,
+        corr_ctx.metafits_context.num_ants,
         antenna_flags
             .iter()
             .enumerate()
@@ -410,14 +409,14 @@ pub fn show_param_info(
 
     info!(
         "Baseline Details (all={}, auto={}, select={}, flag={}):",
-        context.metafits_context.num_baselines,
-        context.metafits_context.num_ants,
-        baseline_idxs.len(),
+        corr_ctx.metafits_context.num_baselines,
+        corr_ctx.metafits_context.num_ants,
+        prep_ctx.sel_baseline_idxs.len(),
         baseline_flag_idxs.len(),
     );
 
     // if !show_baseline_table {
-    //     info!("-> selected:    {:?}", baseline_idxs);
+    //     info!("-> selected:    {:?}", prep_ctx.sel_baseline_idxs);
     //     info!("-> flags:    {:?}", baseline_flag_idxs);
     // }
 
@@ -425,10 +424,10 @@ pub fn show_param_info(
     // - estimated memory consumption
     // - free memory with https://docs.rs/sys-info/latest/sys_info/fn.mem_info.html
 
-    let num_sel_timesteps = timestep_range.len();
-    let num_sel_chans = coarse_chan_range.len() * fine_chans_per_coarse;
-    let num_sel_baselines = baseline_idxs.len();
-    let num_sel_pols = context.metafits_context.num_visibility_pols;
+    let num_sel_timesteps = prep_ctx.sel_timestep_range.len();
+    let num_sel_chans = prep_ctx.sel_coarse_chan_range.len() * fine_chans_per_coarse;
+    let num_sel_baselines = prep_ctx.sel_baseline_idxs.len();
+    let num_sel_pols = corr_ctx.metafits_context.num_visibility_pols;
     let mem_per_timestep_gib = (num_sel_chans
         * num_sel_baselines
         * num_sel_pols
@@ -492,20 +491,7 @@ pub fn show_param_info(
     );
 }
 
-macro_rules! with_increment_duration {
-    ($durs:expr, $name:literal, $($s:stmt);+ $(;)?) => {
-        {
-            let _now = std::time::Instant::now();
-            let _res = {
-                $(
-                    $s
-                )*
-            };
-            *$durs.entry($name).or_insert(Duration::default()) += _now.elapsed();
-            _res
-        }
-    };
-}
+#[allow(clippy::field_reassign_with_default)]
 fn main_with_args<I, T>(args: I)
 where
     I: IntoIterator<Item = T>,
@@ -544,7 +530,7 @@ where
             arg!(--"no-draw-progress" "do not show progress bars"),
 
             // selection options
-            // TODO make this work the same way as rust ranges. start <= x < end
+            // TODO: make this work the same way as rust ranges. start <= x < end
             arg!(--"sel-time" "[WIP] Timestep index range (inclusive) to select")
                 .help_heading("SELECTION")
                 .value_names(&["MIN", "MAX"])
@@ -701,45 +687,60 @@ where
         .expect("--metafits must be a valid path");
     let fits_paths: Vec<&str> = matches.values_of("fits_paths").expect("--").collect();
 
-    let context =
+    let corr_ctx =
         CorrelatorContext::new(&metafits_path, &fits_paths).expect("unable to get mwalib context");
-    debug!("mwalib correlator context:\n{}", &context);
-    let sel_coarse_chan_range = get_coarse_chan_range(&context).unwrap();
-    let mut coarse_chan_flags = get_coarse_chan_flags(&context);
-    let sel_timestep_range = match matches.values_of("sel-time") {
+    debug!("mwalib correlator context:\n{}", &corr_ctx);
+
+    let mut prep_ctx = PreprocessContext::default();
+
+    prep_ctx.sel_coarse_chan_range = get_coarse_chan_range(&corr_ctx).unwrap();
+    let mut coarse_chan_flags = get_coarse_chan_flags(&corr_ctx);
+
+    prep_ctx.sel_timestep_range = match matches.values_of("sel-time") {
         Some(mut values) => {
             if let (Some(from), Some(to)) = (values.next(), values.next()) {
                 let from = from.parse::<usize>().expect("cannot parse --sel-time from");
                 assert!(
-                    from < context.num_timesteps,
+                    from < corr_ctx.num_timesteps,
                     "invalid --sel-time from {}. must be < num_timesteps ({})",
                     from,
-                    context.num_timesteps
+                    corr_ctx.num_timesteps
                 );
                 let to = to.parse::<usize>().expect("cannot parse --sel-time to");
                 assert!(
-                    to >= from && to < context.num_timesteps,
+                    to >= from && to < corr_ctx.num_timesteps,
                     "invalid --sel-time from {} to {}, must be < num_timesteps ({})",
                     from,
                     to,
-                    context.num_timesteps
+                    corr_ctx.num_timesteps
                 );
                 from..to + 1
             } else {
                 panic!("invalid --sel-time <from> <to>, two values must be provided");
             }
         }
-        _ => get_timestep_range(&context).unwrap(),
+        _ => get_timestep_range(&corr_ctx).unwrap(),
     };
 
-    let mut timestep_flags = get_timestep_flags(&context);
-    let mut antenna_flags = get_antenna_flags(&context);
-    let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+    let flagged_timestep_idxs = matches.values_of("flag-times").map(|values| {
+        values
+            .map(|value| {
+                if let Ok(timestep_idx) = value.parse::<usize>() {
+                    timestep_idx
+                } else {
+                    panic!("unable to parse timestep value: {}", value);
+                }
+            })
+            .collect()
+    });
+    let timestep_flags = get_timestep_flags(&corr_ctx, flagged_timestep_idxs);
+    let mut antenna_flags = get_antenna_flags(&corr_ctx);
+    prep_ctx.sel_baseline_idxs = (0..corr_ctx.metafits_context.num_baselines).collect::<Vec<_>>();
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 
     let mut fine_chan_flags = vec![false; fine_chans_per_coarse];
 
-    let array_pos = if matches.is_present("emulate-cotter") {
+    prep_ctx.array_pos = if matches.is_present("emulate-cotter") {
         info!("Using array position from Cotter.");
         LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -751,7 +752,7 @@ where
         LatLngHeight::new_mwa()
     };
 
-    let phase_centre = match (
+    prep_ctx.phase_centre = match (
         matches.values_of("phase-centre"),
         matches.is_present("pointing-centre"),
     ) {
@@ -772,8 +773,8 @@ where
                 panic!("Unable to parse RADec. from --phase-centre");
             }
         }
-        (_, true) => RADec::from_mwalib_tile_pointing(&context.metafits_context),
-        _ => RADec::from_mwalib_phase_or_pointing(&context.metafits_context),
+        (_, true) => RADec::from_mwalib_tile_pointing(&corr_ctx.metafits_context),
+        _ => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
     };
 
     // /////////////// //
@@ -814,15 +815,6 @@ where
     //     let init_seconds = seconds_str.parse::<f64>().unwrap();
     //     // init_steps = todo!();
     // }
-    if let Some(timesteps) = matches.values_of("flag-times") {
-        for value in timesteps {
-            if let Ok(timestep_idx) = value.parse::<usize>() {
-                timestep_flags[timestep_idx] = true;
-            } else {
-                panic!("unable to parse timestep value: {}", value);
-            }
-        }
-    }
 
     // antennae
     // TODO
@@ -853,7 +845,7 @@ where
     // Averaging //
     // ///////// //
 
-    let int_time_s = context.metafits_context.corr_int_time_ms as f64 / 1e3;
+    let int_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1e3;
 
     let avg_time: usize = match (
         matches.value_of("avg-time-factor"),
@@ -884,7 +876,7 @@ where
         _ => 1,
     };
 
-    let fine_chan_width_khz = context.metafits_context.corr_fine_chan_width_hz as f64 / 1e3;
+    let fine_chan_width_khz = corr_ctx.metafits_context.corr_fine_chan_width_hz as f64 / 1e3;
 
     let avg_freq: usize = match (
         matches.value_of("avg-freq-factor"),
@@ -915,10 +907,10 @@ where
         _ => 1,
     };
 
-    let num_sel_timesteps = sel_timestep_range.len();
-    let num_sel_chans = sel_coarse_chan_range.len() * fine_chans_per_coarse;
-    let num_sel_baselines = baseline_idxs.len();
-    let num_sel_pols = context.metafits_context.num_visibility_pols;
+    let num_sel_timesteps = prep_ctx.sel_timestep_range.len();
+    let num_sel_chans = prep_ctx.sel_coarse_chan_range.len() * fine_chans_per_coarse;
+    let num_sel_baselines = prep_ctx.sel_baseline_idxs.len();
+    let num_sel_pols = corr_ctx.metafits_context.num_visibility_pols;
     let bytes_per_timestep = num_sel_chans
         * num_sel_baselines
         * num_sel_pols
@@ -983,19 +975,51 @@ where
         info!("chunking output to {} timesteps per chunk", chunk_size);
     }
 
-    let baseline_flags = get_baseline_flags(&context, &antenna_flags);
+    let baseline_flags = get_baseline_flags(&corr_ctx, &antenna_flags);
+
+    prep_ctx.draw_progress = !matches.is_present("no-draw-progress");
+
+    // ////////////////// //
+    // Correction Options //
+    // ////////////////// //
+
+    // cable delay corrections are enabled by default if they haven't aleady beeen applied.
+    let no_cable_delays = matches.is_present("no-cable-delay");
+    let cable_delays_applied = corr_ctx.metafits_context.cable_delays_applied;
+    debug!(
+        "cable corrections: applied={}, desired={}",
+        cable_delays_applied, !no_cable_delays
+    );
+    prep_ctx.correct_cable_lengths = !cable_delays_applied && !no_cable_delays;
+
+    // coarse channel digital gain corrections are enabled by default
+    prep_ctx.correct_digital_gains = !matches.is_present("no-digital-gains");
+
+    // coarse pfb passband corrections are enabled by default
+    prep_ctx.passband_gains = match matches.value_of("passband-gains") {
+        None | Some("none") => None,
+        Some("jake") => Some(PFB_JAKE_2022_200HZ.to_vec()),
+        Some("cotter") => Some(PFB_COTTER_2014_10KHZ.to_vec()),
+        Some(option) => panic!("unknown option for --passband-gains: {}", option),
+    };
+
+    // geometric corrections are enabled by default if they haven't aleady beeen applied.
+    let no_geometric_delays = matches.is_present("no-geometric-delay");
+    let geometric_delays_applied = corr_ctx.metafits_context.geometric_delays_applied;
+    debug!(
+        "geometric corrections: applied={:?}, desired={}",
+        geometric_delays_applied, !no_geometric_delays
+    );
+    prep_ctx.correct_geometry =
+        matches!(geometric_delays_applied, GeometricDelaysApplied::No) && !no_geometric_delays;
 
     // ///////// //
     // Show info //
     // ///////// //
 
     show_param_info(
-        &context,
-        array_pos,
-        phase_centre,
-        &sel_coarse_chan_range,
-        &sel_timestep_range,
-        &baseline_idxs,
+        &corr_ctx,
+        &prep_ctx,
         &coarse_chan_flags,
         &fine_chan_flags,
         &timestep_flags,
@@ -1006,12 +1030,12 @@ where
         num_timesteps_per_chunk,
     );
 
+    prep_ctx.log_info();
+
     if matches.is_present("dry-run") {
         info!("Dry run. No files will be written.");
         return;
     }
-
-    let draw_progress = !matches.is_present("no-draw-progress");
 
     for unimplemented_option in &[
         "flag-init",
@@ -1050,14 +1074,6 @@ where
         }
     }
 
-    let sel_baselines = baseline_idxs
-        .iter()
-        .map(|&idx| {
-            let baseline = &context.metafits_context.baselines[idx];
-            (baseline.ant1_index, baseline.ant2_index)
-        })
-        .collect::<Vec<_>>();
-
     // used to time large operations
     let mut durations = HashMap::<&str, Duration>::new();
 
@@ -1065,12 +1081,12 @@ where
         with_increment_duration!(durations, "init", {
             UvfitsWriter::from_mwalib(
                 uvfits_out,
-                &context,
-                &sel_timestep_range,
-                &sel_coarse_chan_range,
-                &baseline_idxs,
-                Some(array_pos),
-                Some(phase_centre),
+                &corr_ctx,
+                &prep_ctx.sel_timestep_range,
+                &prep_ctx.sel_coarse_chan_range,
+                &prep_ctx.sel_baseline_idxs,
+                Some(prep_ctx.array_pos),
+                Some(prep_ctx.phase_centre),
                 avg_time,
                 avg_freq,
             )
@@ -1078,14 +1094,15 @@ where
         })
     });
     let mut ms_writer = matches.value_of("ms-out").map(|ms_out| {
-        let writer = MeasurementSetWriter::new(ms_out, phase_centre, Some(array_pos));
+        let writer =
+            MeasurementSetWriter::new(ms_out, prep_ctx.phase_centre, Some(prep_ctx.array_pos));
         with_increment_duration!(durations, "init", {
             writer
                 .initialize_from_mwalib(
-                    &context,
-                    &sel_timestep_range,
-                    &sel_coarse_chan_range,
-                    &baseline_idxs,
+                    &corr_ctx,
+                    &prep_ctx.sel_timestep_range,
+                    &prep_ctx.sel_coarse_chan_range,
+                    &prep_ctx.sel_baseline_idxs,
                     avg_time,
                     avg_freq,
                 )
@@ -1094,13 +1111,7 @@ where
         writer
     });
 
-    let chunk_size = if let Some(steps) = num_timesteps_per_chunk {
-        steps
-    } else {
-        sel_timestep_range.len()
-    };
-
-    let calsols = matches.value_of("apply-di-cal").map(|calsol_file| {
+    let calsols_owned = matches.value_of("apply-di-cal").map(|calsol_file| {
         let calsols = with_increment_duration!(
             durations,
             "read",
@@ -1111,46 +1122,67 @@ where
         }
         // calsols.di_jones.index_axis_move(Axis(0), 0)
         let calsol_chans = calsols.di_jones.dim().2;
-        if calsol_chans % context.num_coarse_chans != 0 {
+        if calsol_chans % corr_ctx.num_coarse_chans != 0 {
             panic!(
                 "the number of calibration solution channels must be a multiple of the number of
                 coarse channels defined in the metafits {}. Instead found {}.
                 dimensions: {:?}",
-                context.metafits_context.num_metafits_coarse_chans,
+                corr_ctx.metafits_context.num_metafits_coarse_chans,
                 calsol_chans,
                 calsols.di_jones.dim());
         }
-        let num_calsol_fine_chans_per_coarse = calsol_chans / context.num_coarse_chans;
+        let num_calsol_fine_chans_per_coarse = calsol_chans / corr_ctx.num_coarse_chans;
         calsols.di_jones
             .index_axis(Axis(0), 0)
             .slice(s![
                 ..,
-                (sel_coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
-                ..(sel_coarse_chan_range.end * num_calsol_fine_chans_per_coarse)]
+                (prep_ctx.sel_coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
+                ..(prep_ctx.sel_coarse_chan_range.end * num_calsol_fine_chans_per_coarse)]
             ).to_owned()
     });
 
-    let passband_gains = match matches.value_of("passband-gains") {
-        None | Some("none") => None,
-        Some("jake") => Some(PFB_JAKE_2022_200HZ),
-        Some("cotter") => Some(PFB_COTTER_2014_10KHZ),
-        Some(option) => panic!("unknown option for --passband-gains: {}", option),
-    };
+    cfg_if! {
+        if #[cfg(feature = "aoflagger")] {
+            prep_ctx.aoflagger_strategy = if !matches.is_present("no-rfi") {
+                let aoflagger = unsafe { cxx_aoflagger_new() };
+                let default_strategy_filename = aoflagger.FindStrategyFileMWA();
+                let strategy_filename = matches.value_of("aoflagger-strategy").unwrap_or(&default_strategy_filename);
+                info!("will flag with strategy {}", strategy_filename);
+                Some(strategy_filename.into())
+                // TODO: log flag occupancy before / after flagging
+            } else {
+                info!("skipped aoflagger");
+                None
+            }
+        }
+    }
 
-    for mut timestep_chunk in &sel_timestep_range.clone().chunks(chunk_size) {
+    // //////// //
+    // Chunking //
+    // //////// //
+
+    let full_sel_timestep_range = prep_ctx.sel_timestep_range.clone();
+    let chunk_size = if let Some(steps) = num_timesteps_per_chunk {
+        steps
+    } else {
+        full_sel_timestep_range.len()
+    };
+    for mut timestep_chunk in &full_sel_timestep_range.clone().chunks(chunk_size) {
         let chunk_first_timestep = timestep_chunk.next().unwrap();
         let chunk_last_timestep = timestep_chunk.last().unwrap_or(chunk_first_timestep);
-        let chunk_timestep_range: Range<usize> = chunk_first_timestep..chunk_last_timestep + 1;
+        prep_ctx.sel_timestep_range = chunk_first_timestep..chunk_last_timestep + 1;
         if num_timesteps_per_chunk.is_some() {
             info!(
                 "processing timestep chunk {:?} of {:?} % {}",
-                chunk_timestep_range, sel_timestep_range, chunk_size
+                prep_ctx.sel_timestep_range,
+                full_sel_timestep_range.clone(),
+                chunk_size
             );
         }
         let flag_array = init_flag_array(
-            &context,
-            &chunk_timestep_range,
-            &sel_coarse_chan_range,
+            &corr_ctx,
+            &prep_ctx.sel_timestep_range,
+            &prep_ctx.sel_coarse_chan_range,
             Some(&timestep_flags),
             Some(&coarse_chan_flags),
             Some(&fine_chan_flags),
@@ -1162,142 +1194,42 @@ where
             durations,
             "read",
             context_to_jones_array(
-                &context,
-                &chunk_timestep_range,
-                &sel_coarse_chan_range,
+                &corr_ctx,
+                &prep_ctx.sel_timestep_range,
+                &prep_ctx.sel_coarse_chan_range,
                 Some(flag_array),
-                draw_progress,
+                prep_ctx.draw_progress,
             )
             .unwrap()
         );
-        // perform cable delays if user has not disabled it, and they haven't aleady beeen applied.
-
-        let no_cable_delays = matches.is_present("no-cable-delay");
-        let cable_delays_applied = context.metafits_context.cable_delays_applied;
-        if !cable_delays_applied && !no_cable_delays {
-            info!(
-                "Applying cable delays. applied: {}, desired: {}",
-                cable_delays_applied, !no_cable_delays
-            );
-            with_increment_duration!(
-                durations,
-                "correct",
-                correct_cable_lengths(&context, &mut jones_array, &sel_coarse_chan_range, false)
-            );
-        } else {
-            info!(
-                "Skipping cable delays. applied: {}, desired: {}",
-                cable_delays_applied, !no_cable_delays
-            );
-        }
-
-        // perform coarse channel gain corrections
-        if !matches.is_present("no-digital-gains") {
-            info!("correcting digital gains");
-            with_increment_duration!(
-                durations,
-                "correct",
-                correct_digital_gains(
-                    &context,
-                    &mut jones_array,
-                    &sel_coarse_chan_range,
-                    &sel_baselines,
-                )
-                .expect("couldn't apply digital gains")
-            );
-        }
 
         // generate weights
-        let weight_factor = get_weight_factor(&context);
+        let weight_factor = get_weight_factor(&corr_ctx);
         let mut weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
-        // perform pfb passband gain corrections
-        if let Some(passband_gains) = passband_gains {
-            info!("correcting pfb gains");
-            let is_mwax = match context.metafits_context.mwa_version {
-                Some(MWAVersion::CorrMWAXv2) => true,
-                Some(MWAVersion::CorrLegacy) => false,
-                Some(MWAVersion::CorrOldLegacy) => false,
-                Some(ver) => panic!("unknown mwa version: {}", ver),
-                None => panic!("unknown mwa version"),
-            };
-            with_increment_duration!(
-                durations,
-                "correct",
-                correct_coarse_passband_gains(
-                    &mut jones_array,
-                    &mut weight_array,
-                    passband_gains,
-                    fine_chans_per_coarse,
-                    is_mwax
-                )
-                .expect("couldn't apply coarse pfb passband gains")
-            );
-        }
-
-        cfg_if! {
-            if #[cfg(feature = "aoflagger")] {
-                if !matches.is_present("no-rfi") {
-                    let aoflagger = unsafe { cxx_aoflagger_new() };
-                    let default_strategy_filename = aoflagger.FindStrategyFileMWA();
-                    let strategy_filename = matches.value_of("aoflagger-strategy").unwrap_or(&default_strategy_filename);
-                    info!("flagging with strategy {}", strategy_filename);
-                    flag_array = with_increment_duration!(durations,
-                        "flag",
-                        flag_jones_array_existing(
-                            &aoflagger,
-                            strategy_filename,
-                            &jones_array,
-                            Some(flag_array),
-                            true,
-                            draw_progress,
-                        )
-                    );
-                    // TODO: log flag occupancy before / after flagging
-                } else {
-                    info!("skipped aoflagger");
-                }
-            }
-        }
-
-        // perform geometric delays if user has not disabled it, and they haven't aleady beeen applied.
-        let no_geometric_delays = matches.is_present("no-geometric-delay");
-        let geometric_delays_applied = context.metafits_context.geometric_delays_applied;
-        match (geometric_delays_applied, no_geometric_delays) {
-            (GeometricDelaysApplied::No, false) => {
-                info!(
-                    "Applying geometric delays. applied: {:?}, desired: {}",
-                    geometric_delays_applied, !no_geometric_delays
-                );
-                with_increment_duration!(
-                    durations,
-                    "correct",
-                    correct_geometry(
-                        &context,
-                        &mut jones_array,
-                        &chunk_timestep_range,
-                        &sel_coarse_chan_range,
-                        Some(array_pos),
-                        Some(phase_centre),
-                        false,
-                    )
-                );
-            }
-            (..) => {
-                info!(
-                    "Skipping geometric delays. applied: {:?}, desired: {}",
-                    geometric_delays_applied, !no_geometric_delays
-                );
-            }
-        };
+        prep_ctx
+            .preprocess(
+                &corr_ctx,
+                &mut jones_array,
+                &mut weight_array,
+                &mut flag_array,
+                &calsols_owned,
+                &mut durations,
+            )
+            .expect("unable to preprocess the chunk.");
 
         // output flags (before averaging)
         if let Some(flag_template) = matches.value_of("flag-template") {
             with_increment_duration!(
                 durations,
                 "write",
-                write_flags(&context, &flag_array, flag_template, &sel_coarse_chan_range)
-                    .expect("unable to write flags")
+                write_flags(
+                    &corr_ctx,
+                    &flag_array,
+                    flag_template,
+                    &prep_ctx.sel_coarse_chan_range
+                )
+                .expect("unable to write flags")
             );
         }
 
@@ -1305,28 +1237,13 @@ where
         //     &context,
         //     &chunk_timestep_range,
         //     &coarse_chan_range,
-        //     &baseline_idxs,
+        //     &prep_ctx.sel_baseline_idxs,
         //     avg_time,
         //     avg_freq,
         // );
 
-        if let Some(ref calsols) = calsols {
-            with_increment_duration!(
-                durations,
-                "calibrate",
-                apply_di_calsol(
-                    calsols.view(),
-                    jones_array.view_mut(),
-                    weight_array.view_mut(),
-                    flag_array.view_mut(),
-                    &sel_baselines,
-                )
-                .unwrap()
-            );
-        }
-
         // TODO: nothing actually uses the pol axis for flags and weights, so rip it out.
-        let num_pols = context.metafits_context.num_visibility_pols;
+        let num_pols = corr_ctx.metafits_context.num_visibility_pols;
         let flag_array = add_dimension(flag_array.view(), num_pols);
         let weight_array = add_dimension(weight_array.view(), num_pols);
 
@@ -1340,13 +1257,13 @@ where
                         jones_array.view(),
                         weight_array.view(),
                         flag_array.view(),
-                        &context,
-                        &chunk_timestep_range,
-                        &sel_coarse_chan_range,
-                        &baseline_idxs,
+                        &corr_ctx,
+                        &prep_ctx.sel_timestep_range,
+                        &prep_ctx.sel_coarse_chan_range,
+                        &prep_ctx.sel_baseline_idxs,
                         avg_time,
                         avg_freq,
-                        draw_progress,
+                        prep_ctx.draw_progress,
                     )
                     .expect("unable to write uvfits")
             );
@@ -1362,13 +1279,13 @@ where
                         jones_array.view(),
                         weight_array.view(),
                         flag_array.view(),
-                        &context,
-                        &chunk_timestep_range,
-                        &sel_coarse_chan_range,
-                        &baseline_idxs,
+                        &corr_ctx,
+                        &prep_ctx.sel_timestep_range,
+                        &prep_ctx.sel_coarse_chan_range,
+                        &prep_ctx.sel_baseline_idxs,
                         avg_time,
                         avg_freq,
-                        draw_progress,
+                        prep_ctx.draw_progress,
                     )
                     .expect("unable to write ms")
             );
@@ -1381,7 +1298,7 @@ where
             durations,
             "write",
             uvfits_writer
-                .write_ants_from_mwalib(&context.metafits_context)
+                .write_ants_from_mwalib(&corr_ctx.metafits_context)
                 .expect("couldn't write antenna table to uvfits")
         );
     }

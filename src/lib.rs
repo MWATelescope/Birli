@@ -146,6 +146,9 @@ pub(crate) use types::TestJones;
 mod error;
 pub use error::BirliError;
 
+pub mod preprocessing;
+pub use preprocessing::PreprocessContext;
+
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
         pub use flags::{flag_jones_array, flag_jones_array_existing};
@@ -153,6 +156,23 @@ cfg_if! {
         use ndarray::{ArrayBase, Dim, ViewRepr};
         use std::os::raw::c_short;
     }
+}
+
+#[macro_export]
+/// Time a statement and increment the timer given by name in the hashmap of durations
+macro_rules! with_increment_duration {
+    ($durs:expr, $name:literal, $($s:stmt);+ $(;)?) => {
+        {
+            let _now = std::time::Instant::now();
+            let _res = {
+                $(
+                    $s
+                )*
+            };
+            *$durs.entry($name).or_insert(Duration::default()) += _now.elapsed();
+            _res
+        }
+    };
 }
 
 /// Get the version of the AOFlagger library from the library itself.

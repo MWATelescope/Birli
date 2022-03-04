@@ -33,6 +33,7 @@ cfg-if = "1.0.0"
 clap = { version = "3.1.5", features = ["cargo"] }
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
+derive_builder = "0.10.2"
 env_logger = "0.9"
 indicatif = { version = "0.16", features = ["rayon"] }
 itertools = "0.10"

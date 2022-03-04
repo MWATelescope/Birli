@@ -6,9 +6,13 @@ use thiserror::Error;
 #[allow(clippy::upper_case_acronyms)]
 /// An enum of all the errors possible in Birli
 pub enum BirliError {
-    #[error("{0}")]
+    #[error("IO Error: {0}")]
     /// Error derived from [`crate::io::error::IOError`]
     IOError(#[from] crate::io::error::IOError),
+
+    #[error("Calibration Error: {0}")]
+    /// Error derived from [`crate::calibration::CalibrationError`]
+    CalibrationError(#[from] crate::calibration::CalibrationError),
 
     #[error("No common timesteps found. CorrelatorContext hdu info: {hdu_info}")]
     /// Error for when gpuboxes provided have no overlapping visibilities
@@ -49,5 +53,25 @@ pub enum BirliError {
     InsufficientMemory {
         /// The amount of memory we think we need
         need_gib: usize,
+    },
+
+    #[error("Invalid Command Line Argument")]
+    /// When a bad CLI argument is provided
+    InvalidCommandLineArgument {
+        /// The option for which the argument was provided
+        option: String,
+        /// The argument that was expected
+        expected: String,
+        /// The argument that was received instead
+        received: String,
+    },
+
+    #[error("Invalid MWA Version")]
+    /// When a bad MWA Version is provided
+    BadMWAVersion {
+        /// The message to display
+        message: String,
+        /// The version that was provided
+        version: String,
     },
 }
