@@ -413,7 +413,7 @@ mod tests_aoflagger {
         );
 
         // generate an array of jones matrices
-        let (jones_array, flag_array) = context_to_jones_array(
+        let (jones_array, mut flag_array) = context_to_jones_array(
             &context,
             &img_timestep_range,
             &img_coarse_chan_range,
@@ -426,11 +426,11 @@ mod tests_aoflagger {
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
 
         // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
-        let flag_array = flag_jones_array_existing(
+        flag_jones_array_existing(
             &aoflagger,
             strategy_filename,
             &jones_array,
-            Some(flag_array),
+            &mut flag_array,
             true,
             false,
         );

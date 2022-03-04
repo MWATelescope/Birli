@@ -2292,7 +2292,7 @@ mod tests_aoflagger {
             Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
         );
 
-        let (jones_array, flag_array) = context_to_jones_array(
+        let (jones_array, mut flag_array) = context_to_jones_array(
             &context,
             &sel_timestep_range,
             &sel_coarse_chan_range,
@@ -2303,11 +2303,11 @@ mod tests_aoflagger {
 
         let strategy_path = &aoflagger.FindStrategyFileMWA();
 
-        let flag_array = flag_jones_array_existing(
+        flag_jones_array_existing(
             &aoflagger,
             strategy_path,
             &jones_array,
-            Some(flag_array),
+            &mut flag_array,
             true,
             false,
         );
@@ -2386,7 +2386,7 @@ mod tests_aoflagger {
             Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
         );
 
-        let (jones_array, flag_array) = context_to_jones_array(
+        let (jones_array, mut flag_array) = context_to_jones_array(
             &context,
             &sel_timestep_range,
             &sel_coarse_chan_range,
@@ -2397,11 +2397,11 @@ mod tests_aoflagger {
 
         let strategy_path = &aoflagger.FindStrategyFileMWA();
 
-        let flag_array = flag_jones_array_existing(
+        flag_jones_array_existing(
             &aoflagger,
             strategy_path,
             &jones_array,
-            Some(flag_array),
+            &mut flag_array,
             true,
             false,
         );
