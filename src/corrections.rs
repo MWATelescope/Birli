@@ -8,7 +8,10 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use log::trace;
 use marlu::{
-    constants::VEL_C, hifitime::Epoch, mwalib::CorrelatorContext, precession::precess_time,
+    constants::VEL_C,
+    hifitime::Epoch,
+    mwalib::{CorrelatorContext, MWAVersion},
+    precession::precess_time,
     Complex, LatLngHeight, RADec, XyzGeodetic, UVW,
 };
 use std::{f64::consts::PI, ops::Range};
@@ -457,12 +460,14 @@ fn _correct_digital_gains(
 /// - The length of the channel axis in `jones_array` is not a multiple of num_fine_chans_per_coarse.
 /// - `jones_array` and `weight_array` have different shapes.
 /// - The length of the coarse band gains is not a multiple of num_fine_chans_per_coarse, or vice versa.
+///
+/// # TODO: `mwax` would be better suited as an enum ScrunchType { CenterSymmetric, Simple }
 pub fn correct_coarse_passband_gains(
     jones_array: &mut Array3<Jones<f32>>,
     weight_array: &mut Array3<f32>,
     passband_gains: &[f64],
     num_fine_chans_per_coarse: usize,
-    mwax: bool,
+    scrunch_type: ScrunchType,
 ) -> Result<(), BirliError> {
     // # TODO: rename correct_passband_gains
     if num_fine_chans_per_coarse == 0 {
@@ -509,7 +514,7 @@ pub fn correct_coarse_passband_gains(
         });
     };
 
-    let scrunched_gains = scrunch_gains(passband_gains, fscrunch, mwax);
+    let scrunched_gains = scrunch_gains(passband_gains, fscrunch, scrunch_type);
 
     for (mut jones_array, mut weight_array) in izip!(
         jones_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse),
@@ -529,6 +534,36 @@ pub fn correct_coarse_passband_gains(
     }
 
     Ok(())
+}
+
+#[derive(Clone)]
+/// Possible types of scrunching that a correlator might do.
+pub enum ScrunchType {
+    /// used by legacy correlator
+    Simple,
+    /// used by MWAX
+    CenterSymmetric,
+}
+
+impl ScrunchType {
+    /// Return the corresponding scrunch version from the mwalib::MWAVersion.
+    ///
+    /// # Errors
+    ///
+    /// Will throw BadMWAVersion If you provide something other than CorrMWAXv2, CorrLegacy, or CorrOldLegacy
+    pub fn from_mwa_version(ver: MWAVersion) -> Result<Self, BirliError> {
+        match ver {
+            MWAVersion::CorrMWAXv2 => Ok(Self::CenterSymmetric),
+            MWAVersion::CorrLegacy => Ok(Self::Simple),
+            MWAVersion::CorrOldLegacy => Ok(Self::Simple),
+            ver => Err(BirliError::BadMWAVersion {
+                message:
+                    "could not determine correlator scrunch type from provided mwalib::MWAVersion."
+                        .into(),
+                version: ver.to_string(),
+            }),
+        }
+    }
 }
 
 /// Given a set of gains for each ultrafine channel, compute the gains for each fine channel,
@@ -552,15 +587,14 @@ pub fn correct_coarse_passband_gains(
 /// 5 (o->o)|           0       |         1         |         2         |
 ///
 /// For more details see: https://wiki.mwatelescope.org/display/MP/MWA+Fine+Channel+Centre+Frequencies
-pub fn scrunch_gains(ultrafine_gains: &[f64], fscrunch: usize, mwax: bool) -> Vec<f64> {
+pub fn scrunch_gains(
+    ultrafine_gains: &[f64],
+    fscrunch: usize,
+    scrunch_type: ScrunchType,
+) -> Vec<f64> {
     let scrunched_length = ultrafine_gains.len() / fscrunch;
     if fscrunch == 1 {
         ultrafine_gains.to_vec()
-    } else if !mwax {
-        ultrafine_gains
-            .chunks(fscrunch)
-            .map(|gains_chunk| gains_chunk.iter().sum::<f64>() / (fscrunch as f64))
-            .collect()
     } else {
         // in mwax, for an even number of scrunched channels, a given scrunched channel `n`:
         // - is centered on ultrafine channel `n * fscrunch`.
@@ -583,36 +617,32 @@ pub fn scrunch_gains(ultrafine_gains: &[f64], fscrunch: usize, mwax: bool) -> Ve
 
         // get the relative index and weight of the window of ultrafine channels that contribute to a scrunched channel.
         #[rustfmt::skip]
-        let window_offset_weights: Vec<(i32, f64)> = match (scrunched_length % 2, fscrunch % 2) {
+        let window_offset_weights: Vec<(i32, f64)> = match (&scrunch_type, scrunched_length % 2, fscrunch % 2) {
+            (ScrunchType::Simple, _, _) => (0..fscrunch).map(|w| (w as i32, 1./fscrunch as f64)).collect(),
             // even channels, even fscrunch: window length is fscrunch + 1, half-weighted edges
-            (0, 0) => (0..fscrunch + 1)
+            (ScrunchType::CenterSymmetric, 0, 0) => (0..fscrunch + 1)
                 .map(|w| (
                     (w as i32 - fscrunch as i32 / 2),
                     (if w == 0 || w == fscrunch { 0.5 } else { 1. }) / fscrunch as f64,
                 ))
                 .collect(),
             // even channels, odd fscrunch: window length is fscrunch, equal weights
-            (0, 1) => (0..fscrunch)
+            (ScrunchType::CenterSymmetric, 0, 1) => (0..fscrunch)
                 .map(|w| (
                     (w as i32 - (fscrunch as i32 - 1) / 2),
                     1. / fscrunch as f64
                 ))
                 .collect(),
             // odd channels: window length is fscrunch + 1, half-weighted edges
-            (1, _) => (0..fscrunch + 1)
+            (ScrunchType::CenterSymmetric, 1, _) => (0..fscrunch + 1)
                 .map(|w| (
                     (w as i32),
                     (if w == 0 || w == fscrunch { 0.5 } else { 1. }) / fscrunch as f64,
                 ))
                 .collect(),
-            // odd channels, odd fscrunch: window length is fscrunch + 1, half-weighted edges
-            // (1, 1) => (0..fscrunch + 1).map(|w| (
-            //     (w as i32),
-            //     (if w == 0 || w == fscrunch { 0.5 } else { 1. }) / fscrunch as f64
-            // )).collect(),
-            (_, _) => unreachable!(),
+            _ => unreachable!(),
         };
-        if scrunched_length % 2 == 0 {
+        if matches!(scrunch_type, ScrunchType::CenterSymmetric) && scrunched_length % 2 == 0 {
             // sanity check: centre symmetric indices should sum to zero, weights should sum to one
             assert_eq!(
                 window_offset_weights
@@ -657,6 +687,7 @@ mod tests {
     use crate::{
         approx::assert_abs_diff_eq,
         context_to_jones_array,
+        corrections::ScrunchType,
         flags::{get_coarse_chan_range, get_timestep_range},
         get_flaggable_timesteps, BirliError, TestJones,
     };
@@ -1579,7 +1610,7 @@ mod tests {
         let expected_gains: Vec<f64> = (0..15)
             .map(|x| ((base.pow(2 * x)) + (base.pow(2 * x + 1))) as f64 / 2.)
             .collect();
-        let scrunched_gains = scrunch_gains(&ultrafine_gains, 2, false);
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 2, ScrunchType::Simple);
         assert_eq!(scrunched_gains, expected_gains);
     }
 
@@ -1597,7 +1628,7 @@ mod tests {
                 (left / 4. + center / 2. + right / 4.) as f64
             })
             .collect();
-        let scrunched_gains = scrunch_gains(&ultrafine_gains, 2, true);
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 2, ScrunchType::CenterSymmetric);
         assert_eq!(scrunched_gains, expected_gains);
     }
 
@@ -1615,7 +1646,7 @@ mod tests {
                 (left / 3. + center / 3. + right / 3.) as f64
             })
             .collect();
-        let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, true);
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, ScrunchType::CenterSymmetric);
         assert_eq!(scrunched_gains, expected_gains);
     }
 
@@ -1635,7 +1666,7 @@ mod tests {
                 (left / 8. + center1 / 4. + center2 / 4. + center3 / 4. + right / 8.) as f64
             })
             .collect();
-        let scrunched_gains = scrunch_gains(&ultrafine_gains, 4, true);
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 4, ScrunchType::CenterSymmetric);
         assert_eq!(scrunched_gains, expected_gains);
     }
 
@@ -1654,7 +1685,7 @@ mod tests {
                 (left / 6. + center1 / 3. + center2 / 3. + right / 6.) as f64
             })
             .collect();
-        let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, true);
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, ScrunchType::CenterSymmetric);
         assert_eq!(scrunched_gains, expected_gains);
     }
 
@@ -1672,7 +1703,7 @@ mod tests {
             &mut weight_array,
             &passband_gains,
             num_fine_chans_per_coarse,
-            false,
+            ScrunchType::Simple,
         )
         .unwrap();
 
@@ -1704,7 +1735,7 @@ mod tests {
             &mut weight_array,
             &passband_gains,
             num_fine_chans_per_coarse,
-            false,
+            ScrunchType::Simple,
         )
         .unwrap();
 
@@ -1738,7 +1769,7 @@ mod tests {
             &mut weight_array,
             &passband_gains,
             num_fine_chans_per_coarse,
-            false,
+            ScrunchType::Simple,
         )
         .unwrap();
 
@@ -1771,7 +1802,7 @@ mod tests {
                 &mut weight_array,
                 &passband_gains,
                 0,
-                false,
+                ScrunchType::Simple,
             ),
             Err(BirliError::BadArrayShape { .. })
         ));
@@ -1783,7 +1814,7 @@ mod tests {
                 &mut weight_array,
                 &passband_gains,
                 3,
-                false,
+                ScrunchType::Simple,
             ),
             Err(BirliError::BadArrayShape { .. })
         ));
@@ -1796,7 +1827,7 @@ mod tests {
                 &mut bad_weight_array,
                 &passband_gains,
                 num_fine_chans_per_coarse,
-                false,
+                ScrunchType::Simple,
             ),
             Err(BirliError::BadArrayShape { .. })
         ));
@@ -1809,7 +1840,7 @@ mod tests {
                 &mut weight_array,
                 &bad_passband_gains,
                 num_fine_chans_per_coarse,
-                false,
+                ScrunchType::Simple,
             ),
             Err(BirliError::BadArrayShape { .. })
         ));
