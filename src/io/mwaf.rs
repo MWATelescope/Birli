@@ -40,8 +40,11 @@ pub struct FlagFileHeaders {
     /// The `VERSION` key from the primary hdu
     // TODO: what is this actually used for?
     pub version: String,
-    /// The `GPSTIME` key from the primary hdu
+    /// The `OBSID` key from the primary hdu (formerly 'GPSTIME').
     pub obs_id: u32,
+    /// The 'GPSSTART' key from the primary hdu; the GPS start time of the flags
+    /// (centroid).
+    pub gps_start: f64,
     /// The number of correlator fine channels per flag file, and the `NCHANS` key from the primary hdu.
     pub num_channels: usize,
     /// Total number of antennas (tiles) in the array, and the `NANTENNA` key from the primary hdu
@@ -64,11 +67,67 @@ pub struct FlagFileHeaders {
 }
 
 impl FlagFileHeaders {
-    /// Construct the [`FlagFileHeaders`] struct corresponding to the provided mwalib context and
-    /// gpubox id.
-    pub fn from_gpubox_context(gpubox_id: usize, context: &CorrelatorContext) -> Self {
+    /// Construct the [`FlagFileHeaders`] struct corresponding to the provided
+    /// mwalib context, gpubox id and GPS start time.
+    pub fn from_gpubox_context(
+        gpubox_id: usize,
+        context: &CorrelatorContext,
+        gps_start: f64,
+    ) -> Self {
         let num_fine_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
         FlagFileHeaders {
+            version: "1.0".to_string(),
+            obs_id: context.metafits_context.obs_id,
+            gps_start,
+            num_channels: context.metafits_context.num_corr_fine_chans_per_coarse,
+            num_ants: context.metafits_context.num_ants,
+            num_timesteps: context.num_common_timesteps,
+            num_pols: 1,
+            gpubox_id,
+            cotter_version: format!("Birli-{}", crate_version!()),
+            // TODO: use something like https://github.com/rustyhorde/vergen
+            cotter_version_date: "2021-04-14".to_string(),
+            bytes_per_row: num_fine_per_coarse / 8 + usize::from(num_fine_per_coarse % 8 != 0),
+            num_rows: context.num_common_timesteps * context.metafits_context.num_baselines,
+        }
+    }
+}
+
+/// flag metadata from a cotter mwaf file. See
+/// https://github.com/MWATelescope/Birli/issues/16
+pub struct FlagFileHeadersCotter {
+    /// The `VERSION` key from the primary hdu
+    // TODO: what is this actually used for?
+    pub version: String,
+    /// The `OBSID` key from the primary hdu (formerly 'GPSTIME').
+    pub obs_id: u32,
+    /// The number of correlator fine channels per flag file, and the `NCHANS` key from the primary hdu.
+    pub num_channels: usize,
+    /// Total number of antennas (tiles) in the array, and the `NANTENNA` key from the primary hdu
+    pub num_ants: usize,
+    /// Number of timesteps in the observation, and the `NSCANS` key from the primary hdu
+    pub num_timesteps: usize,
+    /// The `NPOLS` key from the primary hdu
+    pub num_pols: usize,
+    /// The `GPUBOXNO` key from the primary hdu
+    pub gpubox_id: usize,
+    /// The `COTVER` key from the primary hdu
+    pub cotter_version: String,
+    /// The `COTVDATE` key from the primary hdu
+    pub cotter_version_date: String,
+    /// The width of each fine channel mask vector in bytes, or the `NAXIS1` key from the table hdu
+    pub bytes_per_row: usize,
+    /// The number of rows (timesteps × baselines), and the `NAXIS2` key from the table hdu.
+    pub num_rows: usize,
+    // TODO: is it useful to output aoflagger version and strategy?
+}
+
+impl FlagFileHeadersCotter {
+    /// Construct the [`FlagFileHeaders`] struct corresponding to the provided
+    /// mwalib context, gpubox id and GPS start time.
+    pub fn from_gpubox_context(gpubox_id: usize, context: &CorrelatorContext) -> Self {
+        let num_fine_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+        FlagFileHeadersCotter {
             version: "1.0".to_string(),
             obs_id: context.metafits_context.obs_id,
             num_channels: context.metafits_context.num_corr_fine_chans_per_coarse,
@@ -216,7 +275,8 @@ impl FlagFileSet {
         header: &FlagFileHeaders,
     ) -> Result<(), IOError> {
         hdu.write_key(fptr, "VERSION", header.version.to_string())?;
-        hdu.write_key(fptr, "GPSTIME", header.obs_id)?;
+        hdu.write_key(fptr, "OBSID", header.obs_id)?;
+        hdu.write_key(fptr, "GPSSTART", header.gps_start)?;
         hdu.write_key(fptr, "NCHANS", header.num_channels as u32)?;
         hdu.write_key(fptr, "NANTENNA", header.num_ants as u32)?;
         hdu.write_key(fptr, "NSCANS", header.num_timesteps as u32)?;
@@ -241,6 +301,37 @@ impl FlagFileSet {
         let hdu0 = fits_open_hdu!(fptr, 0)?;
         let hdu1 = fits_open_hdu!(fptr, 1)?;
         let header = FlagFileHeaders {
+            version: get_required_fits_key!(fptr, &hdu0, "VERSION")?,
+            obs_id: get_required_fits_key!(fptr, &hdu0, "OBSID")?,
+            gps_start: get_required_fits_key!(fptr, &hdu0, "GPSSTART")?,
+            num_channels: get_required_fits_key!(fptr, &hdu0, "NCHANS")?,
+            num_ants: get_required_fits_key!(fptr, &hdu0, "NANTENNA")?,
+            num_timesteps: get_required_fits_key!(fptr, &hdu0, "NSCANS")?,
+            num_pols: get_required_fits_key!(fptr, &hdu0, "NPOLS")?,
+            gpubox_id: get_required_fits_key!(fptr, &hdu0, "GPUBOXNO")?,
+            cotter_version: get_required_fits_key!(fptr, &hdu0, "COTVER")?,
+            cotter_version_date: get_required_fits_key!(fptr, &hdu0, "COTVDATE")?,
+            bytes_per_row: get_required_fits_key!(fptr, &hdu1, "NAXIS1")?,
+            num_rows: get_required_fits_key!(fptr, &hdu1, "NAXIS2")?,
+        };
+        let baselines = header.num_ants * (header.num_ants + 1) / 2;
+        if header.num_rows != header.num_timesteps * baselines {
+            return Err(MwafInconsistent {
+                file: String::from(&fptr.filename),
+                expected: "NSCANS * NANTENNA * (NANTENNA+1) / 2 = NAXIS2".to_string(),
+                found: format!(
+                    "{} * {} != {}",
+                    header.num_timesteps, baselines, header.num_rows
+                ),
+            });
+        }
+        Ok(header)
+    }
+
+    fn _read_header_cotter(fptr: &mut FitsFile) -> Result<FlagFileHeadersCotter, IOError> {
+        let hdu0 = fits_open_hdu!(fptr, 0)?;
+        let hdu1 = fits_open_hdu!(fptr, 1)?;
+        let header = FlagFileHeadersCotter {
             version: get_required_fits_key!(fptr, &hdu0, "VERSION")?,
             obs_id: get_required_fits_key!(fptr, &hdu0, "GPSTIME")?,
             num_channels: get_required_fits_key!(fptr, &hdu0, "NCHANS")?,
@@ -267,22 +358,26 @@ impl FlagFileSet {
         Ok(header)
     }
 
-    /// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], and an ndarray
-    /// of boolean flags for the observation into a file for each `gpubox_id`.
+    /// Write flags to disk, given an observation's
+    /// [`mwalib::CorrelatorContext`], an ndarray of boolean flags, and the GPS
+    /// start time of the flags (centroid) for the observation into a file for
+    /// each `gpubox_id`.
     ///
-    /// The filename template should contain two or 3 percentage (`%`) characters which will be replaced
-    /// by the gpubox id or channel number (depending on correlator type). See [`FlagFileSet::new`]
+    /// The filename template should contain two or 3 percentage (`%`)
+    /// characters which will be replaced by the gpubox id or channel number
+    /// (depending on correlator type). See [`FlagFileSet::new`]
     ///
     /// # Errors
     ///
-    /// Will error if the gpubox ids this flagset was initialized with is not contained in the
-    /// provided [`mwalib::CorrelatorContext`].
+    /// Will error if the gpubox ids this flagset was initialized with is not
+    /// contained in the provided [`mwalib::CorrelatorContext`].
     ///
     pub fn write_flag_array(
         &mut self,
         context: &CorrelatorContext,
         flag_array: &Array3<bool>,
         gpubox_ids: &[usize],
+        gps_start: f64,
     ) -> Result<(), IOError> {
         let flag_dims = flag_array.dim();
         let num_timesteps = flag_dims.0;
@@ -341,7 +436,8 @@ impl FlagFileSet {
                     // thread_write_info.push((gpubox_id, fptr, flag_coarse_chan_view));
 
                     let primary_hdu = fits_open_hdu!(fptr, 0)?;
-                    let header = FlagFileHeaders::from_gpubox_context(gpubox_id, context);
+                    let header =
+                        FlagFileHeaders::from_gpubox_context(gpubox_id, context, gps_start);
                     let fine_chans_per_coarse = header.num_channels;
                     FlagFileSet::write_primary_hdu(fptr, &primary_hdu, &header)?;
 
@@ -470,19 +566,48 @@ impl FlagFileSet {
 
         Ok(chan_header_flags_raw)
     }
+
+    fn _read_chan_header_flags_raw_cotter(
+        &mut self,
+    ) -> Result<BTreeMap<usize, (FlagFileHeadersCotter, Vec<i8>)>, BirliError> {
+        let mut chan_header_flags_raw = BTreeMap::new();
+
+        for (&gpubox_id, fptr) in self.gpubox_fptrs.iter_mut() {
+            let header = FlagFileSet::_read_header_cotter(fptr)?;
+            let num_baselines = header.num_ants * (header.num_ants + 1) / 2;
+            let mut flags_raw: Vec<i8> =
+                vec![0; header.num_timesteps * num_baselines * header.num_channels];
+            for timestep_idx in 0..header.num_timesteps {
+                for baseline_idx in 0..num_baselines {
+                    let row_idx = (timestep_idx * num_baselines) + baseline_idx;
+                    let start_bit_idx = row_idx * header.num_channels;
+                    let end_bit_idx = start_bit_idx + header.num_channels;
+                    FlagFileSet::read_flags_raw(
+                        fptr,
+                        &mut flags_raw[start_bit_idx..end_bit_idx],
+                        Some(row_idx),
+                    )?;
+                }
+            }
+            chan_header_flags_raw.insert(gpubox_id, (header, flags_raw));
+        }
+
+        Ok(chan_header_flags_raw)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{FlagFileHeaders, FlagFileSet};
+    use crate::flags::get_timestep_range;
     use crate::io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate};
     use crate::{get_flaggable_timesteps, init_flag_array};
     use fitsio::FitsFile;
     use marlu::{
         fitsio,
         mwalib::{
-            CorrelatorContext, _get_optional_fits_key, _open_hdu, fits_open_hdu,
-            get_optional_fits_key, MWAVersion,
+            CorrelatorContext, _open_hdu, fits_open_hdu, get_required_fits_key, MWAVersion,
+            _get_required_fits_key,
         },
     };
     use ndarray::Axis;
@@ -669,7 +794,7 @@ mod tests {
         .unwrap();
 
         for (&gpubox_id, fptr) in flag_file_set.gpubox_fptrs.iter_mut() {
-            let header = FlagFileSet::read_header(fptr).unwrap();
+            let header = FlagFileSet::_read_header_cotter(fptr).unwrap();
             assert_eq!(header.obs_id, 1247842824);
             assert_eq!(header.num_channels, 128);
             assert_eq!(header.num_ants, 128);
@@ -683,6 +808,8 @@ mod tests {
     #[test]
     fn test_write_primary_hdu() {
         let context = get_mwax_context();
+        let start_timestep = get_timestep_range(&context).unwrap().start;
+        let gps_start = context.timesteps[start_timestep].gps_time_ms as f64 / 1e3;
         let gpubox_ids: Vec<usize> = context
             .common_coarse_chan_indices
             .iter()
@@ -707,7 +834,7 @@ mod tests {
                 FlagFileSet::write_primary_hdu(
                     &mut fptr,
                     &primary_hdu,
-                    &FlagFileHeaders::from_gpubox_context(gpubox_id, &context),
+                    &FlagFileHeaders::from_gpubox_context(gpubox_id, &context, gps_start),
                 )
                 .unwrap();
             }
@@ -717,28 +844,27 @@ mod tests {
             let mut flag_fptr = FitsFile::open(path).unwrap();
             let hdu = flag_fptr.primary_hdu().unwrap();
 
-            let gps_time: Option<i32> =
-                get_optional_fits_key!(&mut flag_fptr, &hdu, "GPSTIME").unwrap();
-            assert_eq!(gps_time.unwrap(), context.metafits_context.obs_id as i32);
+            let obsid: i32 = get_required_fits_key!(&mut flag_fptr, &hdu, "OBSID").unwrap();
+            assert_eq!(obsid, context.metafits_context.obs_id as i32);
 
-            let num_chans: Option<i32> =
-                get_optional_fits_key!(&mut flag_fptr, &hdu, "NCHANS").unwrap();
+            let header_gps_start: f64 =
+                get_required_fits_key!(&mut flag_fptr, &hdu, "GPSSTART").unwrap();
+            assert_eq!(header_gps_start, gps_start);
+
+            let num_chans: i32 = get_required_fits_key!(&mut flag_fptr, &hdu, "NCHANS").unwrap();
             assert_eq!(
-                num_chans.unwrap(),
+                num_chans,
                 context.metafits_context.num_corr_fine_chans_per_coarse as i32
             );
 
-            let num_ants: Option<i32> =
-                get_optional_fits_key!(&mut flag_fptr, &hdu, "NANTENNA").unwrap();
-            assert_eq!(num_ants.unwrap(), context.metafits_context.num_ants as i32);
+            let num_ants: i32 = get_required_fits_key!(&mut flag_fptr, &hdu, "NANTENNA").unwrap();
+            assert_eq!(num_ants, context.metafits_context.num_ants as i32);
 
-            let num_scans: Option<i32> =
-                get_optional_fits_key!(&mut flag_fptr, &hdu, "NSCANS").unwrap();
-            assert_eq!(num_scans.unwrap(), context.num_timesteps as i32);
+            let num_scans: i32 = get_required_fits_key!(&mut flag_fptr, &hdu, "NSCANS").unwrap();
+            assert_eq!(num_scans, context.num_timesteps as i32);
 
-            let gpubox_no: Option<i32> =
-                get_optional_fits_key!(&mut flag_fptr, &hdu, "GPUBOXNO").unwrap();
-            assert_eq!(gpubox_no.unwrap(), gpubox_id as i32);
+            let gpubox_no: i32 = get_required_fits_key!(&mut flag_fptr, &hdu, "GPUBOXNO").unwrap();
+            assert_eq!(gpubox_no, gpubox_id as i32);
         }
     }
 
@@ -770,7 +896,7 @@ mod tests {
             let table_hdu = fptr.hdu(1).unwrap();
             dbg!(table_hdu);
         }
-        let chan_flags_raw = flag_file_set.read_chan_header_flags_raw().unwrap();
+        let chan_flags_raw = flag_file_set._read_chan_header_flags_raw_cotter().unwrap();
 
         assert_eq!(chan_flags_raw.keys().len(), 1);
         let (chan1_header, chan1_flags_raw) = chan_flags_raw.get(&1).unwrap();
@@ -816,6 +942,8 @@ mod tests {
         let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+
+        let gps_start = context.timesteps[img_timestep_range.start].gps_time_ms as f64 / 1e3;
 
         let gpubox_ids = context.coarse_chans[img_coarse_chan_range.clone()]
             .iter()
@@ -869,7 +997,7 @@ mod tests {
         )
         .unwrap();
         flag_file_set
-            .write_flag_array(&context, &flag_array, &gpubox_ids)
+            .write_flag_array(&context, &flag_array, &gpubox_ids, gps_start)
             .unwrap();
         drop(flag_file_set);
 

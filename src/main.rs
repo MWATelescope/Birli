@@ -1293,11 +1293,18 @@ where
 
         // output flags (before averaging)
         if let Some(flag_template) = matches.value_of("flag-template") {
+            let gps_start = context.timesteps[sel_timestep_range.start].gps_time_ms as f64 / 1e3;
             with_increment_duration!(
                 durations,
                 "write",
-                write_flags(&context, &flag_array, flag_template, &sel_coarse_chan_range)
-                    .expect("unable to write flags")
+                write_flags(
+                    &context,
+                    &flag_array,
+                    flag_template,
+                    gps_start,
+                    &sel_coarse_chan_range
+                )
+                .expect("unable to write flags")
             );
         }
 

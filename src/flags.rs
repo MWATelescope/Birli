@@ -562,6 +562,9 @@ pub fn flag_jones_array(
 /// let img_coarse_chan_range =
 ///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 ///
+/// // Get the GPS time of the first timestep
+/// let gps_start = context.timesteps[img_timestep_range.start].gps_time_ms as f64 / 1e3;
+///
 /// // Prepare our flagmasks with known bad antennae
 /// let flag_array = init_flag_array(
 ///     &context,
@@ -583,7 +586,7 @@ pub fn flag_jones_array(
 /// ).unwrap();
 ///
 /// // write the flags to disk as .mwaf
-/// write_flags(&context, &flag_array, flag_template.to_str().unwrap(), &img_coarse_chan_range).unwrap();
+/// write_flags(&context, &flag_array, flag_template.to_str().unwrap(), gps_start, &img_coarse_chan_range).unwrap();
 /// ```
 ///
 /// # Errors
@@ -595,6 +598,7 @@ pub fn write_flags(
     context: &CorrelatorContext,
     flag_array: &Array3<bool>,
     filename_template: &str,
+    gps_start: f64,
     mwalib_coarse_chan_range: &Range<usize>,
 ) -> Result<(), IOError> {
     trace!("start write_flags");
@@ -611,7 +615,7 @@ pub fn write_flags(
     );
 
     let mut flag_file_set = FlagFileSet::new(filename_template, &gpubox_ids, context.mwa_version)?;
-    flag_file_set.write_flag_array(context, flag_array, &gpubox_ids)?;
+    flag_file_set.write_flag_array(context, flag_array, &gpubox_ids, gps_start)?;
 
     trace!("end write_flags");
     Ok(())
@@ -742,6 +746,8 @@ mod tests {
         let img_coarse_chan_range =
             *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 
+        let gps_start = context.timesteps[img_timestep_range.start].gps_time_ms as f64 / 1e3;
+
         let mut flag_array = init_flag_array(
             &context,
             &img_timestep_range,
@@ -769,6 +775,7 @@ mod tests {
             &context,
             &flag_array,
             filename_template.to_str().unwrap(),
+            gps_start,
             &img_coarse_chan_range,
         )
         .unwrap();

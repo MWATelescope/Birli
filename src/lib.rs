@@ -48,6 +48,8 @@
 //! let img_coarse_chan_range =
 //!     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 //! let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+//! // Get the GPS time of the first timestep
+//! let gps_start = context.timesteps[img_timestep_range.start].gps_time_ms as f64 / 1e3;
 //!
 //! // Prepare our flagmasks with known bad antennae
 //! let flag_array = init_flag_array(
@@ -70,7 +72,7 @@
 //! ).unwrap();
 //!
 //! // write the flags to disk as .mwaf
-//! write_flags(&context, &flag_array, flag_template.to_str().unwrap(), &img_coarse_chan_range).unwrap();
+//! write_flags(&context, &flag_array, flag_template.to_str().unwrap(), gps_start, &img_coarse_chan_range).unwrap();
 //! // write the visibilities to disk as .uvfits
 //!
 //! let num_pols = context.metafits_context.num_visibility_pols;
