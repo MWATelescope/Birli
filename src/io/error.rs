@@ -71,7 +71,6 @@ pub enum IOError {
     },
     /// A generic error associated with the fitsio crate.
     #[error("{source_file}:{source_line}\n{fits_filename} HDU {hdu_num}: {fits_error}")]
-    // TODO: address this
     #[allow(clippy::upper_case_acronyms)]
     FitsIO {
         /// The [`fitsio::errors::Error`]

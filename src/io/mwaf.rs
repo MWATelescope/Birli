@@ -475,8 +475,10 @@ impl FlagFileSet {
 #[cfg(test)]
 mod tests {
     use super::{FlagFileHeaders, FlagFileSet};
-    use crate::io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate};
-    use crate::{get_flaggable_timesteps, init_flag_array};
+    use crate::{
+        io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate},
+        FlagContext, VisSelection,
+    };
     use fitsio::FitsFile;
     use marlu::{
         fitsio,
@@ -802,34 +804,31 @@ mod tests {
 
     #[test]
     fn test_write_flag_array() {
-        let context = get_mwax_context();
+        let corr_ctx = get_mwax_context();
 
         let tmp_dir = tempdir().unwrap();
         let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
 
-        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
-        let gpubox_ids = context.coarse_chans[img_coarse_chan_range.clone()]
+        let gpubox_ids = corr_ctx.coarse_chans[vis_sel.coarse_chan_range.clone()]
             .iter()
             .map(|chan| chan.gpubox_number)
             .collect::<Vec<_>>();
 
-        let mut flag_array = init_flag_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            None,
-            None,
-            None,
-            None,
+        let flag_ctx = FlagContext::blank_from_dimensions(
+            corr_ctx.num_timesteps,
+            corr_ctx.num_coarse_chans,
+            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
+            corr_ctx.metafits_context.num_ants,
+        );
+
+        let mut flag_array = flag_ctx.to_array(
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
         );
 
         let mut idx = 0;
@@ -865,18 +864,18 @@ mod tests {
         let mut flag_file_set = FlagFileSet::new(
             filename_template.to_str().unwrap(),
             &gpubox_ids,
-            context.mwa_version,
+            corr_ctx.mwa_version,
         )
         .unwrap();
         flag_file_set
-            .write_flag_array(&context, &flag_array, &gpubox_ids)
+            .write_flag_array(&corr_ctx, &flag_array, &gpubox_ids)
             .unwrap();
         drop(flag_file_set);
 
         let mut flag_file_set = FlagFileSet::open(
             filename_template.to_str().unwrap(),
             &gpubox_ids,
-            context.mwa_version,
+            corr_ctx.mwa_version,
         )
         .unwrap();
 
@@ -887,8 +886,8 @@ mod tests {
         dbg!(chan1_flags_raw);
 
         let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
-        assert_eq!(chan1_header.num_timesteps, context.num_common_timesteps);
-        assert_eq!(num_baselines, context.metafits_context.num_baselines);
+        assert_eq!(chan1_header.num_timesteps, corr_ctx.num_common_timesteps);
+        assert_eq!(num_baselines, corr_ctx.metafits_context.num_baselines);
         assert_eq!(chan1_header.num_channels, fine_chans_per_coarse);
         assert_eq!(
             chan1_flags_raw.len(),

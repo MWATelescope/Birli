@@ -5,16 +5,15 @@ use crate::{
     corrections::{correct_coarse_passband_gains, correct_digital_gains, ScrunchType},
     marlu::{
         mwalib::CorrelatorContext,
-        mwalib::MetafitsContext,
         ndarray::{Array2, Array3},
         Jones, LatLngHeight, RADec,
     },
-    with_increment_duration, BirliError,
+    with_increment_duration, BirliError, VisSelection,
 };
 use cfg_if::cfg_if;
 use derive_builder::Builder;
 use log::info;
-use std::{collections::HashMap, fmt::Debug, ops::Range, time::Duration};
+use std::{collections::HashMap, fmt::Debug, time::Duration};
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
@@ -25,16 +24,9 @@ cfg_if! {
     }
 }
 
-/// Options for preprocessing a chunk of correlator data, contextualizing a jones array with its'
-/// weights and flags
+/// Options for preprocessing a chunk of correlator data
 #[derive(Builder, Debug, Default)]
 pub struct PreprocessContext {
-    /// selected range of mwalib timestep indices
-    pub sel_timestep_range: Range<usize>,
-    /// selected range of mwalib coarse channel indices
-    pub sel_coarse_chan_range: Range<usize>,
-    /// selected mwalib baseline indices
-    pub sel_baseline_idxs: Vec<usize>,
     /// The array position used for geometric corrections
     pub array_pos: LatLngHeight,
     /// The phase centre used for geometric corrections
@@ -46,7 +38,7 @@ pub struct PreprocessContext {
     /// Whether digital gain corrections are enabled
     #[builder(default = "true")]
     pub correct_digital_gains: bool,
-    /// Whether coarse pdb passband gain corrections are enabled
+    /// the pfb passband gains to use for corrections
     pub passband_gains: Option<Vec<f64>>,
     /// Whether geometric corrections are enabled
     #[builder(default = "true")]
@@ -62,22 +54,6 @@ pub struct PreprocessContext {
 }
 
 impl PreprocessContext {
-    // TODO:
-    // pub fn from_mwalib(corr_ctx: &CorrelatorContext) -> Self { }
-
-    /// The selected antenna index pairs corresponding to `sel_baselines_idxs`
-    pub fn get_sel_ant_pairs(&self, meta_ctx: &MetafitsContext) -> Vec<(usize, usize)> {
-        self.sel_baseline_idxs
-            .iter()
-            .map(|&idx| {
-                (
-                    meta_ctx.baselines[idx].ant1_index,
-                    meta_ctx.baselines[idx].ant2_index,
-                )
-            })
-            .collect()
-    }
-
     /// Write a description of what this preprocessing context does to the info logs
     pub fn log_info(&self) {
         info!(
@@ -146,16 +122,17 @@ impl PreprocessContext {
         // TODO: Jones needs to implement Clone before moving this into PreprocessContext
         calsols: &Option<Array2<Jones<f64>>>,
         durations: &mut HashMap<&str, Duration>,
+        vis_sel: &VisSelection,
     ) -> Result<(), BirliError> {
         if self.correct_cable_lengths {
             with_increment_duration!(
                 durations,
                 "correct",
-                correct_cable_lengths(corr_ctx, jones_array, &self.sel_coarse_chan_range, false)
+                correct_cable_lengths(corr_ctx, jones_array, &vis_sel.coarse_chan_range, false)
             );
         }
 
-        let sel_ant_pairs = self.get_sel_ant_pairs(&corr_ctx.metafits_context);
+        let sel_ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 
         if self.correct_digital_gains {
             with_increment_duration!(
@@ -164,7 +141,7 @@ impl PreprocessContext {
                 correct_digital_gains(
                     corr_ctx,
                     jones_array,
-                    &self.sel_coarse_chan_range,
+                    &vis_sel.coarse_chan_range,
                     &sel_ant_pairs,
                 )? // .expect("couldn't apply digital gains")
             );
@@ -215,8 +192,8 @@ impl PreprocessContext {
                 correct_geometry(
                     corr_ctx,
                     jones_array,
-                    &self.sel_timestep_range,
-                    &self.sel_coarse_chan_range,
+                    &vis_sel.timestep_range,
+                    &vis_sel.coarse_chan_range,
                     Some(self.array_pos),
                     Some(self.phase_centre),
                     self.draw_progress,
@@ -249,9 +226,8 @@ mod tests {
     };
 
     use crate::{
-        context_to_jones_array, flag_to_weight_array,
-        flags::{get_coarse_chan_range, get_timestep_range},
-        get_antenna_flags, get_baseline_flags, get_weight_factor, init_flag_array,
+        context_to_jones_array, flag_to_weight_array, flags::get_weight_factor, FlagContext,
+        VisSelection,
     };
 
     use super::*;
@@ -301,10 +277,7 @@ mod tests {
             .expect("unable to get mwalib context");
 
         let mut prep_ctx = PreprocessContext::default();
-        prep_ctx.sel_coarse_chan_range = get_coarse_chan_range(&corr_ctx).unwrap();
-        prep_ctx.sel_timestep_range = get_timestep_range(&corr_ctx).unwrap();
-        prep_ctx.sel_baseline_idxs =
-            (0..corr_ctx.metafits_context.num_baselines).collect::<Vec<_>>();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         prep_ctx.array_pos = LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -318,23 +291,18 @@ mod tests {
         prep_ctx.correct_geometry = false;
         prep_ctx.draw_progress = false;
 
-        let flag_array = init_flag_array(
-            &corr_ctx,
-            &prep_ctx.sel_timestep_range,
-            &prep_ctx.sel_coarse_chan_range,
-            None,
-            None,
-            None,
-            Some(&get_baseline_flags(
-                &corr_ctx,
-                &get_antenna_flags(&corr_ctx),
-            )),
+        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+
+        let flag_array = flag_ctx.to_array(
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
         );
 
         let (mut jones_array, mut flag_array) = context_to_jones_array(
             &corr_ctx,
-            &prep_ctx.sel_timestep_range,
-            &prep_ctx.sel_coarse_chan_range,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
             Some(flag_array),
             prep_ctx.draw_progress,
         )
@@ -354,6 +322,7 @@ mod tests {
                 &mut flag_array,
                 &None,
                 &mut durations,
+                &vis_sel,
             )
             .unwrap();
     }

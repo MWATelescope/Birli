@@ -166,7 +166,7 @@ impl UvfitsWriter {
     /// - there is an existing file at `path` which cannot be removed.
     /// - a fits operation fails.
     ///
-    /// TODO: replace all these args with birli_context
+    /// TODO: reduce number of arguments.
     #[allow(clippy::too_many_arguments)]
     pub fn new<T: AsRef<Path>>(
         path: T,
@@ -359,36 +359,35 @@ impl UvfitsWriter {
     ///
     /// # Details
     ///
-    /// start epoch is determined by `mwalib_timestep_range.start` which may not necessarily match
+    /// start epoch is determined by `timestep_range.start` which may not necessarily match
     /// the obsid.
     ///
     /// # Errors
     ///
     /// See: [`UvfitsWriter::new`]
     ///
-    /// TODO: fix too_many_arguments
+    /// TODO: reduce number of arguments.
     #[allow(clippy::too_many_arguments)]
     pub fn from_mwalib<T: AsRef<Path>>(
         path: T,
         context: &CorrelatorContext,
-        mwalib_timestep_range: &Range<usize>,
-        mwalib_coarse_chan_range: &Range<usize>,
-        mwalib_baseline_idxs: &[usize],
+        timestep_range: &Range<usize>,
+        coarse_chan_range: &Range<usize>,
+        baseline_idxs: &[usize],
         array_pos: Option<LatLngHeight>,
         phase_centre: Option<RADec>,
         avg_time: usize,
         avg_freq: usize,
     ) -> Result<Self, UvfitsWriteError> {
         let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-        let first_gps_time_s =
-            context.timesteps[mwalib_timestep_range.start].gps_time_ms as f64 / 1000.0;
+        let first_gps_time_s = context.timesteps[timestep_range.start].gps_time_ms as f64 / 1000.0;
         let start_epoch = Epoch::from_gpst_seconds(first_gps_time_s);
         let phase_centre = phase_centre
             .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&context.metafits_context));
 
         // TODO: move these calculations into Marlu context.
-        let pre_avg_start_chan_idx = mwalib_coarse_chan_range.start * fine_chans_per_coarse;
-        let pre_avg_end_chan_idx = mwalib_coarse_chan_range.end * fine_chans_per_coarse;
+        let pre_avg_start_chan_idx = coarse_chan_range.start * fine_chans_per_coarse;
+        let pre_avg_end_chan_idx = coarse_chan_range.end * fine_chans_per_coarse;
         let pre_avg_selected_frequencies = &context.metafits_context.metafits_fine_chan_freqs_hz
             [pre_avg_start_chan_idx..pre_avg_end_chan_idx];
         let pre_avg_fine_chan_width_hz = context.metafits_context.corr_fine_chan_width_hz as f64;
@@ -407,12 +406,12 @@ impl UvfitsWriter {
             None => obs_name.as_str(),
         };
 
-        let num_timesteps = (mwalib_timestep_range.len() as f64 / avg_time as f64).ceil() as usize;
+        let num_timesteps = (timestep_range.len() as f64 / avg_time as f64).ceil() as usize;
 
         Self::new(
             path,
             num_timesteps,
-            mwalib_baseline_idxs.len(),
+            baseline_idxs.len(),
             avg_frequencies.len(),
             start_epoch,
             avg_fine_chan_width_hz,
@@ -813,32 +812,29 @@ impl UvfitsWriter {
     /// `flag_array` a [`ndarray::Array3`] of boolean flags with dimensions
     /// identical dimensions to `jones_array`
     ///
-    /// `mwalib_timestep_range` the range of timestep indices (according to mwalib)
+    /// `timestep_range` the range of timestep indices (according to mwalib)
     /// which are used in the visibility and flag arrays
     ///
-    /// `mwalib_coarse_chan_range` the range of coarse channel indices (according to mwalib)
+    /// `coarse_chan_range` the range of coarse channel indices (according to mwalib)
     /// which are used in the visibility and flag arrays
     ///
-    /// `mwalib_baseline_idxs` the baseline indices (according to mwalib) used
+    /// `baseline_idxs` the baseline indices (according to mwalib) used
     /// in the visibility and flag arrays
-    ///
-    /// TODO: handle averaging
     ///
     /// # Errors
     ///
     /// Will return an [`UvfitsWriteError`] if a fits operation fails.
     ///
-    ///
-    /// TODO: replace all these args with birli_context
+    /// TODO: reduce number of arguments.
     #[allow(clippy::too_many_arguments)]
     pub fn write_jones_flags(
         &mut self,
         context: &CorrelatorContext,
         jones_array: &Array3<Jones<f32>>,
         flag_array: &Array3<bool>,
-        mwalib_timestep_range: &Range<usize>,
-        mwalib_coarse_chan_range: &Range<usize>,
-        mwalib_baseline_idxs: &[usize],
+        timestep_range: &Range<usize>,
+        coarse_chan_range: &Range<usize>,
+        baseline_idxs: &[usize],
         avg_time: usize,
         avg_freq: usize,
         draw_progress: bool,
@@ -852,9 +848,9 @@ impl UvfitsWriter {
             weight_array.view(),
             expanded_flag_array.view(),
             context,
-            mwalib_timestep_range,
-            mwalib_coarse_chan_range,
-            mwalib_baseline_idxs,
+            timestep_range,
+            coarse_chan_range,
+            baseline_idxs,
             avg_time,
             avg_freq,
             draw_progress,
@@ -1082,7 +1078,7 @@ mod tests {
 
     use crate::{
         approx::assert_abs_diff_eq,
-        context_to_jones_array, get_flaggable_timesteps, init_flag_array,
+        context_to_jones_array,
         marlu::{
             constants::{
                 COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
@@ -1092,6 +1088,7 @@ mod tests {
                 fits_open_hdu, get_fits_col, get_required_fits_key,
             },
         },
+        FlagContext, VisSelection,
     };
 
     // TODO: dedup this from lib.rs
@@ -1651,18 +1648,11 @@ mod tests {
 
     #[test]
     pub(crate) fn uvfits_from_mwalib_matches_cotter_header() {
-        let context = get_mwa_ord_context();
+        let corr_ctx = get_mwa_ord_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
-        // let tmp_uvfits_file = Path::new("tests/data/test_header.uvfits");
 
-        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        let sel_timestep_range =
-            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
-        let sel_coarse_chan_idxs = context.common_coarse_chan_indices.clone();
-        let sel_coarse_chan_range =
-            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         let array_pos = Some(LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -1672,10 +1662,10 @@ mod tests {
 
         let u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            &sel_baseline_idxs,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             array_pos,
             None,
             1,
@@ -1763,18 +1753,11 @@ mod tests {
     /// See: https://github.com/MWATelescope/Birli/issues/6
     #[test]
     fn center_frequencies() {
-        let context = get_mwa_ord_context();
+        let corr_ctx = get_mwa_ord_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
 
-        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(sel_timestep_idxs.len(), 4);
-        let sel_timestep_range =
-            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
-        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let sel_coarse_chan_range =
-            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         let array_pos = Some(LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -1784,10 +1767,10 @@ mod tests {
 
         let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            &sel_baseline_idxs,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             array_pos,
             None,
             1,
@@ -1795,40 +1778,43 @@ mod tests {
         )
         .unwrap();
 
-        // Prepare our flagmasks with known bad antennae
-        let flag_array = init_flag_array(
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            None,
-            None,
-            None,
-            None,
+        // Prepare our flagmasks
+        let flag_ctx = FlagContext::blank_from_dimensions(
+            corr_ctx.num_timesteps,
+            corr_ctx.num_coarse_chans,
+            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
+            corr_ctx.metafits_context.num_ants,
+        );
+        let flag_array = flag_ctx.to_array(
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
         );
 
         let (jones_array, flag_array) = context_to_jones_array(
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
             Some(flag_array),
             false,
         )
         .unwrap();
 
         u.write_jones_flags(
-            &context,
+            &corr_ctx,
             &jones_array,
             &flag_array,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            &sel_baseline_idxs,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             1,
             1,
             false,
         )
         .unwrap();
 
-        u.write_ants_from_mwalib(&context.metafits_context).unwrap();
+        u.write_ants_from_mwalib(&corr_ctx.metafits_context)
+            .unwrap();
 
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
 
@@ -1852,19 +1838,11 @@ mod tests {
     /// See: https://github.com/MWATelescope/Birli/issues/6
     #[test]
     fn avg_center_frequencies() {
-        let context = get_mwa_ord_context();
+        let corr_ctx = get_mwa_ord_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
 
-        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(sel_timestep_idxs.len(), 4);
-        let sel_timestep_range =
-            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
-        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let sel_coarse_chan_range =
-            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-        assert_eq!(sel_coarse_chan_range.len(), 2);
-        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         let array_pos = Some(LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -1876,10 +1854,10 @@ mod tests {
 
         let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            &sel_baseline_idxs,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             array_pos,
             None,
             avg_time,
@@ -1887,46 +1865,49 @@ mod tests {
         )
         .unwrap();
 
-        // Prepare our flagmasks with known bad antennae
-        let flag_array = init_flag_array(
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            None,
-            None,
-            None,
-            None,
+        // Prepare our flagmasks
+        let flag_ctx = FlagContext::blank_from_dimensions(
+            corr_ctx.num_timesteps,
+            corr_ctx.num_coarse_chans,
+            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
+            corr_ctx.metafits_context.num_ants,
+        );
+        let flag_array = flag_ctx.to_array(
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
         );
 
         let (jones_array, flag_array) = context_to_jones_array(
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
             Some(flag_array),
             false,
         )
         .unwrap();
 
-        let num_pols = context.metafits_context.num_visibility_pols;
+        let num_pols = corr_ctx.metafits_context.num_visibility_pols;
         let flag_array = add_dimension(flag_array.view(), num_pols);
-        let weight_factor = get_weight_factor(&context);
+        let weight_factor = get_weight_factor(&corr_ctx);
         let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
         u.write_vis_mwalib(
             jones_array.view(),
             weight_array.view(),
             flag_array.view(),
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            &sel_baseline_idxs,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             avg_time,
             avg_freq,
             false,
         )
         .unwrap();
 
-        u.write_ants_from_mwalib(&context.metafits_context).unwrap();
+        u.write_ants_from_mwalib(&corr_ctx.metafits_context)
+            .unwrap();
 
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
 
@@ -1951,18 +1932,11 @@ mod tests {
     /// and ftp://ftp.aoc.nrao.edu/pub/software/aips/TEXT/PUBL/AIPSMEM117.PS
     #[test]
     fn aips_117() {
-        let context = get_mwa_ord_context();
+        let corr_ctx = get_mwa_ord_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
 
-        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(sel_timestep_idxs.len(), 4);
-        let sel_timestep_range =
-            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
-        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let sel_coarse_chan_range =
-            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         let array_pos = Some(LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -1972,10 +1946,10 @@ mod tests {
 
         let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            &sel_baseline_idxs,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             array_pos,
             None,
             1,
@@ -1983,39 +1957,43 @@ mod tests {
         )
         .unwrap();
 
-        let flag_array = init_flag_array(
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            None,
-            None,
-            None,
-            None,
+        // Prepare our flagmasks
+        let flag_ctx = FlagContext::blank_from_dimensions(
+            corr_ctx.num_timesteps,
+            corr_ctx.num_coarse_chans,
+            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
+            corr_ctx.metafits_context.num_ants,
+        );
+        let flag_array = flag_ctx.to_array(
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
         );
 
         let (jones_array, flag_array) = context_to_jones_array(
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
             Some(flag_array),
             false,
         )
         .unwrap();
 
         u.write_jones_flags(
-            &context,
+            &corr_ctx,
             &jones_array,
             &flag_array,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            &sel_baseline_idxs,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             1,
             1,
             false,
         )
         .unwrap();
 
-        u.write_ants_from_mwalib(&context.metafits_context).unwrap();
+        u.write_ants_from_mwalib(&corr_ctx.metafits_context)
+            .unwrap();
 
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
 
@@ -2233,32 +2211,23 @@ mod tests_aoflagger {
     use crate::{
         context_to_jones_array,
         flags::flag_jones_array_existing,
-        get_antenna_flags, get_baseline_flags, get_flaggable_timesteps, init_flag_array,
         marlu::{
             constants::{
                 COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
             },
             mwalib::{_open_fits, fits_open},
         },
+        FlagContext, VisSelection,
     };
     use aoflagger_sys::cxx_aoflagger_new;
 
     #[test]
     fn uvfits_tables_from_mwalib_matches_cotter() {
-        use crate::flags::get_baseline_flags;
-
-        let context = get_mwa_ord_context();
+        let corr_ctx = get_mwa_ord_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
 
-        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(sel_timestep_idxs.len(), 4);
-        let sel_timestep_range =
-            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
-        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let sel_coarse_chan_range =
-            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         let array_pos = Some(LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -2268,10 +2237,10 @@ mod tests_aoflagger {
 
         let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            &sel_baseline_idxs,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             array_pos,
             None,
             1,
@@ -2282,20 +2251,17 @@ mod tests_aoflagger {
         let aoflagger = unsafe { cxx_aoflagger_new() };
 
         // Prepare our flagmasks with known bad antennae
-        let flag_array = init_flag_array(
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            None,
-            None,
-            None,
-            Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
+        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+        let flag_array = flag_ctx.to_array(
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
         );
 
         let (jones_array, mut flag_array) = context_to_jones_array(
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
             Some(flag_array),
             false,
         )
@@ -2313,19 +2279,20 @@ mod tests_aoflagger {
         );
 
         u.write_jones_flags(
-            &context,
+            &corr_ctx,
             &jones_array,
             &flag_array,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            &sel_baseline_idxs,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             1,
             1,
             false,
         )
         .unwrap();
 
-        u.write_ants_from_mwalib(&context.metafits_context).unwrap();
+        u.write_ants_from_mwalib(&corr_ctx.metafits_context)
+            .unwrap();
 
         let cotter_uvfits_path = Path::new("tests/data/1196175296_mwa_ord/1196175296.uvfits");
 
@@ -2340,17 +2307,10 @@ mod tests_aoflagger {
 
     #[test]
     fn uvfits_tables_from_mwalib_matches_cotter_avg_4s_160khz() {
-        let context = get_1254670392_avg_context();
+        let corr_ctx = get_1254670392_avg_context();
 
         let tmp_uvfits_file = NamedTempFile::new().unwrap();
-
-        let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        let sel_timestep_range =
-            *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
-        let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let sel_coarse_chan_range =
-            *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-        let sel_baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         let array_pos = Some(LatLngHeight {
             longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -2362,10 +2322,10 @@ mod tests_aoflagger {
 
         let mut u = UvfitsWriter::from_mwalib(
             tmp_uvfits_file.path(),
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            &sel_baseline_idxs,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             array_pos,
             None,
             avg_time,
@@ -2376,20 +2336,17 @@ mod tests_aoflagger {
         let aoflagger = unsafe { cxx_aoflagger_new() };
 
         // Prepare our flagmasks with known bad antennae
-        let flag_array = init_flag_array(
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            None,
-            None,
-            None,
-            Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
+        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+        let flag_array = flag_ctx.to_array(
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
         );
 
         let (jones_array, mut flag_array) = context_to_jones_array(
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
             Some(flag_array),
             false,
         )
@@ -2406,26 +2363,27 @@ mod tests_aoflagger {
             false,
         );
 
-        let num_pols = context.metafits_context.num_visibility_pols;
+        let num_pols = corr_ctx.metafits_context.num_visibility_pols;
         let flag_array = add_dimension(flag_array.view(), num_pols);
-        let weight_factor = get_weight_factor(&context);
+        let weight_factor = get_weight_factor(&corr_ctx);
         let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
         u.write_vis_mwalib(
             jones_array.view(),
             weight_array.view(),
             flag_array.view(),
-            &context,
-            &sel_timestep_range,
-            &sel_coarse_chan_range,
-            &sel_baseline_idxs,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             avg_time,
             avg_freq,
             false,
         )
         .unwrap();
 
-        u.write_ants_from_mwalib(&context.metafits_context).unwrap();
+        u.write_ants_from_mwalib(&corr_ctx.metafits_context)
+            .unwrap();
 
         let cotter_uvfits_path =
             Path::new("tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.uvfits");

@@ -13,10 +13,9 @@
 //! ```rust
 //! use birli::{
 //!     context_to_jones_array, write_flags,
-//!     get_flaggable_timesteps, init_flag_array,
-//!     get_antenna_flags, mwalib::CorrelatorContext, write_uvfits,
+//!     mwalib::CorrelatorContext, write_uvfits,
 //!     add_dimension, get_weight_factor, flag_to_weight_array,
-//!     get_baseline_flags,
+//!     FlagContext, VisSelection
 //! };
 //! use tempfile::tempdir;
 //!
@@ -37,55 +36,45 @@
 //! let uvfits_out = tmp_dir.path().join("1297526432.uvfits");
 //!
 //! // Create an mwalib::CorrelatorContext for accessing visibilities.
-//! let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+//! let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 //!
 //! // Determine which timesteps and coarse channels we want to use
-//! let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-//! let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-//!
-//! let img_timestep_range =
-//!     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-//! let img_coarse_chan_range =
-//!     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-//! let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+//! let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 //!
 //! // Prepare our flagmasks with known bad antennae
-//! let flag_array = init_flag_array(
-//!     &context,
-//!     &img_timestep_range,
-//!     &img_coarse_chan_range,
-//!     None,
-//!     None,
-//!     None,
-//!     Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
+//! let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+//! let flag_array = flag_ctx.to_array(
+//!     &vis_sel.timestep_range,
+//!     &vis_sel.coarse_chan_range,
+//!     vis_sel.get_ant_pairs(&corr_ctx.metafits_context)
 //! );
 //!
 //! // load visibilities into our array of jones matrices
 //! let (mut jones_array, flag_array) = context_to_jones_array(
-//!     &context,
-//!     &img_timestep_range,
-//!     &img_coarse_chan_range,
+//!     &corr_ctx,
+//!     &vis_sel.timestep_range,
+//!     &vis_sel.coarse_chan_range,
 //!     Some(flag_array),
 //!     false,
 //! ).unwrap();
 //!
 //! // write the flags to disk as .mwaf
-//! write_flags(&context, &flag_array, flag_template.to_str().unwrap(), &img_coarse_chan_range).unwrap();
+//! write_flags(&corr_ctx, &flag_array, flag_template.to_str().unwrap(), &vis_sel.coarse_chan_range).unwrap();
 //! // write the visibilities to disk as .uvfits
 //!
-//! let num_pols = context.metafits_context.num_visibility_pols;
+//! let num_pols = corr_ctx.metafits_context.num_visibility_pols;
 //! let flag_array = add_dimension(flag_array.view(), num_pols);
-//! let weight_factor = get_weight_factor(&context);
+//! let weight_factor = get_weight_factor(&corr_ctx);
 //! let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 //! write_uvfits(
 //!     uvfits_out.as_path(),
-//!     &context,
+//!     &corr_ctx,
 //!     jones_array.view(),
 //!     weight_array.view(),
 //!     flag_array.view(),
-//!     &img_timestep_range,
-//!     &img_coarse_chan_range,
-//!     &baseline_idxs,
+//!     &vis_sel.timestep_range,
+//!     &vis_sel.coarse_chan_range,
+//!     &vis_sel.baseline_idxs,
 //!     None,
 //!     None,
 //!     1,
@@ -127,10 +116,7 @@ pub mod flags;
 pub use approx;
 #[cfg(test)]
 pub(crate) mod types;
-pub use flags::{
-    add_dimension, flag_to_weight_array, get_antenna_flags, get_baseline_flags,
-    get_flaggable_timesteps, get_weight_factor, init_flag_array, write_flags,
-};
+pub use flags::{add_dimension, flag_to_weight_array, get_weight_factor, write_flags, FlagContext};
 pub mod passband_gains;
 pub use marlu;
 pub use marlu::{
@@ -148,6 +134,9 @@ pub use error::BirliError;
 
 pub mod preprocessing;
 pub use preprocessing::PreprocessContext;
+
+pub mod selection;
+pub use selection::VisSelection;
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
@@ -267,7 +256,7 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, mwalib::CorrelatorContext};
+/// use birli::{context_to_jones_array, mwalib::CorrelatorContext, VisSelection};
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -279,37 +268,37 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 /// ];
 ///
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
-/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+/// let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 ///
 /// // Determine which timesteps and coarse channels we want to use
-/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-/// let img_timestep_idxs = &context.common_timestep_indices;
-/// let good_timestep_idxs = &context.common_good_timestep_indices;
+/// let img_timestep_idxs = &corr_ctx.common_timestep_indices;
+/// let good_timestep_idxs = &corr_ctx.common_good_timestep_indices;
 ///
-/// let img_timestep_range =
+/// let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+/// vis_sel.timestep_range =
 ///     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-/// let good_timestep_range =
-///     *good_timestep_idxs.first().unwrap()..(*good_timestep_idxs.last().unwrap() + 1);
-/// let img_coarse_chan_range =
-///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
 ///
 ///
 /// // read visibilities out of the gpubox files
 /// let (jones_array, _) = context_to_jones_array(
-///     &context,
-///     &img_timestep_range,
-///     &img_coarse_chan_range,
+///     &corr_ctx,
+///     &vis_sel.timestep_range,
+///     &vis_sel.coarse_chan_range,
 ///     None,
 ///     false,
 /// ).unwrap();
 ///
 /// let dims_common = jones_array.dim();
 ///
+/// // now try only with good timesteps
+/// vis_sel.timestep_range =
+///     *good_timestep_idxs.first().unwrap()..(*good_timestep_idxs.last().unwrap() + 1);
+///
 /// // read visibilities out of the gpubox files
 /// let (jones_array, _) = context_to_jones_array(
-///     &context,
-///     &good_timestep_range,
-///     &img_coarse_chan_range,
+///     &corr_ctx,
+///     &vis_sel.timestep_range,
+///     &vis_sel.coarse_chan_range,
 ///     None,
 ///     false,
 /// ).unwrap();
@@ -324,9 +313,9 @@ macro_rules! _write_hdu_buffer_to_jones_view {
 /// can throw BadArrayShape flag_array is provided and its shape does not match
 /// that of the timestep and coarse channel ranges.
 pub fn context_to_jones_array(
-    context: &CorrelatorContext,
-    mwalib_timestep_range: &Range<usize>,
-    mwalib_coarse_chan_range: &Range<usize>,
+    corr_ctx: &CorrelatorContext,
+    timestep_range: &Range<usize>,
+    coarse_chan_range: &Range<usize>,
     flag_array: Option<Array3<bool>>,
     draw_progress: bool,
 ) -> Result<(Array3<Jones<f32>>, Array3<bool>), BirliError> {
@@ -334,11 +323,11 @@ pub fn context_to_jones_array(
 
     // allocate our result
 
-    let num_timesteps = mwalib_timestep_range.len();
-    let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-    let num_coarse_chans = mwalib_coarse_chan_range.len();
+    let num_timesteps = timestep_range.len();
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let num_coarse_chans = coarse_chan_range.len();
     let num_chans = num_coarse_chans * fine_chans_per_coarse;
-    let num_baselines = context.metafits_context.num_baselines;
+    let num_baselines = corr_ctx.metafits_context.num_baselines;
 
     let shape = (num_timesteps, num_chans, num_baselines);
     let num_elems = num_timesteps * num_chans * num_baselines;
@@ -387,7 +376,7 @@ pub fn context_to_jones_array(
     // since we are using read_by_by basline into buffer, the visibilities are read in order:
     // baseline,frequency,pol,r,i
 
-    let floats_per_chan = context.metafits_context.num_visibility_pols * 2;
+    let floats_per_chan = corr_ctx.metafits_context.num_visibility_pols * 2;
     let floats_per_baseline = floats_per_chan * fine_chans_per_coarse;
     let floats_per_hdu = floats_per_baseline * num_baselines;
 
@@ -403,7 +392,7 @@ pub fn context_to_jones_array(
     // a progress bar containing the progress bars associated with this method
     let multi_progress = MultiProgress::with_draw_target(draw_target);
     // a vector of progress bars for the visibility reading progress of each channel.
-    let read_progress: Vec<ProgressBar> = mwalib_coarse_chan_range
+    let read_progress: Vec<ProgressBar> = coarse_chan_range
         .to_owned()
         .map(|mwalib_coarse_chan_idx| {
             let channel_progress = multi_progress.add(
@@ -451,10 +440,10 @@ pub fn context_to_jones_array(
                     mwalib_timestep_idx, mwalib_coarse_chan_idx, err
                 );
 
-                assert!(mwalib_timestep_range.contains(&mwalib_timestep_idx));
-                let img_timestep_idx = mwalib_timestep_idx - mwalib_timestep_range.start;
-                assert!(mwalib_coarse_chan_range.contains(&mwalib_coarse_chan_idx));
-                let img_coarse_chan_idx = mwalib_coarse_chan_idx - mwalib_coarse_chan_range.start;
+                assert!(timestep_range.contains(&mwalib_timestep_idx));
+                let img_timestep_idx = mwalib_timestep_idx - timestep_range.start;
+                assert!(coarse_chan_range.contains(&mwalib_coarse_chan_idx));
+                let img_coarse_chan_idx = mwalib_coarse_chan_idx - coarse_chan_range.start;
 
                 // TODO: there's probably a better way of doing this.
                 for mut coarse_chan_flags_view in flag_array
@@ -477,7 +466,7 @@ pub fn context_to_jones_array(
         jones_array
             .axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse)
             .into_par_iter()
-            .zip(mwalib_coarse_chan_range.clone())
+            .zip(coarse_chan_range.clone())
             .zip(read_progress)
             .for_each(
                 |((mut jones_coarse_chan_view, mwalib_coarse_chan_idx), progress)| {
@@ -487,10 +476,10 @@ pub fn context_to_jones_array(
 
                     // jones_coarse_chan_view is [timestep][chan][baseline] for all chans in the coarse channel
                     for (mwalib_timestep_idx, mut jones_hdu_view) in izip!(
-                        mwalib_timestep_range.clone(),
+                        timestep_range.clone(),
                         jones_coarse_chan_view.outer_iter_mut()
                     ) {
-                        match context.read_by_baseline_into_buffer(
+                        match corr_ctx.read_by_baseline_into_buffer(
                             mwalib_timestep_idx,
                             mwalib_coarse_chan_idx,
                             hdu_buffer.as_mut_slice(),
@@ -539,7 +528,7 @@ pub fn context_to_jones_array(
 ///
 /// # Errors
 ///
-/// Will throw [`BirliError`] if there was an error reading from context.
+/// Will throw [`BirliError`] if there was an error reading from corr_ctx.
 #[cfg(feature = "aoflagger")]
 pub fn jones_baseline_view_to_imageset(
     aoflagger: &CxxAOFlagger,
@@ -589,7 +578,7 @@ pub fn jones_baseline_view_to_imageset(
 ///
 /// # Errors
 ///
-/// Will throw [`BirliError`] if there was an error reading from context.
+/// Will throw [`BirliError`] if there was an error reading from corr_ctx.
 #[cfg(feature = "aoflagger")]
 pub fn flag_baseline_view_to_flagmask(
     aoflagger: &CxxAOFlagger,
@@ -613,12 +602,11 @@ pub fn flag_baseline_view_to_flagmask(
 
 #[cfg(test)]
 mod tests {
-    // TODO: Why does clippy think CxxImageSet.ImageBuffer() is &[f64]?
     #![allow(clippy::float_cmp)]
 
-    use crate::TestJones;
+    use crate::{TestJones, VisSelection};
 
-    use super::{context_to_jones_array, get_flaggable_timesteps};
+    use super::context_to_jones_array;
     use approx::assert_abs_diff_eq;
     use marlu::{mwalib::CorrelatorContext, Complex};
 
@@ -644,7 +632,7 @@ mod tests {
         CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
     }
 
-    /// Get a dummy MWA Ord context with multiple holes in the data
+    /// Get a dummy MWA Ord corr_ctx with multiple holes in the data
     ///
     /// The gpubox (batch, hdu) tuples look like this:
     /// - ts is according to [`mwalib::correlatorContext`]
@@ -668,22 +656,14 @@ mod tests {
     /// We expect coarse channel 0 ( fine channels 0,1 ) to be the same as in get_mwa_ord_context,
     /// but coarse channel 0 (fine channels 2, 3 ) should be shifted.
     fn test_context_to_jones_array_mwax_flags_missing_hdus() {
-        let context = get_mwa_ord_dodgy_context();
+        let corr_ctx = get_mwa_ord_dodgy_context();
 
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-
-        // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         let (jones_array, flags_array) = context_to_jones_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
             // img_baseline_idxs.as_slice(),
             None,
             false,
@@ -789,23 +769,13 @@ mod tests {
 
     #[test]
     fn test_context_to_jones_array_mwax() {
-        let context = get_mwax_context();
-
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-
-        // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+        let corr_ctx = get_mwax_context();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         let (jones_array, _) = context_to_jones_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            // img_baseline_idxs.as_slice(),
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
             None,
             false,
         )
@@ -895,23 +865,13 @@ mod tests {
 
     #[test]
     fn test_context_to_jones_array_mwa_ord() {
-        let context = get_mwa_ord_context();
-
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-
-        // let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
+        let corr_ctx = get_mwa_ord_context();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         let (jones_array, _) = context_to_jones_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            // img_baseline_idxs.as_slice(),
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
             None,
             false,
         )

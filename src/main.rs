@@ -1,10 +1,6 @@
 use birli::{
     context_to_jones_array,
-    flags::{
-        add_dimension, flag_to_weight_array, get_baseline_flags, get_coarse_chan_flags,
-        get_coarse_chan_range, get_timestep_flags, get_timestep_range, get_weight_factor,
-    },
-    get_antenna_flags, init_flag_array,
+    flags::{add_dimension, flag_to_weight_array, get_weight_factor, FlagContext},
     io::{aocal::AOCalSols, WriteableVis},
     marlu::{
         constants::{
@@ -15,6 +11,7 @@ use birli::{
     },
     passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
     with_increment_duration, write_flags, Axis, Complex, PreprocessContext, UvfitsWriter,
+    VisSelection,
 };
 use cfg_if::cfg_if;
 use clap::{arg, command, PossibleValue, ValueHint::FilePath};
@@ -63,11 +60,8 @@ pub fn display_build_info() {
 pub fn show_param_info(
     corr_ctx: &CorrelatorContext,
     prep_ctx: &PreprocessContext,
-    coarse_chan_flags: &[bool],
-    fine_chan_flags: &[bool],
-    timestep_flags: &[bool],
-    antenna_flags: &[bool],
-    baseline_flags: &[bool],
+    flag_ctx: &FlagContext,
+    vis_sel: &VisSelection,
     avg_time: usize,
     avg_freq: usize,
     num_timesteps_per_chunk: Option<usize>,
@@ -92,24 +86,29 @@ pub fn show_param_info(
         info!("Pointing centre:      {}", &pointing_centre);
     }
 
-    let coarse_chan_flag_idxs: Vec<usize> = coarse_chan_flags
+    let coarse_chan_flag_idxs: Vec<usize> = flag_ctx
+        .coarse_chan_flags
         .iter()
         .enumerate()
         .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
         .collect();
     // TODO: actually display this.
-    let _fine_chan_flag_idxs: Vec<usize> = fine_chan_flags
+    let _fine_chan_flag_idxs: Vec<usize> = flag_ctx
+        .fine_chan_flags
         .iter()
         .enumerate()
         .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
         .collect();
-    let timestep_flag_idxs: Vec<usize> = timestep_flags
+    let timestep_flag_idxs: Vec<usize> = flag_ctx
+        .timestep_flags
         .iter()
         .enumerate()
         .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
         .collect();
+    let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
     #[allow(clippy::needless_collect)]
-    let baseline_flag_idxs: Vec<usize> = baseline_flags
+    let baseline_flag_idxs: Vec<usize> = flag_ctx
+        .get_baseline_flags(&ant_pairs)
         .iter()
         .enumerate()
         .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
@@ -187,8 +186,7 @@ pub fn show_param_info(
         (quack_duration_s / int_time_s).ceil(),
         int_time_s
     );
-    let num_avg_timesteps =
-        (prep_ctx.sel_timestep_range.len() as f64 / avg_time as f64).ceil() as usize;
+    let num_avg_timesteps = (vis_sel.timestep_range.len() as f64 / avg_time as f64).ceil() as usize;
     let avg_int_time_s = int_time_s * avg_time as f64;
     info!(
         "Output duration:      {:.3}s = {:3} * {:.3}s{}",
@@ -214,11 +212,10 @@ pub fn show_param_info(
         fine_chan_width_khz
     );
 
-    let out_bandwidth_mhz = prep_ctx.sel_coarse_chan_range.len() as f64
-        * fine_chans_per_coarse as f64
-        * fine_chan_width_khz
-        / 1e3;
-    let num_avg_chans = (prep_ctx.sel_coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64
+    let out_bandwidth_mhz =
+        vis_sel.coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64 * fine_chan_width_khz
+            / 1e3;
+    let num_avg_chans = (vis_sel.coarse_chan_range.len() as f64 * fine_chans_per_coarse as f64
         / avg_freq as f64)
         .ceil() as usize;
     let avg_fine_chan_width_khz = fine_chan_width_khz * avg_freq as f64;
@@ -255,7 +252,7 @@ pub fn show_param_info(
     let common_good_timestep_indices = corr_ctx.common_good_timestep_indices.clone();
     for (timestep_idx, timestep) in corr_ctx.timesteps.iter().enumerate() {
         let provided = provided_timestep_indices.contains(&timestep_idx);
-        let selected = prep_ctx.sel_timestep_range.contains(&timestep_idx);
+        let selected = vis_sel.timestep_range.contains(&timestep_idx);
         let common = common_timestep_indices.contains(&timestep_idx);
         let good = common_good_timestep_indices.contains(&timestep_idx);
         let flagged = timestep_flag_idxs.contains(&timestep_idx);
@@ -287,7 +284,7 @@ pub fn show_param_info(
         corr_ctx.num_provided_timesteps,
         corr_ctx.num_common_timesteps,
         corr_ctx.num_common_good_timesteps,
-        prep_ctx.sel_timestep_range.len(),
+        vis_sel.timestep_range.len(),
         timestep_flag_idxs.len(),
         if show_timestep_table {
             format!("\n{}", timestep_table)
@@ -302,7 +299,7 @@ pub fn show_param_info(
             "-> common good: {:?}",
             corr_ctx.common_good_timestep_indices
         );
-        info!("-> selected:    {:?}", prep_ctx.sel_timestep_range);
+        info!("-> selected:    {:?}", vis_sel.timestep_range);
     }
 
     let mut coarse_chan_table = table!([
@@ -324,7 +321,7 @@ pub fn show_param_info(
     let common_good_coarse_chan_indices = corr_ctx.common_good_coarse_chan_indices.clone();
     for (chan_idx, chan) in corr_ctx.coarse_chans.iter().enumerate() {
         let provided = provided_coarse_chan_indices.contains(&chan_idx);
-        let selected = prep_ctx.sel_coarse_chan_range.contains(&chan_idx);
+        let selected = vis_sel.coarse_chan_range.contains(&chan_idx);
         let common = common_coarse_chan_indices.contains(&chan_idx);
         let good = common_good_coarse_chan_indices.contains(&chan_idx);
         let flagged = coarse_chan_flag_idxs.contains(&chan_idx);
@@ -351,7 +348,7 @@ pub fn show_param_info(
         corr_ctx.num_provided_coarse_chans,
         corr_ctx.num_common_coarse_chans,
         corr_ctx.num_common_good_coarse_chans,
-        prep_ctx.sel_coarse_chan_range.len(),
+        vis_sel.coarse_chan_range.len(),
         coarse_chan_flag_idxs.len(),
         if show_coarse_chan_table { format!("\n{}", coarse_chan_table) } else { "".into() }
     );
@@ -366,7 +363,7 @@ pub fn show_param_info(
             "-> common good: {:?}",
             corr_ctx.common_good_coarse_chan_indices
         );
-        info!("-> selected:    {:?}", prep_ctx.sel_coarse_chan_range);
+        info!("-> selected:    {:?}", vis_sel.coarse_chan_range);
     }
 
     let mut ant_table = table!([
@@ -381,7 +378,7 @@ pub fn show_param_info(
     ant_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
 
     for (ant_idx, ant) in corr_ctx.metafits_context.antennas.iter().enumerate() {
-        let flagged = *antenna_flags.get(ant_idx).unwrap_or(&false);
+        let flagged = *flag_ctx.antenna_flags.get(ant_idx).unwrap_or(&false);
         let row = row![r =>
             format!("ant{}:", ant_idx),
             ant.tile_id,
@@ -397,7 +394,8 @@ pub fn show_param_info(
     debug!(
         "Antenna details (all={}, flag={}):{}",
         corr_ctx.metafits_context.num_ants,
-        antenna_flags
+        flag_ctx
+            .antenna_flags
             .iter()
             .enumerate()
             .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
@@ -411,22 +409,20 @@ pub fn show_param_info(
         "Baseline Details (all={}, auto={}, select={}, flag={}):",
         corr_ctx.metafits_context.num_baselines,
         corr_ctx.metafits_context.num_ants,
-        prep_ctx.sel_baseline_idxs.len(),
+        vis_sel.baseline_idxs.len(),
         baseline_flag_idxs.len(),
     );
 
     // if !show_baseline_table {
-    //     info!("-> selected:    {:?}", prep_ctx.sel_baseline_idxs);
+    //     info!("-> selected:    {:?}", vis_sel.baseline_idxs);
     //     info!("-> flags:    {:?}", baseline_flag_idxs);
     // }
 
-    // TODO: show:
-    // - estimated memory consumption
-    // - free memory with https://docs.rs/sys-info/latest/sys_info/fn.mem_info.html
+    // TODO: show free memory with https://docs.rs/sys-info/latest/sys_info/fn.mem_info.html
 
-    let num_sel_timesteps = prep_ctx.sel_timestep_range.len();
-    let num_sel_chans = prep_ctx.sel_coarse_chan_range.len() * fine_chans_per_coarse;
-    let num_sel_baselines = prep_ctx.sel_baseline_idxs.len();
+    let num_sel_timesteps = vis_sel.timestep_range.len();
+    let num_sel_chans = vis_sel.coarse_chan_range.len() * fine_chans_per_coarse;
+    let num_sel_baselines = vis_sel.baseline_idxs.len();
     let num_sel_pols = corr_ctx.metafits_context.num_visibility_pols;
     let mem_per_timestep_gib = (num_sel_chans
         * num_sel_baselines
@@ -500,7 +496,6 @@ where
 {
     debug!("args:\n{:?}", &args);
 
-    // TODO: fix this
     #[allow(unused_mut)]
     let mut app = command!()
         .subcommand_precedence_over_arg(true)
@@ -692,53 +687,36 @@ where
     debug!("mwalib correlator context:\n{}", &corr_ctx);
 
     let mut prep_ctx = PreprocessContext::default();
+    let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+    let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
 
-    prep_ctx.sel_coarse_chan_range = get_coarse_chan_range(&corr_ctx).unwrap();
-    let mut coarse_chan_flags = get_coarse_chan_flags(&corr_ctx);
+    // ////////// //
+    // Selections //
+    // ////////// //
 
-    prep_ctx.sel_timestep_range = match matches.values_of("sel-time") {
-        Some(mut values) => {
-            if let (Some(from), Some(to)) = (values.next(), values.next()) {
-                let from = from.parse::<usize>().expect("cannot parse --sel-time from");
-                assert!(
-                    from < corr_ctx.num_timesteps,
-                    "invalid --sel-time from {}. must be < num_timesteps ({})",
-                    from,
-                    corr_ctx.num_timesteps
-                );
-                let to = to.parse::<usize>().expect("cannot parse --sel-time to");
-                assert!(
-                    to >= from && to < corr_ctx.num_timesteps,
-                    "invalid --sel-time from {} to {}, must be < num_timesteps ({})",
-                    from,
-                    to,
-                    corr_ctx.num_timesteps
-                );
-                from..to + 1
-            } else {
-                panic!("invalid --sel-time <from> <to>, two values must be provided");
-            }
+    if let Some(mut values) = matches.values_of("sel-time") {
+        // TODO: custom error types
+        if let (Some(from), Some(to)) = (values.next(), values.next()) {
+            let from = from.parse::<usize>().expect("cannot parse --sel-time from");
+            assert!(
+                from < corr_ctx.num_timesteps,
+                "invalid --sel-time from {}. must be < num_timesteps ({})",
+                from,
+                corr_ctx.num_timesteps
+            );
+            let to = to.parse::<usize>().expect("cannot parse --sel-time to");
+            assert!(
+                to >= from && to < corr_ctx.num_timesteps,
+                "invalid --sel-time from {} to {}, must be < num_timesteps ({})",
+                from,
+                to,
+                corr_ctx.num_timesteps
+            );
+            vis_sel.timestep_range = from..to + 1
+        } else {
+            panic!("invalid --sel-time <from> <to>, two values must be provided");
         }
-        _ => get_timestep_range(&corr_ctx).unwrap(),
     };
-
-    let flagged_timestep_idxs = matches.values_of("flag-times").map(|values| {
-        values
-            .map(|value| {
-                if let Ok(timestep_idx) = value.parse::<usize>() {
-                    timestep_idx
-                } else {
-                    panic!("unable to parse timestep value: {}", value);
-                }
-            })
-            .collect()
-    });
-    let timestep_flags = get_timestep_flags(&corr_ctx, flagged_timestep_idxs);
-    let mut antenna_flags = get_antenna_flags(&corr_ctx);
-    prep_ctx.sel_baseline_idxs = (0..corr_ctx.metafits_context.num_baselines).collect::<Vec<_>>();
-    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
-
-    let mut fine_chan_flags = vec![false; fine_chans_per_coarse];
 
     prep_ctx.array_pos = if matches.is_present("emulate-cotter") {
         info!("Using array position from Cotter.");
@@ -756,7 +734,12 @@ where
         matches.values_of("phase-centre"),
         matches.is_present("pointing-centre"),
     ) {
+        (Some(_), true) => {
+            // TODO: custom error type
+            panic!("--phase-centre can't be used with --pointing-centre");
+        }
         (Some(mut values), _) => {
+            // TODO: custom error type
             if let (Some(ra), Some(dec)) = (values.next(), values.next()) {
                 let ra = ra
                     .parse::<f64>()
@@ -781,30 +764,21 @@ where
     // Manual flagging //
     // /////////////// //
 
-    // coarse channels
-    if let Some(coarse_chans) = matches.values_of("flag-coarse-chans") {
-        for value in coarse_chans {
-            if let Ok(coarse_chan_idx) = value.parse::<usize>() {
-                coarse_chan_flags[coarse_chan_idx] = true;
-            } else {
-                panic!("unable to parse coarse chan value: {}", value);
-            }
-        }
-    }
+    // Timesteps
+    if let Some(values) = matches.values_of("flag-times") {
+        values
+            .map(|value| {
+                // TODO: custom error types
+                if let Ok(timestep_idx) = value.parse::<usize>() {
+                    flag_ctx.timestep_flags[timestep_idx] = true;
+                } else {
+                    panic!("unable to parse timestep value: {}", value);
+                }
+            })
+            .collect()
+    };
 
-    // fine channels
-    if let Some(fine_chans) = matches.values_of("flag-fine-chans") {
-        for value in fine_chans {
-            if let Ok(fine_chan_idx) = value.parse::<usize>() {
-                fine_chan_flags[fine_chan_idx] = true;
-            } else {
-                panic!("unable to parse fine_chan value: {}", value);
-            }
-        }
-    }
-
-    // time
-    // TODO
+    // TODO: init and end steps
     // let mut init_steps: usize = 0;
     // let mut end_steps: usize = 0;
     // if let Some(count_str) = matches.value_of("flag-init-steps") {
@@ -816,30 +790,53 @@ where
     //     // init_steps = todo!();
     // }
 
-    // antennae
-    // TODO
+    // coarse channels
+    if let Some(coarse_chans) = matches.values_of("flag-coarse-chans") {
+        for value in coarse_chans {
+            // TODO: custom error types
+            if let Ok(coarse_chan_idx) = value.parse::<usize>() {
+                flag_ctx.coarse_chan_flags[coarse_chan_idx] = true;
+            } else {
+                panic!("unable to parse coarse chan value: {}", value);
+            }
+        }
+    }
+
+    // fine channels
+    if let Some(fine_chans) = matches.values_of("flag-fine-chans") {
+        for value in fine_chans {
+            // TODO: custom error types
+            if let Ok(fine_chan_idx) = value.parse::<usize>() {
+                flag_ctx.fine_chan_flags[fine_chan_idx] = true;
+            } else {
+                panic!("unable to parse fine_chan value: {}", value);
+            }
+        }
+    }
+
+    // Antennas
     let ignore_metafits = matches.is_present("no-flag-metafits");
     if ignore_metafits {
         info!("Ignoring antenna flags from metafits.");
         // set antenna flags to all false
-        antenna_flags = vec![false; antenna_flags.len()];
+        flag_ctx.antenna_flags = vec![false; flag_ctx.antenna_flags.len()];
     }
 
     if let Some(antennae) = matches.values_of("flag-antennae") {
         for value in antennae {
+            // TODO: custom error types
             if let Ok(antenna_idx) = value.parse::<usize>() {
-                antenna_flags[antenna_idx] = true;
+                flag_ctx.antenna_flags[antenna_idx] = true;
             } else {
                 panic!("unable to parse antenna value: {}", value);
             }
         }
     }
-    // } else {
-    //     let init_seconds = context.metafits_context.quack_time_duration_ms as f64 / 1e3;
-    //     let edge_width_khz = 40.0;
-    //     info!("Using default flagging parameters. {} seconds, {} kHz edges", init_seconds, edge_width_khz);
-    //     // init_steps = todo!();
-    // }
+
+    // Baselines
+    if matches.is_present("flag-autos") {
+        flag_ctx.autos = true;
+    }
 
     // ///////// //
     // Averaging //
@@ -907,9 +904,10 @@ where
         _ => 1,
     };
 
-    let num_sel_timesteps = prep_ctx.sel_timestep_range.len();
-    let num_sel_chans = prep_ctx.sel_coarse_chan_range.len() * fine_chans_per_coarse;
-    let num_sel_baselines = prep_ctx.sel_baseline_idxs.len();
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let num_sel_timesteps = vis_sel.timestep_range.len();
+    let num_sel_chans = vis_sel.coarse_chan_range.len() * fine_chans_per_coarse;
+    let num_sel_baselines = vis_sel.baseline_idxs.len();
     let num_sel_pols = corr_ctx.metafits_context.num_visibility_pols;
     let bytes_per_timestep = num_sel_chans
         * num_sel_baselines
@@ -923,9 +921,11 @@ where
         matches.value_of("max-memory"),
     ) {
         (Some(_), Some(_)) => {
+            // TODO: custom error type
             panic!("you can't use --time-chunk and --max-memory at the same time");
         }
         (Some(steps_str), None) => {
+            // TODO: custom error type
             let steps = steps_str.parse().unwrap_or_else(|_| {
                 panic!(
                     "unable to parse --time-chunk \"{}\" as an unsigned integer",
@@ -941,6 +941,7 @@ where
             Some(steps)
         }
         (_, Some(mem_str)) => {
+            // TODO: custom error type
             let max_memory_bytes = mem_str.parse::<f64>().unwrap_or_else(|_| {
                 panic!("unable to parse --max-memory \"{}\" as a float", mem_str)
             }) * 1024.0_f64.powi(3);
@@ -974,8 +975,6 @@ where
         }
         info!("chunking output to {} timesteps per chunk", chunk_size);
     }
-
-    let baseline_flags = get_baseline_flags(&corr_ctx, &antenna_flags);
 
     prep_ctx.draw_progress = !matches.is_present("no-draw-progress");
 
@@ -1020,11 +1019,8 @@ where
     show_param_info(
         &corr_ctx,
         &prep_ctx,
-        &coarse_chan_flags,
-        &fine_chan_flags,
-        &timestep_flags,
-        &antenna_flags,
-        &baseline_flags,
+        &flag_ctx,
+        &vis_sel,
         avg_time,
         avg_freq,
         num_timesteps_per_chunk,
@@ -1040,7 +1036,6 @@ where
     for unimplemented_option in &[
         "flag-init",
         "flag-init-steps",
-        "flag-autos",
         "flag-end",
         "flag-end-steps",
         "flag-edge-width",
@@ -1060,6 +1055,7 @@ where
         "flag-times",
         "flag-coarse-chans",
         "flag-fine-chans",
+        "flag-autos",
         "no-flag-metafits",
         "flag-antennae",
         "sel-time",
@@ -1082,9 +1078,9 @@ where
             UvfitsWriter::from_mwalib(
                 uvfits_out,
                 &corr_ctx,
-                &prep_ctx.sel_timestep_range,
-                &prep_ctx.sel_coarse_chan_range,
-                &prep_ctx.sel_baseline_idxs,
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                &vis_sel.baseline_idxs,
                 Some(prep_ctx.array_pos),
                 Some(prep_ctx.phase_centre),
                 avg_time,
@@ -1100,9 +1096,9 @@ where
             writer
                 .initialize_from_mwalib(
                     &corr_ctx,
-                    &prep_ctx.sel_timestep_range,
-                    &prep_ctx.sel_coarse_chan_range,
-                    &prep_ctx.sel_baseline_idxs,
+                    &vis_sel.timestep_range,
+                    &vis_sel.coarse_chan_range,
+                    &vis_sel.baseline_idxs,
                     avg_time,
                     avg_freq,
                 )
@@ -1136,8 +1132,8 @@ where
             .index_axis(Axis(0), 0)
             .slice(s![
                 ..,
-                (prep_ctx.sel_coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
-                ..(prep_ctx.sel_coarse_chan_range.end * num_calsol_fine_chans_per_coarse)]
+                (vis_sel.coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
+                ..(vis_sel.coarse_chan_range.end * num_calsol_fine_chans_per_coarse)]
             ).to_owned()
     });
 
@@ -1161,7 +1157,7 @@ where
     // Chunking //
     // //////// //
 
-    let full_sel_timestep_range = prep_ctx.sel_timestep_range.clone();
+    let full_sel_timestep_range = vis_sel.timestep_range.clone();
     let chunk_size = if let Some(steps) = num_timesteps_per_chunk {
         steps
     } else {
@@ -1170,23 +1166,22 @@ where
     for mut timestep_chunk in &full_sel_timestep_range.clone().chunks(chunk_size) {
         let chunk_first_timestep = timestep_chunk.next().unwrap();
         let chunk_last_timestep = timestep_chunk.last().unwrap_or(chunk_first_timestep);
-        prep_ctx.sel_timestep_range = chunk_first_timestep..chunk_last_timestep + 1;
+        let chunk_vis_sel = VisSelection {
+            timestep_range: chunk_first_timestep..chunk_last_timestep + 1,
+            ..vis_sel.clone()
+        };
         if num_timesteps_per_chunk.is_some() {
             info!(
                 "processing timestep chunk {:?} of {:?} % {}",
-                prep_ctx.sel_timestep_range,
+                chunk_vis_sel.timestep_range,
                 full_sel_timestep_range.clone(),
                 chunk_size
             );
         }
-        let flag_array = init_flag_array(
-            &corr_ctx,
-            &prep_ctx.sel_timestep_range,
-            &prep_ctx.sel_coarse_chan_range,
-            Some(&timestep_flags),
-            Some(&coarse_chan_flags),
-            Some(&fine_chan_flags),
-            Some(&baseline_flags),
+        let flag_array = flag_ctx.to_array(
+            &chunk_vis_sel.timestep_range,
+            &chunk_vis_sel.coarse_chan_range,
+            chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
         );
 
         #[allow(unused_mut)]
@@ -1195,8 +1190,8 @@ where
             "read",
             context_to_jones_array(
                 &corr_ctx,
-                &prep_ctx.sel_timestep_range,
-                &prep_ctx.sel_coarse_chan_range,
+                &chunk_vis_sel.timestep_range,
+                &chunk_vis_sel.coarse_chan_range,
                 Some(flag_array),
                 prep_ctx.draw_progress,
             )
@@ -1215,6 +1210,7 @@ where
                 &mut flag_array,
                 &calsols_owned,
                 &mut durations,
+                &chunk_vis_sel,
             )
             .expect("unable to preprocess the chunk.");
 
@@ -1227,7 +1223,7 @@ where
                     &corr_ctx,
                     &flag_array,
                     flag_template,
-                    &prep_ctx.sel_coarse_chan_range
+                    &chunk_vis_sel.coarse_chan_range
                 )
                 .expect("unable to write flags")
             );
@@ -1237,7 +1233,7 @@ where
         //     &context,
         //     &chunk_timestep_range,
         //     &coarse_chan_range,
-        //     &prep_ctx.sel_baseline_idxs,
+        //     &chunk_vis_sel.baseline_idxs,
         //     avg_time,
         //     avg_freq,
         // );
@@ -1258,9 +1254,9 @@ where
                         weight_array.view(),
                         flag_array.view(),
                         &corr_ctx,
-                        &prep_ctx.sel_timestep_range,
-                        &prep_ctx.sel_coarse_chan_range,
-                        &prep_ctx.sel_baseline_idxs,
+                        &chunk_vis_sel.timestep_range,
+                        &chunk_vis_sel.coarse_chan_range,
+                        &chunk_vis_sel.baseline_idxs,
                         avg_time,
                         avg_freq,
                         prep_ctx.draw_progress,
@@ -1280,9 +1276,9 @@ where
                         weight_array.view(),
                         flag_array.view(),
                         &corr_ctx,
-                        &prep_ctx.sel_timestep_range,
-                        &prep_ctx.sel_coarse_chan_range,
-                        &prep_ctx.sel_baseline_idxs,
+                        &chunk_vis_sel.timestep_range,
+                        &chunk_vis_sel.coarse_chan_range,
+                        &chunk_vis_sel.baseline_idxs,
                         avg_time,
                         avg_freq,
                         prep_ctx.draw_progress,
