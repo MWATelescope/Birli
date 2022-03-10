@@ -139,7 +139,7 @@ pub mod selection;
 pub use selection::VisSelection;
 
 pub mod cli;
-pub use cli::parse_args;
+pub use cli::BirliContext;
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
@@ -149,6 +149,9 @@ cfg_if! {
         use std::os::raw::c_short;
     }
 }
+
+#[cfg(test)]
+pub mod test_common;
 
 #[macro_export]
 /// Time a statement and increment the timer given by name in the hashmap of durations
@@ -161,7 +164,7 @@ macro_rules! with_increment_duration {
                     $s
                 )*
             };
-            *$durs.entry($name).or_insert(Duration::default()) += _now.elapsed();
+            *$durs.entry($name.into()).or_insert(Duration::default()) += _now.elapsed();
             _res
         }
     };

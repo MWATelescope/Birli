@@ -121,7 +121,7 @@ impl PreprocessContext {
         flag_array: &mut Array3<bool>,
         // TODO: Jones needs to implement Clone before moving this into PreprocessContext
         calsols: &Option<Array2<Jones<f64>>>,
-        durations: &mut HashMap<&str, Duration>,
+        durations: &mut HashMap<String, Duration>,
         vis_sel: &VisSelection,
     ) -> Result<(), BirliError> {
         if self.correct_cable_lengths {
