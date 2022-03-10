@@ -1131,3 +1131,79 @@ where
         num_timesteps_per_chunk,
     })
 }
+
+#[cfg(test)]
+#[cfg(feature = "aoflagger")]
+mod tests_aoflagger {
+    use tempfile::tempdir;
+
+    use super::*;
+
+    // TODO: dedup
+    fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
+        let metafits_path = "tests/data/1254670392_avg/1254670392.fixed.metafits";
+        let gpufits_paths = [
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox02_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox03_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox04_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox05_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox06_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox07_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox08_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox09_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox10_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox11_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox12_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox13_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox14_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox15_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox16_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox17_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox18_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox19_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox20_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox21_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox22_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox23_00.fits",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox24_00.fits",
+        ];
+        (metafits_path, gpufits_paths)
+    }
+
+    #[test]
+    fn test_parse_args_no_corrections_default_rfi() {
+        let tmp_dir = tempdir().unwrap();
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+        let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-u",
+            uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains",
+            "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        let birli_ctx = parse_args(&args);
+        let BirliContext {
+            prep_ctx, io_ctx, ..
+        } = birli_ctx.unwrap();
+
+        assert!(matches!(prep_ctx.correct_cable_lengths, false));
+        assert!(matches!(prep_ctx.passband_gains, None));
+        assert!(matches!(prep_ctx.correct_digital_gains, false));
+        assert!(matches!(prep_ctx.correct_geometry, false));
+        assert!(matches!(prep_ctx.aoflagger_strategy, Some(_)));
+        assert_eq!(io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(io_ctx.gpufits_in, gpufits_paths.map(|p| p.to_string()));
+        assert_eq!(io_ctx.uvfits_out.unwrap(), uvfits_path.to_str().unwrap());
+    }
+}
