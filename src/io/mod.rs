@@ -26,21 +26,23 @@ use self::error::IOError;
 #[derive(Builder, Debug, Default)]
 pub struct IOContext {
     // in
-    /// The path to the metafits input file
+    /// The path to the .metafits input file
     #[builder(default)]
     pub metafits_in: String,
-    /// A vector of gpufits input paths
+    /// A vector of gpufits .fits input paths
     #[builder(default)]
     pub gpufits_in: Vec<String>,
+    /// Optional path to a .bin ao calibration solutions input file
+    pub aocalsols_in: Option<String>,
 
     // out
-    /// Optional uvfits output path
+    /// Optional .uvfits output path
     #[builder(default)]
     pub uvfits_out: Option<String>,
-    /// Optional measurement set output path
+    /// Optional .ms measurement set output path
     #[builder(default)]
     pub ms_out: Option<String>,
-    /// Optional .mwaf file path template (see `io::mwaf::FlagFileSet`)
+    /// Optional .mwaf flag file path template (see `io::mwaf::FlagFileSet`)
     #[builder(default)]
     pub flag_template: Option<String>,
 }

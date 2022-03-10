@@ -138,6 +138,9 @@ pub use preprocessing::PreprocessContext;
 pub mod selection;
 pub use selection::VisSelection;
 
+pub mod cli;
+pub use cli::parse_args;
+
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
         pub use flags::{flag_jones_array, flag_jones_array_existing};

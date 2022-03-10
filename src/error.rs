@@ -28,6 +28,10 @@ pub enum BirliError {
         hdu_info: String,
     },
 
+    #[error("You selected dry run")]
+    /// enum variant for when a dry run is selected
+    DryRun {},
+
     #[error("bad array shape supplied to argument {argument} of function {function}. expected {expected}, received {received}")]
     /// Error for bad array shape in provided argument
     BadArrayShape {
