@@ -9,10 +9,11 @@ pub mod uvfits;
 
 use std::{ops::Range, path::Path};
 
+use derive_builder::Builder;
 use log::trace;
 use marlu::{
     io::{ms::MeasurementSetWriter, VisWritable},
-    mwalib::CorrelatorContext,
+    mwalib::{CorrelatorContext, MwalibError},
     Jones, LatLngHeight, RADec,
 };
 use uvfits::UvfitsWriter;
@@ -20,6 +21,42 @@ use uvfits::UvfitsWriter;
 use crate::ndarray::{ArrayView3, ArrayView4, ArrayViewMut3};
 
 use self::error::IOError;
+
+/// Groups together parameters related to I/O
+#[derive(Builder, Debug, Default)]
+pub struct IOContext {
+    // in
+    /// The path to the metafits input file
+    #[builder(default)]
+    pub metafits_in: String,
+    /// A vector of gpufits input paths
+    #[builder(default)]
+    pub gpufits_in: Vec<String>,
+
+    // out
+    /// Optional uvfits output path
+    #[builder(default)]
+    pub uvfits_out: Option<String>,
+    /// Optional measurement set output path
+    #[builder(default)]
+    pub ms_out: Option<String>,
+    /// Optional .mwaf file path template (see `io::mwaf::FlagFileSet`)
+    #[builder(default)]
+    pub flag_template: Option<String>,
+}
+
+impl IOContext {
+    /// Get the `mwalib::CorrelatorContext` from metafits and gpufits
+    ///
+    /// # Errors
+    ///
+    /// see `mwalib::CorrelatorContext::new`
+    pub fn get_corr_ctx(&self) -> Result<CorrelatorContext, MwalibError> {
+        CorrelatorContext::new(&self.metafits_in, &self.gpufits_in)
+    }
+
+    // TODO: pub fn validate_params(&self), checks permissions
+}
 
 /// The container has visibilities which can be read by passing in a mwalib
 /// CorrelatorContext and the range of values to read.

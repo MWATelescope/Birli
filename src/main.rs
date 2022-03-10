@@ -1,7 +1,7 @@
 use birli::{
     context_to_jones_array,
     flags::{add_dimension, flag_to_weight_array, get_weight_factor, FlagContext},
-    io::{aocal::AOCalSols, WriteableVis},
+    io::{aocal::AOCalSols, IOContext, WriteableVis},
     marlu::{
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
@@ -10,7 +10,7 @@ use birli::{
         LatLngHeight,
     },
     passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
-    with_increment_duration, write_flags, Axis, Complex, PreprocessContext, UvfitsWriter,
+    with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, UvfitsWriter,
     VisSelection,
 };
 use cfg_if::cfg_if;
@@ -677,23 +677,34 @@ where
     let matches = app.get_matches_from(args);
     trace!("arg matches:\n{:?}", &matches);
 
-    let metafits_path = matches
+    // // //
+    // IO //
+    // // //
+
+    let mut io_ctx = IOContext::default();
+
+    // TODO: proper error handling instead of .expect()
+    io_ctx.metafits_in = matches
         .value_of("metafits")
-        .expect("--metafits must be a valid path");
-    let fits_paths: Vec<&str> = matches.values_of("fits_paths").expect("--").collect();
+        .expect("--metafits must be a valid path")
+        .into();
+    io_ctx.gpufits_in = matches
+        .values_of("fits_paths")
+        .expect("--")
+        .map(|s| s.into())
+        .collect();
 
-    let corr_ctx =
-        CorrelatorContext::new(&metafits_path, &fits_paths).expect("unable to get mwalib context");
+    io_ctx.uvfits_out = matches.value_of("uvfits-out").map(|s| s.into());
+    io_ctx.ms_out = matches.value_of("ms-out").map(|s| s.into());
+    io_ctx.flag_template = matches.value_of("flag-template").map(|s| s.into());
+    let corr_ctx = io_ctx.get_corr_ctx().expect("unable to get mwalib context");
     debug!("mwalib correlator context:\n{}", &corr_ctx);
-
-    let mut prep_ctx = PreprocessContext::default();
-    let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-    let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
 
     // ////////// //
     // Selections //
     // ////////// //
 
+    let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
     if let Some(mut values) = matches.values_of("sel-time") {
         // TODO: custom error types
         if let (Some(from), Some(to)) = (values.next(), values.next()) {
@@ -718,51 +729,11 @@ where
         }
     };
 
-    prep_ctx.array_pos = if matches.is_present("emulate-cotter") {
-        info!("Using array position from Cotter.");
-        LatLngHeight {
-            longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
-            latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
-            height_metres: COTTER_MWA_HEIGHT_METRES,
-        }
-    } else {
-        info!("Using default MWA array position.");
-        LatLngHeight::new_mwa()
-    };
+    // //////// //
+    // Flagging //
+    // //////// //
 
-    prep_ctx.phase_centre = match (
-        matches.values_of("phase-centre"),
-        matches.is_present("pointing-centre"),
-    ) {
-        (Some(_), true) => {
-            // TODO: custom error type
-            panic!("--phase-centre can't be used with --pointing-centre");
-        }
-        (Some(mut values), _) => {
-            // TODO: custom error type
-            if let (Some(ra), Some(dec)) = (values.next(), values.next()) {
-                let ra = ra
-                    .parse::<f64>()
-                    .unwrap_or_else(|_| panic!("unable to parse RA {}", ra));
-                let dec = dec
-                    .parse::<f64>()
-                    .unwrap_or_else(|_| panic!("unable to parse DEC {}", dec));
-                debug!(
-                    "Using phase centre from command line: RA={}, DEC={}",
-                    ra, dec
-                );
-                RADec::new(ra.to_radians(), dec.to_radians())
-            } else {
-                panic!("Unable to parse RADec. from --phase-centre");
-            }
-        }
-        (_, true) => RADec::from_mwalib_tile_pointing(&corr_ctx.metafits_context),
-        _ => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
-    };
-
-    // /////////////// //
-    // Manual flagging //
-    // /////////////// //
+    let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
 
     // Timesteps
     if let Some(values) = matches.values_of("flag-times") {
@@ -976,11 +947,55 @@ where
         info!("chunking output to {} timesteps per chunk", chunk_size);
     }
 
-    prep_ctx.draw_progress = !matches.is_present("no-draw-progress");
-
     // ////////////////// //
     // Correction Options //
     // ////////////////// //
+
+    let mut prep_ctx = PreprocessContext::default();
+
+    prep_ctx.draw_progress = !matches.is_present("no-draw-progress");
+
+    prep_ctx.array_pos = if matches.is_present("emulate-cotter") {
+        info!("Using array position from Cotter.");
+        LatLngHeight {
+            longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
+            latitude_rad: COTTER_MWA_LATITUDE_RADIANS,
+            height_metres: COTTER_MWA_HEIGHT_METRES,
+        }
+    } else {
+        info!("Using default MWA array position.");
+        LatLngHeight::new_mwa()
+    };
+
+    prep_ctx.phase_centre = match (
+        matches.values_of("phase-centre"),
+        matches.is_present("pointing-centre"),
+    ) {
+        (Some(_), true) => {
+            // TODO: custom error type
+            panic!("--phase-centre can't be used with --pointing-centre");
+        }
+        (Some(mut values), _) => {
+            // TODO: custom error type
+            if let (Some(ra), Some(dec)) = (values.next(), values.next()) {
+                let ra = ra
+                    .parse::<f64>()
+                    .unwrap_or_else(|_| panic!("unable to parse RA {}", ra));
+                let dec = dec
+                    .parse::<f64>()
+                    .unwrap_or_else(|_| panic!("unable to parse DEC {}", dec));
+                debug!(
+                    "Using phase centre from command line: RA={}, DEC={}",
+                    ra, dec
+                );
+                RADec::new(ra.to_radians(), dec.to_radians())
+            } else {
+                panic!("Unable to parse RADec. from --phase-centre");
+            }
+        }
+        (_, true) => RADec::from_mwalib_tile_pointing(&corr_ctx.metafits_context),
+        _ => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
+    };
 
     // cable delay corrections are enabled by default if they haven't aleady beeen applied.
     let no_cable_delays = matches.is_present("no-cable-delay");
@@ -1011,6 +1026,48 @@ where
     );
     prep_ctx.correct_geometry =
         matches!(geometric_delays_applied, GeometricDelaysApplied::No) && !no_geometric_delays;
+
+    let calsols_owned = matches.value_of("apply-di-cal").map(|calsol_file| {
+        let calsols = AOCalSols::read_andre_binary(calsol_file).unwrap();
+        if calsols.di_jones.dim().0 != 1 {
+            panic!("only 1 timeblock must be supplied for calsols. Instead found {} timeblocks. dimensions {:?}", calsols.di_jones.dim().1, calsols.di_jones.dim());
+        }
+        // calsols.di_jones.index_axis_move(Axis(0), 0)
+        let calsol_chans = calsols.di_jones.dim().2;
+        if calsol_chans % corr_ctx.num_coarse_chans != 0 {
+            panic!(
+                "the number of calibration solution channels must be a multiple of the number of
+                coarse channels defined in the metafits {}. Instead found {}.
+                dimensions: {:?}",
+                corr_ctx.metafits_context.num_metafits_coarse_chans,
+                calsol_chans,
+                calsols.di_jones.dim());
+        }
+        let num_calsol_fine_chans_per_coarse = calsol_chans / corr_ctx.num_coarse_chans;
+        calsols.di_jones
+            .index_axis(Axis(0), 0)
+            .slice(s![
+                ..,
+                (vis_sel.coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
+                ..(vis_sel.coarse_chan_range.end * num_calsol_fine_chans_per_coarse)]
+            ).to_owned()
+    });
+
+    cfg_if! {
+        if #[cfg(feature = "aoflagger")] {
+            prep_ctx.aoflagger_strategy = if !matches.is_present("no-rfi") {
+                let aoflagger = unsafe { cxx_aoflagger_new() };
+                let default_strategy_filename = aoflagger.FindStrategyFileMWA();
+                let strategy_filename = matches.value_of("aoflagger-strategy").unwrap_or(&default_strategy_filename);
+                info!("will flag with strategy {}", strategy_filename);
+                Some(strategy_filename.into())
+                // TODO: log flag occupancy before / after flagging
+            } else {
+                info!("skipped aoflagger");
+                None
+            }
+        }
+    }
 
     // ///////// //
     // Show info //
@@ -1073,7 +1130,11 @@ where
     // used to time large operations
     let mut durations = HashMap::<&str, Duration>::new();
 
-    let mut uvfits_writer = matches.value_of("uvfits-out").map(|uvfits_out| {
+    // ////////// //
+    // Prepare IO //
+    // ////////// //
+
+    let mut uvfits_writer = io_ctx.uvfits_out.map(|uvfits_out| {
         with_increment_duration!(durations, "init", {
             UvfitsWriter::from_mwalib(
                 uvfits_out,
@@ -1089,7 +1150,7 @@ where
             .expect("couldn't initialise uvfits writer")
         })
     });
-    let mut ms_writer = matches.value_of("ms-out").map(|ms_out| {
+    let mut ms_writer = io_ctx.ms_out.map(|ms_out| {
         let writer =
             MeasurementSetWriter::new(ms_out, prep_ctx.phase_centre, Some(prep_ctx.array_pos));
         with_increment_duration!(durations, "init", {
@@ -1107,51 +1168,14 @@ where
         writer
     });
 
-    let calsols_owned = matches.value_of("apply-di-cal").map(|calsol_file| {
-        let calsols = with_increment_duration!(
-            durations,
-            "read",
-            AOCalSols::read_andre_binary(calsol_file).unwrap()
-        );
-        if calsols.di_jones.dim().0 != 1 {
-            panic!("only 1 timeblock must be supplied for calsols. Instead found {} timeblocks. dimensions {:?}", calsols.di_jones.dim().1, calsols.di_jones.dim());
-        }
-        // calsols.di_jones.index_axis_move(Axis(0), 0)
-        let calsol_chans = calsols.di_jones.dim().2;
-        if calsol_chans % corr_ctx.num_coarse_chans != 0 {
-            panic!(
-                "the number of calibration solution channels must be a multiple of the number of
-                coarse channels defined in the metafits {}. Instead found {}.
-                dimensions: {:?}",
-                corr_ctx.metafits_context.num_metafits_coarse_chans,
-                calsol_chans,
-                calsols.di_jones.dim());
-        }
-        let num_calsol_fine_chans_per_coarse = calsol_chans / corr_ctx.num_coarse_chans;
-        calsols.di_jones
-            .index_axis(Axis(0), 0)
-            .slice(s![
-                ..,
-                (vis_sel.coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
-                ..(vis_sel.coarse_chan_range.end * num_calsol_fine_chans_per_coarse)]
-            ).to_owned()
+    let gpubox_ids = corr_ctx.coarse_chans[vis_sel.coarse_chan_range.clone()]
+        .iter()
+        .map(|chan| chan.gpubox_number)
+        .collect::<Vec<_>>();
+    let mut flag_file_set = io_ctx.flag_template.map(|flag_template| {
+        FlagFileSet::new(&flag_template, &gpubox_ids, corr_ctx.mwa_version)
+            .expect("cannot create flag file writer")
     });
-
-    cfg_if! {
-        if #[cfg(feature = "aoflagger")] {
-            prep_ctx.aoflagger_strategy = if !matches.is_present("no-rfi") {
-                let aoflagger = unsafe { cxx_aoflagger_new() };
-                let default_strategy_filename = aoflagger.FindStrategyFileMWA();
-                let strategy_filename = matches.value_of("aoflagger-strategy").unwrap_or(&default_strategy_filename);
-                info!("will flag with strategy {}", strategy_filename);
-                Some(strategy_filename.into())
-                // TODO: log flag occupancy before / after flagging
-            } else {
-                info!("skipped aoflagger");
-                None
-            }
-        }
-    }
 
     // //////// //
     // Chunking //
@@ -1215,17 +1239,13 @@ where
             .expect("unable to preprocess the chunk.");
 
         // output flags (before averaging)
-        if let Some(flag_template) = matches.value_of("flag-template") {
+        if let Some(flag_file_set) = flag_file_set.as_mut() {
             with_increment_duration!(
                 durations,
                 "write",
-                write_flags(
-                    &corr_ctx,
-                    &flag_array,
-                    flag_template,
-                    &chunk_vis_sel.coarse_chan_range
-                )
-                .expect("unable to write flags")
+                flag_file_set
+                    .write_flag_array(&corr_ctx, &flag_array, &gpubox_ids)
+                    .expect("unable to write flags")
             );
         }
 
