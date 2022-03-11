@@ -87,7 +87,7 @@ pub fn display_build_info() {
 
 impl Display for BirliContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
+        writeln!(
             f,
             "{} version {}",
             env!("CARGO_PKG_NAME"),
@@ -96,17 +96,17 @@ impl Display for BirliContext {
 
         display_build_info();
 
-        write!(
+        writeln!(
             f,
             "observation name:     {}",
             self.corr_ctx.metafits_context.obs_name
         )?;
 
-        write!(f, "Array position:       {}", &self.prep_ctx.array_pos)?;
-        write!(f, "Phase centre:         {}", &self.prep_ctx.phase_centre)?;
+        writeln!(f, "Array position:       {}", &self.prep_ctx.array_pos)?;
+        writeln!(f, "Phase centre:         {}", &self.prep_ctx.phase_centre)?;
         let pointing_centre = RADec::from_mwalib_tile_pointing(&self.corr_ctx.metafits_context);
         if pointing_centre != self.prep_ctx.phase_centre {
-            write!(f, "Pointing centre:      {}", &pointing_centre)?;
+            writeln!(f, "Pointing centre:      {}", &pointing_centre)?;
         }
 
         let coarse_chan_flag_idxs: Vec<usize> = self
@@ -174,7 +174,7 @@ impl Display for BirliContext {
                 self.prep_ctx.phase_centre,
                 self.prep_ctx.array_pos,
             );
-        write!(
+        writeln!(
             f,
             "Scheduled start:      {} {} UTC, unix={:.3}, gps={:.3}, mjd={:.3}, lmst={:7.4}°, lmst2k={:7.4}°, lat2k={:7.4}°",
             sched_start_date, sched_start_time,
@@ -190,7 +190,7 @@ impl Display for BirliContext {
             self.prep_ctx.phase_centre,
             self.prep_ctx.array_pos,
         );
-        write!(
+        writeln!(
             f,
 
             "Scheduled end:        {} {} UTC, unix={:.3}, gps={:.3}, mjd={:.3}, lmst={:7.4}°, lmst2k={:7.4}°, lat2k={:7.4}°",
@@ -204,7 +204,7 @@ impl Display for BirliContext {
         )?;
         let int_time_s = self.corr_ctx.metafits_context.corr_int_time_ms as f64 / 1e3;
         let sched_duration_s = self.corr_ctx.metafits_context.sched_duration_ms as f64 / 1e3;
-        write!(
+        writeln!(
             f,
             "Scheduled duration:   {:.3}s = {:3} * {:.3}s",
             sched_duration_s,
@@ -212,7 +212,7 @@ impl Display for BirliContext {
             int_time_s
         )?;
         let quack_duration_s = self.corr_ctx.metafits_context.quack_time_duration_ms as f64 / 1e3;
-        write!(
+        writeln!(
             f,
             "Quack duration:       {:.3}s = {:3} * {:.3}s",
             quack_duration_s,
@@ -222,7 +222,7 @@ impl Display for BirliContext {
         let num_avg_timesteps =
             (self.vis_sel.timestep_range.len() as f64 / self.avg_time as f64).ceil() as usize;
         let avg_int_time_s = int_time_s * self.avg_time as f64;
-        write!(
+        writeln!(
             f,
             "Output duration:      {:.3}s = {:3} * {:.3}s{}",
             num_avg_timesteps as f64 * avg_int_time_s,
@@ -243,7 +243,7 @@ impl Display for BirliContext {
             .metafits_context
             .num_corr_fine_chans_per_coarse;
 
-        write!(
+        writeln!(
             f,
             "Scheduled Bandwidth:  {:.3}MHz = {:3} * {:3} * {:.3}kHz",
             total_bandwidth_mhz,
@@ -261,7 +261,7 @@ impl Display for BirliContext {
             / self.avg_freq as f64)
             .ceil() as usize;
         let avg_fine_chan_width_khz = fine_chan_width_khz * self.avg_freq as f64;
-        write!(
+        writeln!(
             f,
             "Output Bandwidth:     {:.3}MHz = {:9} * {:.3}kHz{}",
             out_bandwidth_mhz,
@@ -322,7 +322,7 @@ impl Display for BirliContext {
 
         let show_timestep_table = true;
 
-        write!(
+        writeln!(
             f,
             "Timestep details (all={}, provided={}, common={}, good={}, select={}, flag={}):{}",
             self.corr_ctx.num_timesteps,
@@ -338,22 +338,22 @@ impl Display for BirliContext {
             }
         )?;
         if !show_timestep_table {
-            write!(
+            writeln!(
                 f,
                 "-> provided:    {:?}",
                 self.corr_ctx.provided_timestep_indices
             )?;
-            write!(
+            writeln!(
                 f,
                 "-> common:      {:?}",
                 self.corr_ctx.common_timestep_indices
             )?;
-            write!(
+            writeln!(
                 f,
                 "-> common good: {:?}",
                 self.corr_ctx.common_good_timestep_indices
             )?;
-            write!(f, "-> selected:    {:?}", self.vis_sel.timestep_range)?;
+            writeln!(f, "-> selected:    {:?}", self.vis_sel.timestep_range)?;
         }
 
         let mut coarse_chan_table = table!([
@@ -396,7 +396,7 @@ impl Display for BirliContext {
 
         let show_coarse_chan_table = true;
 
-        write!(
+        writeln!(
             f,
             "Coarse channel details (metafits={}, provided={}, common={}, good={}, select={}, flag={}):{}",
             self.corr_ctx.num_coarse_chans,
@@ -409,22 +409,22 @@ impl Display for BirliContext {
         )?;
 
         if !show_coarse_chan_table {
-            write!(
+            writeln!(
                 f,
                 "-> provided:    {:?}",
                 self.corr_ctx.provided_coarse_chan_indices
             )?;
-            write!(
+            writeln!(
                 f,
                 "-> common:      {:?}",
                 self.corr_ctx.common_coarse_chan_indices
             )?;
-            write!(
+            writeln!(
                 f,
                 "-> common good: {:?}",
                 self.corr_ctx.common_good_coarse_chan_indices
             )?;
-            write!(f, "-> selected:    {:?}", self.vis_sel.coarse_chan_range)?;
+            writeln!(f, "-> selected:    {:?}", self.vis_sel.coarse_chan_range)?;
         }
 
         let mut ant_table = table!([
@@ -466,7 +466,7 @@ impl Display for BirliContext {
 
         // let show_baseline_table = false;
 
-        write!(
+        writeln!(
             f,
             "Baseline Details (all={}, auto={}, select={}, flag={}):",
             self.corr_ctx.metafits_context.num_baselines,
@@ -489,7 +489,7 @@ impl Display for BirliContext {
                 + std::mem::size_of::<bool>())) as f64
             / 1024.0_f64.powi(3);
 
-        write!(
+        writeln!(
             f,
             "Estimated memory usage per timestep =           {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>) = {:7.02} GiB",
             num_sel_chans,
@@ -502,7 +502,7 @@ impl Display for BirliContext {
         )?;
 
         if let Some(num_timesteps) = self.num_timesteps_per_chunk {
-            write!(
+            writeln!(
                 f,
                 "Estimated memory per chunk          = {:5}ts * {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>) = {:7.02} GiB",
                 num_timesteps,
@@ -516,7 +516,7 @@ impl Display for BirliContext {
             )?;
         }
 
-        write!(
+        writeln!(
             f,
             "Estimated memory selected           = {:5}ts * {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>) = {:7.02} GiB",
             num_sel_timesteps,
@@ -537,7 +537,7 @@ impl Display for BirliContext {
                 + std::mem::size_of::<bool>())) as f64
             / 1024.0_f64.powi(3);
 
-        write!(
+        writeln!(
             f,
             "Estimated output size               = {:5}ts * {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>) = {:7.02} GiB",
             num_avg_timesteps,
@@ -548,6 +548,12 @@ impl Display for BirliContext {
             std::mem::size_of::<f32>(),
             std::mem::size_of::<bool>(),
             avg_mem_per_timestep_gib * num_avg_timesteps as f64,
+        )?;
+
+        writeln!(
+            f,
+            "Preprocessing Context: \n{}",
+            &self.prep_ctx
         )?;
 
         Ok(())
@@ -1168,8 +1174,6 @@ impl BirliContext {
 
         info!("{}", &result);
 
-        result.prep_ctx.log_info();
-
         if matches.is_present("dry-run") {
             return Err(DryRun {});
         }
@@ -1412,6 +1416,54 @@ impl BirliContext {
         };
 
         Ok(durations)
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "aoflagger")]
+mod tests {
+    use tempfile::tempdir;
+
+    use crate::{test_common::*, BirliContext};
+
+    #[test]
+    fn test_birli_context_display_doesnt_crash() {
+        let tmp_dir = tempdir().unwrap();
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+        let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-u",
+            uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains",
+            "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+
+        assert!(!birli_ctx.prep_ctx.correct_cable_lengths);
+        assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
+        assert!(!birli_ctx.prep_ctx.correct_digital_gains);
+        assert!(!birli_ctx.prep_ctx.correct_geometry);
+        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.gpufits_in,
+            gpufits_paths.map(|p| p.to_string())
+        );
+
+        let display = format!("{}", &birli_ctx);
+        assert!(display.contains("high_2019B_2458765_EOR0"));
+        assert!(display.contains("Will not correct cable lengths"));
     }
 }
 

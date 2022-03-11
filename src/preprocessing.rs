@@ -13,7 +13,7 @@ use crate::{
 use cfg_if::cfg_if;
 use derive_builder::Builder;
 use log::info;
-use std::{collections::HashMap, fmt::Debug, time::Duration};
+use std::{collections::HashMap, fmt::{Debug, Display}, time::Duration};
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
@@ -53,51 +53,60 @@ pub struct PreprocessContext {
     pub draw_progress: bool,
 }
 
-impl PreprocessContext {
-    /// Write a description of what this preprocessing context does to the info logs
-    pub fn log_info(&self) {
-        info!(
+impl Display for PreprocessContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
             "{} correct cable lengths.",
             if self.correct_cable_lengths {
                 "Will"
             } else {
                 "Will not"
             }
-        );
-        info!(
+        )?;
+        writeln!(
+            f,
             "{} correct digital gains.",
             if self.correct_digital_gains {
                 "Will"
             } else {
                 "Will not"
             }
-        );
-        info!(
+        )?;
+        writeln!(
+            f,
             "{} correct coarse pfb passband gains.",
             if self.passband_gains.is_some() {
                 "Will"
             } else {
                 "Will not"
             }
-        );
+        )?;
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
                 if let Some(strategy) = &self.aoflagger_strategy {
-                    info!("Will flag with aoflagger strategy {}", strategy);
+                    writeln!(f, "Will flag with aoflagger strategy {}", strategy)?;
                 } else {
-                    info!("Will not flag with aoflagger");
+                    writeln!(f, "Will not flag with aoflagger")?;
                 }
             }
         }
-        info!(
+        writeln!(
+            f,
             "{} correct geometry.",
             if self.correct_geometry {
                 "Will"
             } else {
                 "Will not"
             }
-        );
+        )?;
+        Ok(())
     }
+}
+
+impl PreprocessContext {
+    /// Write a description of what this preprocessing context does to the info logs
+    pub fn log_info(&self) {}
 
     /// Preprocess visibilities for a chunk of correlator data
     ///
