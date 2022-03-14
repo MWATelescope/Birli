@@ -1545,6 +1545,7 @@ mod tests {
 
     #[test]
     fn test_scrunch_gains_mwax_even_scrunch_even_channels() {
+        let corr_ctx = get_mwax_context();
         let base: i32 = 2;
         let ultrafine_gains: Vec<f64> = (0..12).map(|x| (base.pow(x)) as _).collect();
         let expected_gains: Vec<f64> = (0..12 / 2)
@@ -1557,7 +1558,11 @@ mod tests {
                 (left / 4. + center / 2. + right / 4.) as f64
             })
             .collect();
-        let scrunched_gains = scrunch_gains(&ultrafine_gains, 2, ScrunchType::CenterSymmetric);
+        let scrunched_gains = scrunch_gains(
+            &ultrafine_gains,
+            2,
+            ScrunchType::from_mwa_version(corr_ctx.metafits_context.mwa_version.unwrap()).unwrap(),
+        );
         assert_eq!(scrunched_gains, expected_gains);
     }
 
