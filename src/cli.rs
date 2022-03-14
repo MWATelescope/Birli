@@ -2,7 +2,7 @@
 
 use crate::{
     context_to_jones_array,
-    error::{BirliError, BirliError::DryRun},
+    error::{BirliError, BirliError::DryRun, CLIError::InvalidCommandLineArgument},
     flags::FlagContext,
     flags::{add_dimension, flag_to_weight_array, get_weight_factor},
     io::IOContext,
@@ -610,7 +610,7 @@ impl BirliContext {
 
                 // selection options
                 // TODO: make this work the same way as rust ranges. start <= x < end
-                arg!(--"sel-time" "[WIP] Timestep index range (inclusive) to select")
+                arg!(--"sel-time" "Timestep index range (inclusive) to select")
                     .help_heading("SELECTION")
                     .value_names(&["MIN", "MAX"])
                     .required(false),
@@ -788,29 +788,28 @@ impl BirliContext {
         // ////////// //
 
         let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-        if let Some(mut values) = matches.values_of("sel-time") {
-            // TODO: custom error types
-            if let (Some(from), Some(to)) = (values.next(), values.next()) {
-                let from = from.parse::<usize>().expect("cannot parse --sel-time from");
-                assert!(
-                    from < corr_ctx.num_timesteps,
-                    "invalid --sel-time from {}. must be < num_timesteps ({})",
-                    from,
-                    corr_ctx.num_timesteps
-                );
-                let to = to.parse::<usize>().expect("cannot parse --sel-time to");
-                assert!(
-                    to >= from && to < corr_ctx.num_timesteps,
-                    "invalid --sel-time from {} to {}, must be < num_timesteps ({})",
-                    from,
-                    to,
-                    corr_ctx.num_timesteps
-                );
-                vis_sel.timestep_range = from..to + 1
-            } else {
-                panic!("invalid --sel-time <from> <to>, two values must be provided");
+
+        match matches
+            .values_of_t::<usize>("sel-time")
+            .map(|v| (v[0], v[1]))
+        {
+            Ok((from, to)) => {
+                if from > to || to >= corr_ctx.num_timesteps {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--sel-time <FROM> <TO>".into(),
+                        expected: format!("from <= to < num_timesteps={}", corr_ctx.num_timesteps),
+                        received: format!("from={} to={}", from, to),
+                    }));
+                }
+                vis_sel.timestep_range = from..(to + 1);
             }
-        };
+            Err(err) => match err.kind() {
+                clap::ErrorKind::ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
+        }
+
+        // TODO: sel-ants, no-sel-flagged-ants, no-sel-autos
 
         // //////// //
         // Flagging //
@@ -1149,7 +1148,6 @@ impl BirliContext {
             "flag-autos",
             "no-flag-metafits",
             "flag-antennae",
-            "sel-time",
             "time-chunk",
             "max-memory",
         ] {
@@ -1473,31 +1471,14 @@ mod tests {
 
 #[cfg(test)]
 mod argparse_tests {
-    use tempfile::tempdir;
-
     use crate::{error::BirliError, test_common::*, BirliContext};
 
     #[test]
     fn test_parse_missing_input() {
-        let tmp_dir = tempdir().unwrap();
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
-        let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
 
         // no gpufits
-        let args = vec![
-            "birli",
-            "-m",
-            metafits_path,
-            "-u",
-            uvfits_path.to_str().unwrap(),
-            "--no-digital-gains",
-            "--no-draw-progress",
-            "--pfb-gains",
-            "none",
-            "--no-cable-delay",
-            "--no-geometric-delay",
-            "--emulate-cotter",
-        ];
+        let args = vec!["birli", "-m", metafits_path];
 
         match BirliContext::from_args(&args) {
             Err(BirliError::ClapError(inner)) => assert!(matches!(
@@ -1509,18 +1490,7 @@ mod argparse_tests {
         }
 
         // no metafits
-        let mut args = vec![
-            "birli",
-            "-u",
-            uvfits_path.to_str().unwrap(),
-            "--no-digital-gains",
-            "--no-draw-progress",
-            "--pfb-gains",
-            "none",
-            "--no-cable-delay",
-            "--no-geometric-delay",
-            "--emulate-cotter",
-        ];
+        let mut args = vec!["birli"];
         args.extend_from_slice(&gpufits_paths);
 
         match BirliContext::from_args(&args) {
@@ -1535,26 +1505,11 @@ mod argparse_tests {
 
     #[test]
     fn test_parse_invalid_input() {
-        let tmp_dir = tempdir().unwrap();
         let (metafits_path, mut gpufits_paths) = get_1254670392_avg_paths();
-        let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
 
         // test nonexistent metafits
 
-        let mut args = vec![
-            "birli",
-            "-m",
-            "nonexistent.metafits",
-            "-u",
-            uvfits_path.to_str().unwrap(),
-            "--no-digital-gains",
-            "--no-draw-progress",
-            "--pfb-gains",
-            "none",
-            "--no-cable-delay",
-            "--no-geometric-delay",
-            "--emulate-cotter",
-        ];
+        let mut args = vec!["birli", "-m", "nonexistent.metafits"];
         args.extend_from_slice(&gpufits_paths);
 
         assert!(matches!(
@@ -1564,26 +1519,46 @@ mod argparse_tests {
 
         gpufits_paths[0] = "nonexistent.fits";
 
-        let mut args = vec![
-            "birli",
-            "-m",
-            metafits_path,
-            "-u",
-            uvfits_path.to_str().unwrap(),
-            "--no-digital-gains",
-            "--no-draw-progress",
-            "--pfb-gains",
-            "none",
-            "--no-cable-delay",
-            "--no-geometric-delay",
-            "--emulate-cotter",
-        ];
+        let mut args = vec!["birli", "-m", metafits_path];
         args.extend_from_slice(&gpufits_paths);
 
         assert!(matches!(
             BirliContext::from_args(&args),
             Err(BirliError::MwalibError(_))
         ));
+    }
+
+    #[test]
+    fn test_parse_invalid_time_selection() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec!["birli", "-m", metafits_path, "--sel-time", "0", "999999"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+
+        let mut args = vec!["birli", "-m", metafits_path, "--sel-time", "2", "0"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_valid_time_selection() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec!["birli", "-m", metafits_path, "--sel-time", "1", "2"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { vis_sel, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert_eq!(vis_sel.timestep_range, 1..3);
     }
 }
 
