@@ -13,7 +13,11 @@ use crate::{
 use cfg_if::cfg_if;
 use derive_builder::Builder;
 use log::info;
-use std::{collections::HashMap, fmt::{Debug, Display}, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    time::Duration,
+};
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {

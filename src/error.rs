@@ -1,18 +1,47 @@
 //! Errors that can occur in Birli
 
+use marlu::mwalib;
 use thiserror::Error;
 
+/// Errors relating to CI
 #[derive(Error, Debug)]
 #[allow(clippy::upper_case_acronyms)]
+pub enum CLIError {
+    #[error("Invalid Command Line Argument")]
+    /// When a bad CLI argument is provided
+    InvalidCommandLineArgument {
+        /// The option for which the argument was provided
+        option: String,
+        /// The argument that was expected
+        expected: String,
+        /// The argument that was received instead
+        received: String,
+    },
+}
+
 /// An enum of all the errors possible in Birli
+#[derive(Error, Debug)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum BirliError {
-    #[error("IO Error: {0}")]
+    #[error(transparent)]
     /// Error derived from [`crate::io::error::IOError`]
     IOError(#[from] crate::io::error::IOError),
 
-    #[error("Calibration Error: {0}")]
+    #[error(transparent)]
     /// Error derived from [`crate::calibration::CalibrationError`]
     CalibrationError(#[from] crate::calibration::CalibrationError),
+
+    #[error(transparent)]
+    /// Error derived from [`clap::Error`]
+    ClapError(#[from] clap::Error),
+
+    #[error(transparent)]
+    /// Error derived from [`crate::errors::CLIError`]
+    CLIError(#[from] CLIError),
+
+    #[error(transparent)]
+    /// Error derived from [`mwalib::errors::MwalibError`]
+    MwalibError(#[from] mwalib::MwalibError),
 
     #[error("No common timesteps found. CorrelatorContext hdu info: {hdu_info}")]
     /// Error for when gpuboxes provided have no overlapping visibilities
@@ -50,17 +79,6 @@ pub enum BirliError {
     InsufficientMemory {
         /// The amount of memory we think we need
         need_gib: usize,
-    },
-
-    #[error("Invalid Command Line Argument")]
-    /// When a bad CLI argument is provided
-    InvalidCommandLineArgument {
-        /// The option for which the argument was provided
-        option: String,
-        /// The argument that was expected
-        expected: String,
-        /// The argument that was received instead
-        received: String,
     },
 
     #[error("Invalid MWA Version")]

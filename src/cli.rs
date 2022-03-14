@@ -67,22 +67,28 @@ include!(concat!(env!("OUT_DIR"), "/built.rs"));
 
 /// stolen from hyperdrive
 /// Write many info-level log lines of how this executable was compiled.
-pub fn display_build_info() {
+///
+/// # Errors
+///
+/// propagates writeln! fails
+pub fn fmt_build_info(f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match GIT_HEAD_REF {
         Some(hr) => {
             let dirty = GIT_DIRTY.unwrap_or(false);
-            info!(
+            writeln!(
+                f,
                 "Compiled on git commit hash: {}{}",
                 GIT_COMMIT_HASH.unwrap(),
                 if dirty { " (dirty)" } else { "" }
-            );
-            info!("            git head ref: {}", hr);
+            )?;
+            writeln!(f, "            git head ref: {}", hr)?;
         }
-        None => info!("Compiled on git commit hash: <no git info>"),
+        None => writeln!(f, "Compiled on git commit hash: <no git info>")?,
     }
-    info!("            {}", BUILT_TIME_UTC);
-    info!("         with compiler {}", RUSTC_VERSION);
-    info!("");
+    writeln!(f, "            {}", BUILT_TIME_UTC)?;
+    writeln!(f, "         with compiler {}", RUSTC_VERSION)?;
+    writeln!(f)?;
+    Ok(())
 }
 
 impl Display for BirliContext {
@@ -94,7 +100,7 @@ impl Display for BirliContext {
             env!("CARGO_PKG_VERSION"),
         )?;
 
-        display_build_info();
+        fmt_build_info(f)?;
 
         writeln!(
             f,
@@ -550,22 +556,22 @@ impl Display for BirliContext {
             avg_mem_per_timestep_gib * num_avg_timesteps as f64,
         )?;
 
-        writeln!(
-            f,
-            "Preprocessing Context: \n{}",
-            &self.prep_ctx
-        )?;
+        writeln!(f, "Preprocessing Context: \n{}", &self.prep_ctx)?;
 
         Ok(())
     }
 }
 
 impl BirliContext {
-    /// Parse an iterator of arguments into a BirliContext.
+    /// Parse an iterator of arguments, `args` into a `BirliContext`.
     ///
     /// # Errors
     ///
     /// TODO: parsing error handling
+    ///
+    /// Can raise:
+    /// - `clap::Error` if clap cannot parse `args`
+    /// - `mwalib::MwalibError` if mwalib can't open the input files.
     pub fn from_args<I, T>(args: I) -> Result<BirliContext, BirliError>
     where
         I: IntoIterator<Item = T>,
@@ -751,23 +757,21 @@ impl BirliContext {
             }
         };
 
-        // base command line matches
-        let matches = app.get_matches_from(args);
+        let matches = app.try_get_matches_from_mut(args)?;
         trace!("arg matches:\n{:?}", &matches);
 
         // // //
         // IO //
         // // //
 
-        // TODO: proper error handling instead of .expect()
         let io_ctx = IOContext {
             metafits_in: matches
                 .value_of("metafits")
-                .expect("--metafits must be a valid path")
+                .expect("--metafits is a required argument, enforced by clap")
                 .into(),
             gpufits_in: matches
                 .values_of("fits_paths")
-                .expect("--")
+                .expect("<PATHS> is a required argument, enforced by clap")
                 .map(|s| s.into())
                 .collect(),
             aocalsols_in: matches.value_of("apply-di-cal").map(|s| s.into()),
@@ -776,7 +780,7 @@ impl BirliContext {
             flag_template: matches.value_of("flag-template").map(|s| s.into()),
         };
 
-        let corr_ctx = io_ctx.get_corr_ctx().expect("unable to get mwalib context");
+        let corr_ctx = io_ctx.get_corr_ctx()?;
         debug!("mwalib correlator context:\n{}", &corr_ctx);
 
         // ////////// //
@@ -1467,6 +1471,122 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod argparse_tests {
+    use tempfile::tempdir;
+
+    use crate::{error::BirliError, test_common::*, BirliContext};
+
+    #[test]
+    fn test_parse_missing_input() {
+        let tmp_dir = tempdir().unwrap();
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+        let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
+
+        // no gpufits
+        let args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-u",
+            uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains",
+            "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--emulate-cotter",
+        ];
+
+        match BirliContext::from_args(&args) {
+            Err(BirliError::ClapError(inner)) => assert!(matches!(
+                inner.kind(),
+                clap::error::ErrorKind::MissingRequiredArgument { .. }
+            )),
+            Err(e) => panic!("expected missing required argument error, not {}", e),
+            Ok(_) => panic!("expected error, but got Ok(_)"),
+        }
+
+        // no metafits
+        let mut args = vec![
+            "birli",
+            "-u",
+            uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains",
+            "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        match BirliContext::from_args(&args) {
+            Err(BirliError::ClapError(inner)) => assert!(matches!(
+                inner.kind(),
+                clap::error::ErrorKind::MissingRequiredArgument { .. }
+            )),
+            Err(e) => panic!("expected missing required argument error, not {}", e),
+            Ok(_) => panic!("expected error, but got Ok(_)"),
+        }
+    }
+
+    #[test]
+    fn test_parse_invalid_input() {
+        let tmp_dir = tempdir().unwrap();
+        let (metafits_path, mut gpufits_paths) = get_1254670392_avg_paths();
+        let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
+
+        // test nonexistent metafits
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            "nonexistent.metafits",
+            "-u",
+            uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains",
+            "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::MwalibError(_))
+        ));
+
+        gpufits_paths[0] = "nonexistent.fits";
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-u",
+            uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains",
+            "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::MwalibError(_))
+        ));
+    }
+}
+
 /// These are basically integration tests, but if I put them in a separate
 /// module, then I don't get the coverage. :(
 /// All these tests require aoflagger because they either require flagging or
@@ -1585,6 +1705,27 @@ mod tests_aoflagger {
         compare_uvfits_with_csv(uvfits_path, expected_csv_path, F32Margin::default(), true);
     }
 
+    /// Test data generated with
+    ///
+    /// ```bash
+    /// cotter \
+    ///  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
+    ///  -o tests/data/1254670392_avg/1254670392.cotter.cable.uvfits \
+    ///  -allowmissing \
+    ///  -edgewidth 0 \
+    ///  -endflag 0 \
+    ///  -initflag 0 \
+    ///  -noantennapruning \
+    ///  -nogeom \
+    ///  -noflagautos \
+    ///  -noflagdcchannels \
+    ///  -nosbgains \
+    ///  -sbpassband tests/data/subband-passband-32ch-unitary.txt \
+    ///  -nostats \
+    ///  -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
+    ///  tests/data/1254670392_avg/1254670392*gpubox*.fits
+    /// ```
+
     #[test]
     #[ignore = "slow"]
     fn compare_cotter_uvfits_cable_only_rfi() {
@@ -1609,7 +1750,7 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--emulate-cotter",
         ];
-        args.extend_from_slice(&gpufits_paths[..1]);
+        args.extend_from_slice(&gpufits_paths);
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 

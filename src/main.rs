@@ -9,31 +9,33 @@ where
     T: Into<OsString> + Clone,
     I: Debug,
 {
-    match BirliContext::from_args(args) {
+    let birli_ctx = match BirliContext::from_args(args) {
+        Ok(birli_ctx) => birli_ctx,
         Err(BirliError::DryRun {}) => {
             info!("Dry run. No files will be written.");
+            return 0;
+        }
+        Err(BirliError::ClapError(inner)) => inner.exit(),
+        Err(e) => {
+            eprintln!("error parsing args: {:?}", e);
+            return 1;
+        }
+    };
+    match birli_ctx.run() {
+        Ok(durations) => {
+            info!(
+                "total duration: {:?}",
+                durations
+                    .into_iter()
+                    .fold(Duration::ZERO, |duration_sum, (name, duration)| {
+                        info!("{} duration: {:?}", name, duration);
+                        duration_sum + duration
+                    })
+            );
             0
         }
-        Ok(birli_ctx) => match birli_ctx.run() {
-            Ok(durations) => {
-                info!(
-                    "total duration: {:?}",
-                    durations
-                        .into_iter()
-                        .fold(Duration::ZERO, |duration_sum, (name, duration)| {
-                            info!("{} duration: {:?}", name, duration);
-                            duration_sum + duration
-                        })
-                );
-                0
-            }
-            Err(e) => {
-                eprintln!("preprocessing error: {}", e);
-                1
-            }
-        },
         Err(e) => {
-            eprintln!("error parsing args: {}", e);
+            eprintln!("preprocessing error: {}", e);
             1
         }
     }
