@@ -146,7 +146,6 @@ cfg_if! {
         pub use flags::{flag_jones_array, flag_jones_array_existing};
         pub use aoflagger_sys::{cxx_aoflagger_new, CxxAOFlagger, CxxFlagMask, UniquePtr, CxxImageSet};
         use ndarray::{ArrayBase, Dim, ViewRepr};
-        use std::os::raw::c_short;
     }
 }
 
@@ -168,33 +167,6 @@ macro_rules! with_increment_duration {
             _res
         }
     };
-}
-
-/// Get the version of the AOFlagger library from the library itself.
-///
-/// # Examples
-///
-/// ```rust
-/// use birli::get_aoflagger_version_string;
-/// use regex::Regex;
-///
-/// let aoflagger_version = get_aoflagger_version_string();
-/// // This ensures we're using aoflagger 3.*
-/// let version_regex = Regex::new(r"3\.\d+\.\d+").unwrap();
-/// assert!(version_regex.is_match(&aoflagger_version));
-/// ```
-#[cfg(feature = "aoflagger")]
-pub fn get_aoflagger_version_string() -> String {
-    let mut major: c_short = -1;
-    let mut minor: c_short = -1;
-    let mut sub_minor: c_short = -1;
-
-    unsafe {
-        let aoflagger = cxx_aoflagger_new();
-        aoflagger.GetVersion(&mut major, &mut minor, &mut sub_minor);
-    }
-
-    return format!("{}.{}.{}", major, minor, sub_minor);
 }
 
 /// Given a buffer from mwalib::CorrelatorContext.read_by_baseline, which is in the order
