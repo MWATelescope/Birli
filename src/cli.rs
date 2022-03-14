@@ -672,11 +672,10 @@ impl BirliContext {
                     .help_heading("FLAGGING"),
                 arg!(--"no-flag-dc" "[WIP] Do not flag DC centre chans")
                     .help_heading("FLAGGING"),
-                // TODO: rename to antennas
-                // -> antennae
+                // -> antennas
                 arg!(--"no-flag-metafits" "[WIP] Ignore antenna flags in metafits")
                     .help_heading("FLAGGING"),
-                arg!(--"flag-antennae" <ANTS>... "[WIP] Flag antenna indices")
+                arg!(--"flag-antennas" <ANTS>... "[WIP] Flag antenna indices")
                     .help_heading("FLAGGING")
                     .multiple_values(true)
                     .required(false),
@@ -818,73 +817,118 @@ impl BirliContext {
         let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
 
         // Timesteps
-        if let Some(values) = matches.values_of("flag-times") {
-            values
-                .map(|value| {
-                    // TODO: custom error types
-                    if let Ok(timestep_idx) = value.parse::<usize>() {
-                        flag_ctx.timestep_flags[timestep_idx] = true;
-                    } else {
-                        panic!("unable to parse timestep value: {}", value);
+
+        match matches.values_of_t::<usize>("flag-times") {
+            Ok(timestep_idxs) => {
+                for (value_idx, &timestep_idx) in timestep_idxs.iter().enumerate() {
+                    if timestep_idx >= corr_ctx.num_timesteps {
+                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                            option: "--flag-times <TIMESTEPS>...".into(),
+                            expected: format!(
+                                "timestep_idx < num_timesteps={}",
+                                corr_ctx.num_timesteps
+                            ),
+                            received: format!(
+                                "timestep_idxs[{}]={}. all:{:?}",
+                                value_idx, timestep_idx, timestep_idxs
+                            ),
+                        }));
                     }
-                })
-                .collect()
+                    flag_ctx.timestep_flags[timestep_idx] = true;
+                }
+            }
+            Err(err) => match err.kind() {
+                clap::ErrorKind::ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
         };
 
-        // TODO: init and end steps
-        // let mut init_steps: usize = 0;
-        // let mut end_steps: usize = 0;
-        // if let Some(count_str) = matches.value_of("flag-init-steps") {
-        //     init_steps = count_str.parse::<usize>().unwrap();
-        //     info!("Flagging {} initial timesteps", init_steps);
-        // }
-        // if let Some(seconds_str) = matches.value_of("flag-init") {
-        //     let init_seconds = seconds_str.parse::<f64>().unwrap();
-        //     // init_steps = todo!();
-        // }
+        // TODO: flag-init, flag-steps, flag-end, flag-end-steps,
 
         // coarse channels
-        if let Some(coarse_chans) = matches.values_of("flag-coarse-chans") {
-            for value in coarse_chans {
-                // TODO: custom error types
-                if let Ok(coarse_chan_idx) = value.parse::<usize>() {
+        match matches.values_of_t::<usize>("flag-coarse-chans") {
+            Ok(coarse_chan_idxs) => {
+                for (value_idx, &coarse_chan_idx) in coarse_chan_idxs.iter().enumerate() {
+                    if coarse_chan_idx >= corr_ctx.num_coarse_chans {
+                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                            option: "--flag-coarse-chans <CHANS>...".into(),
+                            expected: format!(
+                                "coarse_chan_idx < num_coarse_chans={}",
+                                corr_ctx.num_coarse_chans
+                            ),
+                            received: format!(
+                                "coarse_chan_idxs[{}]={}. all:{:?}",
+                                value_idx, coarse_chan_idx, coarse_chan_idxs
+                            ),
+                        }));
+                    }
                     flag_ctx.coarse_chan_flags[coarse_chan_idx] = true;
-                } else {
-                    panic!("unable to parse coarse chan value: {}", value);
                 }
             }
-        }
+            Err(err) => match err.kind() {
+                clap::ErrorKind::ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
+        };
 
         // fine channels
-        if let Some(fine_chans) = matches.values_of("flag-fine-chans") {
-            for value in fine_chans {
-                // TODO: custom error types
-                if let Ok(fine_chan_idx) = value.parse::<usize>() {
+        // TODO: flag-edge-width, flag-edge-chans, flag-dc, no-flag-dc,
+        match matches.values_of_t::<usize>("flag-fine-chans") {
+            Ok(fine_chan_idxs) => {
+                for (value_idx, &fine_chan_idx) in fine_chan_idxs.iter().enumerate() {
+                    if fine_chan_idx >= corr_ctx.metafits_context.num_corr_fine_chans_per_coarse {
+                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                            option: "--flag-fine-chans <CHANS>...".into(),
+                            expected: format!(
+                                "fine_chan_idx < num_fine_chans={}",
+                                corr_ctx.metafits_context.num_corr_fine_chans_per_coarse
+                            ),
+                            received: format!(
+                                "fine_chan_idxs[{}]={}. all:{:?}",
+                                value_idx, fine_chan_idx, fine_chan_idxs
+                            ),
+                        }));
+                    }
                     flag_ctx.fine_chan_flags[fine_chan_idx] = true;
-                } else {
-                    panic!("unable to parse fine_chan value: {}", value);
                 }
             }
-        }
+            Err(err) => match err.kind() {
+                clap::ErrorKind::ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
+        };
 
         // Antennas
-        let ignore_metafits = matches.is_present("no-flag-metafits");
-        if ignore_metafits {
+        if matches.is_present("no-flag-metafits") {
             info!("Ignoring antenna flags from metafits.");
             // set antenna flags to all false
             flag_ctx.antenna_flags = vec![false; flag_ctx.antenna_flags.len()];
         }
 
-        if let Some(antennae) = matches.values_of("flag-antennae") {
-            for value in antennae {
-                // TODO: custom error types
-                if let Ok(antenna_idx) = value.parse::<usize>() {
+        match matches.values_of_t::<usize>("flag-antennas") {
+            Ok(antenna_idxs) => {
+                for (value_idx, &antenna_idx) in antenna_idxs.iter().enumerate() {
+                    if antenna_idx >= corr_ctx.metafits_context.num_ants {
+                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                            option: "--flag-antennas <ANTS>...".into(),
+                            expected: format!(
+                                "antenna_idx < num_ants={}",
+                                corr_ctx.metafits_context.num_ants
+                            ),
+                            received: format!(
+                                "antenna_idxs[{}]={}. all:{:?}",
+                                value_idx, antenna_idx, antenna_idxs
+                            ),
+                        }));
+                    }
                     flag_ctx.antenna_flags[antenna_idx] = true;
-                } else {
-                    panic!("unable to parse antenna value: {}", value);
                 }
             }
-        }
+            Err(err) => match err.kind() {
+                clap::ErrorKind::ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
+        };
 
         // Baselines
         if matches.is_present("flag-autos") {
@@ -1147,7 +1191,7 @@ impl BirliContext {
             "flag-fine-chans",
             "flag-autos",
             "no-flag-metafits",
-            "flag-antennae",
+            "flag-antennas",
             "time-chunk",
             "max-memory",
         ] {
@@ -1559,6 +1603,183 @@ mod argparse_tests {
         let BirliContext { vis_sel, .. } = BirliContext::from_args(&args).unwrap();
 
         assert_eq!(vis_sel.timestep_range, 1..3);
+    }
+
+    #[test]
+    fn test_parse_invalid_time_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--flag-times",
+            "0",
+            "9999",
+            "--",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_valid_time_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-times", "2", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.timestep_flags[2]);
+        assert!(!flag_ctx.timestep_flags[1]);
+    }
+
+    #[test]
+    fn test_parse_invalid_coarse_chan_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--flag-coarse-chans",
+            "0",
+            "9999",
+            "--",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_valid_coarse_chan_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--flag-coarse-chans",
+            "2",
+            "--",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.coarse_chan_flags[2]);
+        assert!(!flag_ctx.coarse_chan_flags[1]);
+    }
+
+    #[test]
+    fn test_parse_invalid_fine_chan_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--flag-fine-chans",
+            "0",
+            "9999",
+            "--",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_valid_fine_chan_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-fine-chans", "2", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.fine_chan_flags[2]);
+        assert!(!flag_ctx.fine_chan_flags[1]);
+    }
+
+    #[test]
+    fn test_parse_invalid_antenna_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--flag-antennas",
+            "0",
+            "9999",
+            "--",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_valid_antenna_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-antennas", "2", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.antenna_flags[2]);
+        assert!(!flag_ctx.antenna_flags[1]);
+    }
+
+    #[test]
+    fn test_parse_no_flag_metafits_and_valid_antenna_flag() {
+        let (_, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            // in this metafits file, all ants are flagged.
+            "tests/data/1254670392_avg/1254670392.metafits",
+            "--no-flag-metafits",
+            "--flag-antennas",
+            "2",
+            "--",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.antenna_flags[2]);
+        assert!(!flag_ctx.antenna_flags[1]);
+    }
+
+    #[test]
+    fn test_parse_flag_autos() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-autos"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.autos);
     }
 }
 

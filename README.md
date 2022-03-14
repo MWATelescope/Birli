@@ -217,14 +217,14 @@ SELECTION:
         --no-sel-autos            [WIP] Deselect autocorrelations
         --no-sel-flagged-ants     [WIP] Deselect flagged antennas
         --sel-ants <ANTS>...      [WIP] Antenna to select
-        --sel-time <MIN> <MAX>    [WIP] Timestep index range (inclusive) to select
+        --sel-time <MIN> <MAX>    Timestep index range (inclusive) to select
 
 RESOURCE LIMITS:
         --max-memory <GIBIBYTES>    [WIP] Estimate --time-chunk with <GIBIBYTES> GiB each chunk.
         --time-chunk <STEPS>        [WIP] Process observation in chunks of <STEPS> timesteps.
 
 FLAGGING:
-        --flag-antennae <ANTS>...         [WIP] Flag antenna indices
+        --flag-antennas <ANTS>...         [WIP] Flag antenna indices
         --flag-autos                      [WIP] Flag auto correlations
         --flag-coarse-chans <CHANS>...    [WIP] Flag additional coarse chan indices
         --flag-dc                         [WIP] Force flagging of DC centre chans
