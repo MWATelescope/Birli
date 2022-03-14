@@ -660,39 +660,19 @@ mod tests {
     };
     use itertools::izip;
     use marlu::{
-        hifitime::Epoch, mwalib::CorrelatorContext, precession::precess_time, Complex, Jones,
-        LatLngHeight, RADec, XyzGeodetic, UVW,
+        hifitime::Epoch, precession::precess_time, Complex, Jones, LatLngHeight, RADec,
+        XyzGeodetic, UVW,
     };
     use ndarray::{s, Array2, Array3, Axis};
     use std::f64::consts::PI;
 
     use crate::{
-        approx::assert_abs_diff_eq, context_to_jones_array, corrections::ScrunchType, BirliError,
-        TestJones, VisSelection,
+        approx::assert_abs_diff_eq,
+        context_to_jones_array,
+        corrections::ScrunchType,
+        test_common::{get_mwa_ord_context, get_mwax_context},
+        BirliError, TestJones, VisSelection,
     };
-
-    // TODO: deduplicate from lib.rs
-    fn get_mwax_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
-
-    fn get_mwa_ord_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
 
     #[test]
     fn test_cable_length_corrections_mwax() {

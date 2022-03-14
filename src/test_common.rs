@@ -3,7 +3,7 @@ use crate::{
         fitsio, fitsio_sys,
         mwalib::{
             _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
-            get_required_fits_key,
+            get_required_fits_key, CorrelatorContext,
         },
         rubbl_casatables::{Table, TableOpenMode},
     },
@@ -51,6 +51,34 @@ pub fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
         "tests/data/1254670392_avg/1254670392_20191009153257_gpubox24_00.fits",
     ];
     (metafits_path, gpufits_paths)
+}
+
+#[allow(dead_code)]
+pub(crate) fn get_1254670392_avg_context() -> CorrelatorContext {
+    let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+    CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+}
+
+pub fn get_mwax_context() -> CorrelatorContext {
+    let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+    let gpufits_paths = vec![
+        "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+        "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+        "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+        "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+    ];
+    CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+}
+
+pub fn get_mwa_ord_context() -> CorrelatorContext {
+    let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
+    let gpufits_paths = vec![
+        "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
+        "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
+        "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
+        "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
+    ];
+    CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
 }
 
 lazy_static! {

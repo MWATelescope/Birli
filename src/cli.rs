@@ -1239,7 +1239,7 @@ impl BirliContext {
     pub fn run(self) -> Result<HashMap<String, Duration>, BirliError> {
         let BirliContext {
             corr_ctx,
-            prep_ctx,
+            mut prep_ctx,
             vis_sel,
             flag_ctx,
             io_ctx,
@@ -1255,7 +1255,7 @@ impl BirliContext {
         // Prepare IO //
         // ////////// //
 
-        let calsols_owned = io_ctx.aocalsols_in.map(|calsol_file| {
+        prep_ctx.calsols = io_ctx.aocalsols_in.map(|calsol_file| {
             let calsols = AOCalSols::read_andre_binary(calsol_file).unwrap();
             if calsols.di_jones.dim().0 != 1 {
                 panic!("only 1 timeblock must be supplied for calsols. Instead found {} timeblocks. dimensions {:?}", calsols.di_jones.dim().1, calsols.di_jones.dim());
@@ -1378,7 +1378,6 @@ impl BirliContext {
                     &mut jones_array,
                     &mut weight_array,
                     &mut flag_array,
-                    &calsols_owned,
                     &mut durations,
                     &chunk_vis_sel,
                 )

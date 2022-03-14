@@ -44,6 +44,8 @@ pub struct PreprocessContext {
     pub correct_digital_gains: bool,
     /// the pfb passband gains to use for corrections
     pub passband_gains: Option<Vec<f64>>,
+    /// The calibration solutions to apply
+    pub calsols: Option<Array2<Jones<f64>>>,
     /// Whether geometric corrections are enabled
     #[builder(default = "true")]
     pub correct_geometry: bool,
@@ -119,7 +121,6 @@ impl PreprocessContext {
     /// * `jones_array` - Array of Jones visibilties
     /// * `weight_array` - Array of weights associated with Jones visibilities
     /// * `flag_array` - Array of flags associated with Jones visibilities
-    /// * `calsols` - Optional view of calibration solutions
     /// * `durations` - Hashmap used to record timing info
     ///
     /// # Errors
@@ -132,8 +133,6 @@ impl PreprocessContext {
         jones_array: &mut Array3<Jones<f32>>,
         weight_array: &mut Array3<f32>,
         flag_array: &mut Array3<bool>,
-        // TODO: Jones needs to implement Clone before moving this into PreprocessContext
-        calsols: &Option<Array2<Jones<f64>>>,
         durations: &mut HashMap<String, Duration>,
         vis_sel: &VisSelection,
     ) -> Result<(), BirliError> {
@@ -156,7 +155,7 @@ impl PreprocessContext {
                     jones_array,
                     &vis_sel.coarse_chan_range,
                     &sel_ant_pairs,
-                )? // .expect("couldn't apply digital gains")
+                )?
             );
         }
 
@@ -174,7 +173,7 @@ impl PreprocessContext {
                     passband_gains,
                     fine_chans_per_coarse,
                     ScrunchType::from_mwa_version(corr_ctx.metafits_context.mwa_version.unwrap())?,
-                )? // .expect("couldn't apply coarse pfb passband gains")
+                )?
             );
         }
 
@@ -214,7 +213,7 @@ impl PreprocessContext {
             );
         }
 
-        if let Some(calsols) = calsols {
+        if let Some(ref calsols) = self.calsols {
             with_increment_duration!(
                 durations,
                 "calibrate",
@@ -234,57 +233,30 @@ impl PreprocessContext {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use float_cmp::F32Margin;
     use marlu::constants::{
         COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
     };
+    use tempfile::tempdir;
 
     use crate::{
-        context_to_jones_array, flag_to_weight_array, flags::get_weight_factor, FlagContext,
-        VisSelection,
+        add_dimension, context_to_jones_array, flag_to_weight_array,
+        flags::get_weight_factor,
+        test_common::{compare_uvfits_with_csv, get_1254670392_avg_paths},
+        write_uvfits, FlagContext, VisSelection,
     };
 
     use super::*;
-
-    // TODO: dedup from main
-    fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
-        let metafits_path = "tests/data/1254670392_avg/1254670392.fixed.metafits";
-        let gpufits_paths = [
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox02_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox03_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox04_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox05_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox06_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox07_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox08_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox09_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox10_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox11_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox12_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox13_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox14_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox15_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox16_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox17_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox18_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox19_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox20_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox21_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox22_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox23_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox24_00.fits",
-        ];
-        (metafits_path, gpufits_paths)
-    }
 
     #[test]
     #[allow(clippy::field_reassign_with_default)]
     fn test_1254670392_avg_uvfits_no_correct_norfi() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
-        // TODO: actually validate against this.
-        // let expected_csv_path =
-        //     PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.uvfits.csv");
+        let expected_csv_path =
+            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.uvfits.csv");
 
         let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths)
             .expect("unable to get mwalib context");
@@ -303,6 +275,8 @@ mod tests {
         prep_ctx.correct_digital_gains = false;
         prep_ctx.correct_geometry = false;
         prep_ctx.draw_progress = false;
+
+        let (avg_time, avg_freq) = (1, 1);
 
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
 
@@ -333,10 +307,32 @@ mod tests {
                 &mut jones_array,
                 &mut weight_array,
                 &mut flag_array,
-                &None,
                 &mut durations,
                 &vis_sel,
             )
             .unwrap();
+
+        let tmp_dir = tempdir().unwrap();
+        let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
+        let num_pols = corr_ctx.metafits_context.num_visibility_pols;
+
+        write_uvfits(
+            uvfits_path.clone(),
+            &corr_ctx,
+            jones_array.view(),
+            add_dimension(weight_array.view(), num_pols).view(),
+            add_dimension(flag_array.view(), num_pols).view(),
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
+            Some(prep_ctx.array_pos),
+            Some(prep_ctx.phase_centre),
+            avg_time,
+            avg_freq,
+            prep_ctx.draw_progress,
+        )
+        .unwrap();
+
+        compare_uvfits_with_csv(uvfits_path, expected_csv_path, F32Margin::default(), true);
     }
 }

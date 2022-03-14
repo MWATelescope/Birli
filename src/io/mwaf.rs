@@ -477,6 +477,7 @@ mod tests {
     use super::{FlagFileHeaders, FlagFileSet};
     use crate::{
         io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate},
+        test_common::{get_mwa_ord_context, get_mwax_context},
         FlagContext, VisSelection,
     };
     use fitsio::FitsFile;
@@ -492,29 +493,6 @@ mod tests {
     use std::fs::File;
     use std::path::Path;
     use tempfile::tempdir;
-
-    // TODO: deduplicate this from lib.rs
-    fn get_mwax_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
-
-    fn get_mwa_ord_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
 
     #[test]
     fn test_flagfileset_enforces_percents_in_filename_template() {

@@ -156,7 +156,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_read_andre_binary() {
+    fn test_read_invalid_andre_binary() {
+        let file = "tests/data/1254670392_avg/1254670392.metafits";
+        assert!(matches!(
+            AOCalSols::read_andre_binary(file),
+            Err(ReadSolutionsError::AndreBinaryStr { .. })
+        ));
+    }
+
+    #[test]
+    fn test_read_valid_andre_binary() {
         let file = "tests/data/1254670392_avg/1254690096.bin";
         let sols = AOCalSols::read_andre_binary(file).unwrap();
         assert_eq!(sols.di_jones.dim(), (1, 128, 768));

@@ -427,20 +427,9 @@ mod tests {
     use crate::{
         error::BirliError::{NoCommonTimesteps, NoProvidedTimesteps},
         marlu::mwalib::CorrelatorContext,
+        test_common::get_mwax_context,
         FlagContext, FlagFileSet, VisSelection,
     };
-
-    // TODO: deduplicate from lib.rs
-    fn get_mwax_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
 
     /// Get a dummy MWA Ord corr_ctx with multiple holes in the data
     ///

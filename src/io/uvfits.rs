@@ -1088,52 +1088,9 @@ mod tests {
                 fits_open_hdu, get_fits_col, get_required_fits_key,
             },
         },
+        test_common::get_mwa_ord_context,
         FlagContext, VisSelection,
     };
-
-    // TODO: dedup this from lib.rs
-    pub fn get_mwa_ord_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn get_1254670392_avg_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1254670392_avg/1254670392.fixed.metafits";
-        let gpufits_paths = [
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox02_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox03_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox04_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox05_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox06_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox07_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox08_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox09_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox10_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox11_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox12_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox13_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox14_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox15_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox16_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox17_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox18_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox19_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox20_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox21_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox22_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox23_00.fits",
-            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox24_00.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
 
     macro_rules! assert_short_string_keys_eq {
         ($keys:expr, $left_fptr:expr, $left_hdu:expr, $right_fptr:expr, $right_hdu:expr) => {
@@ -2205,7 +2162,7 @@ mod tests_aoflagger {
     use tempfile::NamedTempFile;
     use tests::{
         assert_uvfits_ant_header_eq, assert_uvfits_ant_table_eq, assert_uvfits_primary_header_eq,
-        assert_uvfits_vis_table_eq, get_1254670392_avg_context, get_mwa_ord_context,
+        assert_uvfits_vis_table_eq,
     };
 
     use crate::{
@@ -2217,6 +2174,7 @@ mod tests_aoflagger {
             },
             mwalib::{_open_fits, fits_open},
         },
+        test_common::{get_1254670392_avg_context, get_mwa_ord_context},
         FlagContext, VisSelection,
     };
     use aoflagger_sys::cxx_aoflagger_new;
