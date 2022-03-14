@@ -25,7 +25,7 @@ use crate::{
     VisSelection,
 };
 use cfg_if::cfg_if;
-use clap::{arg, command, PossibleValue, ValueHint::FilePath};
+use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
 use itertools::Itertools;
 use log::{debug, info, trace, warn};
 use prettytable::{cell, format as prettyformat, row, table};
@@ -487,13 +487,11 @@ impl Display for BirliContext {
         let num_sel_chans = self.vis_sel.coarse_chan_range.len() * fine_chans_per_coarse;
         let num_sel_baselines = self.vis_sel.baseline_idxs.len();
         let num_sel_pols = self.corr_ctx.metafits_context.num_visibility_pols;
-        let mem_per_timestep_gib = (num_sel_chans
-            * num_sel_baselines
-            * num_sel_pols
-            * (std::mem::size_of::<Complex<f32>>()
-                + std::mem::size_of::<f32>()
-                + std::mem::size_of::<bool>())) as f64
-            / 1024.0_f64.powi(3);
+        let mem_selected_bytes = self
+            .vis_sel
+            .estimate_bytes(fine_chans_per_coarse, num_sel_pols);
+        let mem_per_timestep_gib =
+            mem_selected_bytes as f64 / num_sel_timesteps as f64 / 1024.0_f64.powi(3);
 
         writeln!(
             f,
@@ -626,7 +624,8 @@ impl BirliContext {
                 // resource limit options
                 arg!(--"time-chunk" <STEPS> "[WIP] Process observation in chunks of <STEPS> timesteps.")
                     .help_heading("RESOURCE LIMITS")
-                    .required(false),
+                    .required(false)
+                    .conflicts_with("max-memory"),
                 arg!(--"max-memory" <GIBIBYTES> "[WIP] Estimate --time-chunk with <GIBIBYTES> GiB each chunk.")
                     .help_heading("RESOURCE LIMITS")
                     .required(false),
@@ -764,15 +763,14 @@ impl BirliContext {
         // // //
 
         let io_ctx = IOContext {
-            metafits_in: matches
-                .value_of("metafits")
-                .expect("--metafits is a required argument, enforced by clap")
-                .into(),
-            gpufits_in: matches
-                .values_of("fits_paths")
-                .expect("<PATHS> is a required argument, enforced by clap")
-                .map(|s| s.into())
-                .collect(),
+            metafits_in: match matches.value_of_t("metafits") {
+                Ok(path) => path,
+                _ => unreachable!("--metafits <PATH> is required, enforced by clap"),
+            },
+            gpufits_in: match matches.values_of_t("fits_paths") {
+                Ok(path) => path,
+                _ => unreachable!("<PATHS> is required, enforced by clap"),
+            },
             aocalsols_in: matches.value_of("apply-di-cal").map(|s| s.into()),
             uvfits_out: matches.value_of("uvfits-out").map(|s| s.into()),
             ms_out: matches.value_of("ms-out").map(|s| s.into()),
@@ -803,7 +801,7 @@ impl BirliContext {
                 vis_sel.timestep_range = from..(to + 1);
             }
             Err(err) => match err.kind() {
-                clap::ErrorKind::ArgumentNotFound { .. } => {}
+                ArgumentNotFound { .. } => {}
                 _ => return Err(err.into()),
             },
         }
@@ -838,7 +836,7 @@ impl BirliContext {
                 }
             }
             Err(err) => match err.kind() {
-                clap::ErrorKind::ArgumentNotFound { .. } => {}
+                ArgumentNotFound { .. } => {}
                 _ => return Err(err.into()),
             },
         };
@@ -866,7 +864,7 @@ impl BirliContext {
                 }
             }
             Err(err) => match err.kind() {
-                clap::ErrorKind::ArgumentNotFound { .. } => {}
+                ArgumentNotFound { .. } => {}
                 _ => return Err(err.into()),
             },
         };
@@ -893,7 +891,7 @@ impl BirliContext {
                 }
             }
             Err(err) => match err.kind() {
-                clap::ErrorKind::ArgumentNotFound { .. } => {}
+                ArgumentNotFound { .. } => {}
                 _ => return Err(err.into()),
             },
         };
@@ -925,7 +923,7 @@ impl BirliContext {
                 }
             }
             Err(err) => match err.kind() {
-                clap::ErrorKind::ArgumentNotFound { .. } => {}
+                ArgumentNotFound { .. } => {}
                 _ => return Err(err.into()),
             },
         };
@@ -940,124 +938,129 @@ impl BirliContext {
         // ///////// //
 
         let int_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1e3;
-
         let avg_time: usize = match (
-            matches.value_of("avg-time-factor"),
-            matches.value_of("avg-time-res"),
+            matches.value_of_t::<usize>("avg-time-factor"),
+            matches.value_of_t::<f64>("avg-time-res"),
         ) {
-            (Some(_), Some(_)) => {
-                panic!("you can't use --avg-time-factor and --avg-time-res at the same time");
+            // filter any errors other than ArgumentNotFound
+            (Err(err), _) if err.kind() != ArgumentNotFound => return Err(err.into()),
+            (_, Err(err)) if err.kind() != ArgumentNotFound => return Err(err.into()),
+            (Ok(_), Ok(_)) => {
+                unreachable!("--avg-time-res conflicts with --avg-time-factor, enforced by clap")
             }
-            (Some(factor_str), None) => factor_str.parse().unwrap_or_else(|_| {
-                panic!(
-                    "unable to parse --avg-time-factor \"{}\" as an unsigned integer",
-                    factor_str
-                )
-            }),
-            (_, Some(res_str)) => {
-                let res = res_str.parse::<f64>().unwrap_or_else(|_| {
-                    panic!("unable to parse --avg-time-res \"{}\" as a float", res_str)
-                });
+            (Ok(factor), _) => {
+                if factor == 0 {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--avg-time-factor <FACTOR>".into(),
+                        expected: "a positive, non-zero integer".into(),
+                        received: format!("{}", factor),
+                    }));
+                }
+                factor
+            }
+            (_, Ok(res)) => {
                 let ratio = res / int_time_s;
-                assert!(
-                    ratio.is_finite() && ratio >= 1.0 && ratio.fract() < 1e-6,
-                    "--avg-time-res {} must be an integer multiple of the input resolution, {}",
-                    res,
-                    int_time_s
-                );
+                if ratio.is_infinite() || ratio.fract() > 1e-6 || ratio < 1.0 {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--avg-time-res <RES>".into(),
+                        expected: format!("a multiple of the integration time, {} [s]", int_time_s),
+                        received: format!("{}", res),
+                    }));
+                }
                 ratio.round() as _
             }
             _ => 1,
         };
 
         let fine_chan_width_khz = corr_ctx.metafits_context.corr_fine_chan_width_hz as f64 / 1e3;
-
         let avg_freq: usize = match (
-            matches.value_of("avg-freq-factor"),
-            matches.value_of("avg-freq-res"),
+            matches.value_of_t::<usize>("avg-freq-factor"),
+            matches.value_of_t::<f64>("avg-freq-res"),
         ) {
-            (Some(_), Some(_)) => {
-                panic!("you can't use --avg-freq-factor and --avg-freq-res at the same time");
+            // filter any errors other than ArgumentNotFound
+            (Err(err), _) if err.kind() != ArgumentNotFound => return Err(err.into()),
+            (_, Err(err)) if err.kind() != ArgumentNotFound => return Err(err.into()),
+            (Ok(_), Ok(_)) => {
+                unreachable!("--avg-freq-res conflicts with --avg-freq-factor, enforced by clap")
             }
-            (Some(factor_str), None) => factor_str.parse().unwrap_or_else(|_| {
-                panic!(
-                    "unable to parse --avg-freq-factor \"{}\" as an unsigned integer",
-                    factor_str
-                )
-            }),
-            (_, Some(res_str)) => {
-                let res = res_str.parse::<f64>().unwrap_or_else(|_| {
-                    panic!("unable to parse --avg-freq-res \"{}\" as a float", res_str)
-                });
+            (Ok(factor), _) => {
+                if factor == 0 {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--avg-freq-factor <FACTOR>".into(),
+                        expected: "a positive, non-zero integer".into(),
+                        received: format!("{}", factor),
+                    }));
+                }
+                factor
+            }
+            (_, Ok(res)) => {
                 let ratio = res / fine_chan_width_khz;
-                assert!(
-                    ratio.is_finite() && ratio >= 1.0 && ratio.fract() < 1e-6,
-                    "--avg-freq-res {} must be an integer multiple of the input resolution, {}",
-                    res,
-                    fine_chan_width_khz
-                );
+                if ratio.is_infinite() || ratio.fract() > 1e-6 || ratio < 1.0 {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--avg-freq-res <RES>".into(),
+                        expected: format!(
+                            "a multiple of the fine channel width, {} [KHz]",
+                            fine_chan_width_khz
+                        ),
+                        received: format!("{}", res),
+                    }));
+                }
                 ratio.round() as _
             }
             _ => 1,
         };
 
-        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
-        let num_sel_timesteps = vis_sel.timestep_range.len();
-        let num_sel_chans = vis_sel.coarse_chan_range.len() * fine_chans_per_coarse;
-        let num_sel_baselines = vis_sel.baseline_idxs.len();
-        let num_sel_pols = corr_ctx.metafits_context.num_visibility_pols;
-        let bytes_per_timestep = num_sel_chans
-            * num_sel_baselines
-            * num_sel_pols
-            * (std::mem::size_of::<Complex<f32>>()
-                + std::mem::size_of::<f32>()
-                + std::mem::size_of::<bool>());
+        // //////// //
+        // Chunking //
+        // //////// //
 
         let num_timesteps_per_chunk: Option<usize> = match (
-            matches.value_of("time-chunk"),
-            matches.value_of("max-memory"),
+            matches.value_of_t::<usize>("time-chunk"),
+            matches.value_of_t::<f64>("max-memory"),
         ) {
-            (Some(_), Some(_)) => {
-                // TODO: custom error type
-                panic!("you can't use --time-chunk and --max-memory at the same time");
+            // filter any errors other than ArgumentNotFound
+            (Err(err), _) if err.kind() != ArgumentNotFound => return Err(err.into()),
+            (_, Err(err)) if err.kind() != ArgumentNotFound => return Err(err.into()),
+            (Ok(_), Ok(_)) => {
+                unreachable!("--time-chunk conflicts with --max-memory, enforced by clap")
             }
-            (Some(steps_str), None) => {
-                // TODO: custom error type
-                let steps = steps_str.parse().unwrap_or_else(|_| {
-                    panic!(
-                        "unable to parse --time-chunk \"{}\" as an unsigned integer",
-                        steps_str
-                    )
-                });
+            (Ok(steps), _) => {
                 if steps % avg_time != 0 {
-                    panic!(
-                        "--time-chunk {} must be an integer multiple of the averaging factor, {}",
-                        steps, avg_time
-                    );
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--time-chunk <STEPS>".into(),
+                        expected: format!(
+                            "a multiple of the temporal averaging factor, {}",
+                            avg_time
+                        ),
+                        received: format!("{}", steps),
+                    }));
                 }
                 Some(steps)
             }
-            (_, Some(mem_str)) => {
-                // TODO: custom error type
-                let max_memory_bytes = mem_str.parse::<f64>().unwrap_or_else(|_| {
-                    panic!("unable to parse --max-memory \"{}\" as a float", mem_str)
-                }) * 1024.0_f64.powi(3);
-                if max_memory_bytes < 1.0 {
-                    panic!(
-                        "--max-memory must be at least 1 Byte, not {}B",
-                        max_memory_bytes
-                    );
+            (_, Ok(mem_gib)) => {
+                let max_mem_bytes = mem_gib * 1024.0_f64.powi(3);
+                if max_mem_bytes < 1.0 {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--max-memory <GIBIBYTES>".into(),
+                        expected: "at least one Byte".into(),
+                        received: format!("{}B", max_mem_bytes),
+                    }));
                 }
+                let bytes_selected = vis_sel.estimate_bytes(
+                    corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
+                    corr_ctx.metafits_context.num_visibility_pols,
+                );
+                let bytes_per_timestep = bytes_selected / vis_sel.timestep_range.len();
                 let bytes_per_avg_time = bytes_per_timestep * avg_time;
-                let num_bytes_total = num_sel_timesteps * bytes_per_timestep;
-                if max_memory_bytes < num_bytes_total as f64 {
-                    if max_memory_bytes < bytes_per_avg_time as f64 {
-                        panic!(
-                            "--max-memory ({} GiB) too small to fit a single averaged timestep ({} * {:.02} = {:.02} GiB)",
-                            max_memory_bytes as f64 / 1024.0_f64.powi(3), avg_time, bytes_per_timestep as f64 / 1024.0_f64.powi(3), bytes_per_avg_time as f64 / 1024.0_f64.powi(3)
-                        );
+                if max_mem_bytes < bytes_selected as f64 {
+                    if max_mem_bytes < bytes_per_avg_time as f64 {
+                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                            option: "--max-memory <GIBIBYTES>".into(),
+                            expected: format!("at least enough memory for an averaged timestep ({} * {:.02} = {:.02} GiB)", avg_time, bytes_per_timestep as f64 / 1024.0_f64.powi(3), bytes_per_avg_time as f64 / 1024.0_f64.powi(3)),
+                            received: format!("{}GiB", max_mem_bytes as f64 / 1024.0_f64.powi(3)),
+                        }));
                     }
-                    Some((max_memory_bytes / bytes_per_avg_time as f64).floor() as usize * avg_time)
+                    Some((max_mem_bytes / bytes_per_avg_time as f64).floor() as usize * avg_time)
                 } else {
                     None
                 }
@@ -1068,14 +1071,15 @@ impl BirliContext {
         // validate chunk size
         if let Some(chunk_size) = num_timesteps_per_chunk {
             if matches.value_of("flag-template").is_some() {
+                // TODO: mwaf chunking
                 panic!("chunking is not supported when writing .mwaf files using --flag-template");
             }
             info!("chunking output to {} timesteps per chunk", chunk_size);
         }
 
-        // ////////////////// //
-        // Correction Options //
-        // ////////////////// //
+        // ////////// //
+        // Correction //
+        // ////////// //
 
         let mut prep_ctx = PreprocessContext {
             draw_progress: !matches.is_present("no-draw-progress"),
@@ -1780,6 +1784,174 @@ mod argparse_tests {
         let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
 
         assert!(flag_ctx.autos);
+    }
+
+    #[test]
+    fn test_parse_invalid_avg_time() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec!["birli", "-m", metafits_path, "--avg-time-factor", "0"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+
+        let mut args = vec!["birli", "-m", metafits_path, "--avg-time-res", "0.5"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+
+        let mut args = vec!["birli", "-m", metafits_path, "--avg-time-res", "4s"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::ClapError(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_invalid_avg_freq() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec!["birli", "-m", metafits_path, "--avg-freq-factor", "0"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+
+        let mut args = vec!["birli", "-m", metafits_path, "--avg-freq-res", "0.5"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+
+        let mut args = vec!["birli", "-m", metafits_path, "--avg-freq-res", "4s"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::ClapError(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_valid_avg_freq() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec!["birli", "-m", metafits_path, "--avg-freq-res", "120"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { avg_freq, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert_eq!(avg_freq, 3);
+    }
+
+    #[test]
+    fn test_parse_invalid_time_chunk() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        // test when time_chunk is not a multiple of avg_time
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--avg-time-factor",
+            "2",
+            "--time-chunk",
+            "1",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_valid_time_chunk() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec!["birli", "-m", metafits_path, "--time-chunk", "2"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext {
+            num_timesteps_per_chunk,
+            ..
+        } = BirliContext::from_args(&args).unwrap();
+
+        assert_eq!(num_timesteps_per_chunk, Some(2));
+    }
+
+    #[test]
+    fn test_parse_invalid_max_memory() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        // test when max mem is less than 1 byte
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--max-memory",
+            "0.0000000000000001",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+
+        // test when max mem can't fit a single averaged timestep
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--max-memory",
+            "0.32",
+            "--avg-time-factor",
+            "2",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_valid_max_memory() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--max-memory",
+            "0.64",
+            "--sel-time",
+            "0",
+            "2",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext {
+            num_timesteps_per_chunk,
+            ..
+        } = BirliContext::from_args(&args).unwrap();
+
+        assert_eq!(num_timesteps_per_chunk, Some(2));
     }
 }
 
@@ -2768,7 +2940,6 @@ mod tests_aoflagger {
         );
     }
 
-    /// Same as above but forcing chunks by using a small --max-memory
     #[test]
     fn compare_cotter_ms_none_avg_4s_160khz_max_mem() {
         let tmp_dir = tempdir().unwrap();
@@ -2835,62 +3006,6 @@ mod tests_aoflagger {
             F32Margin::default().epsilon(1e-7),
             false,
         );
-    }
-
-    /// test when time_chunk is not a multiple of avg_time
-    #[test]
-    #[should_panic]
-    fn compare_cotter_ms_none_avg_4s_160khz_tiny_chunk() {
-        let tmp_dir = tempdir().unwrap();
-        let ms_path = tmp_dir.path().join("1254670392.ms");
-
-        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
-
-        env_logger::try_init().unwrap_or(());
-
-        #[rustfmt::skip]
-        let mut args = vec![
-            "birli",
-            "-m",
-            metafits_path,
-            "-M",
-            ms_path.to_str().unwrap(),
-            "--no-digital-gains",
-            "--no-draw-progress",
-            "--pfb-gains",
-            "none",
-            "--emulate-cotter",
-            "--no-cable-delay",
-            "--no-geometric-delay",
-            "--avg-time-factor", "2",
-            "--avg-freq-factor", "4",
-            "--sel-time", "0", "2",
-            "--time-chunk", "1",
-        ];
-        args.extend_from_slice(&gpufits_paths);
-
-        let birli_ctx = BirliContext::from_args(&args).unwrap();
-
-        assert!(birli_ctx.prep_ctx.correct_cable_lengths);
-        assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
-        assert!(!birli_ctx.prep_ctx.correct_digital_gains);
-        assert!(birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
-        assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
-        assert_eq!(
-            birli_ctx.io_ctx.ms_out,
-            Some(ms_path.to_str().unwrap().into())
-        );
-        assert_eq!(birli_ctx.avg_time, 2);
-        assert_eq!(birli_ctx.avg_freq, 4);
-        assert_eq!(birli_ctx.num_timesteps_per_chunk, Some(1));
-        assert_eq!(birli_ctx.vis_sel.timestep_range, 0..1);
-
-        birli_ctx.run().unwrap();
     }
 
     /// Data generated with

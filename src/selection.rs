@@ -2,7 +2,10 @@
 
 use std::ops::Range;
 
-use marlu::mwalib::{CorrelatorContext, MetafitsContext};
+use marlu::{
+    mwalib::{CorrelatorContext, MetafitsContext},
+    Complex,
+};
 
 use crate::{
     BirliError,
@@ -127,5 +130,19 @@ impl VisSelection {
                 )
             })
             .collect()
+    }
+
+    /// Estimate the memory size in bytes required to store the given selection.
+    pub fn estimate_bytes(&self, fine_chans_per_coarse: usize, num_pols: usize) -> usize {
+        let num_sel_chans = self.coarse_chan_range.len() * fine_chans_per_coarse;
+        let num_sel_baselines = self.baseline_idxs.len();
+        let num_sel_timesteps = self.timestep_range.len();
+        num_sel_chans
+            * num_sel_baselines
+            * num_sel_timesteps
+            * num_pols
+            * (std::mem::size_of::<Complex<f32>>()
+                + std::mem::size_of::<f32>()
+                + std::mem::size_of::<bool>())
     }
 }
