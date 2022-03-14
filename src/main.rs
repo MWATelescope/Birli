@@ -46,9 +46,7 @@ fn main() {
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
     trace!("start main");
-
     let retcode = main_with_args(env::args());
-
     trace!("end main");
     std::process::exit(retcode);
 }
@@ -61,7 +59,36 @@ mod tests {
 
     #[test]
     fn main_with_version_doesnt_crash() {
-        main_with_args(&["birli", "--version"]);
+        assert_eq!(main_with_args(&["birli", "--version"]), 0);
+    }
+
+    #[test]
+    fn main_with_dry_run_doesnt_crash() {
+        assert_eq!(
+            main_with_args(&[
+                "birli",
+                "-m",
+                "tests/data/1254670392_avg/1254670392.fixed.metafits",
+                "--dry-run",
+                "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits"
+            ]),
+            0
+        );
+    }
+
+    #[test]
+    fn main_with_bad_arg_returns_1() {
+        assert_eq!(
+            main_with_args(&[
+                "birli",
+                "-m",
+                "tests/data/1254670392_avg/1254670392.fixed.metafits",
+                "--avg-time-factor",
+                "0",
+                "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits"
+            ]),
+            1
+        );
     }
 
     #[test]
