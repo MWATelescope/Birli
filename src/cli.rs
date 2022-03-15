@@ -325,41 +325,17 @@ impl Display for BirliContext {
             timestep_table.add_row(row);
         }
 
-        let show_timestep_table = true;
-
         writeln!(
             f,
-            "Timestep details (all={}, provided={}, common={}, good={}, select={}, flag={}):{}",
+            "Timestep details (all={}, provided={}, common={}, good={}, select={}, flag={}):\n{}",
             self.corr_ctx.num_timesteps,
             self.corr_ctx.num_provided_timesteps,
             self.corr_ctx.num_common_timesteps,
             self.corr_ctx.num_common_good_timesteps,
             self.vis_sel.timestep_range.len(),
             timestep_flag_idxs.len(),
-            if show_timestep_table {
-                format!("\n{}", timestep_table)
-            } else {
-                "".into()
-            }
+            timestep_table
         )?;
-        if !show_timestep_table {
-            writeln!(
-                f,
-                "-> provided:    {:?}",
-                self.corr_ctx.provided_timestep_indices
-            )?;
-            writeln!(
-                f,
-                "-> common:      {:?}",
-                self.corr_ctx.common_timestep_indices
-            )?;
-            writeln!(
-                f,
-                "-> common good: {:?}",
-                self.corr_ctx.common_good_timestep_indices
-            )?;
-            writeln!(f, "-> selected:    {:?}", self.vis_sel.timestep_range)?;
-        }
 
         let mut coarse_chan_table = table!([
             "",
@@ -399,66 +375,46 @@ impl Display for BirliContext {
             coarse_chan_table.add_row(row);
         }
 
-        let show_coarse_chan_table = true;
-
         writeln!(
             f,
-            "Coarse channel details (metafits={}, provided={}, common={}, good={}, select={}, flag={}):{}",
+            "Coarse channel details (metafits={}, provided={}, common={}, good={}, select={}, flag={}):\n{}",
             self.corr_ctx.num_coarse_chans,
             self.corr_ctx.num_provided_coarse_chans,
             self.corr_ctx.num_common_coarse_chans,
             self.corr_ctx.num_common_good_coarse_chans,
             self.vis_sel.coarse_chan_range.len(),
             coarse_chan_flag_idxs.len(),
-            if show_coarse_chan_table { format!("\n{}", coarse_chan_table) } else { "".into() }
+            coarse_chan_table
         )?;
 
-        if !show_coarse_chan_table {
-            writeln!(
-                f,
-                "-> provided:    {:?}",
-                self.corr_ctx.provided_coarse_chan_indices
-            )?;
-            writeln!(
-                f,
-                "-> common:      {:?}",
-                self.corr_ctx.common_coarse_chan_indices
-            )?;
-            writeln!(
-                f,
-                "-> common good: {:?}",
-                self.corr_ctx.common_good_coarse_chan_indices
-            )?;
-            writeln!(f, "-> selected:    {:?}", self.vis_sel.coarse_chan_range)?;
-        }
+        // let mut ant_table = table!([
+        //     "",
+        //     "tile",
+        //     "name",
+        //     "north [m]",
+        //     "east [m]",
+        //     "height [m]",
+        //     "f"
+        // ]);
+        // ant_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
 
-        let mut ant_table = table!([
-            "",
-            "tile",
-            "name",
-            "north [m]",
-            "east [m]",
-            "height [m]",
-            "f"
-        ]);
-        ant_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
+        // for (ant_idx, ant) in self.corr_ctx.metafits_context.antennas.iter().enumerate() {
+        //     let flagged = *self.flag_ctx.antenna_flags.get(ant_idx).unwrap_or(&false);
+        //     let row = row![r =>
+        //         format!("ant{}:", ant_idx),
+        //         ant.tile_id,
+        //         ant.tile_name,
+        //         format!("{:.3}", ant.north_m),
+        //         format!("{:.3}", ant.east_m),
+        //         format!("{:.3}", ant.height_m),
+        //         if flagged {"f"} else {""}
+        //     ];
+        //     ant_table.add_row(row);
+        // }
 
-        for (ant_idx, ant) in self.corr_ctx.metafits_context.antennas.iter().enumerate() {
-            let flagged = *self.flag_ctx.antenna_flags.get(ant_idx).unwrap_or(&false);
-            let row = row![r =>
-                format!("ant{}:", ant_idx),
-                ant.tile_id,
-                ant.tile_name,
-                format!("{:.3}", ant.north_m),
-                format!("{:.3}", ant.east_m),
-                format!("{:.3}", ant.height_m),
-                if flagged {"f"} else {""}
-            ];
-            ant_table.add_row(row);
-        }
-
-        debug!(
-            "Antenna details (all={}, flag={}):{}",
+        writeln!(
+            f,
+            "Antenna details (all={}, flag={})",
             self.corr_ctx.metafits_context.num_ants,
             self.flag_ctx
                 .antenna_flags
@@ -466,10 +422,8 @@ impl Display for BirliContext {
                 .enumerate()
                 .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
                 .count(),
-            format!("\n{}", ant_table)
-        );
-
-        // let show_baseline_table = false;
+            // format!("\n{}", ant_table)
+        )?;
 
         writeln!(
             f,
