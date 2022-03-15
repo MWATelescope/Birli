@@ -148,6 +148,7 @@ pub fn compare_uvfits_with_csv(
     expected_csv_path: PathBuf,
     vis_margin: F32Margin,
     ignore_weights: bool,
+    ignore_missing_chans: bool,
 ) {
     // Check both files are present
     assert!(uvfits_path.exists());
@@ -308,10 +309,12 @@ pub fn compare_uvfits_with_csv(
                             })
                             .collect();
 
-                        assert_eq!(
-                            num_fine_freq_chans * num_pols * floats_per_complex,
-                            exp_pol_vis.len() * num_pols
-                        );
+                        if !ignore_missing_chans {
+                            assert_eq!(
+                                num_fine_freq_chans * num_pols * floats_per_complex,
+                                exp_pol_vis.len() * num_pols
+                            );
+                        }
 
                         let obs_pol_vis: Vec<_> = obs_vis
                             .chunks(floats_per_pol * num_pols)
@@ -354,7 +357,9 @@ pub fn compare_uvfits_with_csv(
                             .map(|cell| cell.parse().unwrap())
                             .collect();
 
-                        assert_eq!(num_fine_freq_chans, exp_pol_weight.len());
+                        if !ignore_missing_chans {
+                            assert_eq!(num_fine_freq_chans, exp_pol_weight.len());
+                        }
 
                         let obs_pol_weight: Vec<_> = obs_vis
                             .chunks(floats_per_pol * num_pols)
@@ -415,6 +420,7 @@ pub fn compare_ms_with_csv(
     expected_csv_path: PathBuf,
     vis_margin: F32Margin,
     ignore_weights: bool,
+    ignore_missing_chans: bool,
 ) {
     // Check both files are present
     assert!(ms_path.exists());
@@ -530,7 +536,10 @@ pub fn compare_ms_with_csv(
                             .skip(pol_idx)
                             .step_by(num_pols)
                             .collect::<Vec<_>>();
-                        assert_eq!(obs_pol_vis.len(), exp_pol_vis.len());
+
+                        if !ignore_missing_chans {
+                            assert_eq!(obs_pol_vis.len(), exp_pol_vis.len());
+                        }
 
                         for (vis_idx, (&obs_val, &exp_val)) in
                             izip!(obs_pol_vis.iter(), exp_pol_vis.iter()).enumerate()
@@ -574,7 +583,9 @@ pub fn compare_ms_with_csv(
                             .step_by(num_pols)
                             .collect::<Vec<_>>();
 
-                        assert_eq!(obs_pol_weight.len(), exp_pol_weight.len());
+                        if !ignore_missing_chans {
+                            assert_eq!(obs_pol_weight.len(), exp_pol_weight.len());
+                        }
 
                         for (weight_idx, (&obs_val, &exp_val)) in
                             izip!(obs_pol_weight.iter(), exp_pol_weight.iter()).enumerate()
@@ -613,7 +624,9 @@ pub fn compare_ms_with_csv(
                             .step_by(num_pols)
                             .collect::<Vec<_>>();
 
-                        assert_eq!(obs_pol_flag.len(), exp_pol_flag.len());
+                        if !ignore_missing_chans {
+                            assert_eq!(obs_pol_flag.len(), exp_pol_flag.len());
+                        }
 
                         for (flag_idx, (&obs_val, &exp_val)) in
                             izip!(obs_pol_flag.iter(), exp_pol_flag.iter()).enumerate()

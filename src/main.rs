@@ -55,6 +55,8 @@ fn main() {
 mod tests {
     use std::env;
 
+    use tempfile::tempdir;
+
     use super::main_with_args;
 
     #[test]
@@ -89,6 +91,36 @@ mod tests {
             ]),
             1
         );
+    }
+
+    #[test]
+    fn main_succesful_writes_uvfits() {
+        let tmp_dir = tempdir().unwrap();
+        let uvfits_path = tmp_dir.path().join("1247842824.uvfits");
+
+        let metafits_path = "tests/data/1247842824_flags/1247842824.metafits";
+        let gpufits_paths =
+            vec!["tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits"];
+
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-u",
+            uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains",
+            "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert_eq!(main_with_args(&args), 0);
+
+        assert!(uvfits_path.exists());
+        assert!(uvfits_path.metadata().unwrap().len() > 0);
     }
 
     #[test]

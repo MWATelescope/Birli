@@ -332,6 +332,12 @@ mod tests {
         )
         .unwrap();
 
-        compare_uvfits_with_csv(uvfits_path, expected_csv_path, F32Margin::default(), true);
+        compare_uvfits_with_csv(
+            uvfits_path,
+            expected_csv_path,
+            F32Margin::default(),
+            true,
+            false,
+        );
     }
 }

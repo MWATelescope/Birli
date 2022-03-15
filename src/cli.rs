@@ -1473,16 +1473,14 @@ mod tests {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
         let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "-u",
-            uvfits_path.to_str().unwrap(),
+            "-m", metafits_path,
+            "-u", uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--emulate-cotter",
@@ -1497,10 +1495,6 @@ mod tests {
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
-        assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
 
         let display = format!("{}", &birli_ctx);
         assert!(display.contains("high_2019B_2458765_EOR0"));
@@ -1548,6 +1542,7 @@ mod argparse_tests {
 
         // test nonexistent metafits
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", "nonexistent.metafits"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1558,6 +1553,7 @@ mod argparse_tests {
 
         gpufits_paths[0] = "nonexistent.fits";
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1571,6 +1567,7 @@ mod argparse_tests {
     fn test_parse_invalid_time_selection() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--sel-time", "0", "999999"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1579,6 +1576,7 @@ mod argparse_tests {
             Err(BirliError::CLIError(_))
         ));
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--sel-time", "2", "0"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1592,6 +1590,7 @@ mod argparse_tests {
     fn test_parse_valid_time_selection() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--sel-time", "1", "2"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1604,10 +1603,10 @@ mod argparse_tests {
     fn test_parse_invalid_time_flag() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
+            "-m", metafits_path,
             "--flag-times",
             "0",
             "9999",
@@ -1625,6 +1624,7 @@ mod argparse_tests {
     fn test_parse_valid_time_flag() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--flag-times", "2", "--"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1638,13 +1638,11 @@ mod argparse_tests {
     fn test_parse_invalid_coarse_chan_flag() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "--flag-coarse-chans",
-            "0",
-            "9999",
+            "-m", metafits_path,
+            "--flag-coarse-chans", "0", "9999",
             "--",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -1659,12 +1657,11 @@ mod argparse_tests {
     fn test_parse_valid_coarse_chan_flag() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "--flag-coarse-chans",
-            "2",
+            "-m", metafits_path,
+            "--flag-coarse-chans", "2",
             "--",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -1679,13 +1676,11 @@ mod argparse_tests {
     fn test_parse_invalid_fine_chan_flag() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "--flag-fine-chans",
-            "0",
-            "9999",
+            "-m", metafits_path,
+            "--flag-fine-chans", "0", "9999",
             "--",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -1700,6 +1695,7 @@ mod argparse_tests {
     fn test_parse_valid_fine_chan_flag() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--flag-fine-chans", "2", "--"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1713,13 +1709,11 @@ mod argparse_tests {
     fn test_parse_invalid_antenna_flag() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "--flag-antennas",
-            "0",
-            "9999",
+            "-m", metafits_path,
+            "--flag-antennas", "0", "9999",
             "--",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -1734,6 +1728,7 @@ mod argparse_tests {
     fn test_parse_valid_antenna_flag() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--flag-antennas", "2", "--"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1747,14 +1742,14 @@ mod argparse_tests {
     fn test_parse_no_flag_metafits_and_valid_antenna_flag() {
         let (_, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
             "-m",
             // in this metafits file, all ants are flagged.
             "tests/data/1254670392_avg/1254670392.metafits",
             "--no-flag-metafits",
-            "--flag-antennas",
-            "2",
+            "--flag-antennas", "2",
             "--",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -1769,6 +1764,7 @@ mod argparse_tests {
     fn test_parse_flag_autos() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--flag-autos"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1781,6 +1777,7 @@ mod argparse_tests {
     fn test_parse_invalid_avg_time() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--avg-time-factor", "0"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1789,6 +1786,7 @@ mod argparse_tests {
             Err(BirliError::CLIError(_))
         ));
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--avg-time-res", "0.5"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1797,6 +1795,7 @@ mod argparse_tests {
             Err(BirliError::CLIError(_))
         ));
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--avg-time-res", "4s"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1810,6 +1809,7 @@ mod argparse_tests {
     fn test_parse_invalid_avg_freq() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--avg-freq-factor", "0"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1818,6 +1818,7 @@ mod argparse_tests {
             Err(BirliError::CLIError(_))
         ));
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--avg-freq-res", "0.5"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1826,6 +1827,7 @@ mod argparse_tests {
             Err(BirliError::CLIError(_))
         ));
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--avg-freq-res", "4s"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1839,6 +1841,7 @@ mod argparse_tests {
     fn test_parse_valid_avg_freq() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--avg-freq-res", "120"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1873,6 +1876,7 @@ mod argparse_tests {
     fn test_parse_valid_time_chunk() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec!["birli", "-m", metafits_path, "--time-chunk", "2"];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1925,15 +1929,12 @@ mod argparse_tests {
     fn test_parse_valid_max_memory() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "--max-memory",
-            "0.64",
-            "--sel-time",
-            "0",
-            "2",
+            "-m", metafits_path,
+            "--max-memory", "0.64",
+            "--sel-time", "0", "2",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1975,16 +1976,14 @@ mod tests_aoflagger {
         let expected_csv_path =
             PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.uvfits.csv");
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "-u",
-            uvfits_path.to_str().unwrap(),
+            "-m", metafits_path,
+            "-u", uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--emulate-cotter",
@@ -2000,17 +1999,19 @@ mod tests_aoflagger {
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
         assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
-        assert_eq!(
             birli_ctx.io_ctx.uvfits_out,
             Some(uvfits_path.to_str().unwrap().into())
         );
 
         birli_ctx.run().unwrap();
 
-        compare_uvfits_with_csv(uvfits_path, expected_csv_path, F32Margin::default(), false);
+        compare_uvfits_with_csv(
+            uvfits_path,
+            expected_csv_path,
+            F32Margin::default(),
+            false,
+            false,
+        );
     }
 
     #[test]
@@ -2022,22 +2023,20 @@ mod tests_aoflagger {
         let expected_csv_path =
             PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.uvfits.csv");
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "-u",
-            uvfits_path.to_str().unwrap(),
+            "-m", metafits_path,
+            "-u", uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--no-rfi",
             "--emulate-cotter",
-            "--time-chunk",
-            "1",
+            "--time-chunk", "1",
+            "--sel-time", "0", "2"
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2050,10 +2049,6 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.aoflagger_strategy, None);
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
         assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
-        assert_eq!(
             birli_ctx.io_ctx.uvfits_out,
             Some(uvfits_path.to_str().unwrap().into())
         );
@@ -2061,129 +2056,11 @@ mod tests_aoflagger {
 
         birli_ctx.run().unwrap();
 
-        compare_uvfits_with_csv(uvfits_path, expected_csv_path, F32Margin::default(), true);
-    }
-
-    /// Test data generated with
-    ///
-    /// ```bash
-    /// cotter \
-    ///  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
-    ///  -o tests/data/1254670392_avg/1254670392.cotter.cable.uvfits \
-    ///  -allowmissing \
-    ///  -edgewidth 0 \
-    ///  -endflag 0 \
-    ///  -initflag 0 \
-    ///  -noantennapruning \
-    ///  -nogeom \
-    ///  -noflagautos \
-    ///  -noflagdcchannels \
-    ///  -nosbgains \
-    ///  -sbpassband tests/data/subband-passband-32ch-unitary.txt \
-    ///  -nostats \
-    ///  -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
-    ///  tests/data/1254670392_avg/1254670392*gpubox*.fits
-    /// ```
-
-    #[test]
-    #[ignore = "slow"]
-    fn compare_cotter_uvfits_cable_only_rfi() {
-        let tmp_dir = tempdir().unwrap();
-        let uvfits_path = tmp_dir.path().join("1254670392.uvfits");
-
-        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
-
-        let expected_csv_path =
-            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.cable.uvfits.csv");
-
-        let mut args = vec![
-            "birli",
-            "-m",
-            metafits_path,
-            "-u",
-            uvfits_path.to_str().unwrap(),
-            "--no-digital-gains",
-            "--no-draw-progress",
-            "--pfb-gains",
-            "none",
-            "--no-geometric-delay",
-            "--emulate-cotter",
-        ];
-        args.extend_from_slice(&gpufits_paths);
-
-        let birli_ctx = BirliContext::from_args(&args).unwrap();
-
-        assert!(birli_ctx.prep_ctx.correct_cable_lengths);
-        assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
-        assert!(!birli_ctx.prep_ctx.correct_digital_gains);
-        assert!(!birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
-        assert_eq!(
-            birli_ctx.io_ctx.uvfits_out,
-            Some(uvfits_path.to_str().unwrap().into())
-        );
-
-        birli_ctx.run().unwrap();
-
         compare_uvfits_with_csv(
             uvfits_path,
             expected_csv_path,
-            F32Margin::default().epsilon(5e-5),
-            false,
-        );
-    }
-
-    #[test]
-    // #[ignore = "slow"]
-    fn compare_cotter_uvfits_geom_only_rfi() {
-        let tmp_dir = tempdir().unwrap();
-        let uvfits_path = tmp_dir.path().join("1254670392.uvfits");
-
-        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
-
-        let expected_csv_path =
-            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.geom.uvfits.csv");
-
-        let mut args = vec![
-            "birli",
-            "-m",
-            metafits_path,
-            "-u",
-            uvfits_path.to_str().unwrap(),
-            "--no-digital-gains",
-            "--no-draw-progress",
-            "--pfb-gains",
-            "none",
-            "--no-cable-delay",
-            "--emulate-cotter",
-        ];
-        args.extend_from_slice(&gpufits_paths);
-
-        let birli_ctx = BirliContext::from_args(&args).unwrap();
-
-        assert!(!birli_ctx.prep_ctx.correct_cable_lengths);
-        assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
-        assert!(!birli_ctx.prep_ctx.correct_digital_gains);
-        assert!(birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
-        assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
-        assert_eq!(
-            birli_ctx.io_ctx.uvfits_out,
-            Some(uvfits_path.to_str().unwrap().into())
-        );
-        assert_eq!(birli_ctx.num_timesteps_per_chunk, None);
-
-        birli_ctx.run().unwrap();
-
-        compare_uvfits_with_csv(
-            uvfits_path,
-            expected_csv_path,
-            F32Margin::default().epsilon(5e-5),
+            F32Margin::default(),
+            true,
             false,
         );
     }
@@ -2198,16 +2075,14 @@ mod tests_aoflagger {
         let expected_csv_path =
             PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.corrected.uvfits.csv");
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "-u",
-            uvfits_path.to_str().unwrap(),
+            "-m", metafits_path,
+            "-u", uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -2221,10 +2096,6 @@ mod tests_aoflagger {
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
         assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
-        assert_eq!(
             birli_ctx.io_ctx.uvfits_out,
             Some(uvfits_path.to_str().unwrap().into())
         );
@@ -2235,6 +2106,7 @@ mod tests_aoflagger {
             uvfits_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-4),
+            false,
             false,
         );
     }
@@ -2278,19 +2150,15 @@ mod tests_aoflagger {
             "tests/data/1254670392_avg/1254670392.cotter.corrected.phase0.uvfits.csv",
         );
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "-u",
-            uvfits_path.to_str().unwrap(),
+            "-m", metafits_path,
+            "-u", uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
-            "--phase-centre",
-            "0.0",
-            "0.0",
+            "--phase-centre", "0.0", "0.0",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -2305,10 +2173,6 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.phase_centre, RADec { ra: 0., dec: 0. });
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
         assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
-        assert_eq!(
             birli_ctx.io_ctx.uvfits_out,
             Some(uvfits_path.to_str().unwrap().into())
         );
@@ -2319,6 +2183,7 @@ mod tests_aoflagger {
             uvfits_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-4),
+            false,
             false,
         );
     }
@@ -2362,20 +2227,21 @@ mod tests_aoflagger {
             "tests/data/1254670392_avg/1254670392.cotter.corrected.phase-point.ms.csv",
         );
 
-        let mut args = vec![
+        #[rustfmt::skip]
+        let args = vec![
             "birli",
-            "-m",
-            metafits_path,
+            "-m", metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--pointing-centre",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--emulate-cotter",
+            "--sel-time", "0", "1",
+            gpufits_paths[23],
+            gpufits_paths[22],
         ];
-        args.extend_from_slice(&gpufits_paths);
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -2389,10 +2255,6 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.phase_centre, pointing_centre);
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
         assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
-        assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
         );
@@ -2403,7 +2265,8 @@ mod tests_aoflagger {
             ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(2e-4),
-            false,
+            true,
+            true,
         );
     }
 
@@ -2446,22 +2309,20 @@ mod tests_aoflagger {
         let expected_csv_path =
             PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.norfi.cal.ms.csv");
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
+            "-m", metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--no-rfi",
             "--emulate-cotter",
-            "--apply-di-cal",
-            "tests/data/1254670392_avg/1254690096.bin",
+            "--apply-di-cal", "tests/data/1254670392_avg/1254690096.bin",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2474,10 +2335,6 @@ mod tests_aoflagger {
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, None));
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
         assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
-        assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
         );
@@ -2485,7 +2342,13 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         // ignoring weights because Cotter doesn't flag NaNs
-        compare_ms_with_csv(ms_path, expected_csv_path, F32Margin::default(), true);
+        compare_ms_with_csv(
+            ms_path,
+            expected_csv_path,
+            F32Margin::default(),
+            true,
+            false,
+        );
     }
 
     #[test]
@@ -2499,22 +2362,20 @@ mod tests_aoflagger {
             "tests/data/1254670392_avg/1254670392.cotter.none.norfi.cal.partial.ms.csv",
         );
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
+            "-m", metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--no-rfi",
             "--emulate-cotter",
-            "--apply-di-cal",
-            "tests/data/1254670392_avg/1254690096.bin",
+            "--apply-di-cal", "tests/data/1254670392_avg/1254690096.bin",
         ];
         args.extend_from_slice(&gpufits_paths[21..]);
 
@@ -2534,7 +2395,13 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         // ignoring weights because Cotter doesn't flag NaNs
-        compare_ms_with_csv(ms_path, expected_csv_path, F32Margin::default(), true);
+        compare_ms_with_csv(
+            ms_path,
+            expected_csv_path,
+            F32Margin::default(),
+            true,
+            false,
+        );
     }
 
     /// Data generated with
@@ -2574,21 +2441,21 @@ mod tests_aoflagger {
         let expected_csv_path =
             PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.norfi.nopfb.ms.csv");
 
-        let mut args = vec![
+        #[rustfmt::skip]
+        let args = vec![
             "birli",
-            "-m",
-            metafits_path,
+            "-m", metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--no-cable-delay",
             "--no-geometric-delay",
             "--no-rfi",
             "--emulate-cotter",
+            gpufits_paths[23],
+            gpufits_paths[22],
         ];
-        args.extend_from_slice(&gpufits_paths);
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -2598,10 +2465,6 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, None));
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
-        assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -2614,6 +2477,7 @@ mod tests_aoflagger {
             expected_csv_path,
             F32Margin::default().epsilon(7e-5),
             false,
+            true,
         );
     }
 
@@ -2656,10 +2520,10 @@ mod tests_aoflagger {
             "tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.pfb-cotter-40.ms.csv",
         );
 
-        let mut args = vec![
+        #[rustfmt::skip]
+        let args = vec![
             "birli",
-            "-m",
-            metafits_path,
+            "-m", metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
             "--no-draw-progress",
@@ -2667,11 +2531,11 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--no-rfi",
             "--no-digital-gains",
-            "--pfb-gains",
-            "cotter",
+            "--pfb-gains", "cotter",
             "--emulate-cotter",
+            gpufits_paths[23],
+            gpufits_paths[22],
         ];
-        args.extend_from_slice(&gpufits_paths);
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -2681,10 +2545,6 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, None));
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
-        assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -2697,6 +2557,7 @@ mod tests_aoflagger {
             expected_csv_path,
             F32Margin::default().epsilon(1e-2),
             false,
+            true,
         );
     }
 
@@ -2736,16 +2597,15 @@ mod tests_aoflagger {
         let expected_csv_path =
             PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.corrected.ms.csv");
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
+            "-m", metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--emulate-cotter",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -2759,10 +2619,6 @@ mod tests_aoflagger {
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
         assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
-        assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
         );
@@ -2773,6 +2629,7 @@ mod tests_aoflagger {
             ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-3),
+            false,
             false,
         );
     }
@@ -2819,23 +2676,20 @@ mod tests_aoflagger {
 
         env_logger::try_init().unwrap_or(());
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
+            "-m", metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",
-            "--avg-time-res",
-            "4",
-            "--avg-freq-res",
-            "160",
+            "--avg-time-res", "4",
+            "--avg-freq-res", "160",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2847,10 +2701,6 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
-        assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -2864,6 +2714,7 @@ mod tests_aoflagger {
             ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-7),
+            false,
             false,
         );
     }
@@ -2881,23 +2732,22 @@ mod tests_aoflagger {
 
         env_logger::try_init().unwrap_or(());
 
+        #[rustfmt::skip]
+
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
+            "-m", metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",
-            "--avg-time-factor",
-            "2",
-            "--avg-freq-factor",
-            "4",
+            "--avg-time-factor", "2",
+            "--avg-freq-factor", "4",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2909,10 +2759,6 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
-        assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -2927,6 +2773,7 @@ mod tests_aoflagger {
             ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-7),
+            false,
             false,
         );
     }
@@ -2946,14 +2793,12 @@ mod tests_aoflagger {
         #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
+            "-m", metafits_path,
             "-M",
             ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--emulate-cotter",
             "--no-cable-delay",
             "--no-geometric-delay",
@@ -2973,18 +2818,13 @@ mod tests_aoflagger {
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
         assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
         assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
-        assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
         );
         assert_eq!(birli_ctx.avg_time, 2);
         assert_eq!(birli_ctx.avg_freq, 4);
         assert_eq!(birli_ctx.num_timesteps_per_chunk, Some(2));
-        // TODO: ???
-        // assert_eq!( birli_ctx.vis_sel.timestep_range, 0..1 );
+        assert_eq!(birli_ctx.vis_sel.timestep_range, 0..3);
 
         birli_ctx.run().unwrap();
 
@@ -2996,87 +2836,6 @@ mod tests_aoflagger {
             expected_csv_path,
             F32Margin::default().epsilon(1e-7),
             false,
-        );
-    }
-
-    /// Data generated with
-    ///
-    /// ```bash
-    /// cotter \
-    ///  -m tests/data/1254670392_avg/1254670392.fixed.metafits \
-    ///  -o tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.ms \
-    ///  -allowmissing \
-    ///  -edgewidth 0 \
-    ///  -endflag 0 \
-    ///  -initflag 0 \
-    ///  -noantennapruning \
-    ///  -nocablelength \
-    ///  -norfi \
-    ///  -nogeom \
-    ///  -noflagautos \
-    ///  -noflagdcchannels \
-    ///  -nosbgains \
-    ///  -nostats \
-    ///  -flag-strategy /usr/share/aoflagger/strategies/mwa-default.lua \
-    ///  tests/data/1254670392_avg/*gpubox*.fits
-    /// ```
-    ///
-    /// then casa
-    ///
-    /// ```bash
-    /// tb.open('tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.ms')
-    /// exec(open('tests/data/casa_dump_ms.py').read())
-    /// ```
-    #[ignore = "Cotter doesn't correctly average passband gains"]
-    #[test]
-    fn compare_cotter_ms_none_norfi_nodigital_pfb_cotter() {
-        let tmp_dir = tempdir().unwrap();
-        let ms_path = tmp_dir.path().join("1254670392.none.norfi.nodigital.ms");
-        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
-
-        let expected_csv_path = PathBuf::from(
-            "tests/data/1254670392_avg/1254670392.cotter.none.norfi.nodigital.ms.csv",
-        );
-
-        let mut args = vec![
-            "birli",
-            "-m",
-            metafits_path,
-            "-M",
-            ms_path.to_str().unwrap(),
-            "--no-draw-progress",
-            "--no-cable-delay",
-            "--no-geometric-delay",
-            "--no-rfi",
-            "--no-digital-gains",
-            "--pfb-gains",
-            "cotter",
-            "--emulate-cotter",
-        ];
-        args.extend_from_slice(&gpufits_paths);
-
-        let birli_ctx = BirliContext::from_args(&args).unwrap();
-
-        assert!(birli_ctx.prep_ctx.correct_cable_lengths);
-        assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
-        assert!(!birli_ctx.prep_ctx.correct_digital_gains);
-        assert!(birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
-        assert_eq!(
-            birli_ctx.io_ctx.gpufits_in,
-            gpufits_paths.map(|p| p.to_string())
-        );
-        assert_eq!(
-            birli_ctx.io_ctx.ms_out,
-            Some(ms_path.to_str().unwrap().into())
-        );
-
-        birli_ctx.run().unwrap();
-        compare_ms_with_csv(
-            ms_path,
-            expected_csv_path,
-            F32Margin::default().epsilon(1e-3),
             false,
         );
     }
