@@ -1199,31 +1199,38 @@ impl BirliContext {
         // Prepare IO //
         // ////////// //
 
-        prep_ctx.calsols = io_ctx.aocalsols_in.map(|calsol_file| {
+        prep_ctx.calsols = if let Some(ref calsol_file) = io_ctx.aocalsols_in {
             let calsols = AOCalSols::read_andre_binary(calsol_file).unwrap();
             if calsols.di_jones.dim().0 != 1 {
                 panic!("only 1 timeblock must be supplied for calsols. Instead found {} timeblocks. dimensions {:?}", calsols.di_jones.dim().1, calsols.di_jones.dim());
             }
-            // calsols.di_jones.index_axis_move(Axis(0), 0)
             let calsol_chans = calsols.di_jones.dim().2;
             if calsol_chans % corr_ctx.num_coarse_chans != 0 {
-                panic!(
-                    "the number of calibration solution channels must be a multiple of the number of
-                    coarse channels defined in the metafits {}. Instead found {}.
-                    dimensions: {:?}",
-                    corr_ctx.metafits_context.num_metafits_coarse_chans,
-                    calsol_chans,
-                    calsols.di_jones.dim());
+                return Err(BirliError::BadArrayShape {
+                    argument: format!("io_ctx.aocalsols_in={}", calsol_file),
+                    expected: format!(
+                        "a multiple of metafits_num_coarse_chans={}",
+                        corr_ctx.metafits_context.num_metafits_coarse_chans
+                    ),
+                    received: format!("{}", calsol_chans),
+                    function: "BirliContext::run".into(),
+                });
             }
             let num_calsol_fine_chans_per_coarse = calsol_chans / corr_ctx.num_coarse_chans;
-            calsols.di_jones
-                .index_axis(Axis(0), 0)
-                .slice(s![
-                    ..,
-                    (vis_sel.coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
-                    ..(vis_sel.coarse_chan_range.end * num_calsol_fine_chans_per_coarse)]
-                ).to_owned()
-        });
+            Some(
+                calsols
+                    .di_jones
+                    .index_axis(Axis(0), 0)
+                    .slice(s![
+                        ..,
+                        (vis_sel.coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
+                            ..(vis_sel.coarse_chan_range.end * num_calsol_fine_chans_per_coarse)
+                    ])
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
 
         let mut uvfits_writer = io_ctx.uvfits_out.map(|uvfits_out| {
             with_increment_duration!(durations, "init", {

@@ -66,11 +66,11 @@ mod tests {
 
     #[test]
     fn main_with_dry_run_doesnt_crash() {
+        #[rustfmt::skip]
         assert_eq!(
             main_with_args(&[
                 "birli",
-                "-m",
-                "tests/data/1254670392_avg/1254670392.fixed.metafits",
+                "-m", "tests/data/1254670392_avg/1254670392.fixed.metafits",
                 "--dry-run",
                 "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits"
             ]),
@@ -80,16 +80,15 @@ mod tests {
 
     #[test]
     fn main_with_bad_arg_returns_1() {
-        assert_eq!(
+        #[rustfmt::skip]
+        assert_ne!(
             main_with_args(&[
                 "birli",
-                "-m",
-                "tests/data/1254670392_avg/1254670392.fixed.metafits",
-                "--avg-time-factor",
-                "0",
+                "-m", "tests/data/1254670392_avg/1254670392.fixed.metafits",
+                "--avg-time-factor", "0",
                 "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits"
             ]),
-            1
+            0
         );
     }
 
@@ -102,16 +101,14 @@ mod tests {
         let gpufits_paths =
             vec!["tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits"];
 
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "-u",
-            uvfits_path.to_str().unwrap(),
+            "-m", metafits_path,
+            "-u", uvfits_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains",
-            "none",
+            "--pfb-gains", "none",
             "--no-cable-delay",
             "--no-geometric-delay",
         ];
@@ -121,6 +118,32 @@ mod tests {
 
         assert!(uvfits_path.exists());
         assert!(uvfits_path.metadata().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn main_gracefully_handle_munted_cal_file() {
+        let tmp_dir = tempdir().unwrap();
+        let uvfits_path = tmp_dir.path().join("1247842824.uvfits");
+
+        let metafits_path = "tests/data/1254670392_avg/1254670392.fixed.metafits";
+        let gpufits_paths =
+            ["tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits"];
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", metafits_path,
+            "-u", uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains", "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--apply-di-cal", "tests/data/1254670392_avg/1254690096.munted.bin"
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert_ne!(main_with_args(&args), 0);
     }
 
     #[test]
