@@ -1,4 +1,83 @@
 //! Selecting a subset of visibilities from an observation using ranges and vectors of indices.
+//!
+//! Observations can sometimes be too large to fit in memory. This method will only load
+//! visibilities from the selected timesteps, coarse channels and baselines in order to enable
+//! processing in "chunks"
+//!
+//! The timesteps are specified as a range of indices in the [`mwalib::CorrelatorContext`]'s
+//! timestep array, which should be a contiguous superset of times from all provided coarse gpubox
+//! files. A similar concept applies to coarse channels. Instead of reading visibilities for all
+//! known timesteps / coarse channels, it is recommended to use `common_coarse_chan_indices` and
+//! `common_timestep_indices`, as these ignore timesteps and coarse channels which are missing
+//! contiguous data. `common_good_timestep_indices` is also a good choice to avoid quack time.
+//!
+//! For more details, see the [documentation](https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html).
+//!
+//! Note: it doesn't make sense to ask aoflagger to flag non-contiguous timesteps
+//! or coarse channels, and so this interface only allows to ranges to be used.
+//! For flagging an obeservation with "picket fence" coarse channels or timesteps,
+//! contiguous ranges should be flagged separately.
+//!
+//! [`mwalib::CorrelatorContext`]: https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html
+//!
+//! # Examples
+//!
+//! ```rust
+//! use birli::{mwalib::CorrelatorContext, FlagContext, VisSelection};
+//!
+//! // define our input files
+//! let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+//! let gpufits_paths = vec![
+//!     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+//!     "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+//!     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+//!     "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+//! ];
+//!
+//! // Create an mwalib::CorrelatorContext for accessing visibilities.
+//! let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+//!
+//! // Determine which timesteps and coarse channels we want to use
+//! let img_timestep_idxs = &corr_ctx.common_timestep_indices;
+//! let good_timestep_idxs = &corr_ctx.common_good_timestep_indices;
+//!
+//! let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+//! vis_sel.timestep_range =
+//!     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
+//!
+//! // Create a blank array to store flags and visibilities
+//! let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+//! let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+//! let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+//!
+//! // read visibilities out of the gpubox files
+//! vis_sel
+//!     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+//!     .unwrap();
+//!
+//! let dims_common = jones_array.dim();
+//!
+//! // now try only with good timesteps
+//! vis_sel.timestep_range =
+//!     *good_timestep_idxs.first().unwrap()..(*good_timestep_idxs.last().unwrap() + 1);
+//!
+//! // read visibilities out of the gpubox files
+//! let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+//! let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+//! vis_sel
+//!     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+//!     .unwrap();
+//!
+//! let dims_good = jones_array.dim();
+//!
+//! // different selections have different sized arrays.
+//! assert_ne!(dims_common, dims_good);
+//! ```
+//!
+//! # Errors
+//!
+//! can throw BadArrayShape flag_array is provided and its shape does not match
+//! that of the timestep and coarse channel ranges.
 
 use std::ops::Range;
 
@@ -405,7 +484,7 @@ mod tests {
         compare_jones,
         marlu::{num_traits::Zero, Complex},
         test_common::{get_mwa_ord_context, get_mwa_ord_dodgy_context, get_mwax_context},
-        FlagContext, TestJones, VisSelection,
+        TestJones, VisSelection,
     };
 
     use super::*;
@@ -416,23 +495,11 @@ mod tests {
     fn test_read_mwalib_mwax_flags_missing_hdus() {
         let corr_ctx = get_mwa_ord_dodgy_context();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-        let flag_ctx = FlagContext::blank_from_dimensions(
-            corr_ctx.num_timesteps,
-            corr_ctx.num_coarse_chans,
-            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
-            corr_ctx.metafits_context.num_ants,
-        );
-        let mut flag_array = flag_ctx
-            .to_array(
-                &vis_sel.timestep_range,
-                &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-            )
-            .unwrap();
-        let mut jones_array = vis_sel
-            .allocate_jones(corr_ctx.metafits_context.num_corr_fine_chans_per_coarse)
-            .unwrap();
-
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // read visibilities out of the gpubox files
         vis_sel
             .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
             .unwrap();
@@ -520,23 +587,11 @@ mod tests {
     fn test_read_mwalib_mwax() {
         let corr_ctx = get_mwax_context();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-        let flag_ctx = FlagContext::blank_from_dimensions(
-            corr_ctx.num_timesteps,
-            corr_ctx.num_coarse_chans,
-            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
-            corr_ctx.metafits_context.num_ants,
-        );
-        let mut flag_array = flag_ctx
-            .to_array(
-                &vis_sel.timestep_range,
-                &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-            )
-            .unwrap();
-        let mut jones_array = vis_sel
-            .allocate_jones(corr_ctx.metafits_context.num_corr_fine_chans_per_coarse)
-            .unwrap();
-
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // read visibilities out of the gpubox files
         vis_sel
             .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
             .unwrap();
@@ -623,23 +678,11 @@ mod tests {
     fn test_read_mwalib_mwa_ord() {
         let corr_ctx = get_mwa_ord_context();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-        let flag_ctx = FlagContext::blank_from_dimensions(
-            corr_ctx.num_timesteps,
-            corr_ctx.num_coarse_chans,
-            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
-            corr_ctx.metafits_context.num_ants,
-        );
-        let mut flag_array = flag_ctx
-            .to_array(
-                &vis_sel.timestep_range,
-                &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-            )
-            .unwrap();
-        let mut jones_array = vis_sel
-            .allocate_jones(corr_ctx.metafits_context.num_corr_fine_chans_per_coarse)
-            .unwrap();
-
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // read visibilities out of the gpubox files
         vis_sel
             .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
             .unwrap();

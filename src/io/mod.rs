@@ -121,7 +121,7 @@ pub trait WriteableVis: Sync + Send {
 /// ```rust
 /// use tempfile::tempdir;
 /// use birli::{
-///     context_to_jones_array,
+///     FlagContext,
 ///     write_uvfits,
 ///     marlu::mwalib::CorrelatorContext,
 ///     add_dimension,
@@ -148,14 +148,15 @@ pub trait WriteableVis: Sync + Send {
 /// // Determine which timesteps and coarse channels we want to use
 /// let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 ///
-/// // generate an array of jones matrices
-/// let (jones_array, flag_array) = context_to_jones_array(
-///     &corr_ctx,
-///     &vis_sel.timestep_range,
-///     &vis_sel.coarse_chan_range,
-///     None,
-///     false,
-/// ).unwrap();
+/// // Create a blank array to store flags and visibilities
+/// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+/// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+/// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+///
+/// // read visibilities out of the gpubox files
+/// vis_sel
+///     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+///     .unwrap();
 ///
 /// // write the visibilities to disk as .uvfits
 /// let num_pols = corr_ctx.metafits_context.num_visibility_pols;
@@ -247,12 +248,12 @@ pub fn write_uvfits<T: AsRef<Path>>(
 /// use tempfile::tempdir;
 /// use birli::{
 ///     VisSelection,
-///     context_to_jones_array,
 ///     write_ms,
 ///     marlu::mwalib::CorrelatorContext,
 ///     add_dimension,
 ///     get_weight_factor,
-///     flag_to_weight_array
+///     flag_to_weight_array,
+///     FlagContext,
 /// };
 ///
 /// // define our input files
@@ -273,14 +274,15 @@ pub fn write_uvfits<T: AsRef<Path>>(
 /// // Determine which timesteps and coarse channels we want to use
 /// let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 ///
-/// // generate an array of jones matrices
-/// let (jones_array, flag_array) = context_to_jones_array(
-///     &corr_ctx,
-///     &vis_sel.timestep_range,
-///     &vis_sel.coarse_chan_range,
-///     None,
-///     false,
-/// ).unwrap();
+/// // Create a blank array to store flags and visibilities
+/// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+/// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+/// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+///
+/// // read visibilities out of the gpubox files
+/// vis_sel
+///     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+///     .unwrap();
 ///
 /// // write the visibilities to disk as .ms
 ///
@@ -370,7 +372,6 @@ pub fn write_ms<T: AsRef<Path>>(
 /// Tests which require the use of the aoflagger feature
 mod tests_aoflagger {
     use crate::{
-        context_to_jones_array,
         flags::{
             add_dimension, flag_jones_array_existing, flag_to_weight_array, get_weight_factor,
         },
@@ -417,24 +418,20 @@ mod tests_aoflagger {
 
         // Prepare our flagmasks with known bad antennae
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-
-        let flag_array = flag_ctx
-            .to_array(
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        flag_ctx
+            .set_flags(
+                &mut flag_array,
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
                 vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )
             .unwrap();
-
-        // generate an array of jones matrices
-        let (jones_array, mut flag_array) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            Some(flag_array),
-            false,
-        )
-        .unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .unwrap();
 
         // use the default strategy file location for MWA
         let strategy_filename = &aoflagger.FindStrategyFileMWA();

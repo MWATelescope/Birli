@@ -28,7 +28,7 @@ use std::{f64::consts::PI, ops::Range};
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, correct_cable_lengths, mwalib::CorrelatorContext, VisSelection};
+/// use birli::{correct_cable_lengths, mwalib::CorrelatorContext, VisSelection};
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -45,14 +45,15 @@ use std::{f64::consts::PI, ops::Range};
 /// // Determine which timesteps and coarse channels we want to use
 /// let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 ///
+/// // Create a blank array to store flags and visibilities
+/// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+/// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+/// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+///
 /// // read visibilities out of the gpubox files
-/// let (mut jones_array, _) = context_to_jones_array(
-///     &corr_ctx,
-///     &vis_sel.timestep_range,
-///     &vis_sel.coarse_chan_range,
-///     None,
-///     false,
-/// ).unwrap();
+/// vis_sel
+///     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+///     .unwrap();
 ///
 /// correct_cable_lengths(&corr_ctx, &mut jones_array, &vis_sel.coarse_chan_range, false);
 /// ```
@@ -160,7 +161,10 @@ pub fn correct_cable_lengths(
 /// # Examples
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, correct_geometry, mwalib::CorrelatorContext};
+/// use birli::{
+///     FlagContext, correct_geometry, mwalib::CorrelatorContext, VisSelection,
+///     correct_cable_lengths
+/// };
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -175,29 +179,29 @@ pub fn correct_cable_lengths(
 /// let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 ///
 /// // Determine which timesteps and coarse channels we want to use
-/// let sel_coarse_chan_idxs = &corr_ctx.common_coarse_chan_indices;
-/// let sel_timestep_idxs = &corr_ctx.common_timestep_indices;
-/// let baseline_idxs = (0..corr_ctx.metafits_context.num_baselines).collect::<Vec<_>>();
+/// let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 ///
-/// let sel_timestep_range =
+/// let sel_timestep_idxs = &corr_ctx.common_timestep_indices;
+/// vis_sel.timestep_range =
 ///     *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
-/// let coarse_chan_range =
-///     *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
+///
+/// // Create a blank array to store flags and visibilities
+/// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+/// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+/// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 ///
 /// // read visibilities out of the gpubox files
-/// let (mut jones_array, _) = context_to_jones_array(
-///     &corr_ctx,
-///     &sel_timestep_range,
-///     &coarse_chan_range,
-///     None,
-///     false,
-/// ).unwrap();
+/// vis_sel
+///     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+///     .unwrap();
+///
+/// correct_cable_lengths(&corr_ctx, &mut jones_array, &vis_sel.coarse_chan_range, false);
 ///
 /// correct_geometry(
 ///     &corr_ctx,
 ///     &mut jones_array,
-///     &sel_timestep_range,
-///     &coarse_chan_range,
+///     &vis_sel.timestep_range,
+///     &vis_sel.coarse_chan_range,
 ///     None,
 ///     None,
 ///     false,
@@ -668,7 +672,7 @@ mod tests {
 
     use crate::{
         approx::assert_abs_diff_eq,
-        compare_jones, context_to_jones_array,
+        compare_jones,
         corrections::ScrunchType,
         test_common::{get_mwa_ord_context, get_mwax_context},
         BirliError, TestJones, VisSelection,
@@ -679,14 +683,14 @@ mod tests {
         let corr_ctx = get_mwax_context();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
-        let (jones_array, _) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            None,
-            false,
-        )
-        .unwrap();
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // read visibilities out of the gpubox files
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
@@ -860,14 +864,14 @@ mod tests {
         let corr_ctx = get_mwa_ord_context();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
-        let (jones_array, _) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            None,
-            false,
-        )
-        .unwrap();
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // read visibilities out of the gpubox files
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
@@ -1049,14 +1053,14 @@ mod tests {
         let phase_centre_ra = RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context);
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&corr_ctx.metafits_context);
 
-        let (jones_array, _) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            None,
-            false,
-        )
-        .unwrap();
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // read visibilities out of the gpubox files
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .unwrap();
 
         let jones_array = jones_array.mapv(TestJones::from);
 
@@ -1224,14 +1228,14 @@ mod tests {
         let corr_ctx = get_mwax_context();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
-        let (jones_array, _) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            None,
-            false,
-        )
-        .unwrap();
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // read visibilities out of the gpubox files
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
@@ -1405,21 +1409,17 @@ mod tests {
         let corr_ctx = get_mwa_ord_context();
 
         let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-
-        let (jones_array, _) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            None,
-            false,
-        )
-        .unwrap();
-
-        // let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
-        // let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
-
         let sel_baseline_range = 0..2;
         vis_sel.baseline_idxs = sel_baseline_range.clone().collect();
+
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // read visibilities out of the gpubox files
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .unwrap();
 
         let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 

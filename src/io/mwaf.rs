@@ -478,7 +478,7 @@ mod tests {
     use crate::{
         io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate},
         test_common::{get_mwa_ord_context, get_mwax_context},
-        FlagContext, VisSelection,
+        VisSelection,
     };
     use fitsio::FitsFile;
     use marlu::{
@@ -787,8 +787,6 @@ mod tests {
         let tmp_dir = tempdir().unwrap();
         let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
 
-        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
-
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         let gpubox_ids = corr_ctx.coarse_chans[vis_sel.coarse_chan_range.clone()]
@@ -796,20 +794,9 @@ mod tests {
             .map(|chan| chan.gpubox_number)
             .collect::<Vec<_>>();
 
-        let flag_ctx = FlagContext::blank_from_dimensions(
-            corr_ctx.num_timesteps,
-            corr_ctx.num_coarse_chans,
-            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
-            corr_ctx.metafits_context.num_ants,
-        );
-
-        let mut flag_array = flag_ctx
-            .to_array(
-                &vis_sel.timestep_range,
-                &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-            )
-            .unwrap();
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
 
         let mut idx = 0;
 

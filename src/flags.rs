@@ -4,25 +4,23 @@ use std::ops::Range;
 
 use crate::{
     io::error::IOError,
-    ndarray::Axis,
-    ndarray::{Array, Array3, Array4, ArrayView, ArrayView3, Dimension},
+    marlu::{
+        mwalib::CorrelatorContext,
+        ndarray::{Array, Array3, Array4, ArrayView, ArrayView3, Axis, Dimension},
+    },
     BirliError, FlagFileSet,
 };
 use cfg_if::cfg_if;
 use derive_builder::Builder;
 use itertools::izip;
 use log::trace;
-use marlu::mwalib::CorrelatorContext;
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
-        use crate::{
-            flag_baseline_view_to_flagmask, jones_baseline_view_to_imageset,
-        };
         use aoflagger_sys::{CxxAOFlagger, flagmask_or,
-            flagmask_set};
+            flagmask_set, CxxFlagMask, UniquePtr, CxxImageSet};
         use indicatif::{ProgressBar, ProgressStyle};
-        use marlu::{Jones, rayon::prelude::*};
+        use marlu::{Jones, rayon::prelude::*, ndarray::{ArrayView2}};
     }
 }
 
@@ -133,42 +131,6 @@ impl FlagContext {
             .collect()
     }
 
-    /// Initialize a 3D array of `bool` flags for each timestep, channel, baseline selected.
-    ///
-    /// # Errors
-    ///
-    /// Can throw error if not enough memory
-    pub fn to_array(
-        &self,
-        timestep_range: &Range<usize>,
-        coarse_chan_range: &Range<usize>,
-        ant_pairs: Vec<(usize, usize)>,
-    ) -> Result<Array3<bool>, BirliError> {
-        let shape = (
-            timestep_range.len(),
-            coarse_chan_range.len() * self.fine_chan_flags.len(),
-            ant_pairs.len(),
-        );
-        let num_elems = shape.0 * shape.1 * shape.2;
-        let mut v = Vec::new();
-
-        let mut flag_array = if let Ok(()) = v.try_reserve_exact(num_elems) {
-            // Make the vector's length equal to its new capacity.
-            v.resize(num_elems, false);
-            Array3::from_shape_vec(shape, v).unwrap()
-        } else {
-            let need_gib = num_elems * std::mem::size_of::<bool>() / 1024_usize.pow(3);
-            return Err(BirliError::InsufficientMemory { need_gib });
-        };
-        self.set_flags(
-            &mut flag_array,
-            timestep_range,
-            coarse_chan_range,
-            ant_pairs,
-        )?;
-        Ok(flag_array)
-    }
-
     /// Set flags from this context in an existing array.
     ///
     /// # Errors
@@ -230,6 +192,89 @@ where
         .to_owned()
 }
 
+/// Create an aoflagger [`CxxImageSet`] for a particular baseline from the given jones array
+///
+/// # Assumptions
+///
+/// - `baseline_jones_view` is [timestep][channel] for one baseline
+/// - imageset is timesteps wide, and channels high
+/// - jones matrics are always XX, YY, XY, YX
+///
+/// # Errors
+///
+/// Will throw [`BirliError`] if there was an error reading from corr_ctx.
+#[cfg(feature = "aoflagger")]
+pub fn jones_baseline_view_to_imageset(
+    aoflagger: &CxxAOFlagger,
+    // jones_array: &Array3<Jones<f32>>,
+    baseline_jones_view: &ArrayView2<Jones<f32>>,
+) -> Result<UniquePtr<CxxImageSet>, BirliError> {
+    let array_dims = baseline_jones_view.dim();
+    let img_count = 8;
+    let imgset = unsafe {
+        aoflagger.MakeImageSet(
+            array_dims.0,
+            array_dims.1,
+            img_count,
+            0 as f32,
+            array_dims.0,
+        )
+    };
+    let img_stride = imgset.HorizontalStride();
+    let mut img_bufs: Vec<&mut [f32]> = (0..img_count)
+        .map(|img_idx| unsafe { imgset.ImageBufferMutUnsafe(img_idx) })
+        .collect();
+
+    // TODO: benchmark if iterate over pol first
+
+    for (img_timestep_idx, timestep_jones_view) in baseline_jones_view.outer_iter().enumerate() {
+        for (img_chan_idx, singular_jones_view) in timestep_jones_view.outer_iter().enumerate() {
+            let jones = singular_jones_view.get(()).unwrap();
+            for (img_idx, img_buf) in img_bufs.iter_mut().enumerate() {
+                let pol_idx = img_idx / 2;
+                img_buf[img_chan_idx * img_stride + img_timestep_idx] = if img_idx % 2 == 0 {
+                    jones[pol_idx].re
+                } else {
+                    jones[pol_idx].im
+                };
+            }
+        }
+    }
+
+    Ok(imgset)
+}
+
+/// Create an aoflagger [`CxxFlagMask`] for a from the given flag array view
+///
+/// # Assumptions
+///
+/// - flag array view is [timestep][channel] for one baseline
+/// - flagmask is timesteps wide, and channels high
+///
+/// # Errors
+///
+/// Will throw [`BirliError`] if there was an error reading from corr_ctx.
+#[cfg(feature = "aoflagger")]
+pub fn flag_baseline_view_to_flagmask(
+    aoflagger: &CxxAOFlagger,
+    baseline_flag_view: &ArrayView2<bool>,
+) -> Result<UniquePtr<CxxFlagMask>, BirliError> {
+    let array_dims = baseline_flag_view.dim();
+    let mut flag_mask = unsafe { aoflagger.MakeFlagMask(array_dims.0, array_dims.1, false) };
+    let stride = flag_mask.HorizontalStride();
+    let flag_buf = flag_mask.pin_mut().BufferMut();
+
+    // TODO: assign by slice
+    // flag_buf.copy_from_slice(baseline_flag_view.as_slice().unwrap());
+    for (img_timestep_idx, timestep_flag_view) in baseline_flag_view.outer_iter().enumerate() {
+        for (img_chan_idx, singular_flag_view) in timestep_flag_view.outer_iter().enumerate() {
+            flag_buf[img_chan_idx * stride + img_timestep_idx] =
+                *singular_flag_view.get(()).unwrap();
+        }
+    }
+    Ok(flag_mask)
+}
+
 /// Flag an ndarray of [`Jones`] visibilities, given a [`CxxAOFlagger`] instance,
 /// a [`CxxStrategy`] filename, returning an [`ndarray::Array3`] of boolean flags.
 ///
@@ -249,7 +294,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use birli::{context_to_jones_array, flag_jones_array_existing, write_flags,
+/// use birli::{FlagContext, flag_jones_array_existing, write_flags,
 ///     mwalib::CorrelatorContext, cxx_aoflagger_new, VisSelection};
 /// use tempfile::tempdir;
 ///
@@ -271,14 +316,15 @@ where
 /// // specify which coarse_chan and timestep indices we want to load into an image.
 /// let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 ///
+/// // Create a blank array to store flags and visibilities
+/// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+/// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+/// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+///
 /// // read visibilities out of the gpubox files
-/// let (jones_array, mut flag_array) = context_to_jones_array(
-///     &corr_ctx,
-///     &vis_sel.timestep_range,
-///     &vis_sel.coarse_chan_range,
-///     None,
-///     false,
-/// ).unwrap();
+/// vis_sel
+///     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+///     .unwrap();
 ///
 /// // use the default strategy file location for MWA
 /// let strategy_filename = &aoflagger.FindStrategyFileMWA();
@@ -396,7 +442,7 @@ pub fn flag_jones_array(
 /// Here's an example of how to flag some visibility files
 ///
 /// ```rust
-/// use birli::{context_to_jones_array, write_flags, mwalib::CorrelatorContext, FlagContext, VisSelection};
+/// use birli::{FlagContext, write_flags, mwalib::CorrelatorContext, VisSelection};
 /// use tempfile::tempdir;
 ///
 /// // define our input files
@@ -422,20 +468,22 @@ pub fn flag_jones_array(
 ///
 /// // Prepare our flagmasks with known bad antennae
 /// let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-/// let flag_array = flag_ctx.to_array(
+///
+/// // Create a blank array to store flags and visibilities
+/// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+/// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+/// flag_ctx.set_flags(
+///     &mut flag_array,
 ///     &vis_sel.timestep_range,
 ///     &vis_sel.coarse_chan_range,
-///     vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-/// ).unwrap();
+///     vis_sel.get_ant_pairs(&corr_ctx.metafits_context)
+/// );
+/// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 ///
 /// // read visibilities out of the gpubox files
-/// let (jones_array, flag_array) = context_to_jones_array(
-///     &corr_ctx,
-///     &vis_sel.timestep_range,
-///     &vis_sel.coarse_chan_range,
-///     Some(flag_array),
-///     false,
-/// ).unwrap();
+/// vis_sel
+///     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+///     .unwrap();
 ///
 /// // write the flags to disk as .mwaf
 /// write_flags(&corr_ctx, &flag_array, flag_template.to_str().unwrap(), &vis_sel.coarse_chan_range).unwrap();
@@ -486,7 +534,7 @@ mod tests {
             get_mwa_ord_dodgy_context, get_mwa_ord_no_overlap_context,
             get_mwa_ord_no_timesteps_context,
         },
-        FlagContext, FlagFileSet, VisSelection,
+        FlagFileSet, VisSelection,
     };
 
     #[test]
@@ -532,20 +580,9 @@ mod tests {
         let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
         vis_sel.coarse_chan_range =
             vis_sel.coarse_chan_range.start..vis_sel.coarse_chan_range.start + 1;
-        let flag_ctx = FlagContext::blank_from_dimensions(
-            corr_ctx.num_timesteps,
-            corr_ctx.num_coarse_chans,
-            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
-            corr_ctx.metafits_context.num_ants,
-        );
 
-        let mut flag_array = flag_ctx
-            .to_array(
-                &vis_sel.timestep_range,
-                &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-            )
-            .unwrap();
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
 
         flag_array[[flag_timestep, flag_channel, flag_baseline]] = true;
 
@@ -647,7 +684,6 @@ mod tests_aoflagger {
     use ndarray::Array3;
 
     use crate::{
-        context_to_jones_array,
         flags::{flag_jones_array, flag_jones_array_existing, FlagContext},
         VisSelection,
     };
@@ -775,23 +811,20 @@ mod tests_aoflagger {
         let corr_ctx = get_mwa_ord_context();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
-        let (jones_array, _) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            None,
-            false,
-        )
-        .unwrap();
-
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-
-        let mut existing_flag_array = flag_ctx
-            .to_array(
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        flag_ctx
+            .set_flags(
+                &mut flag_array,
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
                 vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )
+            .unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
             .unwrap();
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
@@ -800,24 +833,24 @@ mod tests_aoflagger {
             &aoflagger,
             strategy_filename,
             &jones_array,
-            &mut existing_flag_array,
+            &mut flag_array,
             true,
             false,
         );
 
         // test that flagged antennas are indeed flagged
 
-        assert!(!existing_flag_array.get((1, 0, 0)).unwrap());
-        assert!(existing_flag_array.get((1, 0, 11)).unwrap());
-        assert!(existing_flag_array.get((1, 0, 11)).unwrap());
-        assert!(existing_flag_array.get((1, 0, 62)).unwrap());
-        assert!(existing_flag_array.get((1, 0, 63)).unwrap());
-        assert!(existing_flag_array.get((1, 0, 80)).unwrap());
-        assert!(existing_flag_array.get((1, 0, 87)).unwrap());
-        assert!(existing_flag_array.get((1, 0, 91)).unwrap());
-        assert!(existing_flag_array.get((1, 0, 93)).unwrap());
-        assert!(existing_flag_array.get((1, 0, 95)).unwrap());
-        assert!(existing_flag_array.get((1, 0, 111)).unwrap());
-        assert!(!existing_flag_array.get((1, 0, 113)).unwrap());
+        assert!(!flag_array.get((1, 0, 0)).unwrap());
+        assert!(flag_array.get((1, 0, 11)).unwrap());
+        assert!(flag_array.get((1, 0, 11)).unwrap());
+        assert!(flag_array.get((1, 0, 62)).unwrap());
+        assert!(flag_array.get((1, 0, 63)).unwrap());
+        assert!(flag_array.get((1, 0, 80)).unwrap());
+        assert!(flag_array.get((1, 0, 87)).unwrap());
+        assert!(flag_array.get((1, 0, 91)).unwrap());
+        assert!(flag_array.get((1, 0, 93)).unwrap());
+        assert!(flag_array.get((1, 0, 95)).unwrap());
+        assert!(flag_array.get((1, 0, 111)).unwrap());
+        assert!(!flag_array.get((1, 0, 113)).unwrap());
     }
 }

@@ -1078,7 +1078,6 @@ mod tests {
 
     use crate::{
         approx::assert_abs_diff_eq,
-        context_to_jones_array,
         marlu::{
             constants::{
                 COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
@@ -1089,7 +1088,7 @@ mod tests {
             },
         },
         test_common::get_mwa_ord_context,
-        FlagContext, VisSelection,
+        VisSelection,
     };
 
     macro_rules! assert_short_string_keys_eq {
@@ -1735,29 +1734,14 @@ mod tests {
         )
         .unwrap();
 
-        // Prepare our flagmasks
-        let flag_ctx = FlagContext::blank_from_dimensions(
-            corr_ctx.num_timesteps,
-            corr_ctx.num_coarse_chans,
-            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
-            corr_ctx.metafits_context.num_ants,
-        );
-        let flag_array = flag_ctx
-            .to_array(
-                &vis_sel.timestep_range,
-                &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-            )
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // read visibilities out of the gpubox files
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
             .unwrap();
-
-        let (jones_array, flag_array) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            Some(flag_array),
-            false,
-        )
-        .unwrap();
 
         u.write_jones_flags(
             &corr_ctx,
@@ -1824,29 +1808,14 @@ mod tests {
         )
         .unwrap();
 
-        // Prepare our flagmasks
-        let flag_ctx = FlagContext::blank_from_dimensions(
-            corr_ctx.num_timesteps,
-            corr_ctx.num_coarse_chans,
-            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
-            corr_ctx.metafits_context.num_ants,
-        );
-        let flag_array = flag_ctx
-            .to_array(
-                &vis_sel.timestep_range,
-                &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-            )
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // read visibilities out of the gpubox files
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
             .unwrap();
-
-        let (jones_array, flag_array) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            Some(flag_array),
-            false,
-        )
-        .unwrap();
 
         let num_pols = corr_ctx.metafits_context.num_visibility_pols;
         let flag_array = add_dimension(flag_array.view(), num_pols);
@@ -1918,29 +1887,14 @@ mod tests {
         )
         .unwrap();
 
-        // Prepare our flagmasks
-        let flag_ctx = FlagContext::blank_from_dimensions(
-            corr_ctx.num_timesteps,
-            corr_ctx.num_coarse_chans,
-            corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
-            corr_ctx.metafits_context.num_ants,
-        );
-        let flag_array = flag_ctx
-            .to_array(
-                &vis_sel.timestep_range,
-                &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-            )
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // read visibilities out of the gpubox files
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
             .unwrap();
-
-        let (jones_array, flag_array) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            Some(flag_array),
-            false,
-        )
-        .unwrap();
 
         u.write_jones_flags(
             &corr_ctx,
@@ -2172,7 +2126,6 @@ mod tests_aoflagger {
     };
 
     use crate::{
-        context_to_jones_array,
         flags::flag_jones_array_existing,
         marlu::{
             constants::{
@@ -2216,22 +2169,20 @@ mod tests_aoflagger {
 
         // Prepare our flagmasks with known bad antennae
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-        let flag_array = flag_ctx
-            .to_array(
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        flag_ctx
+            .set_flags(
+                &mut flag_array,
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
                 vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )
             .unwrap();
-
-        let (jones_array, mut flag_array) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            Some(flag_array),
-            false,
-        )
-        .unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .unwrap();
 
         let strategy_path = &aoflagger.FindStrategyFileMWA();
 
@@ -2303,22 +2254,20 @@ mod tests_aoflagger {
 
         // Prepare our flagmasks with known bad antennae
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-        let flag_array = flag_ctx
-            .to_array(
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        flag_ctx
+            .set_flags(
+                &mut flag_array,
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
                 vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )
             .unwrap();
-
-        let (jones_array, mut flag_array) = context_to_jones_array(
-            &corr_ctx,
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            Some(flag_array),
-            false,
-        )
-        .unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        vis_sel
+            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .unwrap();
 
         let strategy_path = &aoflagger.FindStrategyFileMWA();
 
