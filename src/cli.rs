@@ -2840,3 +2840,167 @@ mod tests_aoflagger {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg(feature = "aoflagger")]
+/// Tests which require the use of the aoflagger feature
+mod tests_aoflagger_flagset {
+    use crate::{io::mwaf::FlagFileSet, BirliContext};
+    use itertools::izip;
+    use marlu::mwalib::CorrelatorContext;
+    use tempfile::tempdir;
+
+    macro_rules! assert_flagsets_eq {
+        ($context:expr, $left_flagset:expr, $right_flagset:expr, $gpubox_ids:expr) => {
+            let num_baselines = $context.metafits_context.num_baselines;
+            let num_flags_per_row = $context.metafits_context.num_corr_fine_chans_per_coarse;
+            let num_common_timesteps = $context.num_common_timesteps;
+            let num_rows = num_common_timesteps * num_baselines;
+            let num_flags_per_timestep = num_baselines * num_flags_per_row;
+
+            assert!(num_baselines > 0);
+            assert!(num_rows > 0);
+            assert!(num_flags_per_row > 0);
+
+            let right_chan_header_flags_raw =
+            $right_flagset.read_chan_header_flags_raw().unwrap();
+
+            let left_chan_header_flags_raw = $left_flagset.read_chan_header_flags_raw().unwrap();
+
+            for gpubox_id in $gpubox_ids {
+                let (left_header, left_flags) = left_chan_header_flags_raw.get(&gpubox_id).unwrap();
+                let (right_header, right_flags) =
+                    right_chan_header_flags_raw.get(&gpubox_id).unwrap();
+                assert_eq!(left_header.obs_id, right_header.obs_id);
+                assert_eq!(left_header.num_channels, right_header.num_channels);
+                assert_eq!(left_header.num_ants, right_header.num_ants);
+                // assert_eq!(left_header.num_common_timesteps, right_header.num_common_timesteps);
+                assert_eq!(left_header.num_timesteps, num_common_timesteps);
+                assert_eq!(left_header.num_pols, right_header.num_pols);
+                assert_eq!(left_header.gpubox_id, right_header.gpubox_id);
+                assert_eq!(left_header.bytes_per_row, right_header.bytes_per_row);
+                // assert_eq!(left_header.num_rows, right_header.num_rows);
+                assert_eq!(left_header.num_rows, num_rows);
+
+                // assert_eq!(left_flags.len(), right_flags.len());
+                assert_eq!(
+                    left_flags.len(),
+                    num_common_timesteps * num_baselines * num_flags_per_row
+                );
+
+                izip!(
+                    left_flags.chunks(num_flags_per_timestep),
+                    right_flags.chunks(num_flags_per_timestep)
+                ).enumerate().for_each(|(common_timestep_idx, (left_timestep_chunk, right_timestep_chunk))| {
+                    izip!(
+                        $context.metafits_context.baselines.iter(),
+                        left_timestep_chunk.chunks(num_flags_per_row),
+                        right_timestep_chunk.chunks(num_flags_per_row)
+                    ).enumerate().for_each(|(baseline_idx, (baseline, left_baseline_chunk, right_baseline_chunk))| {
+                        if baseline.ant1_index == baseline.ant2_index {
+                            return
+                        }
+
+                        assert_eq!(
+                            left_baseline_chunk, right_baseline_chunk,
+                            "flag chunks for common timestep {}, baseline {} (ants {}, {}) do not match! \nbirli:\n{:?}\ncotter:\n{:?}",
+                            common_timestep_idx, baseline_idx, baseline.ant1_index, baseline.ant2_index, left_baseline_chunk, right_baseline_chunk
+                        )
+                    });
+                });
+            }
+        };
+    }
+
+    #[test]
+    fn aoflagger_outputs_flags() {
+        let tmp_dir = tempdir().unwrap();
+        let mwaf_path_template = tmp_dir.path().join("Flagfile%%.mwaf");
+
+        let metafits_path = "tests/data/1247842824_flags/1247842824.metafits";
+        let gpufits_paths =
+            vec!["tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits"];
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--pfb-gains", "none",
+            "-f", mwaf_path_template.to_str().unwrap(),
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+
+        assert!(birli_ctx.prep_ctx.correct_cable_lengths);
+        assert!(matches!(birli_ctx.prep_ctx.passband_gains, None));
+        assert!(birli_ctx.prep_ctx.correct_digital_gains);
+        assert!(birli_ctx.prep_ctx.correct_geometry);
+        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.flag_template,
+            Some(mwaf_path_template.to_str().unwrap().into())
+        );
+
+        let corr_ctx =
+            CorrelatorContext::new(&birli_ctx.io_ctx.metafits_in, &birli_ctx.io_ctx.gpufits_in)
+                .unwrap();
+
+        birli_ctx.run().unwrap();
+
+        let gpubox_ids: Vec<usize> = corr_ctx
+            .common_coarse_chan_indices
+            .iter()
+            .map(|&chan| corr_ctx.coarse_chans[chan].gpubox_number)
+            .collect();
+
+        assert!(!gpubox_ids.is_empty());
+
+        let mut birli_flag_file_set = FlagFileSet::open(
+            mwaf_path_template.to_str().unwrap(),
+            &gpubox_ids,
+            corr_ctx.mwa_version,
+        )
+        .unwrap();
+
+        let mut cotter_flag_file_set = FlagFileSet::open(
+            "tests/data/1247842824_flags/FlagfileCotterMWA%%.mwaf",
+            &gpubox_ids,
+            corr_ctx.mwa_version,
+        )
+        .unwrap();
+
+        assert_flagsets_eq!(
+            &corr_ctx,
+            birli_flag_file_set,
+            cotter_flag_file_set,
+            gpubox_ids
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn aoflagger_outputs_flags_chunked() {
+        let tmp_dir = tempdir().unwrap();
+        let mwaf_path_template = tmp_dir.path().join("Flagfile%%.mwaf");
+
+        let metafits_path = "tests/data/1247842824_flags/1247842824.metafits";
+        let gpufits_paths =
+            vec!["tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits"];
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--pfb-gains", "none",
+            "--time-chunk", "1",
+            "-f", mwaf_path_template.to_str().unwrap(),
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        BirliContext::from_args(&args).unwrap();
+    }
+}
