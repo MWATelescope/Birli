@@ -22,6 +22,13 @@ use std::{
     path::PathBuf,
 };
 
+#[macro_export]
+macro_rules! compare_jones {
+    ($a:expr, $b:expr) => {
+        assert_abs_diff_eq!(TestJones::<f32>::from($a), TestJones::<f32>::from($b));
+    };
+}
+
 pub fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
     let metafits_path = "tests/data/1254670392_avg/1254670392.fixed.metafits";
     let gpufits_paths = [
@@ -79,6 +86,53 @@ pub fn get_mwa_ord_context() -> CorrelatorContext {
         "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
     ];
     CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+}
+
+/// Get a dummy MWA Ord corr_ctx with multiple holes in the data
+///
+/// The gpubox (batch, hdu) tuples look like this:
+/// - ts is according to [`mwalib::correlatorContext`]
+///
+/// |                   | ts=0   | 1      | 2      | 3      | 4      |
+/// | ----------------- | ------ | ------ | ------ | ------ | ------ |
+/// | gpubox=00         | (0, 0) | (0, 1) | .      | (1, 0) | .      |
+/// | 01                | .      | (0, 0) | (0, 1) | (1, 0) | (1, 1) |
+pub fn get_mwa_ord_dodgy_context() -> CorrelatorContext {
+    let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
+    let gpufits_paths = vec![
+        "tests/data/1196175296_mwa_ord/adjusted_-1/1196175296_20171201145440_gpubox01_00.fits",
+        "tests/data/1196175296_mwa_ord/limited_1/1196175296_20171201145540_gpubox01_01.fits",
+        "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
+        "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
+    ];
+    CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+}
+
+/// Get a dummy MWA Ord corr_ctx with no overlapping timesteps
+///
+/// The gpubox (batch, hdu) tuples look like this:
+///
+/// | gpubox \ timestep | 0      | 1      | 2      | 3      |
+/// | ----------------- | ------ | ------ | ------ | ------ |
+/// | 00                | (0, 0) | (0, 1) | .      | .      |
+/// | 01                | .      | .      | (0, 1) | (1, 0) |
+pub fn get_mwa_ord_no_overlap_context() -> CorrelatorContext {
+    let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
+    let gpufits_paths = vec![
+        "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
+        "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
+    ];
+    CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+}
+
+/// Get a dummy MWA Ord corr_ctx with no timesteps
+pub fn get_mwa_ord_no_timesteps_context() -> CorrelatorContext {
+    // let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
+    // let gpufits_paths =
+    //     vec!["tests/data/1196175296_mwa_ord/empty/1196175296_20171201145440_gpubox01_00.fits"];
+    let mut corr_ctx = get_mwa_ord_no_overlap_context();
+    corr_ctx.provided_timestep_indices = vec![];
+    corr_ctx
 }
 
 lazy_static! {

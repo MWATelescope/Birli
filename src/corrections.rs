@@ -668,7 +668,7 @@ mod tests {
 
     use crate::{
         approx::assert_abs_diff_eq,
-        context_to_jones_array,
+        compare_jones, context_to_jones_array,
         corrections::ScrunchType,
         test_common::{get_mwa_ord_context, get_mwax_context},
         BirliError, TestJones, VisSelection,
@@ -1398,12 +1398,6 @@ mod tests {
                 Complex::new(rot_1_yy_3_3_re, rot_1_yy_3_3_im),
             ])
         );
-    }
-
-    macro_rules! compare_jones {
-        ($a:expr, $b:expr) => {
-            assert_abs_diff_eq!(TestJones::<f32>::from($a), TestJones::<f32>::from($b));
-        };
     }
 
     #[test]

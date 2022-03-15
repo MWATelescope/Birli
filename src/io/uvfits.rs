@@ -1742,11 +1742,13 @@ mod tests {
             corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
             corr_ctx.metafits_context.num_ants,
         );
-        let flag_array = flag_ctx.to_array(
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-        );
+        let flag_array = flag_ctx
+            .to_array(
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            )
+            .unwrap();
 
         let (jones_array, flag_array) = context_to_jones_array(
             &corr_ctx,
@@ -1829,11 +1831,13 @@ mod tests {
             corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
             corr_ctx.metafits_context.num_ants,
         );
-        let flag_array = flag_ctx.to_array(
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-        );
+        let flag_array = flag_ctx
+            .to_array(
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            )
+            .unwrap();
 
         let (jones_array, flag_array) = context_to_jones_array(
             &corr_ctx,
@@ -1921,11 +1925,13 @@ mod tests {
             corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
             corr_ctx.metafits_context.num_ants,
         );
-        let flag_array = flag_ctx.to_array(
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-        );
+        let flag_array = flag_ctx
+            .to_array(
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            )
+            .unwrap();
 
         let (jones_array, flag_array) = context_to_jones_array(
             &corr_ctx,
@@ -2210,11 +2216,13 @@ mod tests_aoflagger {
 
         // Prepare our flagmasks with known bad antennae
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-        let flag_array = flag_ctx.to_array(
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-        );
+        let flag_array = flag_ctx
+            .to_array(
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            )
+            .unwrap();
 
         let (jones_array, mut flag_array) = context_to_jones_array(
             &corr_ctx,
@@ -2295,11 +2303,13 @@ mod tests_aoflagger {
 
         // Prepare our flagmasks with known bad antennae
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-        let flag_array = flag_ctx.to_array(
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-        );
+        let flag_array = flag_ctx
+            .to_array(
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            )
+            .unwrap();
 
         let (jones_array, mut flag_array) = context_to_jones_array(
             &corr_ctx,

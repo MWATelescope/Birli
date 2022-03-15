@@ -1,7 +1,6 @@
 //! Command Line Interface helpers for Birli
 
 use crate::{
-    context_to_jones_array,
     error::{BirliError, BirliError::DryRun, CLIError::InvalidCommandLineArgument},
     flags::FlagContext,
     flags::{add_dimension, flag_to_weight_array, get_weight_factor},
@@ -489,7 +488,7 @@ impl Display for BirliContext {
         let num_sel_pols = self.corr_ctx.metafits_context.num_visibility_pols;
         let mem_selected_bytes = self
             .vis_sel
-            .estimate_bytes(fine_chans_per_coarse, num_sel_pols);
+            .estimate_bytes_worst(fine_chans_per_coarse, num_sel_pols);
         let mem_per_timestep_gib =
             mem_selected_bytes as f64 / num_sel_timesteps as f64 / 1024.0_f64.powi(3);
 
@@ -871,15 +870,16 @@ impl BirliContext {
 
         // fine channels
         // TODO: flag-edge-width, flag-edge-chans, flag-dc, no-flag-dc,
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
         match matches.values_of_t::<usize>("flag-fine-chans") {
             Ok(fine_chan_idxs) => {
                 for (value_idx, &fine_chan_idx) in fine_chan_idxs.iter().enumerate() {
-                    if fine_chan_idx >= corr_ctx.metafits_context.num_corr_fine_chans_per_coarse {
+                    if fine_chan_idx >= fine_chans_per_coarse {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--flag-fine-chans <CHANS>...".into(),
                             expected: format!(
                                 "fine_chan_idx < num_fine_chans={}",
-                                corr_ctx.metafits_context.num_corr_fine_chans_per_coarse
+                                fine_chans_per_coarse
                             ),
                             received: format!(
                                 "fine_chan_idxs[{}]={}. all:{:?}",
@@ -937,7 +937,6 @@ impl BirliContext {
         // Averaging //
         // ///////// //
 
-        let int_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1e3;
         let avg_time: usize = match (
             matches.value_of_t::<usize>("avg-time-factor"),
             matches.value_of_t::<f64>("avg-time-res"),
@@ -959,6 +958,7 @@ impl BirliContext {
                 factor
             }
             (_, Ok(res)) => {
+                let int_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1e3;
                 let ratio = res / int_time_s;
                 if ratio.is_infinite() || ratio.fract() > 1e-6 || ratio < 1.0 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
@@ -972,7 +972,6 @@ impl BirliContext {
             _ => 1,
         };
 
-        let fine_chan_width_khz = corr_ctx.metafits_context.corr_fine_chan_width_hz as f64 / 1e3;
         let avg_freq: usize = match (
             matches.value_of_t::<usize>("avg-freq-factor"),
             matches.value_of_t::<f64>("avg-freq-res"),
@@ -994,6 +993,8 @@ impl BirliContext {
                 factor
             }
             (_, Ok(res)) => {
+                let fine_chan_width_khz =
+                    corr_ctx.metafits_context.corr_fine_chan_width_hz as f64 / 1e3;
                 let ratio = res / fine_chan_width_khz;
                 if ratio.is_infinite() || ratio.fract() > 1e-6 || ratio < 1.0 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
@@ -1046,10 +1047,8 @@ impl BirliContext {
                         received: format!("{}B", max_mem_bytes),
                     }));
                 }
-                let bytes_selected = vis_sel.estimate_bytes(
-                    corr_ctx.metafits_context.num_corr_fine_chans_per_coarse,
-                    corr_ctx.metafits_context.num_visibility_pols,
-                );
+                let num_pols = corr_ctx.metafits_context.num_visibility_pols;
+                let bytes_selected = vis_sel.estimate_bytes_worst(fine_chans_per_coarse, num_pols);
                 let bytes_per_timestep = bytes_selected / vis_sel.timestep_range.len();
                 let bytes_per_avg_time = bytes_per_timestep * avg_time;
                 if max_mem_bytes < bytes_selected as f64 {
@@ -1099,43 +1098,30 @@ impl BirliContext {
         };
 
         prep_ctx.phase_centre = match (
-            matches.values_of("phase-centre"),
+            matches
+                .values_of_t::<f64>("phase-centre")
+                .map(|v| (v[0], v[1])),
             matches.is_present("pointing-centre"),
         ) {
-            (Some(_), true) => {
-                // TODO: custom error type
-                panic!("--phase-centre can't be used with --pointing-centre");
+            (Err(err), _) if err.kind() != ArgumentNotFound => return Err(err.into()),
+            (Ok(_), true) => {
+                unreachable!("--phase-centre conflicts with --pointing-centre, enforced by clap");
             }
-            (Some(mut values), _) => {
-                // TODO: custom error type
-                if let (Some(ra), Some(dec)) = (values.next(), values.next()) {
-                    let ra = ra
-                        .parse::<f64>()
-                        .unwrap_or_else(|_| panic!("unable to parse RA {}", ra));
-                    let dec = dec
-                        .parse::<f64>()
-                        .unwrap_or_else(|_| panic!("unable to parse DEC {}", dec));
-                    debug!(
-                        "Using phase centre from command line: RA={}, DEC={}",
-                        ra, dec
-                    );
-                    RADec::new(ra.to_radians(), dec.to_radians())
-                } else {
-                    panic!("Unable to parse RADec. from --phase-centre");
-                }
-            }
+            (Ok((ra, dec)), _) => RADec::new(ra.to_radians(), dec.to_radians()),
             (_, true) => RADec::from_mwalib_tile_pointing(&corr_ctx.metafits_context),
             _ => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
         };
 
         // cable delay corrections are enabled by default if they haven't aleady beeen applied.
-        let no_cable_delays = matches.is_present("no-cable-delay");
-        let cable_delays_applied = corr_ctx.metafits_context.cable_delays_applied;
-        debug!(
-            "cable corrections: applied={}, desired={}",
-            cable_delays_applied, !no_cable_delays
-        );
-        prep_ctx.correct_cable_lengths = !cable_delays_applied && !no_cable_delays;
+        prep_ctx.correct_cable_lengths = {
+            let no_cable_delays = matches.is_present("no-cable-delay");
+            let cable_delays_applied = corr_ctx.metafits_context.cable_delays_applied;
+            debug!(
+                "cable corrections: applied={}, desired={}",
+                cable_delays_applied, !no_cable_delays
+            );
+            !cable_delays_applied && !no_cable_delays
+        };
 
         // coarse channel digital gain corrections are enabled by default
         prep_ctx.correct_digital_gains = !matches.is_present("no-digital-gains");
@@ -1149,22 +1135,26 @@ impl BirliContext {
         };
 
         // geometric corrections are enabled by default if they haven't aleady beeen applied.
-        let no_geometric_delays = matches.is_present("no-geometric-delay");
-        let geometric_delays_applied = corr_ctx.metafits_context.geometric_delays_applied;
-        debug!(
-            "geometric corrections: applied={:?}, desired={}",
-            geometric_delays_applied, !no_geometric_delays
-        );
-        prep_ctx.correct_geometry =
-            matches!(geometric_delays_applied, GeometricDelaysApplied::No) && !no_geometric_delays;
+        prep_ctx.correct_geometry = {
+            let no_geometric_delays = matches.is_present("no-geometric-delay");
+            let geometric_delays_applied = corr_ctx.metafits_context.geometric_delays_applied;
+            debug!(
+                "geometric corrections: applied={:?}, desired={}",
+                geometric_delays_applied, !no_geometric_delays
+            );
+            matches!(geometric_delays_applied, GeometricDelaysApplied::No) && !no_geometric_delays
+        };
 
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
-
                 prep_ctx.aoflagger_strategy = if !matches.is_present("no-rfi") {
-                    Some(matches.value_of("aoflagger-strategy").map(|s| s.into()).unwrap_or_else(|| unsafe {
-                        cxx_aoflagger_new().FindStrategyFileMWA()
-                    }))
+                    match matches.value_of_t("aoflagger-strategy") {
+                        Err(err) if err.kind() != ArgumentNotFound => return Err(err.into()),
+                        Ok(strategy) => Some(strategy),
+                        Err(_) => Some(unsafe {
+                            cxx_aoflagger_new().FindStrategyFileMWA()
+                        }),
+                    }
                 } else {
                     None
                 };
@@ -1328,13 +1318,13 @@ impl BirliContext {
         // Chunking //
         // //////// //
 
-        let full_sel_timestep_range = vis_sel.timestep_range.clone();
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
         let chunk_size = if let Some(steps) = num_timesteps_per_chunk {
             steps
         } else {
-            full_sel_timestep_range.len()
+            vis_sel.timestep_range.len()
         };
-        for mut timestep_chunk in &full_sel_timestep_range.clone().chunks(chunk_size) {
+        for mut timestep_chunk in &vis_sel.timestep_range.clone().chunks(chunk_size) {
             let chunk_first_timestep = timestep_chunk.next().unwrap();
             let chunk_last_timestep = timestep_chunk.last().unwrap_or(chunk_first_timestep);
             let chunk_vis_sel = VisSelection {
@@ -1345,27 +1335,29 @@ impl BirliContext {
                 info!(
                     "processing timestep chunk {:?} of {:?} % {}",
                     chunk_vis_sel.timestep_range,
-                    full_sel_timestep_range.clone(),
+                    vis_sel.timestep_range.clone(),
                     chunk_size
                 );
             }
-            let flag_array = flag_ctx.to_array(
+
+            let mut flag_array = chunk_vis_sel.allocate_flags(fine_chans_per_coarse)?;
+            flag_ctx.set_flags(
+                &mut flag_array,
                 &chunk_vis_sel.timestep_range,
                 &chunk_vis_sel.coarse_chan_range,
                 chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-            );
+            )?;
 
-            let (mut jones_array, mut flag_array) = with_increment_duration!(
+            let mut jones_array = chunk_vis_sel.allocate_jones(fine_chans_per_coarse)?;
+            with_increment_duration!(
                 durations,
                 "read",
-                context_to_jones_array(
+                chunk_vis_sel.read_mwalib(
                     &corr_ctx,
-                    &chunk_vis_sel.timestep_range,
-                    &chunk_vis_sel.coarse_chan_range,
-                    Some(flag_array),
+                    &mut jones_array,
+                    &mut flag_array,
                     prep_ctx.draw_progress,
-                )
-                .unwrap()
+                )?
             );
 
             // generate weights

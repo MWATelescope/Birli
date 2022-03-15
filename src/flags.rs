@@ -6,7 +6,7 @@ use crate::{
     io::error::IOError,
     ndarray::Axis,
     ndarray::{Array, Array3, Array4, ArrayView, ArrayView3, Dimension},
-    FlagFileSet,
+    BirliError, FlagFileSet,
 };
 use cfg_if::cfg_if;
 use derive_builder::Builder;
@@ -134,12 +134,53 @@ impl FlagContext {
     }
 
     /// Initialize a 3D array of `bool` flags for each timestep, channel, baseline selected.
+    ///
+    /// # Errors
+    ///
+    /// Can throw error if not enough memory
     pub fn to_array(
         &self,
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
         ant_pairs: Vec<(usize, usize)>,
-    ) -> Array3<bool> {
+    ) -> Result<Array3<bool>, BirliError> {
+        let shape = (
+            timestep_range.len(),
+            coarse_chan_range.len() * self.fine_chan_flags.len(),
+            ant_pairs.len(),
+        );
+        let num_elems = shape.0 * shape.1 * shape.2;
+        let mut v = Vec::new();
+
+        let mut flag_array = if let Ok(()) = v.try_reserve_exact(num_elems) {
+            // Make the vector's length equal to its new capacity.
+            v.resize(num_elems, false);
+            Array3::from_shape_vec(shape, v).unwrap()
+        } else {
+            let need_gib = num_elems * std::mem::size_of::<bool>() / 1024_usize.pow(3);
+            return Err(BirliError::InsufficientMemory { need_gib });
+        };
+        self.set_flags(
+            &mut flag_array,
+            timestep_range,
+            coarse_chan_range,
+            ant_pairs,
+        )?;
+        Ok(flag_array)
+    }
+
+    /// Set flags from this context in an existing array.
+    ///
+    /// # Errors
+    ///
+    /// Can throw error if array is not the correct shape.
+    pub fn set_flags(
+        &self,
+        flag_array: &mut Array3<bool>,
+        timestep_range: &Range<usize>,
+        coarse_chan_range: &Range<usize>,
+        ant_pairs: Vec<(usize, usize)>,
+    ) -> Result<(), BirliError> {
         let timestep_flags = &self.timestep_flags[timestep_range.clone()];
         let coarse_chan_flags = &self.coarse_chan_flags[coarse_chan_range.clone()];
         let baseline_flags = self.get_baseline_flags(&ant_pairs);
@@ -156,9 +197,23 @@ impl FlagContext {
             .collect();
         let shape = (timestep_range.len(), chan_flags.len(), ant_pairs.len());
 
-        Array3::from_shape_fn(shape, |(ts_idx, ch_idx, bl_idx)| {
-            timestep_flags[ts_idx] || chan_flags[ch_idx] || baseline_flags[bl_idx]
-        })
+        let flag_shape = flag_array.dim();
+        if flag_shape.0 > shape.0 || flag_shape.1 > shape.1 || flag_shape.2 > shape.2 {
+            return Err(BirliError::BadArrayShape {
+                argument: "flag_array".to_string(),
+                function: "FlagContext::set_flags".to_string(),
+                expected: format!("dims less than {:?}", shape),
+                received: format!("{:?}", flag_shape),
+            });
+        };
+
+        flag_array
+            .indexed_iter_mut()
+            .for_each(|((ts_idx, ch_idx, bl_idx), flag)| {
+                *flag = timestep_flags[ts_idx] || chan_flags[ch_idx] || baseline_flags[bl_idx]
+            });
+
+        Ok(())
     }
 }
 
@@ -371,7 +426,7 @@ pub fn flag_jones_array(
 ///     &vis_sel.timestep_range,
 ///     &vis_sel.coarse_chan_range,
 ///     vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-/// );
+/// ).unwrap();
 ///
 /// // read visibilities out of the gpubox files
 /// let (jones_array, flag_array) = context_to_jones_array(
@@ -426,56 +481,13 @@ mod tests {
 
     use crate::{
         error::BirliError::{NoCommonTimesteps, NoProvidedTimesteps},
-        marlu::mwalib::CorrelatorContext,
         test_common::get_mwax_context,
+        test_common::{
+            get_mwa_ord_dodgy_context, get_mwa_ord_no_overlap_context,
+            get_mwa_ord_no_timesteps_context,
+        },
         FlagContext, FlagFileSet, VisSelection,
     };
-
-    /// Get a dummy MWA Ord corr_ctx with multiple holes in the data
-    ///
-    /// The gpubox (batch, hdu) tuples look like this:
-    ///
-    /// | gpubox \ timestep | 0      | 1      | 2      | 3      | 4      |
-    /// | ----------------- | ------ | ------ | ------ | ------ | ------ |
-    /// | 00                | (0, 0) | (0, 1) | .      | (1, 0) | .      |
-    /// | 01                | .      | (0, 0) | (0, 1) | (1, 0) | (1, 1) |
-    fn get_mwa_ord_dodgy_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1196175296_mwa_ord/adjusted_-1/1196175296_20171201145440_gpubox01_00.fits",
-            "tests/data/1196175296_mwa_ord/limited_1/1196175296_20171201145540_gpubox01_01.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
-
-    /// Get a dummy MWA Ord corr_ctx with no overlapping timesteps
-    ///
-    /// The gpubox (batch, hdu) tuples look like this:
-    ///
-    /// | gpubox \ timestep | 0      | 1      | 2      | 3      |
-    /// | ----------------- | ------ | ------ | ------ | ------ |
-    /// | 00                | (0, 0) | (0, 1) | .      | .      |
-    /// | 01                | .      | .      | (0, 1) | (1, 0) |
-    fn get_mwa_ord_no_overlap_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
-
-    /// Get a dummy MWA Ord corr_ctx with no timesteps
-    fn get_mwa_ord_no_timesteps_context() -> CorrelatorContext {
-        // let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
-        // let gpufits_paths =
-        //     vec!["tests/data/1196175296_mwa_ord/empty/1196175296_20171201145440_gpubox01_00.fits"];
-        let mut corr_ctx = get_mwa_ord_no_overlap_context();
-        corr_ctx.provided_timestep_indices = vec![];
-        corr_ctx
-    }
 
     #[test]
     fn test_get_flaggable_timesteps_handles_no_overlap() {
@@ -527,11 +539,13 @@ mod tests {
             corr_ctx.metafits_context.num_ants,
         );
 
-        let mut flag_array = flag_ctx.to_array(
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-        );
+        let mut flag_array = flag_ctx
+            .to_array(
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            )
+            .unwrap();
 
         flag_array[[flag_timestep, flag_channel, flag_baseline]] = true;
 
@@ -772,11 +786,13 @@ mod tests_aoflagger {
 
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
 
-        let mut existing_flag_array = flag_ctx.to_array(
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-        );
+        let mut existing_flag_array = flag_ctx
+            .to_array(
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            )
+            .unwrap();
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
 

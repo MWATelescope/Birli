@@ -150,12 +150,12 @@ mod tests {
     #[test]
     fn test_jones_debug_display() {
         let jones_c64 = Jones::<f64>::identity();
-        let test_jones_c32: TestJones::<f32> = TestJones::from(jones_c64);
+        let test_jones_c32: TestJones<f32> = TestJones::from(jones_c64);
         assert!(!format!("{:?}", test_jones_c32).is_empty());
         assert!(!format!("{}", test_jones_c32).is_empty());
 
         let jones_c32 = Jones::<f32>::identity();
-        let test_jones_c64: TestJones::<f64> = TestJones::from(jones_c32);
+        let test_jones_c64: TestJones<f64> = TestJones::from(jones_c32);
         assert!(!format!("{:?}", test_jones_c64).is_empty());
         assert!(!format!("{}", test_jones_c64).is_empty());
     }

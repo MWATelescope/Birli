@@ -803,11 +803,13 @@ mod tests {
             corr_ctx.metafits_context.num_ants,
         );
 
-        let mut flag_array = flag_ctx.to_array(
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-        );
+        let mut flag_array = flag_ctx
+            .to_array(
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            )
+            .unwrap();
 
         let mut idx = 0;
 

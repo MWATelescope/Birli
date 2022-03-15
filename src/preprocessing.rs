@@ -280,11 +280,13 @@ mod tests {
 
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
 
-        let flag_array = flag_ctx.to_array(
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-        );
+        let flag_array = flag_ctx
+            .to_array(
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            )
+            .unwrap();
 
         let (mut jones_array, mut flag_array) = context_to_jones_array(
             &corr_ctx,
