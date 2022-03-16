@@ -252,7 +252,7 @@ impl VisSelection {
                 + std::mem::size_of::<bool>())
     }
 
-    /// Allocate a jones array to store the selection
+    /// Allocate a jones array to store visibilities for the selection
     ///
     /// # Errors
     ///
@@ -277,7 +277,7 @@ impl VisSelection {
         }
     }
 
-    /// Allocate a jones array to store the selection
+    /// Allocate a flag array to store flags for the selection
     ///
     /// # Errors
     ///
@@ -290,6 +290,31 @@ impl VisSelection {
         if let Ok(()) = v.try_reserve_exact(num_elems) {
             // Make the vector's length equal to its new capacity.
             v.resize(num_elems, false);
+            Ok(Array3::from_shape_vec(shape, v).unwrap())
+        } else {
+            // Instead of erroring out with how many GiB we need for *this*
+            // array, error out with how many we need for the whole selection.
+            let need_gib = self.estimate_bytes_best(fine_chans_per_coarse) / 1024_usize.pow(3);
+            Err(BirliError::InsufficientMemory { need_gib })
+        }
+    }
+
+    /// Allocate a weight array to store weights for the selection
+    ///
+    /// # Errors
+    ///
+    /// can raise `BirliError::InsufficientMemory` if not enough memory.
+    pub fn allocate_weights(
+        &self,
+        fine_chans_per_coarse: usize,
+    ) -> Result<Array3<f32>, BirliError> {
+        let shape = self.get_shape(fine_chans_per_coarse);
+        let num_elems = shape.0 * shape.1 * shape.2;
+        let mut v = Vec::new();
+
+        if let Ok(()) = v.try_reserve_exact(num_elems) {
+            // Make the vector's length equal to its new capacity.
+            v.resize(num_elems, 0.);
             Ok(Array3::from_shape_vec(shape, v).unwrap())
         } else {
             // Instead of erroring out with how many GiB we need for *this*

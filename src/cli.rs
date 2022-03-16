@@ -3,7 +3,7 @@
 use crate::{
     error::{BirliError, BirliError::DryRun, CLIError::InvalidCommandLineArgument},
     flags::FlagContext,
-    flags::{add_dimension, flag_to_weight_array, get_weight_factor},
+    flags::{add_dimension, get_weight_factor},
     io::IOContext,
     io::{aocal::AOCalSols, WriteableVis},
     marlu::{
@@ -1285,11 +1285,22 @@ impl BirliContext {
         } else {
             vis_sel.timestep_range.len()
         };
+
+        // Allocate our big arrays once, reuse them for each chunk unless the chunk shape changes
+        let chunk_vis_sel = VisSelection {
+            timestep_range: (vis_sel.timestep_range.start
+                ..vis_sel.timestep_range.start + chunk_size),
+            ..vis_sel.clone()
+        };
+        let mut jones_array = chunk_vis_sel.allocate_jones(fine_chans_per_coarse)?;
+        let mut flag_array = chunk_vis_sel.allocate_flags(fine_chans_per_coarse)?;
+        let mut weight_array = chunk_vis_sel.allocate_weights(fine_chans_per_coarse)?;
+
         for mut timestep_chunk in &vis_sel.timestep_range.clone().chunks(chunk_size) {
-            let chunk_first_timestep = timestep_chunk.next().unwrap();
-            let chunk_last_timestep = timestep_chunk.last().unwrap_or(chunk_first_timestep);
+            let chunk_first_timestep = timestep_chunk.next().expect("zero-sized chunk");
             let chunk_vis_sel = VisSelection {
-                timestep_range: chunk_first_timestep..chunk_last_timestep + 1,
+                timestep_range: (chunk_first_timestep
+                    ..(timestep_chunk.last().unwrap_or(chunk_first_timestep) + 1)),
                 ..vis_sel.clone()
             };
             if num_timesteps_per_chunk.is_some() {
@@ -1301,7 +1312,19 @@ impl BirliContext {
                 );
             }
 
-            let mut flag_array = chunk_vis_sel.allocate_flags(fine_chans_per_coarse)?;
+            // only reallocate arrays if the chunk dimensions have changed.
+            let chunk_dims = chunk_vis_sel.get_shape(fine_chans_per_coarse);
+            if jones_array.dim() != chunk_dims {
+                jones_array = chunk_vis_sel.allocate_jones(fine_chans_per_coarse)?;
+            }
+            if flag_array.dim() != chunk_dims {
+                flag_array = chunk_vis_sel.allocate_flags(fine_chans_per_coarse)?;
+            }
+            if weight_array.dim() != chunk_dims {
+                weight_array = chunk_vis_sel.allocate_weights(fine_chans_per_coarse)?;
+            }
+
+            // populate flags
             flag_ctx.set_flags(
                 &mut flag_array,
                 &chunk_vis_sel.timestep_range,
@@ -1309,7 +1332,7 @@ impl BirliContext {
                 chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )?;
 
-            let mut jones_array = chunk_vis_sel.allocate_jones(fine_chans_per_coarse)?;
+            // populate visibilities
             with_increment_duration!(
                 durations,
                 "read",
@@ -1321,20 +1344,17 @@ impl BirliContext {
                 )?
             );
 
-            // generate weights
-            let weight_factor = get_weight_factor(&corr_ctx);
-            let mut weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+            // populate weights
+            weight_array.fill(get_weight_factor(&corr_ctx) as _);
 
-            prep_ctx
-                .preprocess(
-                    &corr_ctx,
-                    &mut jones_array,
-                    &mut weight_array,
-                    &mut flag_array,
-                    &mut durations,
-                    &chunk_vis_sel,
-                )
-                .expect("unable to preprocess the chunk.");
+            prep_ctx.preprocess(
+                &corr_ctx,
+                &mut jones_array,
+                &mut weight_array,
+                &mut flag_array,
+                &mut durations,
+                &chunk_vis_sel,
+            )?;
 
             // output flags (before averaging)
             if let Some(flag_file_set) = flag_file_set.as_mut() {
@@ -1358,8 +1378,8 @@ impl BirliContext {
 
             // TODO: nothing actually uses the pol axis for flags and weights, so rip it out.
             let num_pols = corr_ctx.metafits_context.num_visibility_pols;
-            let flag_array = add_dimension(flag_array.view(), num_pols);
-            let weight_array = add_dimension(weight_array.view(), num_pols);
+            let fat_flag_array = add_dimension(flag_array.view(), num_pols);
+            let fat_weight_array = add_dimension(weight_array.view(), num_pols);
 
             // output uvfits
             if let Some(uvfits_writer) = uvfits_writer.as_mut() {
@@ -1369,8 +1389,8 @@ impl BirliContext {
                     uvfits_writer
                         .write_vis_mwalib(
                             jones_array.view(),
-                            weight_array.view(),
-                            flag_array.view(),
+                            fat_weight_array.view(),
+                            fat_flag_array.view(),
                             &corr_ctx,
                             &chunk_vis_sel.timestep_range,
                             &chunk_vis_sel.coarse_chan_range,
@@ -1391,8 +1411,8 @@ impl BirliContext {
                     ms_writer
                         .write_vis_mwalib(
                             jones_array.view(),
-                            weight_array.view(),
-                            flag_array.view(),
+                            fat_weight_array.view(),
+                            fat_flag_array.view(),
                             &corr_ctx,
                             &chunk_vis_sel.timestep_range,
                             &chunk_vis_sel.coarse_chan_range,

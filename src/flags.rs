@@ -180,6 +180,8 @@ impl FlagContext {
 }
 
 /// Expand an array into a new axis by repeating each element `size` times
+///
+/// TODO: why not just use &Array3<T> not ArrayView3<T>
 pub fn add_dimension<T>(array: ArrayView3<T>, size: usize) -> Array4<T>
 where
     T: std::clone::Clone,
@@ -203,6 +205,8 @@ where
 /// # Errors
 ///
 /// Will throw [`BirliError`] if there was an error reading from corr_ctx.
+///
+/// TODO: why not just use &Array<T> not ArrayView<T>
 #[cfg(feature = "aoflagger")]
 pub fn jones_baseline_view_to_imageset(
     aoflagger: &CxxAOFlagger,
@@ -254,6 +258,8 @@ pub fn jones_baseline_view_to_imageset(
 /// # Errors
 ///
 /// Will throw [`BirliError`] if there was an error reading from corr_ctx.
+///
+/// TODO: why not just use &Array<T> not ArrayView<T>
 #[cfg(feature = "aoflagger")]
 pub fn flag_baseline_view_to_flagmask(
     aoflagger: &CxxAOFlagger,
