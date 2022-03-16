@@ -9,7 +9,6 @@ pub mod uvfits;
 
 use std::{ops::Range, path::Path};
 
-use derive_builder::Builder;
 use log::trace;
 use marlu::{
     io::{ms::MeasurementSetWriter, VisWritable},
@@ -23,27 +22,22 @@ use crate::ndarray::{ArrayView3, ArrayView4, ArrayViewMut3};
 use self::error::IOError;
 
 /// Groups together parameters related to I/O
-#[derive(Builder, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct IOContext {
     // in
     /// The path to the .metafits input file
-    #[builder(default)]
     pub metafits_in: String,
     /// A vector of gpufits .fits input paths
-    #[builder(default)]
     pub gpufits_in: Vec<String>,
     /// Optional path to a .bin ao calibration solutions input file
     pub aocalsols_in: Option<String>,
 
     // out
     /// Optional .uvfits output path
-    #[builder(default)]
     pub uvfits_out: Option<String>,
     /// Optional .ms measurement set output path
-    #[builder(default)]
     pub ms_out: Option<String>,
     /// Optional .mwaf flag file path template (see `io::mwaf::FlagFileSet`)
-    #[builder(default)]
     pub flag_template: Option<String>,
 }
 
