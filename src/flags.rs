@@ -528,7 +528,6 @@ pub fn write_flags(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::float_cmp)]
     use super::write_flags;
     use glob::glob;
     use tempfile::tempdir;
