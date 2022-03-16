@@ -627,16 +627,6 @@ pub fn scrunch_gains(
                 .collect(),
             _ => unreachable!(),
         };
-        // TODO: make sure the following is tested exhaustively
-        // if matches!(scrunch_type, ScrunchType::CenterSymmetric) && scrunched_length % 2 == 0 {
-        //     // sanity check: centre symmetric indices should sum to zero, weights should sum to one
-        //     assert_eq!(
-        //         window_offset_weights
-        //             .iter()
-        //             .fold((0, 0.), |(sum_o, sum_w), (o, w)| { (sum_o + o, sum_w + w) }),
-        //         (0, 1.)
-        //     );
-        // }
         // apply the weights to calculate the scrunched gains
         (0..scrunched_length)
             .map(|scrunched_chan| {
@@ -700,13 +690,11 @@ mod tests {
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
 
-        let jones_array = jones_array.mapv(TestJones::from);
-
         // ts 0, chan 0 (cc 0, fc 0), baseline 0
-        let viz_0_0_0 = *jones_array.get((0, 0, 0)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_0_0_0 = jones_array[(0, 0, 0)];
+        compare_jones!(
             viz_0_0_0,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x410000 as f32, 0x410001 as f32),
                 Complex::new(0x410002 as f32, 0x410003 as f32),
                 Complex::new(0x410004 as f32, 0x410005 as f32),
@@ -715,10 +703,10 @@ mod tests {
         );
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 1
-        let viz_0_0_1 = *jones_array.get((0, 0, 1)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_0_0_1 = jones_array[(0, 0, 1)];
+        compare_jones!(
             viz_0_0_1,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x410010 as f32, 0x410011 as f32),
                 Complex::new(0x410012 as f32, 0x410013 as f32),
                 Complex::new(0x410014 as f32, 0x410015 as f32),
@@ -727,10 +715,10 @@ mod tests {
         );
 
         // ts 3, chan 3 (cc 1, fc 1), baseline 1
-        let viz_3_3_1 = *jones_array.get((3, 3, 1)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_3_3_1 = jones_array[(3, 3, 1)];
+        compare_jones!(
             viz_3_3_1,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x410718 as f32, 0x410719 as f32),
                 Complex::new(0x41071a as f32, 0x41071b as f32),
                 Complex::new(0x41071c as f32, 0x41071d as f32),
@@ -797,8 +785,6 @@ mod tests {
         let (sin_1_yy_3_f64, cos_1_yy_3_f64) = angle_1_yy_3.sin_cos();
         let (sin_1_yy_3, cos_1_yy_3) = (sin_1_yy_3_f64 as f32, cos_1_yy_3_f64 as f32);
 
-        // TODO: this is not great.
-        let mut jones_array = jones_array.mapv(|e| Jones::from([e[0], e[1], e[2], e[3]]));
         correct_cable_lengths(
             &corr_ctx,
             &mut jones_array,
@@ -806,11 +792,9 @@ mod tests {
             false,
         );
 
-        let jones_array = jones_array.mapv(TestJones::from);
-
         // there should be no difference in baseline 0
         // ts 0, chan 0, baseline 0
-        assert_abs_diff_eq!(*jones_array.get((0, 0, 0)).unwrap(), viz_0_0_0);
+        compare_jones!(jones_array[(0, 0, 0)], viz_0_0_0);
 
         ////
         // baseline 1 should be rotated
@@ -829,9 +813,9 @@ mod tests {
         let rot_1_yy_0_0_re = (cos_1_yy_0 * viz_0_0_1[3].re - sin_1_yy_0 * viz_0_0_1[3].im) as f32;
         let rot_1_yy_0_0_im = (sin_1_yy_0 * viz_0_0_1[3].re + cos_1_yy_0 * viz_0_0_1[3].im) as f32;
 
-        assert_abs_diff_eq!(
-            *jones_array.get((0, 0, 1)).unwrap(),
-            &TestJones::from([
+        compare_jones!(
+            jones_array[(0, 0, 1)],
+            Jones::from([
                 Complex::new(rot_1_xx_0_0_re, rot_1_xx_0_0_im),
                 Complex::new(rot_1_xy_0_0_re, rot_1_xy_0_0_im),
                 Complex::new(rot_1_yx_0_0_re, rot_1_yx_0_0_im),
@@ -853,9 +837,9 @@ mod tests {
         let rot_1_yy_3_3_re = (cos_1_yy_3 * viz_3_3_1[3].re - sin_1_yy_3 * viz_3_3_1[3].im) as f32;
         let rot_1_yy_3_3_im = (sin_1_yy_3 * viz_3_3_1[3].re + cos_1_yy_3 * viz_3_3_1[3].im) as f32;
 
-        assert_abs_diff_eq!(
-            *jones_array.get((3, 3, 1)).unwrap(),
-            &TestJones::from([
+        compare_jones!(
+            jones_array[(3, 3, 1)],
+            Jones::from([
                 Complex::new(rot_1_xx_3_3_re, rot_1_xx_3_3_im),
                 Complex::new(rot_1_xy_3_3_re, rot_1_xy_3_3_im),
                 Complex::new(rot_1_yx_3_3_re, rot_1_yx_3_3_im),
@@ -886,13 +870,11 @@ mod tests {
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
 
-        let jones_array = jones_array.mapv(TestJones::from);
-
         // ts 0, chan 0 (cc 0, fc 0), baseline 0
-        let viz_0_0_0 = *jones_array.get((0, 0, 0)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_0_0_0 = jones_array[(0, 0, 0)];
+        compare_jones!(
             viz_0_0_0,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x10c5be as f32, -0x10c5bf as f32),
                 Complex::new(0x10c5ae as f32, 0x10c5af as f32),
                 Complex::new(0x10c5ae as f32, -0x10c5af as f32),
@@ -901,10 +883,10 @@ mod tests {
         );
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 5
-        let viz_0_0_5 = *jones_array.get((0, 0, 5)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_0_0_5 = jones_array[(0, 0, 5)];
+        compare_jones!(
             viz_0_0_5,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x10f1ce as f32, -0x10f1cf as f32),
                 Complex::new(0x10ea26 as f32, -0x10ea27 as f32),
                 Complex::new(0x10f1be as f32, -0x10f1bf as f32),
@@ -913,10 +895,10 @@ mod tests {
         );
 
         // ts 3, chan 3 (cc 1, fc 1), baseline 5
-        let viz_3_3_5 = *jones_array.get((3, 3, 5)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_3_3_5 = jones_array[(3, 3, 5)];
+        compare_jones!(
             viz_3_3_5,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x0df3ce as f32, -0x0df3cf as f32),
                 Complex::new(0x0dec26 as f32, -0x0dec27 as f32),
                 Complex::new(0x0df3be as f32, -0x0df3bf as f32),
@@ -983,9 +965,6 @@ mod tests {
         let (sin_5_yy_3_f64, cos_5_yy_3_f64) = angle_5_yy_3.sin_cos();
         let (sin_5_yy_3, cos_5_yy_3) = (sin_5_yy_3_f64 as f32, cos_5_yy_3_f64 as f32);
 
-        // FIXME: aaaaaaa
-        let mut jones_array = jones_array.mapv(|e| Jones::from([e[0], e[1], e[2], e[3]]));
-
         correct_cable_lengths(
             &corr_ctx,
             &mut jones_array,
@@ -993,11 +972,9 @@ mod tests {
             false,
         );
 
-        let jones_array = jones_array.mapv(TestJones::from);
-
         // there should be no difference in baseline 0
         // ts 0 (batch 0, scan 0), chan 0 (cc 0, fc 0), baseline 0
-        assert_abs_diff_eq!(*jones_array.get((0, 0, 0)).unwrap(), viz_0_0_0);
+        compare_jones!(jones_array[(0, 0, 0)], viz_0_0_0);
 
         ////
         // baseline 5 should be rotated
@@ -1016,9 +993,9 @@ mod tests {
         let rot_5_yy_0_0_re = (cos_5_yy_0 * viz_0_0_5[3].re - sin_5_yy_0 * viz_0_0_5[3].im) as f32;
         let rot_5_yy_0_0_im = (sin_5_yy_0 * viz_0_0_5[3].re + cos_5_yy_0 * viz_0_0_5[3].im) as f32;
 
-        assert_abs_diff_eq!(
-            *jones_array.get((0, 0, 5)).unwrap(),
-            &TestJones::from([
+        compare_jones!(
+            jones_array[(0, 0, 5)],
+            Jones::from([
                 Complex::new(rot_5_xx_0_0_re, rot_5_xx_0_0_im),
                 Complex::new(rot_5_xy_0_0_re, rot_5_xy_0_0_im),
                 Complex::new(rot_5_yx_0_0_re, rot_5_yx_0_0_im),
@@ -1040,9 +1017,9 @@ mod tests {
         let rot_5_yy_3_3_re = (cos_5_yy_3 * viz_3_3_5[3].re - sin_5_yy_3 * viz_3_3_5[3].im) as f32;
         let rot_5_yy_3_3_im = (sin_5_yy_3 * viz_3_3_5[3].re + cos_5_yy_3 * viz_3_3_5[3].im) as f32;
 
-        assert_abs_diff_eq!(
-            *jones_array.get((3, 3, 5)).unwrap(),
-            &TestJones::from([
+        compare_jones!(
+            jones_array[(3, 3, 5)],
+            Jones::from([
                 Complex::new(rot_5_xx_3_3_re, rot_5_xx_3_3_im),
                 Complex::new(rot_5_xy_3_3_re, rot_5_xy_3_3_im),
                 Complex::new(rot_5_yx_3_3_re, rot_5_yx_3_3_im),
@@ -1077,13 +1054,11 @@ mod tests {
             )
             .unwrap();
 
-        let jones_array = jones_array.mapv(TestJones::from);
-
         // ts 0, chan 0 (cc 0, fc 0), baseline 0
-        let viz_0_0_0 = *jones_array.get((0, 0, 0)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_0_0_0 = jones_array[(0, 0, 0)];
+        compare_jones!(
             viz_0_0_0,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x10c5be as f32, -0x10c5bf as f32),
                 Complex::new(0x10c5ae as f32, 0x10c5af as f32),
                 Complex::new(0x10c5ae as f32, -0x10c5af as f32),
@@ -1092,10 +1067,10 @@ mod tests {
         );
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 5
-        let viz_0_0_5 = *jones_array.get((0, 0, 5)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_0_0_5 = jones_array[(0, 0, 5)];
+        compare_jones!(
             viz_0_0_5,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x10f1ce as f32, -0x10f1cf as f32),
                 Complex::new(0x10ea26 as f32, -0x10ea27 as f32),
                 Complex::new(0x10f1be as f32, -0x10f1bf as f32),
@@ -1104,10 +1079,10 @@ mod tests {
         );
 
         // ts 3, chan 3 (cc 1, fc 1), baseline 5
-        let viz_3_3_5 = *jones_array.get((3, 3, 5)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_3_3_5 = jones_array[(3, 3, 5)];
+        compare_jones!(
             viz_3_3_5,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x0df3ce as f32, -0x0df3cf as f32),
                 Complex::new(0x0dec26 as f32, -0x0dec27 as f32),
                 Complex::new(0x0df3be as f32, -0x0df3bf as f32),
@@ -1168,8 +1143,6 @@ mod tests {
 
         // let angle_5_3 = -2.0 * PI * w_5_3 * (all_freqs_hz[3] as f64) / VEL_C;
 
-        let mut jones_array = jones_array.mapv(|e| Jones::from([e[0], e[1], e[2], e[3]]));
-
         correct_geometry(
             &corr_ctx,
             &mut jones_array,
@@ -1180,11 +1153,9 @@ mod tests {
             false,
         );
 
-        let jones_array = jones_array.mapv(TestJones::from);
-
         // there should be no difference in baseline 0
         // ts 0 (batch 0, scan 0), chan 0 (cc 0, fc 0), baseline 0
-        assert_abs_diff_eq!(*jones_array.get((0, 0, 0)).unwrap(), viz_0_0_0);
+        compare_jones!(jones_array[(0, 0, 0)], viz_0_0_0);
 
         ////
         // baseline 5 should be rotated
@@ -1203,9 +1174,9 @@ mod tests {
         let rot_5_yy_0_0_re = (cos_0_0_5 * viz_0_0_5[3].re - sin_0_0_5 * viz_0_0_5[3].im) as f32;
         let rot_5_yy_0_0_im = (sin_0_0_5 * viz_0_0_5[3].re + cos_0_0_5 * viz_0_0_5[3].im) as f32;
 
-        assert_abs_diff_eq!(
-            *jones_array.get((0, 0, 5)).unwrap(),
-            &TestJones::from([
+        compare_jones!(
+            jones_array[(0, 0, 5)],
+            Jones::from([
                 Complex::new(rot_5_xx_0_0_re, rot_5_xx_0_0_im),
                 Complex::new(rot_5_xy_0_0_re, rot_5_xy_0_0_im),
                 Complex::new(rot_5_yx_0_0_re, rot_5_yx_0_0_im),
@@ -1227,9 +1198,9 @@ mod tests {
         let rot_5_yy_3_3_re = (cos_3_3_5 * viz_3_3_5[3].re - sin_3_3_5 * viz_3_3_5[3].im) as f32;
         let rot_5_yy_3_3_im = (sin_3_3_5 * viz_3_3_5[3].re + cos_3_3_5 * viz_3_3_5[3].im) as f32;
 
-        assert_abs_diff_eq!(
-            *jones_array.get((3, 3, 5)).unwrap(),
-            &TestJones::from([
+        compare_jones!(
+            jones_array[(3, 3, 5)],
+            Jones::from([
                 Complex::new(rot_5_xx_3_3_re, rot_5_xx_3_3_im),
                 Complex::new(rot_5_xy_3_3_re, rot_5_xy_3_3_im),
                 Complex::new(rot_5_yx_3_3_re, rot_5_yx_3_3_im),
@@ -1260,8 +1231,6 @@ mod tests {
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
 
-        let jones_array = jones_array.mapv(TestJones::from);
-
         let array_pos = LatLngHeight::new_mwa();
 
         let phase_centre_ra = RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context);
@@ -1270,10 +1239,10 @@ mod tests {
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&corr_ctx.metafits_context);
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 0
-        let viz_0_0_0 = *jones_array.get((0, 0, 0)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_0_0_0 = jones_array[(0, 0, 0)];
+        compare_jones!(
             viz_0_0_0,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x410000 as f32, 0x410001 as f32),
                 Complex::new(0x410002 as f32, 0x410003 as f32),
                 Complex::new(0x410004 as f32, 0x410005 as f32),
@@ -1282,10 +1251,10 @@ mod tests {
         );
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 5
-        let viz_0_0_1 = *jones_array.get((0, 0, 1)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_0_0_1 = jones_array[(0, 0, 1)];
+        compare_jones!(
             viz_0_0_1,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x410010 as f32, 0x410011 as f32),
                 Complex::new(0x410012 as f32, 0x410013 as f32),
                 Complex::new(0x410014 as f32, 0x410015 as f32),
@@ -1294,10 +1263,10 @@ mod tests {
         );
 
         // ts 3, chan 3 (cc 1, fc 1), baseline 5
-        let viz_3_3_1 = *jones_array.get((3, 3, 1)).unwrap();
-        assert_abs_diff_eq!(
+        let viz_3_3_1 = jones_array[(3, 3, 1)];
+        compare_jones!(
             viz_3_3_1,
-            TestJones::from([
+            Jones::from([
                 Complex::new(0x410718 as f32, 0x410719 as f32),
                 Complex::new(0x41071a as f32, 0x41071b as f32),
                 Complex::new(0x41071c as f32, 0x41071d as f32),
@@ -1357,7 +1326,7 @@ mod tests {
         let (sin_3_3_1, cos_3_3_1) = (sin_3_3_1_f64 as f32, cos_3_3_1_f64 as f32);
 
         // let angle_5_3 = -2.0 * PI * w_5_3 * (all_freqs_hz[3] as f64) / VEL_C;
-        let mut jones_array = jones_array.mapv(|e| Jones::from([e[0], e[1], e[2], e[3]]));
+
         correct_geometry(
             &corr_ctx,
             &mut jones_array,
@@ -1367,10 +1336,9 @@ mod tests {
             None,
             false,
         );
-        let jones_array = jones_array.mapv(TestJones::from);
         // there should be no difference in baseline 0
         // ts 0 (batch 0, scan 0), chan 0 (cc 0, fc 0), baseline 0
-        assert_abs_diff_eq!(*jones_array.get((0, 0, 0)).unwrap(), viz_0_0_0);
+        compare_jones!(jones_array[(0, 0, 0)], viz_0_0_0);
 
         ////
         // baseline 1 should be rotated
@@ -1389,9 +1357,9 @@ mod tests {
         let rot_1_yy_0_0_re = (cos_0_0_1 * viz_0_0_1[3].re - sin_0_0_1 * viz_0_0_1[3].im) as f32;
         let rot_1_yy_0_0_im = (sin_0_0_1 * viz_0_0_1[3].re + cos_0_0_1 * viz_0_0_1[3].im) as f32;
 
-        assert_abs_diff_eq!(
-            *jones_array.get((0, 0, 1)).unwrap(),
-            &TestJones::from([
+        compare_jones!(
+            jones_array[(0, 0, 1)],
+            Jones::from([
                 Complex::new(rot_1_xx_0_0_re, rot_1_xx_0_0_im),
                 Complex::new(rot_1_xy_0_0_re, rot_1_xy_0_0_im),
                 Complex::new(rot_1_yx_0_0_re, rot_1_yx_0_0_im),
@@ -1413,9 +1381,9 @@ mod tests {
         let rot_1_yy_3_3_re = (cos_3_3_1 * viz_3_3_1[3].re - sin_3_3_1 * viz_3_3_1[3].im) as f32;
         let rot_1_yy_3_3_im = (sin_3_3_1 * viz_3_3_1[3].re + cos_3_3_1 * viz_3_3_1[3].im) as f32;
 
-        assert_abs_diff_eq!(
-            *jones_array.get((3, 3, 1)).unwrap(),
-            &TestJones::from([
+        compare_jones!(
+            jones_array[(3, 3, 1)],
+            Jones::from([
                 Complex::new(rot_1_xx_3_3_re, rot_1_xx_3_3_im),
                 Complex::new(rot_1_xy_3_3_re, rot_1_xy_3_3_im),
                 Complex::new(rot_1_yx_3_3_re, rot_1_yx_3_3_im),

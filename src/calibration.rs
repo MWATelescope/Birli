@@ -38,7 +38,6 @@ pub enum CalibrationError {
 ///
 /// calsols should have the same number of channels as vis_array, flag_array, weight_array etc.
 ///
-/// TODO: why not just use &Array<T> not ArrayView<T>
 pub fn apply_di_calsol(
     // a two dimensional array of jones matrix calibration solutions with
     // dimensions `[tile][channel]`

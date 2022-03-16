@@ -518,11 +518,10 @@ impl BirliContext {
     ///
     /// # Errors
     ///
-    /// TODO: parsing error handling
-    ///
     /// Can raise:
     /// - `clap::Error` if clap cannot parse `args`
     /// - `mwalib::MwalibError` if mwalib can't open the input files.
+    /// - `BirliError::CLIError` if the arguments are invalid.
     pub fn from_args<I, T>(args: I) -> Result<BirliContext, BirliError>
     where
         I: IntoIterator<Item = T>,
@@ -1179,7 +1178,10 @@ impl BirliContext {
     ///
     /// # Errors
     ///
-    /// TODO: Errors docco
+    /// can raise:
+    /// - `BirliError::BadArrayShape` if the shape of the calibartion solutions
+    ///     is incompatible with the visibility shape.
+    /// - preprocessing errors
     pub fn run(self) -> Result<HashMap<String, Duration>, BirliError> {
         let BirliContext {
             corr_ctx,

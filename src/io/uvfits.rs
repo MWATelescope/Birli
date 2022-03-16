@@ -863,7 +863,6 @@ impl UvfitsWriter {
 // - replace coarse chan range with...
 // - replace baseline indices with ...
 // - pass in tiles xyz geodetic
-/// TODO: why not just use &Array<T> not ArrayView<T>
 impl WriteableVis for UvfitsWriter {
     fn write_vis_mwalib(
         &mut self,
