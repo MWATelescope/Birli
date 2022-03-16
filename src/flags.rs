@@ -675,6 +675,8 @@ pub fn get_weight_factor(corr_ctx: &CorrelatorContext) -> f64 {
 }
 
 /// Convert the given ndarray of boolean flags to an ndarray of float weights
+///
+/// TODO: why not just use &Array<T> not ArrayView<T>
 pub fn flag_to_weight_array<D>(flag_array: ArrayView<bool, D>, weight_factor: f64) -> Array<f32, D>
 where
     D: Dimension,

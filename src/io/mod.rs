@@ -186,6 +186,7 @@ pub trait WriteableVis: Sync + Send {
 /// See: [`UvfitsWriter`]
 ///
 /// TODO: reduce number of arguments.
+/// TODO: why not just use &Array<T> not ArrayView<T>
 #[allow(clippy::too_many_arguments)]
 pub fn write_uvfits<T: AsRef<Path>>(
     path: T,
@@ -314,6 +315,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
 /// See: [`UvfitsWriter`]
 ///
 /// TODO: reduce number of arguments.
+/// TODO: why not just use &Array<T> not ArrayView<T>
 #[allow(clippy::too_many_arguments)]
 pub fn write_ms<T: AsRef<Path>>(
     path: T,

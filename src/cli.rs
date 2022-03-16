@@ -1480,6 +1480,10 @@ mod tests {
         let display = format!("{}", &birli_ctx);
         assert!(display.contains("high_2019B_2458765_EOR0"));
         assert!(display.contains("Will not correct cable lengths"));
+        assert!(display.contains("Will not correct digital gains"));
+        assert!(display.contains("Will not correct coarse pfb passband gains"));
+        assert!(display.contains("Will flag with aoflagger"));
+        assert!(display.contains("Will not correct geometry"));
     }
 }
 
@@ -1588,9 +1592,7 @@ mod argparse_tests {
         let mut args = vec![
             "birli",
             "-m", metafits_path,
-            "--flag-times",
-            "0",
-            "9999",
+            "--flag-times", "0", "9999",
             "--",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -1726,9 +1728,8 @@ mod argparse_tests {
         #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
             // in this metafits file, all ants are flagged.
-            "tests/data/1254670392_avg/1254670392.metafits",
+            "-m", "tests/data/1254670392_avg/1254670392.metafits",
             "--no-flag-metafits",
             "--flag-antennas", "2",
             "--",
@@ -1836,14 +1837,12 @@ mod argparse_tests {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
         // test when time_chunk is not a multiple of avg_time
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "--avg-time-factor",
-            "2",
-            "--time-chunk",
-            "1",
+            "-m", metafits_path,
+            "--avg-time-factor", "2",
+            "--time-chunk", "1",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -1874,10 +1873,10 @@ mod argparse_tests {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
         // test when max mem is less than 1 byte
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
+            "-m", metafits_path,
             "--max-memory",
             "0.0000000000000001",
         ];
@@ -1889,14 +1888,12 @@ mod argparse_tests {
         ));
 
         // test when max mem can't fit a single averaged timestep
+        #[rustfmt::skip]
         let mut args = vec![
             "birli",
-            "-m",
-            metafits_path,
-            "--max-memory",
-            "0.32",
-            "--avg-time-factor",
-            "2",
+            "-m", metafits_path,
+            "--max-memory", "0.32",
+            "--avg-time-factor", "2",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2212,8 +2209,7 @@ mod tests_aoflagger {
         let args = vec![
             "birli",
             "-m", metafits_path,
-            "-M",
-            ms_path.to_str().unwrap(),
+            "-M", ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--pointing-centre",
             "--no-draw-progress",
@@ -2294,8 +2290,7 @@ mod tests_aoflagger {
         let mut args = vec![
             "birli",
             "-m", metafits_path,
-            "-M",
-            ms_path.to_str().unwrap(),
+            "-M", ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
             "--pfb-gains", "none",
@@ -2347,8 +2342,7 @@ mod tests_aoflagger {
         let mut args = vec![
             "birli",
             "-m", metafits_path,
-            "-M",
-            ms_path.to_str().unwrap(),
+            "-M", ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
             "--pfb-gains", "none",
@@ -2426,8 +2420,7 @@ mod tests_aoflagger {
         let args = vec![
             "birli",
             "-m", metafits_path,
-            "-M",
-            ms_path.to_str().unwrap(),
+            "-M", ms_path.to_str().unwrap(),
             "--no-draw-progress",
             "--pfb-gains", "none",
             "--no-cable-delay",
@@ -2450,6 +2443,10 @@ mod tests_aoflagger {
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
         );
+
+        let display = format!("{}", &birli_ctx);
+        assert!(display.contains("Will correct digital gains"));
+        assert!(display.contains("Will not flag with aoflagger"));
 
         birli_ctx.run().unwrap();
 
@@ -2505,8 +2502,7 @@ mod tests_aoflagger {
         let args = vec![
             "birli",
             "-m", metafits_path,
-            "-M",
-            ms_path.to_str().unwrap(),
+            "-M", ms_path.to_str().unwrap(),
             "--no-draw-progress",
             "--no-cable-delay",
             "--no-geometric-delay",
@@ -2530,6 +2526,9 @@ mod tests_aoflagger {
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
         );
+
+        let display = format!("{}", &birli_ctx);
+        assert!(display.contains("Will correct coarse pfb passband gains"));
 
         birli_ctx.run().unwrap();
 
@@ -2582,8 +2581,7 @@ mod tests_aoflagger {
         let mut args = vec![
             "birli",
             "-m", metafits_path,
-            "-M",
-            ms_path.to_str().unwrap(),
+            "-M", ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
             "--pfb-gains", "none",
@@ -2603,6 +2601,13 @@ mod tests_aoflagger {
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
         );
+
+        let display = format!("{}", &birli_ctx);
+        assert!(display.contains("Will correct cable lengths"));
+        assert!(display.contains("Will not correct digital gains"));
+        assert!(display.contains("Will not correct coarse pfb passband gains"));
+        assert!(display.contains("Will flag with aoflagger"));
+        assert!(display.contains("Will correct geometry"));
 
         birli_ctx.run().unwrap();
 
@@ -2661,8 +2666,7 @@ mod tests_aoflagger {
         let mut args = vec![
             "birli",
             "-m", metafits_path,
-            "-M",
-            ms_path.to_str().unwrap(),
+            "-M", ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
             "--pfb-gains", "none",
@@ -2714,13 +2718,10 @@ mod tests_aoflagger {
         env_logger::try_init().unwrap_or(());
 
         #[rustfmt::skip]
-
-        #[rustfmt::skip]
         let mut args = vec![
             "birli",
             "-m", metafits_path,
-            "-M",
-            ms_path.to_str().unwrap(),
+            "-M", ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
             "--pfb-gains", "none",
@@ -2775,8 +2776,7 @@ mod tests_aoflagger {
         let mut args = vec![
             "birli",
             "-m", metafits_path,
-            "-M",
-            ms_path.to_str().unwrap(),
+            "-M", ms_path.to_str().unwrap(),
             "--no-digital-gains",
             "--no-draw-progress",
             "--pfb-gains", "none",
