@@ -52,6 +52,7 @@ pub struct PreprocessContext {
 
     /// AOFlagger strategy path for flagging
     #[builder(default)]
+    #[cfg(feature = "aoflagger")]
     pub aoflagger_strategy: Option<String>,
 
     /// Whether to draw progress bars

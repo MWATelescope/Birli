@@ -276,7 +276,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///
 /// // read visibilities out of the gpubox files
 /// vis_sel
-///     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
 /// // write the visibilities to disk as .ms
