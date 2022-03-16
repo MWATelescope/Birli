@@ -55,7 +55,12 @@ fn bench_uvfits_output_1196175296_none(crt: &mut Criterion) {
         .allocate_jones(corr_ctx.metafits_context.num_corr_fine_chans_per_coarse)
         .unwrap();
     vis_sel
-        .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
         .unwrap();
 
     let weight_factor = get_weight_factor(&corr_ctx);
@@ -101,7 +106,12 @@ fn bench_ms_output_1196175296_none(crt: &mut Criterion) {
         .allocate_jones(corr_ctx.metafits_context.num_corr_fine_chans_per_coarse)
         .unwrap();
     vis_sel
-        .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
         .unwrap();
 
     let weight_factor = get_weight_factor(&corr_ctx);

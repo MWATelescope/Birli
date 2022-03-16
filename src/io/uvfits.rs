@@ -1741,7 +1741,12 @@ mod tests {
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         u.write_jones_flags(
@@ -1815,7 +1820,12 @@ mod tests {
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         let num_pols = corr_ctx.metafits_context.num_visibility_pols;
@@ -1894,7 +1904,12 @@ mod tests {
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         u.write_jones_flags(
@@ -2182,7 +2197,12 @@ mod tests_aoflagger {
             .unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         let strategy_path = &aoflagger.FindStrategyFileMWA();
@@ -2267,7 +2287,12 @@ mod tests_aoflagger {
             .unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         let strategy_path = &aoflagger.FindStrategyFileMWA();

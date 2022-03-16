@@ -155,7 +155,7 @@ pub trait WriteableVis: Sync + Send {
 ///
 /// // read visibilities out of the gpubox files
 /// vis_sel
-///     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
 /// // write the visibilities to disk as .uvfits
@@ -432,7 +432,12 @@ mod tests_aoflagger {
             .unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         // use the default strategy file location for MWA

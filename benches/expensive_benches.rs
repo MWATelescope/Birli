@@ -70,8 +70,8 @@ fn bench_read_mwalib_mwax_half_1247842824(crt: &mut Criterion) {
             vis_sel
                 .read_mwalib(
                     black_box(&corr_ctx),
-                    black_box(&mut jones_array),
-                    black_box(&mut flag_array),
+                    black_box(jones_array.view_mut()),
+                    black_box(flag_array.view_mut()),
                     false,
                 )
                 .unwrap()
@@ -90,8 +90,8 @@ fn bench_read_mwalib_ord_half_1196175296(crt: &mut Criterion) {
             vis_sel
                 .read_mwalib(
                     black_box(&corr_ctx),
-                    black_box(&mut jones_array),
-                    black_box(&mut flag_array),
+                    black_box(jones_array.view_mut()),
+                    black_box(flag_array.view_mut()),
                     false,
                 )
                 .unwrap()
@@ -106,7 +106,12 @@ fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
     let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
     let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
     vis_sel
-        .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
         .unwrap();
 
     crt.bench_function("correct_cable_lengths - mwax_half_1247842824", |bch| {
@@ -129,7 +134,12 @@ fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
     let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
     let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
     vis_sel
-        .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
         .unwrap();
     crt.bench_function("correct_cable_lengths - ord_half_1196175296", |bch| {
         bch.iter(|| {
@@ -151,7 +161,12 @@ fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
     let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
     let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
     vis_sel
-        .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
         .unwrap();
     crt.bench_function("correct_geometry - mwax_half_1247842824", |bch| {
         bch.iter(|| {
@@ -176,7 +191,12 @@ fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
     let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
     let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
     vis_sel
-        .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
         .unwrap();
     crt.bench_function("correct_geometry - ord_half_1196175296", |bch| {
         bch.iter(|| {
@@ -201,7 +221,12 @@ fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
     let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
     let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
     vis_sel
-        .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
         .unwrap();
 
     let tmp_dir = tempdir().unwrap();
@@ -241,7 +266,12 @@ fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
     let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
     let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
     vis_sel
-        .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
         .unwrap();
 
     let tmp_dir = tempdir().unwrap();
@@ -274,7 +304,7 @@ fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
 }
 
 criterion_group!(
-    name = benches;
+    name = expensive_benches;
     config = Criterion::default().sample_size(10);
     targets =
         bench_read_mwalib_mwax_half_1247842824,
@@ -286,4 +316,4 @@ criterion_group!(
         bench_uvfits_output_ord_half_1196175296_none,
         bench_uvfits_output_mwax_half_1247842824_none
 );
-criterion_main!(benches);
+criterion_main!(expensive_benches);

@@ -1338,8 +1338,8 @@ impl BirliContext {
                 "read",
                 chunk_vis_sel.read_mwalib(
                     &corr_ctx,
-                    &mut jones_array,
-                    &mut flag_array,
+                    jones_array.view_mut(),
+                    flag_array.view_mut(),
                     prep_ctx.draw_progress,
                 )?
             );

@@ -57,7 +57,7 @@
 //!
 //! // read visibilities out of the gpubox files
 //! vis_sel
-//!     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+//!     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 //!     .unwrap();
 //!
 //! // write the flags to disk as .mwaf

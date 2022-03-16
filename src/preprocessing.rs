@@ -292,7 +292,12 @@ mod tests {
             .unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         // generate weights
@@ -368,7 +373,12 @@ mod tests {
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
         let mut weight_array = vis_sel.allocate_weights(fine_chans_per_coarse).unwrap();
         weight_array.fill(get_weight_factor(&corr_ctx) as _);

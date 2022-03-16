@@ -52,7 +52,7 @@ use std::{f64::consts::PI, ops::Range};
 ///
 /// // read visibilities out of the gpubox files
 /// vis_sel
-///     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
 /// correct_cable_lengths(&corr_ctx, &mut jones_array, &vis_sel.coarse_chan_range, false);
@@ -192,7 +192,7 @@ pub fn correct_cable_lengths(
 ///
 /// // read visibilities out of the gpubox files
 /// vis_sel
-///     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
 /// correct_cable_lengths(&corr_ctx, &mut jones_array, &vis_sel.coarse_chan_range, false);
@@ -689,7 +689,12 @@ mod tests {
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
@@ -870,7 +875,12 @@ mod tests {
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
@@ -1059,7 +1069,12 @@ mod tests {
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         let jones_array = jones_array.mapv(TestJones::from);
@@ -1234,7 +1249,12 @@ mod tests {
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
@@ -1418,7 +1438,12 @@ mod tests {
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);

@@ -52,7 +52,7 @@
 //!
 //! // read visibilities out of the gpubox files
 //! vis_sel
-//!     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+//!     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 //!     .unwrap();
 //!
 //! let dims_common = jones_array.dim();
@@ -65,7 +65,7 @@
 //! let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
 //! let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 //! vis_sel
-//!     .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+//!     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 //!     .unwrap();
 //!
 //! let dims_good = jones_array.dim();
@@ -86,12 +86,12 @@ use crossbeam_utils::thread;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use log::warn;
-use marlu::num_traits::Zero;
 
 use crate::{
     marlu::{
         mwalib::{CorrelatorContext, MetafitsContext},
-        ndarray::{Array3, Axis},
+        ndarray::{Array3, ArrayViewMut3, Axis},
+        num_traits::Zero,
         rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
         Complex, Jones,
     },
@@ -334,8 +334,8 @@ impl VisSelection {
     pub fn read_mwalib(
         &self,
         corr_ctx: &CorrelatorContext,
-        jones_array: &mut Array3<Jones<f32>>,
-        flag_array: &mut Array3<bool>,
+        mut jones_array: ArrayViewMut3<Jones<f32>>,
+        mut flag_array: ArrayViewMut3<bool>,
         draw_progress: bool,
     ) -> Result<(), BirliError> {
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
@@ -526,7 +526,12 @@ mod tests {
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         // ts 0, chan 0, baseline 0
@@ -618,7 +623,12 @@ mod tests {
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         // ts 0, chan 0, baseline 0
@@ -709,7 +719,12 @@ mod tests {
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
         vis_sel
-            .read_mwalib(&corr_ctx, &mut jones_array, &mut flag_array, false)
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
             .unwrap();
 
         // ts 0, chan 0, baseline 0
