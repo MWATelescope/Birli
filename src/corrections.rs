@@ -16,7 +16,7 @@ use marlu::{
 use std::{f64::consts::PI, ops::Range};
 
 /// Perform cable length corrections, given an observation's
-/// [`mwalib::CorrelatorContext`] and an ['ndarray::Array3`] of [`TestJones`]
+/// [`marlu::mwalib::CorrelatorContext`] and an [`ndarray::Array3`] of [`crate::TestJones`]
 /// visibilities
 ///
 /// Cable lengths are determined by the difference between a baseline's rfInput
@@ -61,7 +61,7 @@ use std::{f64::consts::PI, ops::Range};
 ///
 /// This follows the Cotter implementation of cable length correction, however
 /// there is a slower but more accurate version of the calculation which
-/// uses f64 values for the sin_cos. According to benchmarks, the Cotter
+/// uses f64 values for the `sin_cos`. According to benchmarks, the Cotter
 /// implementation is about 32% faster (5.9 seconds vs 8.6) than the more
 /// precise implementation, and they vary by about three parts in four million.
 /// Therefore it was decided that the Cotter implementation was more favourable.
@@ -151,7 +151,7 @@ pub fn correct_cable_lengths(
 }
 
 /// Perform geometric corrections, given an observation's
-/// [`mwalib::CorrelatorContext`] and an ['ndarray::Array3`] of [`TestJones`]
+/// [`crate::mwalib::CorrelatorContext`] and an [`ndarray::Array3`] of [`crate::TestJones`]
 /// visibilities
 ///
 /// Complex visibilities are phase-shifted by an angle determined by the length
@@ -313,18 +313,18 @@ pub fn correct_geometry(
 ///
 /// # Arguments
 ///
-/// - `corr_ctx` - The correlator corr_ctx.
+/// - `corr_ctx` - The correlator [`marlu::mwalib::CorrelatorContext`].
 /// - `jones_array` - The array of Jones matrices to be corrected, [timestep][channel][baseleine].
 /// - `coarse_chan_range` - The range of mwalib coarse channels which are used in in the channel
 ///     dimension of the jones array.
 ///
 /// # Assumptions
-/// - the digital gains are provided in [`mwalib::Rfinput.digital_gains`] in the same order as the
+/// - the digital gains are provided in [`marlu::mwalib::Rfinput.digital_gains`] in the same order as the
 ///   coarse channel indices (increasing sky frequency)
 ///
 /// # Errors
-/// - Will throw BadArrayShape if:
-///     - `jones_array.dim().1 != num_fine_chans_per_coarse * coarse_chan_range.len()
+/// - Will throw [`BirliError::BadArrayShape`] if:
+///     - `jones_array.dim().1 != num_fine_chans_per_coarse * coarse_chan_range.len()`
 ///     - `jones_array.dim().2 != ant_pairs.len()`
 pub fn correct_digital_gains(
     corr_ctx: &CorrelatorContext,
@@ -399,7 +399,7 @@ fn _correct_digital_gains(
     // iterate through the selected baselines
     for (mut jones_array, (ant1_idx, ant2_idx)) in izip!(
         jones_array.axis_iter_mut(Axis(2)),
-        ant_pairs.iter().cloned()
+        ant_pairs.iter().copied()
     ) {
         // iterate through the selected coarse channels
         for (mut jones_array, &(gain1x, gain1y), &(gain2x, gain2y)) in izip!(
@@ -429,7 +429,7 @@ fn _correct_digital_gains(
     Ok(())
 }
 
-/// Correct for coarse pfb bandpass shape in each coarse channel by scaling passband_gains to
+/// Correct for coarse pfb bandpass shape in each coarse channel by scaling `passband_gains` to
 /// fit the coarse band.
 ///
 /// # Arguments
@@ -444,16 +444,16 @@ fn _correct_digital_gains(
 ///
 /// Will throw `BirliError::BadArrayShape` if:
 /// - `num_fine_chans_per_coarse` is zero
-/// - The length of the channel axis in `jones_array` is not a multiple of num_fine_chans_per_coarse.
+/// - The length of the channel axis in `jones_array` is not a multiple of `num_fine_chans_per_coarse`.
 /// - `jones_array` and `weight_array` have different shapes.
-/// - The length of the coarse band gains is not a multiple of num_fine_chans_per_coarse, or vice versa.
+/// - The length of the coarse band gains is not a multiple of `num_fine_chans_per_coarse`, or vice versa.
 ///
 pub fn correct_coarse_passband_gains(
     jones_array: &mut Array3<Jones<f32>>,
     weight_array: &mut Array3<f32>,
     passband_gains: &[f64],
     num_fine_chans_per_coarse: usize,
-    scrunch_type: ScrunchType,
+    scrunch_type: &ScrunchType,
 ) -> Result<(), BirliError> {
     if num_fine_chans_per_coarse == 0 {
         return Err(BirliError::BadArrayShape {
@@ -531,16 +531,17 @@ pub enum ScrunchType {
 }
 
 impl ScrunchType {
-    /// Return the corresponding scrunch version from the mwalib::MWAVersion.
+    /// Return the corresponding scrunch version from the [`marlu::mwalib::MWAVersion`].
     ///
     /// # Errors
     ///
-    /// Will throw BadMWAVersion If you provide something other than CorrMWAXv2, CorrLegacy, or CorrOldLegacy
+    /// Will throw [`BirliError::BadMWAVersion`] If you provide something other than
+    /// [`marlu::mwalib::MWAVersion::CorrMWAXv2`], [`marlu::mwalib::MWAVersion::CorrLegacy`], or
+    /// [`marlu::mwalib::MWAVersion::CorrOldLegacy`]
     pub fn from_mwa_version(ver: MWAVersion) -> Result<Self, BirliError> {
         match ver {
             MWAVersion::CorrMWAXv2 => Ok(Self::CenterSymmetric),
-            MWAVersion::CorrLegacy => Ok(Self::Simple),
-            MWAVersion::CorrOldLegacy => Ok(Self::Simple),
+            MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy => Ok(Self::Simple),
             ver => Err(BirliError::BadMWAVersion {
                 message:
                     "could not determine correlator scrunch type from provided mwalib::MWAVersion."
@@ -571,11 +572,11 @@ impl ScrunchType {
 /// 3 (o->o)|     0*    |     1     |     2     |     3     |     4     |
 /// 5 (o->o)|           0       |         1         |         2         |
 ///
-/// For more details see: https://wiki.mwatelescope.org/display/MP/MWA+Fine+Channel+Centre+Frequencies
+/// For more details see: <https://wiki.mwatelescope.org/display/MP/MWA+Fine+Channel+Centre+Frequencies>
 pub fn scrunch_gains(
     ultrafine_gains: &[f64],
     fscrunch: usize,
-    scrunch_type: ScrunchType,
+    scrunch_type: &ScrunchType,
 ) -> Vec<f64> {
     let scrunched_length = ultrafine_gains.len() / fscrunch;
     if fscrunch == 1 {
@@ -605,7 +606,7 @@ pub fn scrunch_gains(
         let window_offset_weights: Vec<(i32, f64)> = match (&scrunch_type, scrunched_length % 2, fscrunch % 2) {
             (ScrunchType::Simple, _, _) => (0..fscrunch).map(|w| (w as i32, 1./fscrunch as f64)).collect(),
             // even channels, even fscrunch: window length is fscrunch + 1, half-weighted edges
-            (ScrunchType::CenterSymmetric, 0, 0) => (0..fscrunch + 1)
+            (ScrunchType::CenterSymmetric, 0, 0) => (0..=fscrunch)
                 .map(|w| (
                     (w as i32 - fscrunch as i32 / 2),
                     (if w == 0 || w == fscrunch { 0.5 } else { 1. }) / fscrunch as f64,
@@ -619,7 +620,7 @@ pub fn scrunch_gains(
                 ))
                 .collect(),
             // odd channels: window length is fscrunch + 1, half-weighted edges
-            (ScrunchType::CenterSymmetric, 1, _) => (0..fscrunch + 1)
+            (ScrunchType::CenterSymmetric, 1, _) => (0..=fscrunch)
                 .map(|w| (
                     (w as i32),
                     (if w == 0 || w == fscrunch { 0.5 } else { 1. }) / fscrunch as f64,
@@ -645,6 +646,7 @@ pub fn scrunch_gains(
 }
 
 #[cfg(test)]
+#[allow(clippy::similar_names)]
 mod tests {
 
     use super::{
@@ -1526,7 +1528,7 @@ mod tests {
         let expected_gains: Vec<f64> = (0..15)
             .map(|x| ((base.pow(2 * x)) + (base.pow(2 * x + 1))) as f64 / 2.)
             .collect();
-        let scrunched_gains = scrunch_gains(&ultrafine_gains, 2, ScrunchType::Simple);
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 2, &ScrunchType::Simple);
         assert_eq!(scrunched_gains, expected_gains);
     }
 
@@ -1548,7 +1550,7 @@ mod tests {
         let scrunched_gains = scrunch_gains(
             &ultrafine_gains,
             2,
-            ScrunchType::from_mwa_version(corr_ctx.metafits_context.mwa_version.unwrap()).unwrap(),
+            &ScrunchType::from_mwa_version(corr_ctx.metafits_context.mwa_version.unwrap()).unwrap(),
         );
         assert_eq!(scrunched_gains, expected_gains);
     }
@@ -1567,7 +1569,7 @@ mod tests {
                 (left / 3. + center / 3. + right / 3.) as f64
             })
             .collect();
-        let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, ScrunchType::CenterSymmetric);
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, &ScrunchType::CenterSymmetric);
         assert_eq!(scrunched_gains, expected_gains);
     }
 
@@ -1587,7 +1589,7 @@ mod tests {
                 (left / 8. + center1 / 4. + center2 / 4. + center3 / 4. + right / 8.) as f64
             })
             .collect();
-        let scrunched_gains = scrunch_gains(&ultrafine_gains, 4, ScrunchType::CenterSymmetric);
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 4, &ScrunchType::CenterSymmetric);
         assert_eq!(scrunched_gains, expected_gains);
     }
 
@@ -1606,7 +1608,7 @@ mod tests {
                 (left / 6. + center1 / 3. + center2 / 3. + right / 6.) as f64
             })
             .collect();
-        let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, ScrunchType::CenterSymmetric);
+        let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, &ScrunchType::CenterSymmetric);
         assert_eq!(scrunched_gains, expected_gains);
     }
 
@@ -1624,7 +1626,7 @@ mod tests {
             &mut weight_array,
             &passband_gains,
             num_fine_chans_per_coarse,
-            ScrunchType::Simple,
+            &ScrunchType::Simple,
         )
         .unwrap();
 
@@ -1656,7 +1658,7 @@ mod tests {
             &mut weight_array,
             &passband_gains,
             num_fine_chans_per_coarse,
-            ScrunchType::Simple,
+            &ScrunchType::Simple,
         )
         .unwrap();
 
@@ -1688,7 +1690,7 @@ mod tests {
             &mut weight_array,
             &passband_gains,
             num_fine_chans_per_coarse,
-            ScrunchType::Simple,
+            &ScrunchType::Simple,
         )
         .unwrap();
 
@@ -1721,7 +1723,7 @@ mod tests {
                 &mut weight_array,
                 &passband_gains,
                 0,
-                ScrunchType::Simple,
+                &ScrunchType::Simple,
             ),
             Err(BirliError::BadArrayShape { .. })
         ));
@@ -1733,7 +1735,7 @@ mod tests {
                 &mut weight_array,
                 &passband_gains,
                 3,
-                ScrunchType::Simple,
+                &ScrunchType::Simple,
             ),
             Err(BirliError::BadArrayShape { .. })
         ));
@@ -1746,7 +1748,7 @@ mod tests {
                 &mut bad_weight_array,
                 &passband_gains,
                 num_fine_chans_per_coarse,
-                ScrunchType::Simple,
+                &ScrunchType::Simple,
             ),
             Err(BirliError::BadArrayShape { .. })
         ));
@@ -1759,7 +1761,7 @@ mod tests {
                 &mut weight_array,
                 &bad_passband_gains,
                 num_fine_chans_per_coarse,
-                ScrunchType::Simple,
+                &ScrunchType::Simple,
             ),
             Err(BirliError::BadArrayShape { .. })
         ));

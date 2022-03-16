@@ -24,7 +24,7 @@ use marlu::{
     hifitime::Epoch,
     mwalib::{CorrelatorContext, MetafitsContext},
     num_complex::Complex,
-    precession::*,
+    precession::precess_time,
     Jones, LatLngHeight, RADec, XyzGeodetic, ENH, UVW,
 };
 
@@ -67,7 +67,7 @@ fn rust_strings_to_c_strings<T: AsRef<str>>(
 /// handle more than 255 antennas (up to 2048). This is backwards compatible
 /// with the standard UVFITS convention. Antenna indices start at 1.
 // Shamelessly copied from the RTS, originally written by Randall Wayth.
-pub fn encode_uvfits_baseline(ant1: usize, ant2: usize) -> usize {
+pub const fn encode_uvfits_baseline(ant1: usize, ant2: usize) -> usize {
     if ant2 > 255 {
         ant1 * 2048 + ant2 + 65_536
     } else {
@@ -78,7 +78,7 @@ pub fn encode_uvfits_baseline(ant1: usize, ant2: usize) -> usize {
 /// Decode a uvfits baseline into the antennas that formed it. Antenna indices
 /// start at 1.
 #[allow(dead_code)]
-pub fn decode_uvfits_baseline(bl: usize) -> (usize, usize) {
+pub const fn decode_uvfits_baseline(bl: usize) -> (usize, usize) {
     if bl < 65_535 {
         let ant2 = bl % 256;
         let ant1 = (bl - ant2) / 256;
@@ -130,7 +130,7 @@ impl UvfitsWriter {
     ///
     /// This will destroy any existing uvfits file at that path.
     ///
-    /// If you have a [`mwalib::CorrelatorContext`], then it would be more
+    /// If you have a [`marlu::mwalib::CorrelatorContext`], then it would be more
     /// convenient to use the `from_mwalib` method.
     ///
     /// `num_timesteps`, `num_baselines` and `num_chans` are the number of
@@ -205,7 +205,6 @@ impl UvfitsWriter {
         fits_check_status(status)?;
 
         // Initialise the group header. Copied from cotter. -32 means FLOAT_IMG.
-        let naxis = 6;
         let mut naxes = [0, 3, 4, num_chans as i64, 1, 1];
         let num_group_params = 5;
         let total_num_rows = num_timesteps * num_baselines;
@@ -219,7 +218,7 @@ impl UvfitsWriter {
                 fptr,                  /* I - FITS file pointer                        */
                 1,                     /* I - does file conform to FITS standard? 1/0  */
                 -32,                   /* I - number of bits per data value pixel      */
-                naxis,                 /* I - number of axes in the data array         */
+                naxes.len() as _,      /* I - number of axes in the data array         */
                 naxes.as_mut_ptr(),    /* I - length of each data axis                 */
                 num_group_params,      /* I - number of group parameters (usually 0)   */
                 total_num_rows as i64, /* I - number of random groups (usually 1 or 0) */
@@ -250,15 +249,15 @@ impl UvfitsWriter {
             let ii = i + 1;
             hdu.write_key(&mut u, &format!("PTYPE{}", ii), param)?;
             hdu.write_key(&mut u, &format!("PSCAL{}", ii), 1.0)?;
-            if param != "DATE" {
-                hdu.write_key(&mut u, &format!("PZERO{}", ii), 0.0)?;
-            } else {
+            if param == "DATE" {
                 // Set the zero level for the DATE column.
                 hdu.write_key(
                     &mut u,
                     &format!("PZERO{}", ii),
                     start_epoch.as_jde_utc_days().floor() + 0.5,
                 )?;
+            } else {
+                hdu.write_key(&mut u, &format!("PZERO{}", ii), 0.0)?;
             }
         }
         hdu.write_key(&mut u, "DATE-OBS", get_truncated_date_string(start_epoch))?;
@@ -332,17 +331,17 @@ impl UvfitsWriter {
             format!("v{}", env!("CARGO_PKG_VERSION")),
         )?;
 
-        let array_pos = match array_pos {
-            Some(pos) => pos,
-            None => {
+        let array_pos = array_pos.map_or_else(
+            || {
                 warn!("we are using MWA lat / lng / height from mwalib for array position");
                 // The results here are slightly different to those given by cotter.
                 // This is at least partly due to different constants (the altitude is
                 // definitely slightly different), but possibly also because ERFA is
                 // more accurate than cotter's "homebrewed" Geodetic2XYZ.
                 LatLngHeight::new_mwa()
-            }
-        };
+            },
+            |pos| pos,
+        );
 
         Ok(Self {
             path: path.as_ref().to_path_buf(),
@@ -355,7 +354,7 @@ impl UvfitsWriter {
         })
     }
 
-    /// Create a new uvfits file at the specified path using an [`mwalib::CorrelatorContext`]
+    /// Create a new uvfits file at the specified path using an [`marlu::mwalib::CorrelatorContext`]
     ///
     /// # Details
     ///
@@ -423,7 +422,7 @@ impl UvfitsWriter {
         )
     }
 
-    /// Opens the associated uvfits file in edit mode, returning the [FitsFile]
+    /// Opens the associated uvfits file in edit mode, returning the [`FitsFile`]
     /// struct.
     ///
     /// Closing the file can be achieved by `drop`ing all references to the
@@ -442,7 +441,7 @@ impl UvfitsWriter {
     /// Write the antenna table to a uvfits file. Assumes that the array
     /// location is MWA.
     ///
-    /// `positions` are the [XyzGeodetic] coordinates
+    /// `positions` are the [`XyzGeodetic`] coordinates
     /// of the MWA tiles. These positions need to have the MWA's "centre" XYZ
     /// coordinates subtracted to make them local XYZ.
     ///
@@ -701,7 +700,7 @@ impl UvfitsWriter {
     }
 
     /// Write the antenna table to a uvfits file using the provided
-    /// [`mwalib::CorrelatorContext`]
+    /// [`marlu::mwalib::CorrelatorContext`]
     ///
     /// `self` must have only have a single HDU when this function is called
     /// (true when using methods only provided by `Self`).
@@ -723,7 +722,7 @@ impl UvfitsWriter {
                     h: antenna.height_m,
                 };
                 let position = position_enh.to_xyz(self.array_pos.latitude_rad);
-                (antenna.tile_name.to_owned(), position)
+                (antenna.tile_name.clone(), position)
             })
             .unzip();
         self.write_uvfits_antenna_table(&antenna_names, &positions)
@@ -732,10 +731,10 @@ impl UvfitsWriter {
     /// Write a visibility row into the uvfits file.
     ///
     /// `uvfits` must have been opened in write mode and currently have HDU 0
-    /// open. The [FitsFile] must be supplied to this function to force the
+    /// open. The [`FitsFile`] must be supplied to this function to force the
     /// caller to think about calling this function efficiently; opening the
     /// file for every call would be a problem, and keeping the file open in
-    /// [UvfitsWriter] would mean the struct is not thread safe.
+    /// [`UvfitsWriter`] would mean the struct is not thread safe.
     ///
     /// `tile_index1` and `tile_index2` are expected to be zero indexed; they
     /// are made one indexed by this function.
@@ -793,15 +792,15 @@ impl UvfitsWriter {
     }
 
     /// Write visibilty and weight rows into the uvfits file from the provided
-    /// [`mwalib::CorrelatorContext`].
+    /// [`marlu::mwalib::CorrelatorContext`].
     ///
     /// # Details
     ///
     /// `uvfits` must have been opened in write mode and currently have HDU 0
-    /// open. The [FitsFile] must be supplied to this function to force the
+    /// open. The [`FitsFile`] must be supplied to this function to force the
     /// caller to think about calling this function efficiently; opening the
     /// file for every call would be a problem, and keeping the file open in
-    /// [UvfitsWriter] would mean the struct is not thread safe.
+    /// [`UvfitsWriter`] would mean the struct is not thread safe.
     ///
     /// `baseline_idxs` the baseline indices (according to mwalib)
     /// which should be written to the file
@@ -842,7 +841,7 @@ impl UvfitsWriter {
         let num_pols = context.metafits_context.num_visibility_pols;
         let expanded_flag_array = add_dimension(flag_array.view(), num_pols);
         let weight_factor = get_weight_factor(context);
-        let weight_array = flag_to_weight_array(expanded_flag_array.view(), weight_factor);
+        let weight_array = flag_to_weight_array(&expanded_flag_array.view(), weight_factor);
         self.write_vis_mwalib(
             jones_array.view(),
             weight_array.view(),
@@ -1303,8 +1302,8 @@ mod tests {
         left_fptr: &mut FitsFile,
         right_fptr: &mut FitsFile,
     ) {
-        let mut _left_primary_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
-        let mut _right_primary_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
+        let left_primary_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
+        let right_primary_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
 
         assert_short_string_keys_eq!(
             vec![
@@ -1319,9 +1318,9 @@ mod tests {
                 // "OBJECT",
             ],
             left_fptr,
-            _left_primary_hdu,
+            left_primary_hdu,
             right_fptr,
-            _right_primary_hdu
+            right_primary_hdu
         );
 
         assert_f32_string_keys_eq!(
@@ -1340,16 +1339,16 @@ mod tests {
                 // this is incorrect in Cotter. It writes 2.0 instead of 1.204
             ],
             left_fptr,
-            _left_primary_hdu,
+            left_primary_hdu,
             right_fptr,
-            _right_primary_hdu
+            right_primary_hdu
         );
     }
 
     #[allow(dead_code)]
     pub(crate) fn assert_uvfits_ant_header_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
-        let mut _left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
-        let mut _right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
+        let left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
+        let right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
 
         assert_short_string_keys_eq!(
             vec![
@@ -1359,9 +1358,9 @@ mod tests {
                 "TUNIT10", "TTYPE11", "TFORM11", "EXTNAME", "TIMSYS", "ARRNAM", "RDATE"
             ],
             left_fptr,
-            _left_ant_hdu,
+            left_ant_hdu,
             right_fptr,
-            _right_ant_hdu
+            right_ant_hdu
         );
 
         assert_f32_string_keys_eq!(
@@ -1374,9 +1373,9 @@ mod tests {
                 "IATUTC",
             ],
             left_fptr,
-            _left_ant_hdu,
+            left_ant_hdu,
             right_fptr,
-            _right_ant_hdu
+            right_ant_hdu
         );
     }
 
@@ -1424,30 +1423,30 @@ mod tests {
 
     #[allow(dead_code)]
     pub(crate) fn assert_uvfits_vis_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
-        let mut _left_vis_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
-        let mut _right_vis_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
+        let left_vis_hdu = fits_open_hdu!(left_fptr, 0).unwrap();
+        let right_vis_hdu = fits_open_hdu!(right_fptr, 0).unwrap();
 
         let column_info = assert_group_column_descriptions_match!(
             left_fptr,
-            &_left_vis_hdu,
+            &left_vis_hdu,
             right_fptr,
-            &_right_vis_hdu
+            &right_vis_hdu
         );
 
         let left_length: usize =
-            get_required_fits_key!(left_fptr, &_left_vis_hdu, "GCOUNT").unwrap();
+            get_required_fits_key!(left_fptr, &left_vis_hdu, "GCOUNT").unwrap();
         let right_length: usize =
-            get_required_fits_key!(right_fptr, &_right_vis_hdu, "GCOUNT").unwrap();
+            get_required_fits_key!(right_fptr, &right_vis_hdu, "GCOUNT").unwrap();
 
         assert_eq!(left_length, right_length, "group lengths don't match");
         let group_len = left_length;
 
-        let pcount = get_required_fits_key!(left_fptr, &_left_vis_hdu, "PCOUNT").unwrap();
+        let pcount = get_required_fits_key!(left_fptr, &left_vis_hdu, "PCOUNT").unwrap();
         let floats_per_pol: usize =
-            get_required_fits_key!(left_fptr, &_left_vis_hdu, "NAXIS2").unwrap();
-        let num_pols: usize = get_required_fits_key!(left_fptr, &_left_vis_hdu, "NAXIS3").unwrap();
+            get_required_fits_key!(left_fptr, &left_vis_hdu, "NAXIS2").unwrap();
+        let num_pols: usize = get_required_fits_key!(left_fptr, &left_vis_hdu, "NAXIS3").unwrap();
         let num_fine_freq_chans: usize =
-            get_required_fits_key!(left_fptr, &_left_vis_hdu, "NAXIS4").unwrap();
+            get_required_fits_key!(left_fptr, &left_vis_hdu, "NAXIS4").unwrap();
 
         let mut left_group_params: Vec<f32> = vec![0.0; pcount];
         let mut right_group_params: Vec<f32> = vec![0.0; pcount];
@@ -1551,25 +1550,25 @@ mod tests {
 
     #[allow(dead_code)]
     pub(crate) fn assert_uvfits_ant_table_eq(left_fptr: &mut FitsFile, right_fptr: &mut FitsFile) {
-        let mut _left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
-        let mut _right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
+        let left_ant_hdu = fits_open_hdu!(left_fptr, 1).unwrap();
+        let right_ant_hdu = fits_open_hdu!(right_fptr, 1).unwrap();
 
         let column_info = assert_table_column_descriptions_match!(
             left_fptr,
-            &_left_ant_hdu,
+            &left_ant_hdu,
             right_fptr,
-            &_right_ant_hdu
+            &right_ant_hdu
         );
 
         let first_col_name = &column_info[0];
         let left_length = {
             let left_annames: Vec<String> =
-                get_fits_col!(left_fptr, &_left_ant_hdu, first_col_name.as_str()).unwrap();
+                get_fits_col!(left_fptr, &left_ant_hdu, first_col_name.as_str()).unwrap();
             left_annames.len()
         };
         let right_length = {
             let right_annames: Vec<String> =
-                get_fits_col!(right_fptr, &_right_ant_hdu, first_col_name.as_str()).unwrap();
+                get_fits_col!(right_fptr, &right_ant_hdu, first_col_name.as_str()).unwrap();
             right_annames.len()
         };
         assert_eq!(left_length, right_length, "column lengths don't match");
@@ -1578,17 +1577,17 @@ mod tests {
         assert_table_string_column_values_match!(
             &["ANNAME", "POLTYA", "POLTYB"],
             left_fptr,
-            &_left_ant_hdu,
+            &left_ant_hdu,
             right_fptr,
-            &_right_ant_hdu
+            &right_ant_hdu
         );
 
         assert_table_f64_column_values_match!(
             &["NOSTA", "MNTSTA", "STAXOF", "POLAA", "POLAB"],
             left_fptr,
-            &_left_ant_hdu,
+            &left_ant_hdu,
             right_fptr,
-            &_right_ant_hdu
+            &right_ant_hdu
         );
 
         assert_table_vector_f64_column_values_match!(
@@ -1596,9 +1595,9 @@ mod tests {
             vec![("STABXYZ", 3), ("POLCALA", 3), ("POLCALB", 3)],
             row_len,
             left_fptr,
-            &_left_ant_hdu,
+            &left_ant_hdu,
             right_fptr,
-            &_right_ant_hdu
+            &right_ant_hdu
         );
     }
 
@@ -1638,7 +1637,7 @@ mod tests {
         let mut birli_fptr = fits_open!(&tmp_uvfits_file.path()).unwrap();
         let mut cotter_fptr = fits_open!(&cotter_uvfits_path).unwrap();
 
-        assert_uvfits_primary_header_eq(&mut birli_fptr, &mut cotter_fptr)
+        assert_uvfits_primary_header_eq(&mut birli_fptr, &mut cotter_fptr);
     }
 
     #[test]
@@ -1706,7 +1705,7 @@ mod tests {
     }
 
     /// This test ensures center frequencies are calculated correctly.
-    /// See: https://github.com/MWATelescope/Birli/issues/6
+    /// See: <https://github.com/MWATelescope/Birli/issues/6>
     #[test]
     fn center_frequencies() {
         let corr_ctx = get_mwa_ord_context();
@@ -1783,7 +1782,7 @@ mod tests {
     }
 
     /// This test ensures center frequencies are calculated correctly with frequency averaging.
-    /// See: https://github.com/MWATelescope/Birli/issues/6
+    /// See: <https://github.com/MWATelescope/Birli/issues/6>
     #[test]
     fn avg_center_frequencies() {
         let corr_ctx = get_mwa_ord_context();
@@ -1830,7 +1829,7 @@ mod tests {
         let num_pols = corr_ctx.metafits_context.num_visibility_pols;
         let flag_array = add_dimension(flag_array.view(), num_pols);
         let weight_factor = get_weight_factor(&corr_ctx);
-        let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+        let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
         u.write_vis_mwalib(
             jones_array.view(),
@@ -1868,9 +1867,10 @@ mod tests {
     }
 
     /// Tests for AIPS 117 compliance.
-    /// See https://github.com/MWATelescope/Birli/issues/9
-    /// and ftp://ftp.aoc.nrao.edu/pub/software/aips/TEXT/PUBL/AIPSMEM117.PS
+    /// See <https://github.com/MWATelescope/Birli/issues/9>
+    /// and <ftp://ftp.aoc.nrao.edu/pub/software/aips/TEXT/PUBL/AIPSMEM117.PS>
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn aips_117() {
         let corr_ctx = get_mwa_ord_context();
 
@@ -2191,7 +2191,7 @@ mod tests_aoflagger {
                 &mut flag_array,
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+                &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )
             .unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
@@ -2281,7 +2281,7 @@ mod tests_aoflagger {
                 &mut flag_array,
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+                &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )
             .unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
@@ -2308,7 +2308,7 @@ mod tests_aoflagger {
         let num_pols = corr_ctx.metafits_context.num_visibility_pols;
         let flag_array = add_dimension(flag_array.view(), num_pols);
         let weight_factor = get_weight_factor(&corr_ctx);
-        let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+        let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
         u.write_vis_mwalib(
             jones_array.view(),

@@ -28,11 +28,13 @@ use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::
 use itertools::Itertools;
 use log::{debug, info, trace, warn};
 use prettytable::{cell, format as prettyformat, row, table};
-use std::{collections::HashMap, time::Duration};
 use std::{
+    collections::HashMap,
+    convert::Into,
     env,
     ffi::OsString,
     fmt::{Debug, Display},
+    time::Duration,
 };
 
 cfg_if! {
@@ -90,6 +92,33 @@ pub fn fmt_build_info(f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     Ok(())
 }
 
+fn time_details(
+    gps_time_ms: u64,
+    phase_centre: RADec,
+    array_pos: LatLngHeight,
+) -> (String, String, f64, PrecessionInfo) {
+    let epoch = Epoch::from_gpst_seconds(gps_time_ms as f64 / 1e3);
+    let (y, mo, d, h, mi, s, ms) = epoch.as_gregorian_utc();
+    let precession_info = precess_time(
+        phase_centre,
+        epoch,
+        array_pos.longitude_rad,
+        array_pos.latitude_rad,
+    );
+    (
+        format!("{:02}-{:02}-{:02}", y, mo, d),
+        format!(
+            "{:02}:{:02}:{:02}.{:03}",
+            h,
+            mi,
+            s,
+            (ms as f64 / 1e6).round()
+        ),
+        epoch.as_mjd_utc_seconds(),
+        precession_info,
+    )
+}
+
 impl Display for BirliContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
@@ -145,33 +174,6 @@ impl Display for BirliContext {
             .enumerate()
             .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
             .collect();
-
-        fn time_details(
-            gps_time_ms: u64,
-            phase_centre: RADec,
-            array_pos: LatLngHeight,
-        ) -> (String, String, f64, PrecessionInfo) {
-            let epoch = Epoch::from_gpst_seconds(gps_time_ms as f64 / 1e3);
-            let (y, mo, d, h, mi, s, ms) = epoch.as_gregorian_utc();
-            let precession_info = precess_time(
-                phase_centre,
-                epoch,
-                array_pos.longitude_rad,
-                array_pos.latitude_rad,
-            );
-            (
-                format!("{:02}-{:02}-{:02}", y, mo, d),
-                format!(
-                    "{:02}:{:02}:{:02}.{:03}",
-                    h,
-                    mi,
-                    s,
-                    (ms as f64 / 1e6).round()
-                ),
-                epoch.as_mjd_utc_seconds(),
-                precession_info,
-            )
-        }
 
         let (sched_start_date, sched_start_time, sched_start_mjd_s, sched_start_prec) =
             time_details(
@@ -233,10 +235,10 @@ impl Display for BirliContext {
             num_avg_timesteps as f64 * avg_int_time_s,
             num_avg_timesteps,
             avg_int_time_s,
-            if self.avg_time != 1 {
-                format!(" ({}x)", self.avg_time)
-            } else {
+            if self.avg_time == 1 {
                 "".into()
+            } else {
+                format!(" ({}x)", self.avg_time)
             }
         )?;
 
@@ -272,10 +274,10 @@ impl Display for BirliContext {
             out_bandwidth_mhz,
             num_avg_chans,
             avg_fine_chan_width_khz,
-            if self.avg_freq != 1 {
-                format!(" ({}x)", self.avg_freq)
-            } else {
+            if self.avg_freq == 1 {
                 "".into()
+            } else {
+                format!(" ({}x)", self.avg_freq)
             }
         )?;
 
@@ -514,29 +516,20 @@ impl Display for BirliContext {
 }
 
 impl BirliContext {
-    /// Parse an iterator of arguments, `args` into a `BirliContext`.
-    ///
-    /// # Errors
-    ///
-    /// Can raise:
-    /// - `clap::Error` if clap cannot parse `args`
-    /// - `mwalib::MwalibError` if mwalib can't open the input files.
-    /// - `BirliError::CLIError` if the arguments are invalid.
-    pub fn from_args<I, T>(args: I) -> Result<BirliContext, BirliError>
+    // TODO: try struct instead of builder
+    #[allow(clippy::cognitive_complexity)]
+    fn get_matches<I, T>(args: I) -> Result<clap::ArgMatches, BirliError>
     where
-        I: IntoIterator<Item = T>,
+        I: IntoIterator<Item = T> + Debug,
         T: Into<OsString> + Clone,
-        I: Debug,
     {
-        debug!("args:\n{:?}", &args);
-
         #[allow(unused_mut)]
         let mut app = command!()
             .subcommand_precedence_over_arg(true)
             .arg_required_else_help(true)
             .next_line_help(false)
             .about("Preprocess Murchison Widefield Array MetaFITS and GPUFITS data \
-                into usable astronomy formats.")
+                    into usable astronomy formats.")
             .args(&[
                 // input options
                 arg!(-m --metafits <PATH> "Metadata file for the observation")
@@ -649,8 +642,8 @@ impl BirliContext {
                         PossibleValue::new("cotter")
                             .help(
                                 "_sb128ChannelSubbandValue2014FromMemo from
-                                subbandpassband.cpp in Cotter. Can only be used with resolutions of
-                                n * 10kHz"
+                                    subbandpassband.cpp in Cotter. Can only be used with resolutions of
+                                    n * 10kHz"
                             ),
                         PossibleValue::new("jake")
                             .help("see: PFB_JAKE_2022_200HZ in src/passband_gains.rs"),
@@ -682,8 +675,8 @@ impl BirliContext {
 
                 // output options
                 arg!(-f --"flag-template" <TEMPLATE> "The template used to name flag files. \
-                    Percents are substituted for the zero-prefixed GPUBox ID, which can be up to \
-                    3 characters long. Example: FlagFile%%%.mwaf")
+                        Percents are substituted for the zero-prefixed GPUBox ID, which can be up to \
+                        3 characters long. Example: FlagFile%%%.mwaf")
                     .help_heading("OUTPUT")
                     .required(false),
                 arg!(-u --"uvfits-out" <PATH> "Path for uvfits output")
@@ -693,7 +686,6 @@ impl BirliContext {
                     .help_heading("OUTPUT")
                     .required(false),
             ]);
-
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
                 app = app.args(&[
@@ -706,15 +698,12 @@ impl BirliContext {
                 ]);
             }
         };
-
         let matches = app.try_get_matches_from_mut(args)?;
-        trace!("arg matches:\n{:?}", &matches);
+        Ok(matches)
+    }
 
-        // // //
-        // IO //
-        // // //
-
-        let io_ctx = IOContext {
+    fn parse_io_matches(matches: &clap::ArgMatches) -> IOContext {
+        IOContext {
             metafits_in: match matches.value_of_t("metafits") {
                 Ok(path) => path,
                 _ => unreachable!("--metafits <PATH> is required, enforced by clap"),
@@ -723,21 +712,18 @@ impl BirliContext {
                 Ok(path) => path,
                 _ => unreachable!("<PATHS> is required, enforced by clap"),
             },
-            aocalsols_in: matches.value_of("apply-di-cal").map(|s| s.into()),
-            uvfits_out: matches.value_of("uvfits-out").map(|s| s.into()),
-            ms_out: matches.value_of("ms-out").map(|s| s.into()),
-            flag_template: matches.value_of("flag-template").map(|s| s.into()),
-        };
+            aocalsols_in: matches.value_of("apply-di-cal").map(Into::into),
+            uvfits_out: matches.value_of("uvfits-out").map(Into::into),
+            ms_out: matches.value_of("ms-out").map(Into::into),
+            flag_template: matches.value_of("flag-template").map(Into::into),
+        }
+    }
 
-        let corr_ctx = io_ctx.get_corr_ctx()?;
-        debug!("mwalib correlator context:\n{}", &corr_ctx);
-
-        // ////////// //
-        // Selections //
-        // ////////// //
-
-        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-
+    fn parse_vis_sel_matches(
+        corr_ctx: &CorrelatorContext,
+        matches: &clap::ArgMatches,
+    ) -> Result<VisSelection, BirliError> {
+        let mut vis_sel = VisSelection::from_mwalib(corr_ctx).unwrap();
         match matches
             .values_of_t::<usize>("sel-time")
             .map(|v| (v[0], v[1]))
@@ -757,17 +743,14 @@ impl BirliContext {
                 _ => return Err(err.into()),
             },
         }
+        Ok(vis_sel)
+    }
 
-        // TODO: sel-ants, no-sel-flagged-ants, no-sel-autos
-
-        // //////// //
-        // Flagging //
-        // //////// //
-
-        let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-
-        // Timesteps
-
+    fn parse_flag_matches(
+        corr_ctx: &CorrelatorContext,
+        matches: &clap::ArgMatches,
+    ) -> Result<FlagContext, BirliError> {
+        let mut flag_ctx = FlagContext::from_mwalib(corr_ctx);
         match matches.values_of_t::<usize>("flag-times") {
             Ok(timestep_idxs) => {
                 for (value_idx, &timestep_idx) in timestep_idxs.iter().enumerate() {
@@ -792,10 +775,6 @@ impl BirliContext {
                 _ => return Err(err.into()),
             },
         };
-
-        // TODO: flag-init, flag-steps, flag-end, flag-end-steps,
-
-        // coarse channels
         match matches.values_of_t::<usize>("flag-coarse-chans") {
             Ok(coarse_chan_idxs) => {
                 for (value_idx, &coarse_chan_idx) in coarse_chan_idxs.iter().enumerate() {
@@ -820,9 +799,6 @@ impl BirliContext {
                 _ => return Err(err.into()),
             },
         };
-
-        // fine channels
-        // TODO: flag-edge-width, flag-edge-chans, flag-dc, no-flag-dc,
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
         match matches.values_of_t::<usize>("flag-fine-chans") {
             Ok(fine_chan_idxs) => {
@@ -848,14 +824,11 @@ impl BirliContext {
                 _ => return Err(err.into()),
             },
         };
-
-        // Antennas
         if matches.is_present("no-flag-metafits") {
             info!("Ignoring antenna flags from metafits.");
             // set antenna flags to all false
             flag_ctx.antenna_flags = vec![false; flag_ctx.antenna_flags.len()];
         }
-
         match matches.values_of_t::<usize>("flag-antennas") {
             Ok(antenna_idxs) => {
                 for (value_idx, &antenna_idx) in antenna_idxs.iter().enumerate() {
@@ -880,16 +853,16 @@ impl BirliContext {
                 _ => return Err(err.into()),
             },
         };
-
-        // Baselines
         if matches.is_present("flag-autos") {
             flag_ctx.autos = true;
         }
+        Ok(flag_ctx)
+    }
 
-        // ///////// //
-        // Averaging //
-        // ///////// //
-
+    fn parse_avg_matches(
+        matches: &clap::ArgMatches,
+        corr_ctx: &CorrelatorContext,
+    ) -> Result<(usize, usize), BirliError> {
         let avg_time: usize = match (
             matches.value_of_t::<usize>("avg-time-factor"),
             matches.value_of_t::<f64>("avg-time-res"),
@@ -924,7 +897,6 @@ impl BirliContext {
             }
             _ => 1,
         };
-
         let avg_freq: usize = match (
             matches.value_of_t::<usize>("avg-freq-factor"),
             matches.value_of_t::<f64>("avg-freq-res"),
@@ -963,11 +935,16 @@ impl BirliContext {
             }
             _ => 1,
         };
+        Ok((avg_time, avg_freq))
+    }
 
-        // //////// //
-        // Chunking //
-        // //////// //
-
+    fn parse_chunk_matches(
+        corr_ctx: &CorrelatorContext,
+        matches: &clap::ArgMatches,
+        avg_time: usize,
+        vis_sel: &VisSelection,
+    ) -> Result<Option<usize>, BirliError> {
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
         let num_timesteps_per_chunk: Option<usize> = match (
             matches.value_of_t::<usize>("time-chunk"),
             matches.value_of_t::<f64>("max-memory"),
@@ -1022,22 +999,24 @@ impl BirliContext {
 
         // validate chunk size
         if let Some(chunk_size) = num_timesteps_per_chunk {
-            if matches.value_of("flag-template").is_some() {
-                // TODO: mwaf chunking
-                panic!("chunking is not supported when writing .mwaf files using --flag-template");
-            }
+            assert!(
+                matches.value_of("flag-template").is_none(),
+                "chunking is not supported when writing .mwaf files using --flag-template"
+            );
             info!("chunking output to {} timesteps per chunk", chunk_size);
         }
 
-        // ////////// //
-        // Correction //
-        // ////////// //
+        Ok(num_timesteps_per_chunk)
+    }
 
+    fn parse_prep_matches(
+        matches: &clap::ArgMatches,
+        corr_ctx: &CorrelatorContext,
+    ) -> Result<PreprocessContext, BirliError> {
         let mut prep_ctx = PreprocessContext {
             draw_progress: !matches.is_present("no-draw-progress"),
             ..PreprocessContext::default()
         };
-
         prep_ctx.array_pos = if matches.is_present("emulate-cotter") {
             info!("Using array position from Cotter.");
             LatLngHeight {
@@ -1049,7 +1028,6 @@ impl BirliContext {
             info!("Using default MWA array position.");
             LatLngHeight::new_mwa()
         };
-
         prep_ctx.phase_centre = match (
             matches
                 .values_of_t::<f64>("phase-centre")
@@ -1064,8 +1042,6 @@ impl BirliContext {
             (_, true) => RADec::from_mwalib_tile_pointing(&corr_ctx.metafits_context),
             _ => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
         };
-
-        // cable delay corrections are enabled by default if they haven't aleady beeen applied.
         prep_ctx.correct_cable_lengths = {
             let no_cable_delays = matches.is_present("no-cable-delay");
             let cable_delays_applied = corr_ctx.metafits_context.cable_delays_applied;
@@ -1075,19 +1051,13 @@ impl BirliContext {
             );
             !cable_delays_applied && !no_cable_delays
         };
-
-        // coarse channel digital gain corrections are enabled by default
         prep_ctx.correct_digital_gains = !matches.is_present("no-digital-gains");
-
-        // coarse pfb passband corrections are enabled by default
         prep_ctx.passband_gains = match matches.value_of("passband-gains") {
             None | Some("none") => None,
             Some("jake") => Some(PFB_JAKE_2022_200HZ.to_vec()),
             Some("cotter") => Some(PFB_COTTER_2014_10KHZ.to_vec()),
             Some(option) => panic!("unknown option for --passband-gains: {}", option),
         };
-
-        // geometric corrections are enabled by default if they haven't aleady beeen applied.
         prep_ctx.correct_geometry = {
             let no_geometric_delays = matches.is_present("no-geometric-delay");
             let geometric_delays_applied = corr_ctx.metafits_context.geometric_delays_applied;
@@ -1097,10 +1067,11 @@ impl BirliContext {
             );
             matches!(geometric_delays_applied, GeometricDelaysApplied::No) && !no_geometric_delays
         };
-
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
-                prep_ctx.aoflagger_strategy = if !matches.is_present("no-rfi") {
+                prep_ctx.aoflagger_strategy = if matches.is_present("no-rfi") {
+                    None
+                } else {
                     match matches.value_of_t("aoflagger-strategy") {
                         Err(err) if err.kind() != ArgumentNotFound => return Err(err.into()),
                         Ok(strategy) => Some(strategy),
@@ -1108,11 +1079,29 @@ impl BirliContext {
                             cxx_aoflagger_new().FindStrategyFileMWA()
                         }),
                     }
-                } else {
-                    None
                 };
             }
         }
+        Ok(prep_ctx)
+    }
+
+    /// Parse an iterator of arguments, `args` into a `BirliContext`.
+    ///
+    /// # Errors
+    ///
+    /// Can raise:
+    /// - `clap::Error` if clap cannot parse `args`
+    /// - `mwalib::MwalibError` if mwalib can't open the input files.
+    /// - `BirliError::CLIError` if the arguments are invalid.
+    pub fn from_args<I, T>(args: I) -> Result<Self, BirliError>
+    where
+        I: IntoIterator<Item = T> + Debug,
+        T: Into<OsString> + Clone,
+    {
+        debug!("args:\n{:?}", &args);
+
+        let matches = Self::get_matches(args)?;
+        trace!("arg matches:\n{:?}", &matches);
 
         for unimplemented_option in &[
             "flag-init",
@@ -1127,9 +1116,11 @@ impl BirliContext {
             "no-sel-flagged-ants",
             "sel-ants",
         ] {
-            if matches.is_present(unimplemented_option) {
-                panic!("option not yet implemented: --{}", unimplemented_option);
-            }
+            assert!(
+                !matches.is_present(unimplemented_option),
+                "option not yet implemented: --{}",
+                unimplemented_option
+            );
         }
 
         for untested_option in &[
@@ -1150,11 +1141,17 @@ impl BirliContext {
             }
         }
 
-        // ///////// //
-        // Show info //
-        // ///////// //
+        let io_ctx = Self::parse_io_matches(&matches);
+        let corr_ctx = io_ctx.get_corr_ctx()?;
+        debug!("mwalib correlator context:\n{}", &corr_ctx);
+        let vis_sel = Self::parse_vis_sel_matches(&corr_ctx, &matches)?;
+        let flag_ctx = Self::parse_flag_matches(&corr_ctx, &matches)?;
+        let prep_ctx = Self::parse_prep_matches(&matches, &corr_ctx)?;
+        let (avg_time, avg_freq) = Self::parse_avg_matches(&matches, &corr_ctx)?;
+        let num_timesteps_per_chunk =
+            Self::parse_chunk_matches(&corr_ctx, &matches, avg_time, &vis_sel)?;
 
-        let result = BirliContext {
+        let result = Self {
             corr_ctx,
             prep_ctx,
             vis_sel,
@@ -1203,9 +1200,13 @@ impl BirliContext {
 
         prep_ctx.calsols = if let Some(ref calsol_file) = io_ctx.aocalsols_in {
             let calsols = AOCalSols::read_andre_binary(calsol_file).unwrap();
-            if calsols.di_jones.dim().0 != 1 {
-                panic!("only 1 timeblock must be supplied for calsols. Instead found {} timeblocks. dimensions {:?}", calsols.di_jones.dim().1, calsols.di_jones.dim());
-            }
+            assert!(
+                calsols.di_jones.dim().0 == 1,
+                "only 1 timeblock must be supplied for calsols. \
+                Instead found {} timeblocks. dimensions {:?}",
+                calsols.di_jones.dim().1,
+                calsols.di_jones.dim()
+            );
             let calsol_chans = calsols.di_jones.dim().2;
             if calsol_chans % corr_ctx.num_coarse_chans != 0 {
                 return Err(BirliError::BadArrayShape {
@@ -1331,7 +1332,7 @@ impl BirliContext {
                 &mut flag_array,
                 &chunk_vis_sel.timestep_range,
                 &chunk_vis_sel.coarse_chan_range,
-                chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+                &chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )?;
 
             // populate visibilities
@@ -1448,7 +1449,7 @@ impl BirliContext {
 mod tests {
     use tempfile::tempdir;
 
-    use crate::{test_common::*, BirliContext};
+    use crate::{test_common::get_1254670392_avg_paths, BirliContext};
 
     #[test]
     fn test_birli_context_display_doesnt_crash() {
@@ -1491,7 +1492,7 @@ mod tests {
 
 #[cfg(test)]
 mod argparse_tests {
-    use crate::{error::BirliError, test_common::*, BirliContext};
+    use crate::{error::BirliError, test_common::get_1254670392_avg_paths, BirliContext};
 
     #[test]
     fn test_parse_missing_input() {
@@ -1945,7 +1946,10 @@ mod tests_aoflagger {
     };
     use tempfile::tempdir;
 
-    use crate::{test_common::*, BirliContext};
+    use crate::{
+        test_common::{compare_ms_with_csv, compare_uvfits_with_csv, get_1254670392_avg_paths},
+        BirliContext,
+    };
 
     #[test]
     fn compare_cotter_uvfits_nocorrect_rfi() {
@@ -1986,7 +1990,7 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         compare_uvfits_with_csv(
-            uvfits_path,
+            &uvfits_path,
             expected_csv_path,
             F32Margin::default(),
             false,
@@ -2037,7 +2041,7 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         compare_uvfits_with_csv(
-            uvfits_path,
+            &uvfits_path,
             expected_csv_path,
             F32Margin::default(),
             true,
@@ -2083,7 +2087,7 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         compare_uvfits_with_csv(
-            uvfits_path,
+            &uvfits_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-4),
             false,
@@ -2160,7 +2164,7 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         compare_uvfits_with_csv(
-            uvfits_path,
+            &uvfits_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-4),
             false,
@@ -2241,7 +2245,7 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         compare_ms_with_csv(
-            ms_path,
+            &ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(2e-4),
             true,
@@ -2321,7 +2325,7 @@ mod tests_aoflagger {
 
         // ignoring weights because Cotter doesn't flag NaNs
         compare_ms_with_csv(
-            ms_path,
+            &ms_path,
             expected_csv_path,
             F32Margin::default(),
             true,
@@ -2373,7 +2377,7 @@ mod tests_aoflagger {
 
         // ignoring weights because Cotter doesn't flag NaNs
         compare_ms_with_csv(
-            ms_path,
+            &ms_path,
             expected_csv_path,
             F32Margin::default(),
             true,
@@ -2453,7 +2457,7 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         compare_ms_with_csv(
-            ms_path,
+            &ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(7e-5),
             false,
@@ -2535,7 +2539,7 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         compare_ms_with_csv(
-            ms_path,
+            &ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-2),
             false,
@@ -2614,7 +2618,7 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         compare_ms_with_csv(
-            ms_path,
+            &ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-3),
             false,
@@ -2698,7 +2702,7 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         compare_ms_with_csv(
-            ms_path,
+            &ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-7),
             false,
@@ -2754,7 +2758,7 @@ mod tests_aoflagger {
         birli_ctx.run().unwrap();
 
         compare_ms_with_csv(
-            ms_path,
+            &ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-7),
             false,
@@ -2815,7 +2819,7 @@ mod tests_aoflagger {
         assert_eq!(main_table.n_rows(), 2 * 8256);
 
         compare_ms_with_csv(
-            ms_path,
+            &ms_path,
             expected_csv_path,
             F32Margin::default().epsilon(1e-7),
             false,

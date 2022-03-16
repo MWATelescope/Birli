@@ -1,9 +1,3 @@
-#![warn(missing_docs)]
-#![warn(rustdoc::missing_doc_code_examples)]
-#![warn(clippy::missing_safety_doc)]
-#![warn(clippy::missing_errors_doc)]
-#![warn(clippy::float_cmp)]
-
 //! Birli is a library of common preprocessing tasks performed in the data pipeline of the Murchison
 //! Widefield Array (MWA) Telescope.
 //!
@@ -52,7 +46,7 @@
 //!     &mut flag_array,
 //!     &vis_sel.timestep_range,
 //!     &vis_sel.coarse_chan_range,
-//!     vis_sel.get_ant_pairs(&corr_ctx.metafits_context)
+//!     &vis_sel.get_ant_pairs(&corr_ctx.metafits_context)
 //! );
 //! let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 //!
@@ -68,7 +62,7 @@
 //! let num_pols = corr_ctx.metafits_context.num_visibility_pols;
 //! let flag_array = add_dimension(flag_array.view(), num_pols);
 //! let weight_factor = get_weight_factor(&corr_ctx);
-//! let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+//! let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 //! write_uvfits(
 //!     uvfits_out.as_path(),
 //!     &corr_ctx,
@@ -89,12 +83,81 @@
 //! # Details
 //!
 //! Birli reads visibilities with [`MWALib`] and uses CXX to bind to the [`AOFlagger`] C++ library.
-//! For more details about AOFlagger's interface, check out the [`aoflagger::AOFlagger`]
+//! For more details its interface, check out the [`aoflagger::AOFlagger`]
 //! documentation
 //!
 //! [`MWALib`]: https://github.com/MWATelescope/mwalib
 //! [`AOFlagger`]: https://gitlab.com/aroffringa/aoflagger
 //! [`aoflagger::AOFlagger`]: http://www.andreoffringa.org/aoflagger/doxygen/classaoflagger_1_1AOFlagger.html
+
+#![warn(missing_docs)]
+#![warn(rustdoc::missing_doc_code_examples)]
+#![deny(clippy::all)]
+// //////// //
+// pedantic //
+// //////// //
+
+// #![warn(clippy::pedantic)]
+
+// useful:
+#![warn(clippy::missing_safety_doc)]
+#![warn(clippy::missing_errors_doc)]
+#![warn(clippy::float_cmp)]
+#![warn(clippy::if_not_else)]
+#![warn(clippy::explicit_iter_loop)]
+#![warn(clippy::wildcard_imports)]
+#![warn(clippy::cloned_instead_of_copied)]
+#![warn(clippy::cognitive_complexity)]
+#![warn(clippy::type_repetition_in_bounds)]
+#![warn(clippy::redundant_closure_for_method_calls)]
+#![warn(clippy::manual_assert)]
+#![warn(clippy::doc_markdown)]
+#![warn(clippy::match_same_arms)]
+#![warn(clippy::default_trait_access)]
+#![warn(clippy::semicolon_if_nothing_returned)]
+#![warn(clippy::explicit_into_iter_loop)]
+#![warn(clippy::inefficient_to_string)]
+#![warn(clippy::needless_pass_by_value)]
+#![warn(clippy::used_underscore_binding)]
+// TODO: Look at these later:
+// #![allow(clippy::too_many_lines)]
+// #![allow(clippy::missing_panics_doc)]
+// #![allow(clippy::must_use_candidate)]
+
+// won't fix:
+// #![allow(clippy::module_name_repetitions)]
+// #![allow(clippy::cast_precision_loss)]
+// #![allow(clippy::cast_sign_loss)]
+// #![allow(clippy::cast_possible_truncation)]
+// #![allow(clippy::cast_lossless)]
+// #![allow(clippy::unreadable_literal)]
+// #![allow(clippy::similar_names)]
+// #![allow(clippy::struct_excessive_bools)]
+// #![allow(clippy::range_plus_one)]
+// #![allow(clippy::cast_possible_wrap)]
+
+// /////// //
+// nursery //
+// /////// //
+
+// #![warn(clippy::nursery)]
+
+// useful:
+#![warn(clippy::use_self)]
+#![warn(clippy::missing_const_for_fn)]
+#![warn(clippy::option_if_let_else)]
+#![warn(clippy::equatable_if_let)]
+// TODO: Look at these later:
+#![allow(clippy::suboptimal_flops)]
+#![allow(clippy::redundant_pub_crate)]
+// won't fix:
+#![allow(clippy::debug_assert_with_mut_call)]
+
+// ///// //
+// cargo //
+// ///// //
+
+// #![warn(clippy::cargo)]
 
 use cfg_if::cfg_if;
 use log::warn;

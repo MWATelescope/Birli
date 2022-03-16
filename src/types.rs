@@ -7,8 +7,8 @@ pub use crate::{approx, Complex, Jones};
 pub(crate) struct TestJones<F: Float + Num>(Jones<F>);
 
 impl<F: Float> TestJones<F> {
-    pub fn identity() -> TestJones<F> {
-        TestJones(Jones::<F>::identity())
+    pub fn identity() -> Self {
+        Self(Jones::<F>::identity())
     }
 }
 

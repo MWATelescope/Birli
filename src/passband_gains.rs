@@ -6409,7 +6409,7 @@ pub const PFB_JAKE_2022_200HZ: &[f64] = &[
     5.00036511286166e-01,
 ];
 
-/// From https://github.com/MWATelescope/cotter/blob/0f99a09cb21721666d2ba328ab2257484b4cd183/subbandpassband.cpp#L58
+/// From <https://github.com/MWATelescope/cotter/blob/0f99a09cb21721666d2ba328ab2257484b4cd183/subbandpassband.cpp#L58>
 ///
 /// "These are subband values coming from an old Levine MWA memo, where they
 /// are derived from the poly phase filter coefficients. Nichole Barry mailed

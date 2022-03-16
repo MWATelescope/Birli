@@ -4,7 +4,7 @@
 //! visibilities from the selected timesteps, coarse channels and baselines in order to enable
 //! processing in "chunks"
 //!
-//! The timesteps are specified as a range of indices in the [`mwalib::CorrelatorContext`]'s
+//! The timesteps are specified as a range of indices in the [`marlu::mwalib::CorrelatorContext`]'s
 //! timestep array, which should be a contiguous superset of times from all provided coarse gpubox
 //! files. A similar concept applies to coarse channels. Instead of reading visibilities for all
 //! known timesteps / coarse channels, it is recommended to use `common_coarse_chan_indices` and
@@ -18,7 +18,7 @@
 //! For flagging an obeservation with "picket fence" coarse channels or timesteps,
 //! contiguous ranges should be flagged separately.
 //!
-//! [`mwalib::CorrelatorContext`]: https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html
+//! [`marlu::mwalib::CorrelatorContext`]: https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html
 //!
 //! # Examples
 //!
@@ -73,11 +73,6 @@
 //! // different selections have different sized arrays.
 //! assert_ne!(dims_common, dims_good);
 //! ```
-//!
-//! # Errors
-//!
-//! can throw BadArrayShape flag_array is provided and its shape does not match
-//! that of the timestep and coarse channel ranges.
 
 use std::ops::Range;
 
@@ -101,9 +96,10 @@ use crate::{
 
 /// Keep track of which mwalib indices the values in a jones array, its' weights and its' flags
 /// came from
+///
+/// TODO: what about <https://doc.rust-lang.org/std/ops/trait.RangeBounds.html> insetad of Range?
 #[derive(Debug, Default, Clone)]
 pub struct VisSelection {
-    // TODO: remove sel_ prefix
     /// selected range of mwalib timestep indices
     pub timestep_range: Range<usize>,
     /// selected range of mwalib coarse channel indices
@@ -113,7 +109,7 @@ pub struct VisSelection {
 }
 
 impl VisSelection {
-    /// Produce a VisSelection from a given [`mwalib::CorrelatorContext`].
+    /// Produce a [`VisSelection`] from a given [`marlu::mwalib::CorrelatorContext`].
     ///
     /// - timesteps are selected from the first [common](https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html#structfield.common_timestep_indices) to the last [provided](https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html#structfield.provided_timestep_indices).
     /// - only [common](https://docs.rs/mwalib/latest/mwalib/struct.CorrelatorContext.html#structfield.common_coarse_chan_indices) coarse channels are selected
@@ -146,8 +142,8 @@ impl VisSelection {
     /// timesteps have been provided, [`BirliError::NoCommonTimesteps`] if none of the provided
     /// gpuboxes have timesteps in common
     ///
-    /// [`mwalib::CorrelatorContext.common_timestep_indices`]:
-    /// [`mwalib::CorrelatorContext.provided_timestep_indices`]:
+    /// [`marlu::mwalib::CorrelatorContext.common_timestep_indices`]:
+    /// [`marlu::mwalib::CorrelatorContext.provided_timestep_indices`]:
     pub fn from_mwalib(corr_ctx: &CorrelatorContext) -> Result<Self, BirliError> {
         Ok(Self {
             timestep_range: match (
@@ -265,7 +261,7 @@ impl VisSelection {
         let num_elems = shape.0 * shape.1 * shape.2;
         let mut v = Vec::new();
 
-        if let Ok(()) = v.try_reserve_exact(num_elems) {
+        if v.try_reserve_exact(num_elems) == Ok(()) {
             // Make the vector's length equal to its new capacity.
             v.resize(num_elems, Jones::zero());
             Ok(Array3::from_shape_vec(shape, v).unwrap())
@@ -287,7 +283,7 @@ impl VisSelection {
         let num_elems = shape.0 * shape.1 * shape.2;
         let mut v = Vec::new();
 
-        if let Ok(()) = v.try_reserve_exact(num_elems) {
+        if v.try_reserve_exact(num_elems) == Ok(()) {
             // Make the vector's length equal to its new capacity.
             v.resize(num_elems, false);
             Ok(Array3::from_shape_vec(shape, v).unwrap())
@@ -312,7 +308,7 @@ impl VisSelection {
         let num_elems = shape.0 * shape.1 * shape.2;
         let mut v = Vec::new();
 
-        if let Ok(()) = v.try_reserve_exact(num_elems) {
+        if v.try_reserve_exact(num_elems) == Ok(()) {
             // Make the vector's length equal to its new capacity.
             v.resize(num_elems, 0.);
             Ok(Array3::from_shape_vec(shape, v).unwrap())
@@ -329,7 +325,7 @@ impl VisSelection {
     ///
     /// # Errors
     ///
-    /// Can raise `BirliError::BadArrayShape` if jones_array or flag_array does not match the
+    /// Can raise [`BirliError::BadArrayShape`] if `jones_array` or `flag_array` does not match the
     /// expected shape of this selection.
     pub fn read_mwalib(
         &self,
@@ -515,7 +511,7 @@ mod tests {
     use super::*;
 
     #[test]
-    /// We expect coarse channel 0 ( fine channels 0,1 ) to be the same as in get_mwa_ord_context,
+    /// We expect coarse channel 0 ( fine channels 0,1 ) to be the same as in `get_mwa_ord_context`,
     /// but coarse channel 0 (fine channels 2, 3 ) should be shifted.
     fn test_read_mwalib_mwax_flags_missing_hdus() {
         let corr_ctx = get_mwa_ord_dodgy_context();

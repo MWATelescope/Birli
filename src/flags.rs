@@ -42,7 +42,7 @@ pub struct FlagContext {
 }
 
 impl FlagContext {
-    /// Create a new FlagContext with all flags false, in the given dimensions
+    /// Create a new [`FlagContext`] with all flags false, in the given dimensions
     pub fn blank_from_dimensions(
         num_timesteps: usize,
         num_coarse_chans: usize,
@@ -54,11 +54,11 @@ impl FlagContext {
             coarse_chan_flags: vec![false; num_coarse_chans],
             fine_chan_flags: vec![false; num_fine_chans_per_coarse],
             antenna_flags: vec![false; num_ants],
-            ..Default::default()
+            ..Self::default()
         }
     }
 
-    /// Create a new FlagContext from a CorrelatorContext, flagging anything not provided.
+    /// Create a new [`FlagContext`] from a [`marlu::mwalib::CorrelatorContext`], flagging anything not provided.
     ///
     /// - Timesteps are flagged in they are not provided in any of the gpubox files.
     /// - Coarse channels are flagged if they appear in the metafits, but are not provided.
@@ -103,18 +103,18 @@ impl FlagContext {
             corr_ctx.metafits_context.num_ants,
         );
         for (i, flag) in result.timestep_flags.iter_mut().enumerate() {
-            *flag = !corr_ctx.provided_timestep_indices.contains(&i)
+            *flag = !corr_ctx.provided_timestep_indices.contains(&i);
         }
 
         for (i, flag) in result.coarse_chan_flags.iter_mut().enumerate() {
-            *flag = !corr_ctx.provided_coarse_chan_indices.contains(&i)
+            *flag = !corr_ctx.provided_coarse_chan_indices.contains(&i);
         }
 
         for (antenna, flag) in izip!(
             corr_ctx.metafits_context.antennas.iter(),
             result.antenna_flags.iter_mut()
         ) {
-            *flag = antenna.rfinput_x.flagged || antenna.rfinput_y.flagged
+            *flag = antenna.rfinput_x.flagged || antenna.rfinput_y.flagged;
         }
 
         result
@@ -141,11 +141,11 @@ impl FlagContext {
         flag_array: &mut Array3<bool>,
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
-        ant_pairs: Vec<(usize, usize)>,
+        ant_pairs: &[(usize, usize)],
     ) -> Result<(), BirliError> {
         let timestep_flags = &self.timestep_flags[timestep_range.clone()];
         let coarse_chan_flags = &self.coarse_chan_flags[coarse_chan_range.clone()];
-        let baseline_flags = self.get_baseline_flags(&ant_pairs);
+        let baseline_flags = self.get_baseline_flags(ant_pairs);
 
         let chan_flags: Vec<_> = coarse_chan_flags
             .iter()
@@ -172,7 +172,7 @@ impl FlagContext {
         flag_array
             .indexed_iter_mut()
             .for_each(|((ts_idx, ch_idx, bl_idx), flag)| {
-                *flag = timestep_flags[ts_idx] || chan_flags[ch_idx] || baseline_flags[bl_idx]
+                *flag = timestep_flags[ts_idx] || chan_flags[ch_idx] || baseline_flags[bl_idx];
             });
 
         Ok(())
@@ -180,8 +180,6 @@ impl FlagContext {
 }
 
 /// Expand an array into a new axis by repeating each element `size` times
-///
-/// TODO: why not just use &Array3<T> not ArrayView3<T>
 pub fn add_dimension<T>(array: ArrayView3<T>, size: usize) -> Array4<T>
 where
     T: std::clone::Clone,
@@ -204,12 +202,10 @@ where
 ///
 /// # Errors
 ///
-/// Will throw [`BirliError`] if there was an error reading from corr_ctx.
-///
+/// TODO: this doesn't actually throw any errors?
 #[cfg(feature = "aoflagger")]
 pub fn jones_baseline_view_to_imageset(
     aoflagger: &CxxAOFlagger,
-    // jones_array: &Array3<Jones<f32>>,
     baseline_jones_view: &ArrayView2<Jones<f32>>,
 ) -> Result<UniquePtr<CxxImageSet>, BirliError> {
     let array_dims = baseline_jones_view.dim();
@@ -256,8 +252,7 @@ pub fn jones_baseline_view_to_imageset(
 ///
 /// # Errors
 ///
-/// Will throw [`BirliError`] if there was an error reading from corr_ctx.
-///
+/// TODO: this doesn't actually throw any errors?
 #[cfg(feature = "aoflagger")]
 pub fn flag_baseline_view_to_flagmask(
     aoflagger: &CxxAOFlagger,
@@ -433,7 +428,7 @@ pub fn flag_jones_array(
     flag_array
 }
 
-/// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], a vector of
+/// Write flags to disk, given an observation's [`marlu::mwalib::CorrelatorContext`], a vector of
 /// [`CxxFlagMask`]s for each baseline in the observation, a filename template and a vector of
 /// gpubox IDs.
 ///
@@ -480,7 +475,7 @@ pub fn flag_jones_array(
 ///     &mut flag_array,
 ///     &vis_sel.timestep_range,
 ///     &vis_sel.coarse_chan_range,
-///     vis_sel.get_ant_pairs(&corr_ctx.metafits_context)
+///     &vis_sel.get_ant_pairs(&corr_ctx.metafits_context)
 /// );
 /// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 ///
@@ -495,8 +490,8 @@ pub fn flag_jones_array(
 ///
 /// # Errors
 ///
-/// - Will error with [IOError::FitsOpen] if there are files already present at the paths specified in filename template.
-/// - Will error with [IOError::InvalidFlagFilenameTemplate] if an invalid flag filename template is provided (wrong number of percents).
+/// - Will error with [`IOError::FitsOpen`] if there are files already present at the paths specified in filename template.
+/// - Will error with [`IOError::InvalidFlagFilenameTemplate`] if an invalid flag filename template is provided (wrong number of percents).
 
 pub fn write_flags(
     corr_ctx: &CorrelatorContext,
@@ -648,11 +643,11 @@ mod tests {
             (1, 2, 0, i8::from(false)),
             (1, 2, 1, i8::from(false)),
         ];
-        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests.iter() {
+        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests {
             let row_idx = timestep_idx * num_baselines + baseline_idx;
             let offset = row_idx * fine_chans_per_coarse + fine_chan_idx;
             assert_eq!(
-                &chan1_flags_raw[offset], expected_flag,
+                chan1_flags_raw[offset], expected_flag,
                 "with timestep {}, baseline {}, fine_chan {}, expected {} at row_idx {}, offset {}",
                 timestep_idx, baseline_idx, fine_chan_idx, expected_flag, row_idx, offset
             );
@@ -660,7 +655,7 @@ mod tests {
     }
 }
 
-/// Get the weight factor of an observation's corr_ctx.
+/// Get the weight factor of an observation's `corr_ctx`.
 ///
 /// This is a conceptfrom Cotter, and the legacy MWA correlator where the value
 /// is a multiple of the frequency averaging factor (relative to 10kHz), and the
@@ -672,7 +667,7 @@ pub fn get_weight_factor(corr_ctx: &CorrelatorContext) -> f64 {
 }
 
 /// Convert the given ndarray of boolean flags to an ndarray of float weights
-pub fn flag_to_weight_array<D>(flag_array: ArrayView<bool, D>, weight_factor: f64) -> Array<f32, D>
+pub fn flag_to_weight_array<D>(flag_array: &ArrayView<bool, D>, weight_factor: f64) -> Array<f32, D>
 where
     D: Dimension,
 {
@@ -822,7 +817,7 @@ mod tests_aoflagger {
                 &mut flag_array,
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+                &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )
             .unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();

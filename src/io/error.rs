@@ -86,7 +86,7 @@ pub enum IOError {
     },
 
     #[error("{0}")]
-    /// Error derived from [`mwalib::FitsError`]
+    /// Error derived from [`marlu::mwalib::FitsError`]
     FitsError(#[from] mwalib::FitsError),
 
     #[error("{0}")]

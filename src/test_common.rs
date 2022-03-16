@@ -19,7 +19,7 @@ use lexical::parse;
 use regex::Regex;
 use std::{
     collections::{BTreeMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 #[macro_export]
@@ -29,7 +29,7 @@ macro_rules! compare_jones {
     };
 }
 
-pub fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
+pub const fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
     let metafits_path = "tests/data/1254670392_avg/1254670392.fixed.metafits";
     let gpufits_paths = [
         "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
@@ -88,10 +88,10 @@ pub fn get_mwa_ord_context() -> CorrelatorContext {
     CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
 }
 
-/// Get a dummy MWA Ord corr_ctx with multiple holes in the data
+/// Get a dummy MWA Ord `corr_ctx` with multiple holes in the data
 ///
 /// The gpubox (batch, hdu) tuples look like this:
-/// - ts is according to [`mwalib::correlatorContext`]
+/// - ts is according to [`marlu::mwalib::correlatorContext`]
 ///
 /// |                   | ts=0   | 1      | 2      | 3      | 4      |
 /// | ----------------- | ------ | ------ | ------ | ------ | ------ |
@@ -108,7 +108,7 @@ pub fn get_mwa_ord_dodgy_context() -> CorrelatorContext {
     CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
 }
 
-/// Get a dummy MWA Ord corr_ctx with no overlapping timesteps
+/// Get a dummy MWA Ord `corr_ctx` with no overlapping timesteps
 ///
 /// The gpubox (batch, hdu) tuples look like this:
 ///
@@ -125,7 +125,7 @@ pub fn get_mwa_ord_no_overlap_context() -> CorrelatorContext {
     CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
 }
 
-/// Get a dummy MWA Ord corr_ctx with no timesteps
+/// Get a dummy MWA Ord `corr_ctx` with no timesteps
 pub fn get_mwa_ord_no_timesteps_context() -> CorrelatorContext {
     // let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
     // let gpufits_paths =
@@ -144,7 +144,7 @@ lazy_static! {
 }
 
 pub fn compare_uvfits_with_csv(
-    uvfits_path: PathBuf,
+    uvfits_path: &Path,
     expected_csv_path: PathBuf,
     vis_margin: F32Margin,
     ignore_weights: bool,
@@ -212,7 +212,7 @@ pub fn compare_uvfits_with_csv(
         let exp_group_params = ["u", "v", "w", "baseline", "timestep"]
             .iter()
             .map(|key| {
-                let value = &record[indices[&key.to_string()]];
+                let value = &record[indices[&(*key).to_string()]];
                 value
                     .parse::<f64>()
                     .unwrap_or_else(|_| panic!("unable to parse {} -> {}", key, value))
@@ -246,7 +246,7 @@ pub fn compare_uvfits_with_csv(
             fits_check_status(status).unwrap();
 
             for (value, pzero) in izip!(obs_group_params.iter_mut(), pzeros.iter()) {
-                *value += pzero
+                *value += pzero;
             }
 
             times_seen.insert((obs_group_params[4] / time_resolution).round() as u64);
@@ -401,22 +401,23 @@ pub fn compare_uvfits_with_csv(
 
             row_idx += 1;
         }
-        if !match_found {
-            panic!(
-                "unable to find matching row for time={}, baseline={:?}, times_seen={:?}",
-                exp_group_params[4],
-                exp_group_params[3],
-                times_seen
-                    .iter()
-                    .map(|&x| (x as f64) * time_resolution)
-                    .collect::<Vec<_>>()
-            );
-        }
+        assert!(
+            match_found,
+            "unable to find matching row for time={}, baseline={:?}, times_seen={:?}",
+            exp_group_params[4],
+            exp_group_params[3],
+            times_seen
+                .iter()
+                .map(|&x| (x as f64) * time_resolution)
+                .collect::<Vec<_>>()
+        );
     }
 }
 
+// TODO: make this less shitty
+#[allow(clippy::cognitive_complexity)]
 pub fn compare_ms_with_csv(
-    ms_path: PathBuf,
+    ms_path: &Path,
     expected_csv_path: PathBuf,
     vis_margin: F32Margin,
     ignore_weights: bool,
@@ -655,17 +656,16 @@ pub fn compare_ms_with_csv(
 
             row_idx += 1;
         }
-        if !match_found {
-            panic!(
-                "unable to find matching row for time={}, baseline={:?}, mjds_seen={:?}",
-                exp_mjd,
-                exp_baseline,
-                mjds_seen
-                    .iter()
-                    .map(|&x| (x as f64) / 10.)
-                    .collect::<Vec<_>>()
-            );
-        }
+        assert!(
+            match_found,
+            "unable to find matching row for time={}, baseline={:?}, mjds_seen={:?}",
+            exp_mjd,
+            exp_baseline,
+            mjds_seen
+                .iter()
+                .map(|&x| (x as f64) / 10.)
+                .collect::<Vec<_>>()
+        );
     }
 }
 
@@ -696,7 +696,7 @@ fn parse_csv_headers(headers: &StringRecord, keys: &[&str]) -> BTreeMap<String, 
 
     for (idx, cell) in headers.iter().enumerate() {
         let mut remove: Option<String> = None;
-        for key in remaining_keys.iter() {
+        for key in &remaining_keys {
             if cell == key {
                 indices.insert(String::from(cell), idx);
                 remove = Some(key.clone());
@@ -708,9 +708,11 @@ fn parse_csv_headers(headers: &StringRecord, keys: &[&str]) -> BTreeMap<String, 
         }
     }
 
-    if !remaining_keys.is_empty() {
-        panic!("not all keys found: {:?}", remaining_keys);
-    }
+    assert!(
+        remaining_keys.is_empty(),
+        "not all keys found: {:?}",
+        remaining_keys
+    );
 
     indices
 }

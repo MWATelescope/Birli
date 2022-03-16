@@ -36,11 +36,11 @@ pub enum BirliError {
     ClapError(#[from] clap::Error),
 
     #[error(transparent)]
-    /// Error derived from [`crate::errors::CLIError`]
+    /// Error derived from [`crate::error::CLIError`]
     CLIError(#[from] CLIError),
 
     #[error(transparent)]
-    /// Error derived from [`mwalib::errors::MwalibError`]
+    /// Error derived from [`marlu::mwalib::MwalibError`]
     MwalibError(#[from] mwalib::MwalibError),
 
     #[error("No common timesteps found. CorrelatorContext hdu info: {hdu_info}")]

@@ -115,7 +115,7 @@ impl PreprocessContext {
     /// Preprocess visibilities for a chunk of correlator data
     ///
     /// # Arguments
-    /// * `corr_ctx` - mwalib::CorrelatorContext
+    /// * `corr_ctx` - [`marlu::mwalib::CorrelatorContext`]
     /// * `jones_array` - Array of Jones visibilties
     /// * `weight_array` - Array of weights associated with Jones visibilities
     /// * `flag_array` - Array of flags associated with Jones visibilities
@@ -170,7 +170,7 @@ impl PreprocessContext {
                     weight_array,
                     passband_gains,
                     fine_chans_per_coarse,
-                    ScrunchType::from_mwa_version(corr_ctx.metafits_context.mwa_version.unwrap())?,
+                    &ScrunchType::from_mwa_version(corr_ctx.metafits_context.mwa_version.unwrap())?,
                 )?
             );
         }
@@ -288,7 +288,7 @@ mod tests {
                 &mut flag_array,
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+                &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )
             .unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
@@ -303,7 +303,7 @@ mod tests {
 
         // generate weights
         let weight_factor = get_weight_factor(&corr_ctx);
-        let mut weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+        let mut weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
         let mut durations = HashMap::new();
 
@@ -340,7 +340,7 @@ mod tests {
         .unwrap();
 
         compare_uvfits_with_csv(
-            uvfits_path,
+            &uvfits_path,
             expected_csv_path,
             F32Margin::default(),
             true,
@@ -409,6 +409,6 @@ mod tests {
             &vis_sel,
         );
 
-        assert!(matches!(result, Err(BirliError::BadMWAVersion { .. })))
+        assert!(matches!(result, Err(BirliError::BadMWAVersion { .. })));
     }
 }

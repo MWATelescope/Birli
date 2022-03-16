@@ -34,7 +34,7 @@ impl AOCalSols {
     ///
     /// # Errors
     ///
-    /// Can throw ReadSolutionsError if the file format is not valid.
+    /// Can throw [`ReadSolutionsError`] if the file format is not valid.
     pub fn read_andre_binary<T: AsRef<Path>>(file: T) -> Result<Self, ReadSolutionsError> {
         let file_str = file.as_ref().display().to_string();
         // open the file, wrapping the IO Error in one which displays the file path

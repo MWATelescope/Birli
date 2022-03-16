@@ -55,14 +55,14 @@ impl IOContext {
 }
 
 /// The container has visibilities which can be read by passing in a mwalib
-/// CorrelatorContext and the range of values to read.
+/// [`CorrelatorContext`] and the range of values to read.
 pub trait ReadableVis: Sync + Send {
     /// Read the visibilities and weights for the selected timesteps, coarse
     /// channels and baselines into the provided arrays.
     ///
     /// # Errors
     ///
-    /// Can throw IOError if there is an issue reading.
+    /// Can throw [`IOError`] if there is an issue reading.
     ///
     /// TODO: reduce number of arguments.
     #[allow(clippy::too_many_arguments)]
@@ -85,7 +85,7 @@ pub trait WriteableVis: Sync + Send {
     ///
     /// # Errors
     ///
-    /// Can throw IOError if there is an issue writing.
+    /// Can throw [`IOError`] if there is an issue writing.
     ///
     /// TODO: reduce number of arguments.
     #[allow(clippy::too_many_arguments)]
@@ -156,7 +156,7 @@ pub trait WriteableVis: Sync + Send {
 /// let num_pols = corr_ctx.metafits_context.num_visibility_pols;
 /// let flag_array = add_dimension(flag_array.view(), num_pols);
 /// let weight_factor = get_weight_factor(&corr_ctx);
-/// let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+/// let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 ///
 /// write_uvfits(
 ///     uvfits_out.as_path(),
@@ -283,7 +283,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
 /// let num_pols = corr_ctx.metafits_context.num_visibility_pols;
 /// let flag_array = add_dimension(flag_array.view(), num_pols);
 /// let weight_factor = get_weight_factor(&corr_ctx);
-/// let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+/// let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 /// // time and frequency averaging
 /// let (avg_time, avg_freq) = (1, 1);
 /// write_ms(
@@ -419,7 +419,7 @@ mod tests_aoflagger {
                 &mut flag_array,
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
-                vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+                &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )
             .unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
@@ -447,7 +447,7 @@ mod tests_aoflagger {
 
         let weight_factor = get_weight_factor(&corr_ctx);
         let flag_array = add_dimension(flag_array.view(), 4);
-        let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+        let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
         // write the visibilities to disk as .uvfits
 
@@ -544,7 +544,7 @@ mod tests_aoflagger {
         let mut obs_vis: Vec<f32> = vec![0.0; vis_len];
         let mut obs_group_params: Vec<f32> = vec![0.0; pcount];
 
-        for (row_idx, exp_group_params, exp_vis) in expected.iter() {
+        for (row_idx, exp_group_params, exp_vis) in &expected {
             unsafe {
                 // ffggpe = fits_read_grppar_flt
                 fitsio_sys::ffggpe(

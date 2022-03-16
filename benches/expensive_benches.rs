@@ -12,7 +12,7 @@ use std::path::Path;
 use tempfile::tempdir;
 
 fn get_test_dir() -> String {
-    env::var("BIRLI_TEST_DIR").unwrap_or_else(|_| String::from("/mnt/data"))
+    env::var("BIRLI_TEST_DIR").unwrap_or_else(|_| String::from("/data/dev"))
 }
 
 fn get_context_mwax_half_1247842824() -> CorrelatorContext {
@@ -234,7 +234,7 @@ fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
 
     let weight_factor = get_weight_factor(&corr_ctx);
     let flag_array = add_dimension(flag_array.view(), 4);
-    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+    let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
     crt.bench_function("uvfits_output - ord_half_1196175296", |bch| {
         bch.iter(|| {
@@ -279,7 +279,7 @@ fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
 
     let weight_factor = get_weight_factor(&corr_ctx);
     let flag_array = add_dimension(flag_array.view(), 4);
-    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+    let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
     crt.bench_function("uvfits_output - mwax_half_1247842824", |bch| {
         bch.iter(|| {

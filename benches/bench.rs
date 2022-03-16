@@ -65,7 +65,7 @@ fn bench_uvfits_output_1196175296_none(crt: &mut Criterion) {
 
     let weight_factor = get_weight_factor(&corr_ctx);
     let flag_array = add_dimension(flag_array.view(), 4);
-    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+    let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
     crt.bench_function(
         format!("uvfits_output - 1196175296 {} timesteps", NUM_TIMESTEPS).as_str(),
@@ -116,7 +116,7 @@ fn bench_ms_output_1196175296_none(crt: &mut Criterion) {
 
     let weight_factor = get_weight_factor(&corr_ctx);
     let flag_array = add_dimension(flag_array.view(), 4);
-    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+    let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
     crt.bench_function(
         format!("ms_output - 1196175296 {} timesteps", NUM_TIMESTEPS).as_str(),
