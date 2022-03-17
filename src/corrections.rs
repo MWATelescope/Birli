@@ -612,15 +612,6 @@ pub fn scrunch_gains(ultrafine_gains: &[f64], fscrunch: usize, mwax: bool) -> Ve
             // )).collect(),
             (_, _) => unreachable!(),
         };
-        if scrunched_length % 2 == 0 {
-            // sanity check: centre symmetric indices should sum to zero, weights should sum to one
-            assert_eq!(
-                window_offset_weights
-                    .iter()
-                    .fold((0, 0.), |(sum_o, sum_w), (o, w)| { (sum_o + o, sum_w + w) }),
-                (0, 1.)
-            );
-        }
         // apply the weights to calculate the scrunched gains
         (0..scrunched_length)
             .map(|scrunched_chan| {
