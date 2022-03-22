@@ -6,7 +6,7 @@ use crate::{
     io::error::IOError,
     marlu::{
         mwalib::CorrelatorContext,
-        ndarray::{Array, Array3, Array4, ArrayView, ArrayView3, Axis, Dimension},
+        ndarray::{Array, Array3, ArrayView, Dimension},
     },
     BirliError, FlagFileSet,
 };
@@ -20,7 +20,7 @@ cfg_if! {
         use aoflagger_sys::{CxxAOFlagger, flagmask_or,
             flagmask_set, CxxFlagMask, UniquePtr, CxxImageSet};
         use indicatif::{ProgressBar, ProgressStyle};
-        use marlu::{Jones, rayon::prelude::*, ndarray::{ArrayView2}};
+        use marlu::{Jones, rayon::prelude::*, ndarray::{ArrayView2, Axis}};
     }
 }
 
@@ -177,19 +177,6 @@ impl FlagContext {
 
         Ok(())
     }
-}
-
-/// Expand an array into a new axis by repeating each element `size` times
-pub fn add_dimension<T>(array: ArrayView3<T>, size: usize) -> Array4<T>
-where
-    T: std::clone::Clone,
-{
-    let shape = array.dim();
-    array
-        .insert_axis(Axis(3))
-        .broadcast((shape.0, shape.1, shape.2, size))
-        .unwrap()
-        .to_owned()
 }
 
 /// Create an aoflagger [`CxxImageSet`] for a particular baseline from the given jones array
@@ -671,7 +658,7 @@ pub fn flag_to_weight_array<D>(flag_array: &ArrayView<bool, D>, weight_factor: f
 where
     D: Dimension,
 {
-    Array::from_elem(flag_array.dim(), weight_factor as f32)
+    flag_array.map(|f| if *f { -weight_factor } else { weight_factor } as f32)
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@
 //! use birli::{
 //!     write_flags,
 //!     mwalib::CorrelatorContext, write_uvfits,
-//!     add_dimension, get_weight_factor, flag_to_weight_array,
+//!     get_weight_factor, flag_to_weight_array,
 //!     FlagContext, VisSelection
 //! };
 //! use tempfile::tempdir;
@@ -60,7 +60,6 @@
 //! // write the visibilities to disk as .uvfits
 //!
 //! let num_pols = corr_ctx.metafits_context.num_visibility_pols;
-//! let flag_array = add_dimension(flag_array.view(), num_pols);
 //! let weight_factor = get_weight_factor(&corr_ctx);
 //! let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 //! write_uvfits(
@@ -68,7 +67,6 @@
 //!     &corr_ctx,
 //!     jones_array.view(),
 //!     weight_array.view(),
-//!     flag_array.view(),
 //!     &vis_sel.timestep_range,
 //!     &vis_sel.coarse_chan_range,
 //!     &vis_sel.baseline_idxs,
@@ -172,7 +170,7 @@ pub mod flags;
 pub use approx;
 #[cfg(test)]
 pub(crate) mod types;
-pub use flags::{add_dimension, flag_to_weight_array, get_weight_factor, write_flags, FlagContext};
+pub use flags::{flag_to_weight_array, get_weight_factor, write_flags, FlagContext};
 pub mod passband_gains;
 pub use marlu;
 pub use marlu::{

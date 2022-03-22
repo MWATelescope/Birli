@@ -9,6 +9,7 @@ pub mod mwaf;
 use std::{ops::Range, path::Path};
 
 use log::trace;
+use marlu::{MwaObsContext, ObsContext, VisContext};
 
 use crate::{
     marlu::{
@@ -16,7 +17,7 @@ use crate::{
         mwalib::{CorrelatorContext, MwalibError},
         Jones, LatLngHeight, RADec,
     },
-    ndarray::{ArrayView3, ArrayView4, ArrayViewMut3},
+    ndarray::{ArrayView3, ArrayViewMut3},
 };
 
 use self::error::IOError;
@@ -91,7 +92,6 @@ pub trait ReadableVis: Sync + Send {
 ///     FlagContext,
 ///     write_uvfits,
 ///     marlu::mwalib::CorrelatorContext,
-///     add_dimension,
 ///     get_weight_factor,
 ///     flag_to_weight_array,
 ///     VisSelection
@@ -127,7 +127,6 @@ pub trait ReadableVis: Sync + Send {
 ///
 /// // write the visibilities to disk as .uvfits
 /// let num_pols = corr_ctx.metafits_context.num_visibility_pols;
-/// let flag_array = add_dimension(flag_array.view(), num_pols);
 /// let weight_factor = get_weight_factor(&corr_ctx);
 /// let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 ///
@@ -136,7 +135,6 @@ pub trait ReadableVis: Sync + Send {
 ///     &corr_ctx,
 ///     jones_array.view(),
 ///     weight_array.view(),
-///     flag_array.view(),
 ///     &vis_sel.timestep_range,
 ///     &vis_sel.coarse_chan_range,
 ///     &vis_sel.baseline_idxs,
@@ -158,8 +156,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
     path: T,
     corr_ctx: &CorrelatorContext,
     jones_array: ArrayView3<Jones<f32>>,
-    weight_array: ArrayView4<f32>,
-    flag_array: ArrayView4<bool>,
+    weight_array: ArrayView3<f32>,
     timestep_range: &Range<usize>,
     coarse_chan_range: &Range<usize>,
     baseline_idxs: &[usize],
@@ -171,28 +168,36 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ) -> Result<(), IOError> {
     trace!("start write_uvfits to {:?}", path.as_ref());
 
-    let mut uvfits_writer = UvfitsWriter::from_mwalib(
-        path,
+    let vis_ctx = VisContext::from_mwalib(
         corr_ctx,
         timestep_range,
         coarse_chan_range,
         baseline_idxs,
-        array_pos,
-        phase_centre,
         avg_time,
         avg_freq,
+    );
+
+    let mut obs_ctx = ObsContext::from_mwalib(&corr_ctx.metafits_context);
+    if let Some(phase_centre) = phase_centre {
+        obs_ctx.phase_centre = phase_centre;
+    }
+    if let Some(array_pos) = array_pos {
+        obs_ctx.array_pos = array_pos;
+    }
+
+    let mut uvfits_writer = UvfitsWriter::from_marlu(
+        path,
+        &vis_ctx,
+        Some(obs_ctx.array_pos),
+        obs_ctx.phase_centre,
+        obs_ctx.name.clone(),
     )?;
 
-    uvfits_writer.write_vis_mwalib(
+    uvfits_writer.write_vis_marlu(
         jones_array,
         weight_array,
-        flag_array,
-        corr_ctx,
-        timestep_range,
-        coarse_chan_range,
-        baseline_idxs,
-        avg_time,
-        avg_freq,
+        &vis_ctx,
+        &obs_ctx.ant_positions_geodetic(),
         draw_progress,
     )?;
 
@@ -217,7 +222,6 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///     VisSelection,
 ///     write_ms,
 ///     marlu::mwalib::CorrelatorContext,
-///     add_dimension,
 ///     get_weight_factor,
 ///     flag_to_weight_array,
 ///     FlagContext,
@@ -254,7 +258,6 @@ pub fn write_uvfits<T: AsRef<Path>>(
 /// // write the visibilities to disk as .ms
 ///
 /// let num_pols = corr_ctx.metafits_context.num_visibility_pols;
-/// let flag_array = add_dimension(flag_array.view(), num_pols);
 /// let weight_factor = get_weight_factor(&corr_ctx);
 /// let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 /// // time and frequency averaging
@@ -264,7 +267,6 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///     &corr_ctx,
 ///     jones_array.view(),
 ///     weight_array.view(),
-///     flag_array.view(),
 ///     &vis_sel.timestep_range,
 ///     &vis_sel.coarse_chan_range,
 ///     &vis_sel.baseline_idxs,
@@ -286,8 +288,7 @@ pub fn write_ms<T: AsRef<Path>>(
     path: T,
     corr_ctx: &CorrelatorContext,
     jones_array: ArrayView3<Jones<f32>>,
-    weight_array: ArrayView4<f32>,
-    flag_array: ArrayView4<bool>,
+    weight_array: ArrayView3<f32>,
     timestep_range: &Range<usize>,
     coarse_chan_range: &Range<usize>,
     baseline_idxs: &[usize],
@@ -299,32 +300,37 @@ pub fn write_ms<T: AsRef<Path>>(
 ) -> Result<(), IOError> {
     trace!("start write_ms to {:?}", path.as_ref());
 
-    let phase_centre = phase_centre
-        .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context));
-    let mut ms_writer = MeasurementSetWriter::new(path, phase_centre, array_pos);
+    let vis_ctx = VisContext::from_mwalib(
+        corr_ctx,
+        timestep_range,
+        coarse_chan_range,
+        baseline_idxs,
+        avg_time,
+        avg_freq,
+    );
+
+    let mut obs_ctx = ObsContext::from_mwalib(&corr_ctx.metafits_context);
+    if let Some(phase_centre) = phase_centre {
+        obs_ctx.phase_centre = phase_centre;
+    }
+    if let Some(array_pos) = array_pos {
+        obs_ctx.array_pos = array_pos;
+    }
+    let mwa_ctx = MwaObsContext::from_mwalib(&corr_ctx.metafits_context);
+
+    let mut ms_writer =
+        MeasurementSetWriter::new(path, obs_ctx.phase_centre, Some(obs_ctx.array_pos));
 
     ms_writer
-        .initialize_from_mwalib(
-            corr_ctx,
-            timestep_range,
-            coarse_chan_range,
-            baseline_idxs,
-            avg_time,
-            avg_freq,
-        )
+        .initialize_mwa(&vis_ctx, &obs_ctx, &mwa_ctx, coarse_chan_range)
         .unwrap();
 
     ms_writer
-        .write_vis_mwalib(
+        .write_vis_marlu(
             jones_array.view(),
             weight_array.view(),
-            flag_array.view(),
-            corr_ctx,
-            timestep_range,
-            coarse_chan_range,
-            baseline_idxs,
-            avg_time,
-            avg_freq,
+            &vis_ctx,
+            &obs_ctx.ant_positions_geodetic(),
             draw_progress,
         )
         .unwrap();
@@ -339,9 +345,7 @@ pub fn write_ms<T: AsRef<Path>>(
 /// Tests which require the use of the aoflagger feature
 mod tests_aoflagger {
     use crate::{
-        flags::{
-            add_dimension, flag_jones_array_existing, flag_to_weight_array, get_weight_factor,
-        },
+        flags::{flag_jones_array_existing, flag_to_weight_array, get_weight_factor},
         write_uvfits, FlagContext, VisSelection,
     };
     use aoflagger_sys::cxx_aoflagger_new;
@@ -419,7 +423,6 @@ mod tests_aoflagger {
         );
 
         let weight_factor = get_weight_factor(&corr_ctx);
-        let flag_array = add_dimension(flag_array.view(), 4);
         let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
         // write the visibilities to disk as .uvfits
@@ -429,7 +432,6 @@ mod tests_aoflagger {
             &corr_ctx,
             jones_array.view(),
             weight_array.view(),
-            flag_array.view(),
             &vis_sel.timestep_range,
             &vis_sel.coarse_chan_range,
             &vis_sel.baseline_idxs,

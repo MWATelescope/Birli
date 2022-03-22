@@ -3,9 +3,7 @@
 use crate::{
     error::{BirliError, BirliError::DryRun, CLIError::InvalidCommandLineArgument},
     flags::FlagContext,
-    flags::{add_dimension, get_weight_factor},
-    io::aocal::AOCalSols,
-    io::IOContext,
+    io::{aocal::AOCalSols, IOContext},
     marlu::{
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
@@ -22,8 +20,9 @@ use crate::{
 };
 use cfg_if::cfg_if;
 use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
-use itertools::Itertools;
+use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
+use marlu::{Jones, MwaObsContext, ObsContext, VisContext};
 use prettytable::{cell, format as prettyformat, row, table};
 use std::{
     collections::HashMap,
@@ -386,31 +385,6 @@ impl Display for BirliContext {
             coarse_chan_table
         )?;
 
-        // let mut ant_table = table!([
-        //     "",
-        //     "tile",
-        //     "name",
-        //     "north [m]",
-        //     "east [m]",
-        //     "height [m]",
-        //     "f"
-        // ]);
-        // ant_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
-
-        // for (ant_idx, ant) in self.corr_ctx.metafits_context.antennas.iter().enumerate() {
-        //     let flagged = *self.flag_ctx.antenna_flags.get(ant_idx).unwrap_or(&false);
-        //     let row = row![r =>
-        //         format!("ant{}:", ant_idx),
-        //         ant.tile_id,
-        //         ant.tile_name,
-        //         format!("{:.3}", ant.north_m),
-        //         format!("{:.3}", ant.east_m),
-        //         format!("{:.3}", ant.height_m),
-        //         if flagged {"f"} else {""}
-        //     ];
-        //     ant_table.add_row(row);
-        // }
-
         writeln!(
             f,
             "Antenna details (all={}, flag={})",
@@ -439,19 +413,16 @@ impl Display for BirliContext {
         let num_sel_chans = self.vis_sel.coarse_chan_range.len() * fine_chans_per_coarse;
         let num_sel_baselines = self.vis_sel.baseline_idxs.len();
         let num_sel_pols = self.corr_ctx.metafits_context.num_visibility_pols;
-        let mem_selected_bytes = self
-            .vis_sel
-            .estimate_bytes_worst(fine_chans_per_coarse, num_sel_pols);
+        let mem_selected_bytes = self.vis_sel.estimate_bytes_best(fine_chans_per_coarse);
         let mem_per_timestep_gib =
             mem_selected_bytes as f64 / num_sel_timesteps as f64 / 1024.0_f64.powi(3);
 
         writeln!(
             f,
-            "Estimated memory usage per timestep =           {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>) = {:7.02} GiB",
+            "Estimated memory usage per timestep =           {:6}ch * {:6}bl * ({}<Jones<f32>> + {}<f32> + {}<bool>) = {:7.02} GiB",
             num_sel_chans,
             num_sel_baselines,
-            num_sel_pols,
-            std::mem::size_of::<Complex<f32>>(),
+            std::mem::size_of::<Jones<f32>>(),
             std::mem::size_of::<f32>(),
             std::mem::size_of::<bool>(),
             mem_per_timestep_gib,
@@ -460,12 +431,11 @@ impl Display for BirliContext {
         if let Some(num_timesteps) = self.num_timesteps_per_chunk {
             writeln!(
                 f,
-                "Estimated memory per chunk          = {:5}ts * {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>) = {:7.02} GiB",
+                "Estimated memory per chunk          = {:5}ts * {:6}ch * {:6}bl * ({}<Jones<f32>> + {}<f32> + {}<bool>) = {:7.02} GiB",
                 num_timesteps,
                 num_sel_chans,
                 num_sel_baselines,
-                num_sel_pols,
-                std::mem::size_of::<Complex<f32>>(),
+                std::mem::size_of::<Jones<f32>>(),
                 std::mem::size_of::<f32>(),
                 std::mem::size_of::<bool>(),
                 mem_per_timestep_gib * num_timesteps as f64,
@@ -474,12 +444,11 @@ impl Display for BirliContext {
 
         writeln!(
             f,
-            "Estimated memory selected           = {:5}ts * {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>) = {:7.02} GiB",
+            "Estimated memory selected           = {:5}ts * {:6}ch * {:6}bl * ({}<Jones<f32>> + {}<f32> + {}<bool>) = {:7.02} GiB",
             num_sel_timesteps,
             num_sel_chans,
             num_sel_baselines,
-            num_sel_pols,
-            std::mem::size_of::<Complex<f32>>(),
+            std::mem::size_of::<Jones<f32>>(),
             std::mem::size_of::<f32>(),
             std::mem::size_of::<bool>(),
             mem_per_timestep_gib * num_sel_timesteps as f64,
@@ -974,8 +943,7 @@ impl BirliContext {
                         received: format!("{}B", max_mem_bytes),
                     }));
                 }
-                let num_pols = corr_ctx.metafits_context.num_visibility_pols;
-                let bytes_selected = vis_sel.estimate_bytes_worst(fine_chans_per_coarse, num_pols);
+                let bytes_selected = vis_sel.estimate_bytes_best(fine_chans_per_coarse);
                 let bytes_per_timestep = bytes_selected / vis_sel.timestep_range.len();
                 let bytes_per_avg_time = bytes_per_timestep * avg_time;
                 if max_mem_bytes < bytes_selected as f64 {
@@ -1195,6 +1163,26 @@ impl BirliContext {
         // Prepare IO //
         // ////////// //
 
+        let vis_ctx = VisContext::from_mwalib(
+            &corr_ctx,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
+            avg_time,
+            avg_freq,
+        );
+
+        // TODO: move phase_centre, array_pos out of prep_ctx
+        let obs_ctx = ObsContext {
+            phase_centre: prep_ctx.phase_centre,
+            array_pos: prep_ctx.array_pos,
+            ..ObsContext::from_mwalib(&corr_ctx.metafits_context)
+        };
+
+        let tiles_xyz_geod = obs_ctx.ant_positions_geodetic();
+
+        let mwa_ctx = MwaObsContext::from_mwalib(&corr_ctx.metafits_context);
+
         prep_ctx.calsols = if let Some(ref calsol_file) = io_ctx.aocalsols_in {
             let calsols = AOCalSols::read_andre_binary(calsol_file).unwrap();
             assert!(
@@ -1234,34 +1222,23 @@ impl BirliContext {
 
         let mut uvfits_writer = io_ctx.uvfits_out.map(|uvfits_out| {
             with_increment_duration!(durations, "init", {
-                UvfitsWriter::from_mwalib(
+                UvfitsWriter::from_marlu(
                     uvfits_out,
-                    &corr_ctx,
-                    &vis_sel.timestep_range,
-                    &vis_sel.coarse_chan_range,
-                    &vis_sel.baseline_idxs,
-                    Some(prep_ctx.array_pos),
-                    Some(prep_ctx.phase_centre),
-                    avg_time,
-                    avg_freq,
+                    &vis_ctx,
+                    Some(obs_ctx.array_pos),
+                    obs_ctx.phase_centre,
+                    obs_ctx.name.clone(),
                 )
-                .expect("couldn't initialise uvfits writer")
+                .expect("unable to initialize uvfits writer")
             })
         });
         let mut ms_writer = io_ctx.ms_out.map(|ms_out| {
             let writer =
-                MeasurementSetWriter::new(ms_out, prep_ctx.phase_centre, Some(prep_ctx.array_pos));
+                MeasurementSetWriter::new(ms_out, obs_ctx.phase_centre, Some(obs_ctx.array_pos));
             with_increment_duration!(durations, "init", {
                 writer
-                    .initialize_from_mwalib(
-                        &corr_ctx,
-                        &vis_sel.timestep_range,
-                        &vis_sel.coarse_chan_range,
-                        &vis_sel.baseline_idxs,
-                        avg_time,
-                        avg_freq,
-                    )
-                    .unwrap();
+                    .initialize_mwa(&vis_ctx, &obs_ctx, &mwa_ctx, &vis_sel.coarse_chan_range)
+                    .expect("unable to initialize ms writer");
             });
             writer
         });
@@ -1345,7 +1322,7 @@ impl BirliContext {
             );
 
             // populate weights
-            weight_array.fill(get_weight_factor(&corr_ctx) as _);
+            weight_array.fill(vis_ctx.weight_factor() as f32);
 
             prep_ctx.preprocess(
                 &corr_ctx,
@@ -1367,19 +1344,19 @@ impl BirliContext {
                 );
             }
 
-            // let marlu_context = MarluVisContext::from_mwalib(
-            //     &context,
-            //     &chunk_timestep_range,
-            //     &coarse_chan_range,
-            //     &chunk_vis_sel.baseline_idxs,
-            //     avg_time,
-            //     avg_freq,
-            // );
+            // bake flags into weights
+            for (weight, flag) in izip!(weight_array.iter_mut(), flag_array.iter()) {
+                *weight = if *flag { -1. } else { 1. } * (*weight).abs() as f32;
+            }
 
-            // TODO: nothing actually uses the pol axis for flags and weights, so rip it out.
-            let num_pols = corr_ctx.metafits_context.num_visibility_pols;
-            let fat_flag_array = add_dimension(flag_array.view(), num_pols);
-            let fat_weight_array = add_dimension(weight_array.view(), num_pols);
+            let chunk_vis_ctx = VisContext::from_mwalib(
+                &corr_ctx,
+                &chunk_vis_sel.timestep_range,
+                &chunk_vis_sel.coarse_chan_range,
+                &chunk_vis_sel.baseline_idxs,
+                avg_time,
+                avg_freq,
+            );
 
             // output uvfits
             if let Some(uvfits_writer) = uvfits_writer.as_mut() {
@@ -1387,16 +1364,11 @@ impl BirliContext {
                     durations,
                     "write",
                     uvfits_writer
-                        .write_vis_mwalib(
+                        .write_vis_marlu(
                             jones_array.view(),
-                            fat_weight_array.view(),
-                            fat_flag_array.view(),
-                            &corr_ctx,
-                            &chunk_vis_sel.timestep_range,
-                            &chunk_vis_sel.coarse_chan_range,
-                            &chunk_vis_sel.baseline_idxs,
-                            avg_time,
-                            avg_freq,
+                            weight_array.view(),
+                            &chunk_vis_ctx,
+                            &tiles_xyz_geod,
                             prep_ctx.draw_progress,
                         )
                         .expect("unable to write uvfits")
@@ -1409,16 +1381,11 @@ impl BirliContext {
                     durations,
                     "write",
                     ms_writer
-                        .write_vis_mwalib(
+                        .write_vis_marlu(
                             jones_array.view(),
-                            fat_weight_array.view(),
-                            fat_flag_array.view(),
-                            &corr_ctx,
-                            &chunk_vis_sel.timestep_range,
-                            &chunk_vis_sel.coarse_chan_range,
-                            &chunk_vis_sel.baseline_idxs,
-                            avg_time,
-                            avg_freq,
+                            weight_array.view(),
+                            &chunk_vis_ctx,
+                            &tiles_xyz_geod,
                             prep_ctx.draw_progress,
                         )
                         .expect("unable to write ms")

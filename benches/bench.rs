@@ -1,5 +1,5 @@
 use birli::{
-    flags::{add_dimension, flag_to_weight_array, get_weight_factor},
+    flags::{flag_to_weight_array, get_weight_factor},
     io::write_uvfits,
     write_ms, VisSelection,
 };
@@ -64,7 +64,6 @@ fn bench_uvfits_output_1196175296_none(crt: &mut Criterion) {
         .unwrap();
 
     let weight_factor = get_weight_factor(&corr_ctx);
-    let flag_array = add_dimension(flag_array.view(), 4);
     let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
     crt.bench_function(
@@ -75,8 +74,7 @@ fn bench_uvfits_output_1196175296_none(crt: &mut Criterion) {
                     black_box(uvfits_path.as_path()),
                     black_box(&corr_ctx),
                     black_box(jones_array.slice(s![vis_sel.timestep_range.clone(), .., ..])),
-                    black_box(weight_array.slice(s![vis_sel.timestep_range.clone(), .., .., ..])),
-                    black_box(flag_array.slice(s![vis_sel.timestep_range.clone(), .., .., ..])),
+                    black_box(weight_array.slice(s![vis_sel.timestep_range.clone(), .., ..])),
                     black_box(&vis_sel.timestep_range),
                     black_box(&vis_sel.coarse_chan_range),
                     black_box(&vis_sel.baseline_idxs),
@@ -115,7 +113,6 @@ fn bench_ms_output_1196175296_none(crt: &mut Criterion) {
         .unwrap();
 
     let weight_factor = get_weight_factor(&corr_ctx);
-    let flag_array = add_dimension(flag_array.view(), 4);
     let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
     crt.bench_function(
@@ -126,8 +123,7 @@ fn bench_ms_output_1196175296_none(crt: &mut Criterion) {
                     black_box(ms_path.as_path()),
                     black_box(&corr_ctx),
                     black_box(jones_array.slice(s![vis_sel.timestep_range.clone(), .., ..])),
-                    black_box(weight_array.slice(s![vis_sel.timestep_range.clone(), .., .., ..])),
-                    black_box(flag_array.slice(s![vis_sel.timestep_range.clone(), .., .., ..])),
+                    black_box(weight_array.slice(s![vis_sel.timestep_range.clone(), .., ..])),
                     black_box(&vis_sel.timestep_range),
                     black_box(&vis_sel.coarse_chan_range),
                     black_box(&vis_sel.baseline_idxs),

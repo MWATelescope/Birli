@@ -243,7 +243,7 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::{
-        add_dimension, flag_to_weight_array,
+        flag_to_weight_array,
         flags::get_weight_factor,
         passband_gains::PFB_JAKE_2022_200HZ,
         test_common::{compare_uvfits_with_csv, get_1254670392_avg_paths},
@@ -320,14 +320,12 @@ mod tests {
 
         let tmp_dir = tempdir().unwrap();
         let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
-        let num_pols = corr_ctx.metafits_context.num_visibility_pols;
 
         write_uvfits(
             uvfits_path.clone(),
             &corr_ctx,
             jones_array.view(),
-            add_dimension(weight_array.view(), num_pols).view(),
-            add_dimension(flag_array.view(), num_pols).view(),
+            weight_array.view(),
             &vis_sel.timestep_range,
             &vis_sel.coarse_chan_range,
             &vis_sel.baseline_idxs,
