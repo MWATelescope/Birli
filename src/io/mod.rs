@@ -5,19 +5,19 @@
 pub mod aocal;
 pub mod error;
 pub mod mwaf;
-pub mod uvfits;
 
 use std::{ops::Range, path::Path};
 
 use log::trace;
-use marlu::{
-    io::{ms::MeasurementSetWriter, VisWritable},
-    mwalib::{CorrelatorContext, MwalibError},
-    Jones, LatLngHeight, RADec,
-};
-use uvfits::UvfitsWriter;
 
-use crate::ndarray::{ArrayView3, ArrayView4, ArrayViewMut3};
+use crate::{
+    marlu::{
+        io::{ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWritable},
+        mwalib::{CorrelatorContext, MwalibError},
+        Jones, LatLngHeight, RADec,
+    },
+    ndarray::{ArrayView3, ArrayView4, ArrayViewMut3},
+};
 
 use self::error::IOError;
 
@@ -74,33 +74,6 @@ pub trait ReadableVis: Sync + Send {
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
         baseline_idxs: &[usize],
-    ) -> Result<(), IOError>;
-}
-
-/// The container can accept visibilities by passing in the range of mwalib
-/// indices corresponding to the visibilities being written.
-pub trait WriteableVis: Sync + Send {
-    /// Write visibilities and weights from the arrays. Timestep, coarse channel
-    /// and baseline indices are needed for labelling the visibility
-    ///
-    /// # Errors
-    ///
-    /// Can throw [`IOError`] if there is an issue writing.
-    ///
-    /// TODO: reduce number of arguments.
-    #[allow(clippy::too_many_arguments)]
-    fn write_vis_mwalib(
-        &mut self,
-        jones_array: ArrayView3<Jones<f32>>,
-        weight_array: ArrayView4<f32>,
-        flag_array: ArrayView4<bool>,
-        corr_ctx: &CorrelatorContext,
-        timestep_range: &Range<usize>,
-        coarse_chan_range: &Range<usize>,
-        baseline_idxs: &[usize],
-        avg_time: usize,
-        avg_freq: usize,
-        draw_progress: bool,
     ) -> Result<(), IOError>;
 }
 

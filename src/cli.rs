@@ -4,24 +4,21 @@ use crate::{
     error::{BirliError, BirliError::DryRun, CLIError::InvalidCommandLineArgument},
     flags::FlagContext,
     flags::{add_dimension, get_weight_factor},
+    io::aocal::AOCalSols,
     io::IOContext,
-    io::{aocal::AOCalSols, WriteableVis},
     marlu::{
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
         },
         hifitime::Epoch,
+        io::{ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWritable},
         mwalib::{CorrelatorContext, GeometricDelaysApplied},
+        ndarray::s,
         precession::{precess_time, PrecessionInfo},
         LatLngHeight, RADec,
     },
-    marlu::{
-        io::{ms::MeasurementSetWriter, VisWritable},
-        ndarray::s,
-    },
     passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
-    with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, UvfitsWriter,
-    VisSelection,
+    with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection,
 };
 use cfg_if::cfg_if;
 use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};

@@ -526,7 +526,7 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::{
-        error::BirliError::{NoCommonTimesteps, NoProvidedTimesteps},
+        marlu::selection::SelectionError::{NoCommonTimesteps, NoProvidedTimesteps},
         test_common::get_mwax_context,
         test_common::{
             get_mwa_ord_dodgy_context, get_mwa_ord_no_overlap_context,

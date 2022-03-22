@@ -43,19 +43,9 @@ pub enum BirliError {
     /// Error derived from [`marlu::mwalib::MwalibError`]
     MwalibError(#[from] mwalib::MwalibError),
 
-    #[error("No common timesteps found. CorrelatorContext hdu info: {hdu_info}")]
-    /// Error for when gpuboxes provided have no overlapping visibilities
-    NoCommonTimesteps {
-        /// display of mwalib::CorrelatorContext::gpubox_time_map
-        hdu_info: String,
-    },
-
-    #[error("No timesteps were provided. CorrelatorContext hdu info: {hdu_info}")]
-    /// Error for when gpuboxes provided have no overlapping visibilities
-    NoProvidedTimesteps {
-        /// display of mwalib::CorrelatorContext::gpubox_time_map
-        hdu_info: String,
-    },
+    #[error(transparent)]
+    /// Error derived from [`marlu::selection::SelectionError`]
+    SelectionError(#[from] marlu::selection::SelectionError),
 
     #[error("You selected dry run")]
     /// enum variant for when a dry run is selected

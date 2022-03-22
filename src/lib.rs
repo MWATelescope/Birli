@@ -163,7 +163,7 @@ use cfg_if::cfg_if;
 use log::warn;
 
 pub mod io;
-pub use io::{mwaf::FlagFileSet, uvfits::UvfitsWriter, write_ms, write_uvfits};
+pub use io::{mwaf::FlagFileSet, write_ms, write_uvfits};
 pub mod corrections;
 pub use corrections::{correct_cable_lengths, correct_geometry};
 pub mod calibration;
@@ -180,6 +180,7 @@ pub use marlu::{
     mwalib::{fitsio, fitsio_sys, CorrelatorContext},
     ndarray,
     ndarray::{parallel::prelude::*, Array3, Axis},
+    selection::VisSelection,
     Complex, Jones,
 };
 #[cfg(test)]
@@ -190,9 +191,6 @@ pub use error::BirliError;
 
 pub mod preprocessing;
 pub use preprocessing::PreprocessContext;
-
-pub mod selection;
-pub use selection::VisSelection;
 
 pub mod cli;
 pub use cli::BirliContext;
