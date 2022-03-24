@@ -1344,7 +1344,11 @@ impl BirliContext {
 
             // bake flags into weights
             for (weight, flag) in izip!(weight_array.iter_mut(), flag_array.iter()) {
-                *weight = if *flag { -(*weight).abs() } else { (*weight).abs() } as f32;
+                *weight = if *flag {
+                    -(*weight).abs()
+                } else {
+                    (*weight).abs()
+                } as f32;
             }
 
             let chunk_vis_ctx = VisContext::from_mwalib(
