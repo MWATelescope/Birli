@@ -36,7 +36,8 @@ pub enum CalibrationError {
 ///
 /// # Errors
 ///
-/// calsols should have the same number of channels as vis_array, flag_array, weight_array etc.
+/// calsols should have the same number of channels as `vis_array`, `flag_array`, `weight_array` etc.
+///
 pub fn apply_di_calsol(
     // a two dimensional array of jones matrix calibration solutions with
     // dimensions `[tile][channel]`
@@ -133,17 +134,11 @@ pub fn apply_di_calsol(
 mod tests {
     use approx::assert_abs_diff_eq;
 
-    use crate::{types::TestJones, Complex};
+    use crate::{compare_jones, types::TestJones, Complex};
 
     use ndarray::{array, Array2, Array3};
 
     use super::*;
-
-    macro_rules! compare_jones {
-        ($a:expr, $b:expr) => {
-            assert_abs_diff_eq!(TestJones::<f32>::from($a), TestJones::<f32>::from($b));
-        };
-    }
 
     /// Test the calsols are correctly applied in the antenna axis.
     #[test]

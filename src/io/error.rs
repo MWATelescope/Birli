@@ -4,45 +4,6 @@ use thiserror::Error;
 
 use marlu::{fitsio, mwalib, mwalib::FitsError};
 
-///
-/// Most of this was blatently stolen (with permission) from [Chris Jordan](https://github.com/cjordan)
-#[derive(Error, Debug)]
-pub enum UvfitsWriteError {
-    /// An error when trying to write to an unexpected row.
-    #[error("Tried to write to row number {row_num}, but only {num_rows} rows are expected")]
-    BadRowNum {
-        /// The row number (0-indexed)
-        row_num: usize,
-        /// Total number of rows expected.
-        num_rows: usize,
-    },
-
-    /// An error when less rows were written to an HDU than expected.
-    #[error("Expected {total} uvfits rows to be written, but only {current} were written")]
-    NotEnoughRowsWritten {
-        /// Number of rows written
-        current: usize,
-        /// Total number of rows expected.
-        total: usize,
-    },
-
-    /// An error associated with ERFA.
-    #[error("{0}")]
-    Erfa(#[from] marlu::pos::ErfaError),
-
-    /// An error associated with fitsio.
-    #[error("{0}")]
-    Fitsio(#[from] fitsio::errors::Error),
-
-    /// An error when converting a Rust string to a C string.
-    #[error("{0}")]
-    BadString(#[from] std::ffi::NulError),
-
-    /// An IO error.
-    #[error("{0}")]
-    IO(#[from] std::io::Error),
-}
-
 #[derive(Error, Debug)]
 #[allow(clippy::upper_case_acronyms)]
 /// All the errors that can occur in file io operations
@@ -71,7 +32,6 @@ pub enum IOError {
     },
     /// A generic error associated with the fitsio crate.
     #[error("{source_file}:{source_line}\n{fits_filename} HDU {hdu_num}: {fits_error}")]
-    // TODO: address this
     #[allow(clippy::upper_case_acronyms)]
     FitsIO {
         /// The [`fitsio::errors::Error`]
@@ -86,17 +46,21 @@ pub enum IOError {
         source_line: u32,
     },
 
-    #[error("{0}")]
-    /// Error derived from [`mwalib::FitsError`]
+    #[error(transparent)]
+    /// Error derived from [`marlu::mwalib::FitsError`]
     FitsError(#[from] mwalib::FitsError),
 
-    #[error("{0}")]
+    #[error(transparent)]
     /// Error derived from [`fitsio::errors::Error`]
     FitsioError(#[from] fitsio::errors::Error),
 
-    #[error("{0}")]
-    /// Error derived from [`io::errors::UvfitsWriteError`]
-    UvfitsWriteError(#[from] UvfitsWriteError),
+    #[error(transparent)]
+    /// Error derived from [`marlu::io::error::IOError`]
+    MarluIOError(#[from] marlu::io::error::IOError),
+
+    #[error(transparent)]
+    /// Error derived from [`marlu::io::error::UvfitsWriteError`]
+    UvfitsWriteError(#[from] marlu::io::error::UvfitsWriteError),
 
     /// Error to describe some kind of inconsistent state within an mwaf file.
     #[error("Inconsistent mwaf file (file: {file}, expected: {expected}, found: {found})")]
@@ -163,7 +127,7 @@ pub enum ReadSolutionsError {
         got: String,
     },
 
-    #[error("{0}")]
+    #[error(transparent)]
     #[allow(missing_docs)]
     Fits(#[from] FitsError),
 

@@ -5,31 +5,65 @@
 pub mod aocal;
 pub mod error;
 pub mod mwaf;
-pub mod uvfits;
 
 use std::{ops::Range, path::Path};
 
 use log::trace;
-use marlu::{
-    io::{ms::MeasurementSetWriter, VisWritable},
-    mwalib::CorrelatorContext,
-    Jones, LatLngHeight, RADec,
-};
-use uvfits::UvfitsWriter;
+use marlu::{MwaObsContext, ObsContext, VisContext};
 
-use crate::ndarray::{ArrayView3, ArrayView4, ArrayViewMut3};
+use crate::{
+    marlu::{
+        io::{ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWritable},
+        mwalib::{CorrelatorContext, MwalibError},
+        Jones, LatLngHeight, RADec,
+    },
+    ndarray::{ArrayView3, ArrayViewMut3},
+};
 
 use self::error::IOError;
 
+/// Groups together parameters related to I/O
+#[derive(Debug, Default)]
+pub struct IOContext {
+    // in
+    /// The path to the .metafits input file
+    pub metafits_in: String,
+    /// A vector of gpufits .fits input paths
+    pub gpufits_in: Vec<String>,
+    /// Optional path to a .bin ao calibration solutions input file
+    pub aocalsols_in: Option<String>,
+
+    // out
+    /// Optional .uvfits output path
+    pub uvfits_out: Option<String>,
+    /// Optional .ms measurement set output path
+    pub ms_out: Option<String>,
+    /// Optional .mwaf flag file path template (see `io::mwaf::FlagFileSet`)
+    pub flag_template: Option<String>,
+}
+
+impl IOContext {
+    /// Get the `mwalib::CorrelatorContext` from metafits and gpufits
+    ///
+    /// # Errors
+    ///
+    /// see `mwalib::CorrelatorContext::new`
+    pub fn get_corr_ctx(&self) -> Result<CorrelatorContext, MwalibError> {
+        CorrelatorContext::new(&self.metafits_in, &self.gpufits_in)
+    }
+
+    // TODO: pub fn validate_params(&self), checks permissions
+}
+
 /// The container has visibilities which can be read by passing in a mwalib
-/// context and the range of values to read.
+/// [`CorrelatorContext`] and the range of values to read.
 pub trait ReadableVis: Sync + Send {
     /// Read the visibilities and weights for the selected timesteps, coarse
     /// channels and baselines into the provided arrays.
     ///
     /// # Errors
     ///
-    /// Can throw IOError if there is an issue reading.
+    /// Can throw [`IOError`] if there is an issue reading.
     ///
     /// TODO: reduce number of arguments.
     #[allow(clippy::too_many_arguments)]
@@ -37,37 +71,10 @@ pub trait ReadableVis: Sync + Send {
         &self,
         jones_array: ArrayViewMut3<Jones<f32>>,
         weight_array: ArrayViewMut3<f32>,
-        context: &CorrelatorContext,
+        corr_ctx: &CorrelatorContext,
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
         baseline_idxs: &[usize],
-    ) -> Result<(), IOError>;
-}
-
-/// The container can accept visibilities by passing in the range of mwalib
-/// indices corresponding to the visibilities being written.
-pub trait WriteableVis: Sync + Send {
-    /// Write visibilities and weights from the arrays. Timestep, coarse channel
-    /// and baseline indices are needed for labelling the visibility
-    ///
-    /// # Errors
-    ///
-    /// Can throw IOError if there is an issue writing.
-    ///
-    /// TODO: reduce number of arguments.
-    #[allow(clippy::too_many_arguments)]
-    fn write_vis_mwalib(
-        &mut self,
-        jones_array: ArrayView3<Jones<f32>>,
-        weight_array: ArrayView4<f32>,
-        flag_array: ArrayView4<bool>,
-        context: &CorrelatorContext,
-        timestep_range: &Range<usize>,
-        coarse_chan_range: &Range<usize>,
-        baseline_idxs: &[usize],
-        avg_time: usize,
-        avg_freq: usize,
-        draw_progress: bool,
     ) -> Result<(), IOError>;
 }
 
@@ -82,13 +89,12 @@ pub trait WriteableVis: Sync + Send {
 /// ```rust
 /// use tempfile::tempdir;
 /// use birli::{
-///     get_flaggable_timesteps,
-///     context_to_jones_array,
+///     FlagContext,
 ///     write_uvfits,
 ///     marlu::mwalib::CorrelatorContext,
-///     add_dimension,
 ///     get_weight_factor,
-///     flag_to_weight_array
+///     flag_to_weight_array,
+///     VisSelection
 /// };
 ///
 /// // define our input files
@@ -104,44 +110,34 @@ pub trait WriteableVis: Sync + Send {
 /// let uvfits_out = tmp_dir.path().join("synthetic.uvfits");
 ///
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
-/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+/// let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 ///
 /// // Determine which timesteps and coarse channels we want to use
-/// let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-/// let img_timestep_range =
-///     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-/// let img_coarse_chan_range =
-///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+/// let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 ///
+/// // Create a blank array to store flags and visibilities
+/// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+/// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+/// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 ///
-/// // generate an array of jones matrices
-/// let (jones_array, flag_array) = context_to_jones_array(
-///     &context,
-///     &img_timestep_range,
-///     &img_coarse_chan_range,
-///     None,
-///     false,
-/// ).unwrap();
+/// // read visibilities out of the gpubox files
+/// vis_sel
+///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
+///     .unwrap();
 ///
 /// // write the visibilities to disk as .uvfits
-///
-/// let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-///
-/// let num_pols = context.metafits_context.num_visibility_pols;
-/// let flag_array = add_dimension(flag_array.view(), num_pols);
-/// let weight_factor = get_weight_factor(&context);
-/// let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+/// let num_pols = corr_ctx.metafits_context.num_visibility_pols;
+/// let weight_factor = get_weight_factor(&corr_ctx);
+/// let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 ///
 /// write_uvfits(
 ///     uvfits_out.as_path(),
-///     &context,
+///     &corr_ctx,
 ///     jones_array.view(),
 ///     weight_array.view(),
-///     flag_array.view(),
-///     &img_timestep_range,
-///     &img_coarse_chan_range,
-///     &baseline_idxs,
+///     &vis_sel.timestep_range,
+///     &vis_sel.coarse_chan_range,
+///     &vis_sel.baseline_idxs,
 ///     None,
 ///     None,
 ///     1,
@@ -154,17 +150,16 @@ pub trait WriteableVis: Sync + Send {
 ///
 /// See: [`UvfitsWriter`]
 ///
-/// TODO: replace all these args with birli_context
+/// TODO: reduce number of arguments.
 #[allow(clippy::too_many_arguments)]
 pub fn write_uvfits<T: AsRef<Path>>(
     path: T,
-    context: &CorrelatorContext,
+    corr_ctx: &CorrelatorContext,
     jones_array: ArrayView3<Jones<f32>>,
-    weight_array: ArrayView4<f32>,
-    flag_array: ArrayView4<bool>,
-    mwalib_timestep_range: &Range<usize>,
-    mwalib_coarse_chan_range: &Range<usize>,
-    mwalib_baseline_idxs: &[usize],
+    weight_array: ArrayView3<f32>,
+    timestep_range: &Range<usize>,
+    coarse_chan_range: &Range<usize>,
+    baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
     avg_time: usize,
@@ -173,32 +168,42 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ) -> Result<(), IOError> {
     trace!("start write_uvfits to {:?}", path.as_ref());
 
-    let mut uvfits_writer = UvfitsWriter::from_mwalib(
-        path,
-        context,
-        mwalib_timestep_range,
-        mwalib_coarse_chan_range,
-        mwalib_baseline_idxs,
-        array_pos,
-        phase_centre,
+    let vis_ctx = VisContext::from_mwalib(
+        corr_ctx,
+        timestep_range,
+        coarse_chan_range,
+        baseline_idxs,
         avg_time,
         avg_freq,
+    );
+
+    let mut obs_ctx = ObsContext::from_mwalib(&corr_ctx.metafits_context);
+    if let Some(phase_centre) = phase_centre {
+        obs_ctx.phase_centre = phase_centre;
+    }
+    if let Some(array_pos) = array_pos {
+        obs_ctx.array_pos = array_pos;
+    }
+
+    let mut uvfits_writer = UvfitsWriter::from_marlu(
+        path,
+        &vis_ctx,
+        Some(obs_ctx.array_pos),
+        obs_ctx.phase_centre,
+        obs_ctx.name.clone(),
     )?;
 
-    uvfits_writer.write_vis_mwalib(
+    let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
+
+    uvfits_writer.write_vis_marlu(
         jones_array,
         weight_array,
-        flag_array,
-        context,
-        mwalib_timestep_range,
-        mwalib_coarse_chan_range,
-        mwalib_baseline_idxs,
-        avg_time,
-        avg_freq,
+        &vis_ctx,
+        &ant_positions_geodetic,
         draw_progress,
     )?;
 
-    uvfits_writer.write_ants_from_mwalib(&context.metafits_context)?;
+    uvfits_writer.write_ants_from_mwalib(&corr_ctx.metafits_context)?;
 
     trace!("end write_uvfits");
 
@@ -216,13 +221,12 @@ pub fn write_uvfits<T: AsRef<Path>>(
 /// ```rust
 /// use tempfile::tempdir;
 /// use birli::{
-///     get_flaggable_timesteps,
-///     context_to_jones_array,
+///     VisSelection,
 ///     write_ms,
 ///     marlu::mwalib::CorrelatorContext,
-///     add_dimension,
 ///     get_weight_factor,
-///     flag_to_weight_array
+///     flag_to_weight_array,
+///     FlagContext,
 /// };
 ///
 /// // define our input files
@@ -238,45 +242,36 @@ pub fn write_uvfits<T: AsRef<Path>>(
 /// let ms_out = tmp_dir.path().join("synthetic.ms");
 ///
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
-/// let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+/// let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 ///
 /// // Determine which timesteps and coarse channels we want to use
-/// let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-/// let img_timestep_range =
-///     *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-/// let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-/// let img_coarse_chan_range =
-///     *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
+/// let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 ///
+/// // Create a blank array to store flags and visibilities
+/// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+/// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+/// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 ///
-/// // generate an array of jones matrices
-/// let (jones_array, flag_array) = context_to_jones_array(
-///     &context,
-///     &img_timestep_range,
-///     &img_coarse_chan_range,
-///     None,
-///     false,
-/// ).unwrap();
+/// // read visibilities out of the gpubox files
+/// vis_sel
+///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
+///     .unwrap();
 ///
 /// // write the visibilities to disk as .ms
 ///
-/// let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
-///
-/// let num_pols = context.metafits_context.num_visibility_pols;
-/// let flag_array = add_dimension(flag_array.view(), num_pols);
-/// let weight_factor = get_weight_factor(&context);
-/// let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+/// let num_pols = corr_ctx.metafits_context.num_visibility_pols;
+/// let weight_factor = get_weight_factor(&corr_ctx);
+/// let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 /// // time and frequency averaging
 /// let (avg_time, avg_freq) = (1, 1);
 /// write_ms(
 ///     ms_out.as_path(),
-///     &context,
+///     &corr_ctx,
 ///     jones_array.view(),
 ///     weight_array.view(),
-///     flag_array.view(),
-///     &img_timestep_range,
-///     &img_coarse_chan_range,
-///     &baseline_idxs,
+///     &vis_sel.timestep_range,
+///     &vis_sel.coarse_chan_range,
+///     &vis_sel.baseline_idxs,
 ///     None,
 ///     None,
 ///     avg_time,
@@ -289,17 +284,16 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///
 /// See: [`UvfitsWriter`]
 ///
-/// TODO: replace all these args with birli_context
+/// TODO: reduce number of arguments.
 #[allow(clippy::too_many_arguments)]
 pub fn write_ms<T: AsRef<Path>>(
     path: T,
-    context: &CorrelatorContext,
+    corr_ctx: &CorrelatorContext,
     jones_array: ArrayView3<Jones<f32>>,
-    weight_array: ArrayView4<f32>,
-    flag_array: ArrayView4<bool>,
-    mwalib_timestep_range: &Range<usize>,
-    mwalib_coarse_chan_range: &Range<usize>,
-    mwalib_baseline_idxs: &[usize],
+    weight_array: ArrayView3<f32>,
+    timestep_range: &Range<usize>,
+    coarse_chan_range: &Range<usize>,
+    baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
     avg_time: usize,
@@ -308,32 +302,39 @@ pub fn write_ms<T: AsRef<Path>>(
 ) -> Result<(), IOError> {
     trace!("start write_ms to {:?}", path.as_ref());
 
-    let phase_centre = phase_centre
-        .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&context.metafits_context));
-    let mut ms_writer = MeasurementSetWriter::new(path, phase_centre, array_pos);
+    let vis_ctx = VisContext::from_mwalib(
+        corr_ctx,
+        timestep_range,
+        coarse_chan_range,
+        baseline_idxs,
+        avg_time,
+        avg_freq,
+    );
+
+    let mut obs_ctx = ObsContext::from_mwalib(&corr_ctx.metafits_context);
+    if let Some(phase_centre) = phase_centre {
+        obs_ctx.phase_centre = phase_centre;
+    }
+    if let Some(array_pos) = array_pos {
+        obs_ctx.array_pos = array_pos;
+    }
+    let mwa_ctx = MwaObsContext::from_mwalib(&corr_ctx.metafits_context);
+
+    let mut ms_writer =
+        MeasurementSetWriter::new(path, obs_ctx.phase_centre, Some(obs_ctx.array_pos));
 
     ms_writer
-        .initialize_from_mwalib(
-            context,
-            mwalib_timestep_range,
-            mwalib_coarse_chan_range,
-            mwalib_baseline_idxs,
-            avg_time,
-            avg_freq,
-        )
+        .initialize_mwa(&vis_ctx, &obs_ctx, &mwa_ctx, coarse_chan_range)
         .unwrap();
 
+    let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
+
     ms_writer
-        .write_vis_mwalib(
+        .write_vis_marlu(
             jones_array.view(),
             weight_array.view(),
-            flag_array.view(),
-            context,
-            mwalib_timestep_range,
-            mwalib_coarse_chan_range,
-            mwalib_baseline_idxs,
-            avg_time,
-            avg_freq,
+            &vis_ctx,
+            &ant_positions_geodetic,
             draw_progress,
         )
         .unwrap();
@@ -348,12 +349,8 @@ pub fn write_ms<T: AsRef<Path>>(
 /// Tests which require the use of the aoflagger feature
 mod tests_aoflagger {
     use crate::{
-        context_to_jones_array,
-        flags::{
-            add_dimension, flag_jones_array_existing, flag_to_weight_array, get_antenna_flags,
-            get_baseline_flags, get_weight_factor,
-        },
-        get_flaggable_timesteps, init_flag_array, write_uvfits,
+        flags::{flag_jones_array_existing, flag_to_weight_array, get_weight_factor},
+        write_uvfits, FlagContext, VisSelection,
     };
     use aoflagger_sys::cxx_aoflagger_new;
     use fitsio::errors::check_status as fits_check_status;
@@ -386,70 +383,62 @@ mod tests_aoflagger {
         let uvfits_out = tmp_dir.path().join("1297526432.uvfits");
 
         // Create an mwalib::CorrelatorContext for accessing visibilities.
-        let context = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+        let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
 
         // create a CxxAOFlagger object to perform AOFlagger operations
         let aoflagger = unsafe { cxx_aoflagger_new() };
 
         // Determine which timesteps and coarse channels we want to use
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-        let baseline_idxs = (0..context.metafits_context.num_baselines).collect::<Vec<_>>();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         // Prepare our flagmasks with known bad antennae
-        let flag_array = init_flag_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            None,
-            None,
-            None,
-            Some(&get_baseline_flags(&context, &get_antenna_flags(&context))),
-        );
-
-        // generate an array of jones matrices
-        let (jones_array, flag_array) = context_to_jones_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            Some(flag_array),
-            false,
-        )
-        .unwrap();
+        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        flag_ctx
+            .set_flags(
+                &mut flag_array,
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            )
+            .unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        vis_sel
+            .read_mwalib(
+                &corr_ctx,
+                jones_array.view_mut(),
+                flag_array.view_mut(),
+                false,
+            )
+            .unwrap();
 
         // use the default strategy file location for MWA
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
 
         // run the strategy on the imagesets, and get the resulting flagmasks for each baseline
-        let flag_array = flag_jones_array_existing(
+        flag_jones_array_existing(
             &aoflagger,
             strategy_filename,
             &jones_array,
-            Some(flag_array),
+            &mut flag_array,
             true,
             false,
         );
 
-        let weight_factor = get_weight_factor(&context);
-        let flag_array = add_dimension(flag_array.view(), 4);
-        let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+        let weight_factor = get_weight_factor(&corr_ctx);
+        let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
         // write the visibilities to disk as .uvfits
 
         write_uvfits(
             uvfits_out.as_path(),
-            &context,
+            &corr_ctx,
             jones_array.view(),
             weight_array.view(),
-            flag_array.view(),
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            &baseline_idxs,
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             None,
             None,
             1,
@@ -534,7 +523,7 @@ mod tests_aoflagger {
         let mut obs_vis: Vec<f32> = vec![0.0; vis_len];
         let mut obs_group_params: Vec<f32> = vec![0.0; pcount];
 
-        for (row_idx, exp_group_params, exp_vis) in expected.iter() {
+        for (row_idx, exp_group_params, exp_vis) in &expected {
             unsafe {
                 // ffggpe = fits_read_grppar_flt
                 fitsio_sys::ffggpe(

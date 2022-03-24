@@ -1,35 +1,55 @@
 //! Errors that can occur in Birli
 
+use marlu::mwalib;
 use thiserror::Error;
 
+/// Errors relating to CI
 #[derive(Error, Debug)]
 #[allow(clippy::upper_case_acronyms)]
+pub enum CLIError {
+    #[error("Invalid Command Line Argument")]
+    /// When a bad CLI argument is provided
+    InvalidCommandLineArgument {
+        /// The option for which the argument was provided
+        option: String,
+        /// The argument that was expected
+        expected: String,
+        /// The argument that was received instead
+        received: String,
+    },
+}
+
 /// An enum of all the errors possible in Birli
+#[derive(Error, Debug)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum BirliError {
-    #[error("{0}")]
+    #[error(transparent)]
     /// Error derived from [`crate::io::error::IOError`]
     IOError(#[from] crate::io::error::IOError),
 
-    #[error("No common timesteps found. CorrelatorContext hdu info: {hdu_info}")]
-    /// Error for when gpuboxes provided have no overlapping visibilities
-    NoCommonTimesteps {
-        /// display of mwalib::CorrelatorContext::gpubox_time_map
-        hdu_info: String,
-    },
+    #[error(transparent)]
+    /// Error derived from [`crate::calibration::CalibrationError`]
+    CalibrationError(#[from] crate::calibration::CalibrationError),
 
-    #[error("No timesteps were provided. CorrelatorContext hdu info: {hdu_info}")]
-    /// Error for when gpuboxes provided have no overlapping visibilities
-    NoProvidedTimesteps {
-        /// display of mwalib::CorrelatorContext::gpubox_time_map
-        hdu_info: String,
-    },
+    #[error(transparent)]
+    /// Error derived from [`clap::Error`]
+    ClapError(#[from] clap::Error),
 
-    #[error("No common coarse channels found. CorrelatorContext hdu info: {hdu_info}")]
-    /// Error for when gpuboxes provided have no overlapping visibilities
-    NoCommonCoarseChans {
-        /// display of mwalib::CorrelatorContext::gpubox_time_map
-        hdu_info: String,
-    },
+    #[error(transparent)]
+    /// Error derived from [`crate::error::CLIError`]
+    CLIError(#[from] CLIError),
+
+    #[error(transparent)]
+    /// Error derived from [`marlu::mwalib::MwalibError`]
+    MwalibError(#[from] mwalib::MwalibError),
+
+    #[error(transparent)]
+    /// Error derived from [`marlu::selection::SelectionError`]
+    SelectionError(#[from] marlu::selection::SelectionError),
+
+    #[error("You selected dry run")]
+    /// enum variant for when a dry run is selected
+    DryRun {},
 
     #[error("bad array shape supplied to argument {argument} of function {function}. expected {expected}, received {received}")]
     /// Error for bad array shape in provided argument
@@ -49,5 +69,14 @@ pub enum BirliError {
     InsufficientMemory {
         /// The amount of memory we think we need
         need_gib: usize,
+    },
+
+    #[error("Invalid MWA Version")]
+    /// When a bad MWA Version is provided
+    BadMWAVersion {
+        /// The message to display
+        message: String,
+        /// The version that was provided
+        version: String,
     },
 }

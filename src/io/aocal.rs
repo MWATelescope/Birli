@@ -17,6 +17,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use marlu::hifitime;
 
 /// All of the relevant information contained within an MWAOCAL .bin file.
+#[derive(Clone)]
 pub struct AOCalSols {
     /// a three dimensional array of jones matrix calibration solutions with
     /// dimensions `[timestep][tile][frequency]`
@@ -33,7 +34,7 @@ impl AOCalSols {
     ///
     /// # Errors
     ///
-    /// Can throw ReadSolutionsError if the file format is not valid.
+    /// Can throw [`ReadSolutionsError`] if the file format is not valid.
     pub fn read_andre_binary<T: AsRef<Path>>(file: T) -> Result<Self, ReadSolutionsError> {
         let file_str = file.as_ref().display().to_string();
         // open the file, wrapping the IO Error in one which displays the file path
@@ -155,7 +156,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_read_andre_binary() {
+    fn test_read_invalid_andre_binary() {
+        let file = "tests/data/1254670392_avg/1254670392.metafits";
+        assert!(matches!(
+            AOCalSols::read_andre_binary(file),
+            Err(ReadSolutionsError::AndreBinaryStr { .. })
+        ));
+    }
+
+    #[test]
+    fn test_read_valid_andre_binary() {
         let file = "tests/data/1254670392_avg/1254690096.bin";
         let sols = AOCalSols::read_andre_binary(file).unwrap();
         assert_eq!(sols.di_jones.dim(), (1, 128, 768));

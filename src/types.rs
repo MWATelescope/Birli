@@ -7,8 +7,8 @@ pub use crate::{approx, Complex, Jones};
 pub(crate) struct TestJones<F: Float + Num>(Jones<F>);
 
 impl<F: Float> TestJones<F> {
-    pub fn identity() -> TestJones<F> {
-        TestJones(Jones::<F>::identity())
+    pub fn identity() -> Self {
+        Self(Jones::<F>::identity())
     }
 }
 
@@ -138,5 +138,25 @@ where
     #[inline]
     fn abs_diff_eq(&self, other: &Self, epsilon: F::Epsilon) -> bool {
         (0..4).all(|idx| Complex::<F>::abs_diff_eq(&self[idx], &other[idx], epsilon.clone()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use marlu::Jones;
+
+    use crate::types::TestJones;
+
+    #[test]
+    fn test_jones_debug_display() {
+        let jones_c64 = Jones::<f64>::identity();
+        let test_jones_c32: TestJones<f32> = TestJones::from(jones_c64);
+        assert!(!format!("{:?}", test_jones_c32).is_empty());
+        assert!(!format!("{}", test_jones_c32).is_empty());
+
+        let jones_c32 = Jones::<f32>::identity();
+        let test_jones_c64: TestJones<f64> = TestJones::from(jones_c32);
+        assert!(!format!("{:?}", test_jones_c64).is_empty());
+        assert!(!format!("{}", test_jones_c64).is_empty());
     }
 }

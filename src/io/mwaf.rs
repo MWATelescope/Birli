@@ -2,7 +2,7 @@
 //!
 //! # MWAF Format
 //!
-//! Similar to the GPUFits format, mwaf files come in a set for each observation, and there is one
+//! Similar to the GPU Fits format, mwaf files come in a set for each observation, and there is one
 //! .mwaf file per gpubox (coarse channel). This file contains a binary table of all the flags for
 //! that coarse channel. There is one row for each timestep-baseline combination, and there is only
 //! one column. Each cell in the table containsa binary vector of flags for each fine channel in
@@ -68,7 +68,7 @@ impl FlagFileHeaders {
     /// gpubox id.
     pub fn from_gpubox_context(gpubox_id: usize, context: &CorrelatorContext) -> Self {
         let num_fine_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
-        FlagFileHeaders {
+        Self {
             version: "1.0".to_string(),
             obs_id: context.metafits_context.obs_id,
             num_channels: context.metafits_context.num_corr_fine_chans_per_coarse,
@@ -132,22 +132,23 @@ impl FlagFileSet {
     ///
     /// `filename_template` is a template string which is expanded to the list of flag files in the
     /// set, by replacing the percent (`%`) characters with each coarse channel's zero-prefixed
-    /// GPUBox ID. This is to maintain backwards compatibility with Cotter.
+    /// GPU box ID. This is to maintain backwards compatibility with Cotter.
     ///
-    /// For MWA Ord (legacy, pre-2021) correlator observations, the GPUBox ID is the two digit
-    /// correlator channel host number corresponding to [`mwalib::CoarseChannel.corr_chan_number`]
+    /// For MWA Ord (legacy, pre-2021) correlator observations, the GPU box ID is the two digit
+    /// correlator channel host number corresponding to `corr_chan_number` in
+    /// [`marlu::mwalib::CoarseChannel`]
     ///
-    /// For MWAX correlator observations, the GPUBox ID is the three-digit received channel number
-    /// corresponding to [`mwalib::CoarseChannel.rec_chan_number`].
+    /// For MWAX correlator observations, the GPU box ID is the three-digit received channel number
+    /// corresponding to `rec_chan_number` in [`marlu::mwalib::CoarseChannel`].
     ///
     /// Be sure to specify the correct number of percent characters.
     ///
     /// # Errors
     ///
-    /// Will error with [`BirliError::FitsOpen`] if there are files already present at the paths
+    /// Will error with [`IOError::FitsOpen`] if there are files already present at the paths
     /// specified in filename template.
     ///
-    /// Will error with [`BirliError::InvalidFlagFilenameTemplate`] if an invalid flag filename
+    /// Will error with [`IOError::InvalidFlagFilenameTemplate`] if an invalid flag filename
     /// template is provided (wrong number of percents).
     pub fn new(
         filename_template: &str,
@@ -156,8 +157,8 @@ impl FlagFileSet {
     ) -> Result<Self, IOError> {
         let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
         let gpubox_filenames =
-            FlagFileSet::get_gpubox_filenames(mwa_version, filename_template, gpubox_ids)?;
-        for (gpubox_id, fits_filename) in gpubox_filenames.into_iter() {
+            Self::get_gpubox_filenames(mwa_version, filename_template, gpubox_ids)?;
+        for (gpubox_id, fits_filename) in gpubox_filenames {
             match FitsFile::create(Path::new(&fits_filename)).open() {
                 Ok(fptr) => {
                     gpubox_fptrs.insert(gpubox_id, fptr);
@@ -173,7 +174,7 @@ impl FlagFileSet {
             }
         }
 
-        Ok(FlagFileSet { gpubox_fptrs })
+        Ok(Self { gpubox_fptrs })
     }
 
     /// Open an existing set of flag files, given an observation's MWA Version, the flag filename
@@ -190,8 +191,8 @@ impl FlagFileSet {
     ) -> Result<Self, IOError> {
         let mut gpubox_fptrs: BTreeMap<usize, FitsFile> = BTreeMap::new();
         let gpubox_filenames =
-            FlagFileSet::get_gpubox_filenames(mwa_version, filename_template, gpubox_ids)?;
-        for (gpubox_id, fits_filename) in gpubox_filenames.into_iter() {
+            Self::get_gpubox_filenames(mwa_version, filename_template, gpubox_ids)?;
+        for (gpubox_id, fits_filename) in gpubox_filenames {
             match FitsFile::open(Path::new(&fits_filename)) {
                 Ok(fptr) => {
                     gpubox_fptrs.insert(gpubox_id, fptr);
@@ -207,7 +208,7 @@ impl FlagFileSet {
             }
         }
 
-        Ok(FlagFileSet { gpubox_fptrs })
+        Ok(Self { gpubox_fptrs })
     }
 
     fn write_primary_hdu(
@@ -267,7 +268,7 @@ impl FlagFileSet {
         Ok(header)
     }
 
-    /// Write flags to disk, given an observation's [`mwalib::CorrelatorContext`], and an ndarray
+    /// Write flags to disk, given an observation's [`marlu::mwalib::CorrelatorContext`], and an ndarray
     /// of boolean flags for the observation into a file for each `gpubox_id`.
     ///
     /// The filename template should contain two or 3 percentage (`%`) characters which will be replaced
@@ -276,7 +277,7 @@ impl FlagFileSet {
     /// # Errors
     ///
     /// Will error if the gpubox ids this flagset was initialized with is not contained in the
-    /// provided [`mwalib::CorrelatorContext`].
+    /// provided [`marlu::mwalib::CorrelatorContext`].
     ///
     pub fn write_flag_array(
         &mut self,
@@ -343,7 +344,7 @@ impl FlagFileSet {
                     let primary_hdu = fits_open_hdu!(fptr, 0)?;
                     let header = FlagFileHeaders::from_gpubox_context(gpubox_id, context);
                     let fine_chans_per_coarse = header.num_channels;
-                    FlagFileSet::write_primary_hdu(fptr, &primary_hdu, &header)?;
+                    Self::write_primary_hdu(fptr, &primary_hdu, &header)?;
 
                     let flags_colname = "FLAGS";
                     let table_hdu = fptr.create_table(
@@ -356,7 +357,7 @@ impl FlagFileSet {
                             ),
                         }],
                     )?;
-                    FlagFileSet::write_table_hdu(fptr, &table_hdu, &header)?;
+                    Self::write_table_hdu(fptr, &table_hdu, &header)?;
 
                     let mut status = 0;
                     let mut row_idx = 0;
@@ -448,8 +449,8 @@ impl FlagFileSet {
     ) -> Result<BTreeMap<usize, (FlagFileHeaders, Vec<i8>)>, BirliError> {
         let mut chan_header_flags_raw = BTreeMap::new();
 
-        for (&gpubox_id, fptr) in self.gpubox_fptrs.iter_mut() {
-            let header = FlagFileSet::read_header(fptr)?;
+        for (&gpubox_id, fptr) in &mut self.gpubox_fptrs {
+            let header = Self::read_header(fptr)?;
             let num_baselines = header.num_ants * (header.num_ants + 1) / 2;
             let mut flags_raw: Vec<i8> =
                 vec![0; header.num_timesteps * num_baselines * header.num_channels];
@@ -458,7 +459,7 @@ impl FlagFileSet {
                     let row_idx = (timestep_idx * num_baselines) + baseline_idx;
                     let start_bit_idx = row_idx * header.num_channels;
                     let end_bit_idx = start_bit_idx + header.num_channels;
-                    FlagFileSet::read_flags_raw(
+                    Self::read_flags_raw(
                         fptr,
                         &mut flags_raw[start_bit_idx..end_bit_idx],
                         Some(row_idx),
@@ -475,8 +476,11 @@ impl FlagFileSet {
 #[cfg(test)]
 mod tests {
     use super::{FlagFileHeaders, FlagFileSet};
-    use crate::io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate};
-    use crate::{get_flaggable_timesteps, init_flag_array};
+    use crate::{
+        io::error::IOError::{FitsOpen, InvalidFlagFilenameTemplate},
+        test_common::{get_mwa_ord_context, get_mwax_context},
+        VisSelection,
+    };
     use fitsio::FitsFile;
     use marlu::{
         fitsio,
@@ -490,29 +494,6 @@ mod tests {
     use std::fs::File;
     use std::path::Path;
     use tempfile::tempdir;
-
-    // TODO: deduplicate this from lib.rs
-    fn get_mwax_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
-            "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
-
-    fn get_mwa_ord_context() -> CorrelatorContext {
-        let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
-            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
-        ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
-    }
 
     #[test]
     fn test_flagfileset_enforces_percents_in_filename_template() {
@@ -595,7 +576,7 @@ mod tests {
         let ok_gpuboxes = gpubox_ids[..1].to_vec();
         let colliding_gpuboxes = gpubox_ids[1..].to_vec();
 
-        for gpubox_id in colliding_gpuboxes.iter() {
+        for gpubox_id in &colliding_gpuboxes {
             let colliding_filename = tmp_dir
                 .path()
                 .join(format!("Flagfile{:03}.mwaf", gpubox_id));
@@ -668,7 +649,7 @@ mod tests {
         )
         .unwrap();
 
-        for (&gpubox_id, fptr) in flag_file_set.gpubox_fptrs.iter_mut() {
+        for (&gpubox_id, fptr) in &mut flag_file_set.gpubox_fptrs {
             let header = FlagFileSet::read_header(fptr).unwrap();
             assert_eq!(header.obs_id, 1247842824);
             assert_eq!(header.num_channels, 128);
@@ -691,7 +672,7 @@ mod tests {
 
         let tmp_dir = tempdir().unwrap();
         let mut gpubox_paths = BTreeMap::new();
-        for &gpubox_id in gpubox_ids.iter() {
+        for &gpubox_id in &gpubox_ids {
             gpubox_paths.insert(
                 gpubox_id,
                 tmp_dir
@@ -701,7 +682,7 @@ mod tests {
         }
 
         {
-            for (&gpubox_id, path) in gpubox_paths.iter() {
+            for (&gpubox_id, path) in &gpubox_paths {
                 let mut fptr = FitsFile::create(path).open().unwrap();
                 let primary_hdu = fits_open_hdu!(&mut fptr, 0).unwrap();
                 FlagFileSet::write_primary_hdu(
@@ -713,7 +694,7 @@ mod tests {
             }
         }
 
-        for (&gpubox_id, path) in gpubox_paths.iter() {
+        for (&gpubox_id, path) in &gpubox_paths {
             let mut flag_fptr = FitsFile::open(path).unwrap();
             let hdu = flag_fptr.primary_hdu().unwrap();
 
@@ -766,14 +747,10 @@ mod tests {
         )
         .unwrap();
 
-        for (_, fptr) in flag_file_set.gpubox_fptrs.iter_mut() {
-            let table_hdu = fptr.hdu(1).unwrap();
-            dbg!(table_hdu);
-        }
-        let chan_flags_raw = flag_file_set.read_chan_header_flags_raw().unwrap();
+        let chan_hdr_flags_raw = flag_file_set.read_chan_header_flags_raw().unwrap();
 
-        assert_eq!(chan_flags_raw.keys().len(), 1);
-        let (chan1_header, chan1_flags_raw) = chan_flags_raw.get(&1).unwrap();
+        assert_eq!(chan_hdr_flags_raw.keys().len(), 1);
+        let (chan1_header, chan1_flags_raw) = &chan_hdr_flags_raw[&1];
         assert!(!chan1_flags_raw.is_empty());
 
         let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
@@ -788,7 +765,7 @@ mod tests {
             (1, 2, 105, i8::from(true)),
             (1, 2, 106, i8::from(false)),
         ];
-        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests.iter() {
+        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in &tests {
             let row_idx = timestep_idx * num_baselines + baseline_idx;
             let row = &chan1_flags_raw[(row_idx * chan1_header.num_channels)
                 ..((row_idx + 1) * chan1_header.num_channels)];
@@ -802,35 +779,21 @@ mod tests {
 
     #[test]
     fn test_write_flag_array() {
-        let context = get_mwax_context();
+        let corr_ctx = get_mwax_context();
 
         let tmp_dir = tempdir().unwrap();
         let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
 
-        let fine_chans_per_coarse = context.metafits_context.num_corr_fine_chans_per_coarse;
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
-        let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-        assert_eq!(img_timestep_idxs.len(), 4);
-        let img_timestep_range =
-            *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-        let img_coarse_chan_idxs = &context.common_coarse_chan_indices;
-        let img_coarse_chan_range =
-            *img_coarse_chan_idxs.first().unwrap()..(*img_coarse_chan_idxs.last().unwrap() + 1);
-
-        let gpubox_ids = context.coarse_chans[img_coarse_chan_range.clone()]
+        let gpubox_ids = corr_ctx.coarse_chans[vis_sel.coarse_chan_range.clone()]
             .iter()
             .map(|chan| chan.gpubox_number)
             .collect::<Vec<_>>();
 
-        let mut flag_array = init_flag_array(
-            &context,
-            &img_timestep_range,
-            &img_coarse_chan_range,
-            None,
-            None,
-            None,
-            None,
-        );
+        // Create a blank array to store flags and visibilities
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
 
         let mut idx = 0;
 
@@ -865,18 +828,18 @@ mod tests {
         let mut flag_file_set = FlagFileSet::new(
             filename_template.to_str().unwrap(),
             &gpubox_ids,
-            context.mwa_version,
+            corr_ctx.mwa_version,
         )
         .unwrap();
         flag_file_set
-            .write_flag_array(&context, &flag_array, &gpubox_ids)
+            .write_flag_array(&corr_ctx, &flag_array, &gpubox_ids)
             .unwrap();
         drop(flag_file_set);
 
         let mut flag_file_set = FlagFileSet::open(
             filename_template.to_str().unwrap(),
             &gpubox_ids,
-            context.mwa_version,
+            corr_ctx.mwa_version,
         )
         .unwrap();
 
@@ -887,15 +850,15 @@ mod tests {
         dbg!(chan1_flags_raw);
 
         let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
-        assert_eq!(chan1_header.num_timesteps, context.num_common_timesteps);
-        assert_eq!(num_baselines, context.metafits_context.num_baselines);
+        assert_eq!(chan1_header.num_timesteps, corr_ctx.num_common_timesteps);
+        assert_eq!(num_baselines, corr_ctx.metafits_context.num_baselines);
         assert_eq!(chan1_header.num_channels, fine_chans_per_coarse);
         assert_eq!(
             chan1_flags_raw.len(),
             chan1_header.num_timesteps * num_baselines * chan1_header.num_channels
         );
 
-        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in [
+        for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in &[
             (0, 0, 0, i8::from(false)),
             (0, 0, 1, i8::from(false)),
             (0, 1, 0, i8::from(true)),
@@ -908,9 +871,7 @@ mod tests {
             (1, 1, 1, i8::from(false)),
             (1, 2, 0, i8::from(true)),
             (1, 2, 1, i8::from(false)),
-        ]
-        .iter()
-        {
+        ] {
             let row_idx = timestep_idx * num_baselines + baseline_idx;
             let offset = row_idx * fine_chans_per_coarse + fine_chan_idx;
             assert_eq!(

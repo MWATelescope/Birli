@@ -1,8 +1,8 @@
 use birli::{
-    context_to_jones_array, correct_cable_lengths, correct_geometry,
-    flags::{add_dimension, flag_to_weight_array, get_weight_factor},
-    get_flaggable_timesteps,
+    correct_cable_lengths, correct_geometry,
+    flags::{flag_to_weight_array, get_weight_factor},
     io::write_uvfits,
+    VisSelection,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use glob::glob;
@@ -59,70 +59,67 @@ fn get_context_ord_half_1196175296() -> CorrelatorContext {
     CorrelatorContext::new(&metafits_path, &gpufits_files).unwrap()
 }
 
-fn bench_context_to_jones_array_mwax_half_1247842824(crt: &mut Criterion) {
-    let context = get_context_mwax_half_1247842824();
-    let timestep_idxs = context.common_timestep_indices.clone();
-    let timestep_range = timestep_idxs[0]..timestep_idxs[timestep_idxs.len() - 1] + 1;
-    let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
-    let coarse_chan_range = coarse_chan_idxs[0]..coarse_chan_idxs[coarse_chan_idxs.len() - 1] + 1;
-    crt.bench_function("context_to_jones_array - mwax_half_1247842824", |bch| {
+fn bench_read_mwalib_mwax_half_1247842824(crt: &mut Criterion) {
+    let corr_ctx = get_context_mwax_half_1247842824();
+    let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+    let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+    crt.bench_function("VisSelection::read_mwalib - mwax_half_1247842824", |bch| {
         bch.iter(|| {
-            context_to_jones_array(
-                black_box(&context),
-                black_box(&timestep_range),
-                black_box(&coarse_chan_range),
-                None,
-                false,
-            )
+            vis_sel
+                .read_mwalib(
+                    black_box(&corr_ctx),
+                    black_box(jones_array.view_mut()),
+                    black_box(flag_array.view_mut()),
+                    false,
+                )
+                .unwrap()
         })
     });
 }
 
-fn bench_context_to_jones_array_ord_half_1196175296(crt: &mut Criterion) {
-    let context = get_context_ord_half_1196175296();
-    let timestep_idxs = context.common_timestep_indices.clone();
-    let timestep_range = timestep_idxs[0]..timestep_idxs[timestep_idxs.len() - 1] + 1;
-    let coarse_chan_idxs = context.common_coarse_chan_indices.clone();
-    let coarse_chan_range = coarse_chan_idxs[0]..coarse_chan_idxs[coarse_chan_idxs.len() - 1] + 1;
-    crt.bench_function("context_to_jones_array - ord_half_1196175296", |bch| {
+fn bench_read_mwalib_ord_half_1196175296(crt: &mut Criterion) {
+    let corr_ctx = get_context_ord_half_1196175296();
+    let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+    let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+    crt.bench_function("VisSelection::read_mwalib - ord_half_1196175296", |bch| {
         bch.iter(|| {
-            context_to_jones_array(
-                black_box(&context),
-                black_box(&timestep_range),
-                black_box(&coarse_chan_range),
-                None,
-                false,
-            )
+            vis_sel
+                .read_mwalib(
+                    black_box(&corr_ctx),
+                    black_box(jones_array.view_mut()),
+                    black_box(flag_array.view_mut()),
+                    false,
+                )
+                .unwrap()
         })
     });
 }
 
 fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
-    let context = get_context_mwax_half_1247842824();
-
-    let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-
-    let sel_timestep_range =
-        *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
-    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let sel_coarse_chan_range =
-        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-
-    let (mut jones_array, _) = context_to_jones_array(
-        &context,
-        &sel_timestep_range,
-        &sel_coarse_chan_range,
-        None,
-        false,
-    )
-    .unwrap();
+    let corr_ctx = get_context_mwax_half_1247842824();
+    let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+    let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+    vis_sel
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
 
     crt.bench_function("correct_cable_lengths - mwax_half_1247842824", |bch| {
         bch.iter(|| {
             correct_cable_lengths(
-                black_box(&context),
+                black_box(&corr_ctx),
                 black_box(&mut jones_array),
-                black_box(&sel_coarse_chan_range),
+                black_box(&vis_sel.coarse_chan_range),
                 false,
             )
         })
@@ -130,30 +127,26 @@ fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
 }
 
 fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
-    let context = get_context_ord_half_1196175296();
+    let corr_ctx = get_context_ord_half_1196175296();
+    let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
-    let sel_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
-
-    let sel_timestep_range =
-        *sel_timestep_idxs.first().unwrap()..(*sel_timestep_idxs.last().unwrap() + 1);
-    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let sel_coarse_chan_range =
-        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-
-    let (mut jones_array, _) = context_to_jones_array(
-        &context,
-        &sel_timestep_range,
-        &sel_coarse_chan_range,
-        None,
-        false,
-    )
-    .unwrap();
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+    let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+    vis_sel
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
     crt.bench_function("correct_cable_lengths - ord_half_1196175296", |bch| {
         bch.iter(|| {
             correct_cable_lengths(
-                black_box(&context),
+                black_box(&corr_ctx),
                 black_box(&mut jones_array),
-                black_box(&sel_coarse_chan_range),
+                black_box(&vis_sel.coarse_chan_range),
                 false,
             )
         })
@@ -161,30 +154,27 @@ fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
 }
 
 fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
-    let context = get_context_mwax_half_1247842824();
-    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+    let corr_ctx = get_context_mwax_half_1247842824();
+    let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
-    let img_timestep_range =
-        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let sel_coarse_chan_range =
-        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-
-    let (mut jones_array, _) = context_to_jones_array(
-        &context,
-        &img_timestep_range,
-        &sel_coarse_chan_range,
-        None,
-        false,
-    )
-    .unwrap();
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+    let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+    vis_sel
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
     crt.bench_function("correct_geometry - mwax_half_1247842824", |bch| {
         bch.iter(|| {
             correct_geometry(
-                black_box(&context),
+                black_box(&corr_ctx),
                 black_box(&mut jones_array),
-                black_box(&img_timestep_range),
-                black_box(&sel_coarse_chan_range),
+                black_box(&vis_sel.timestep_range),
+                black_box(&vis_sel.coarse_chan_range),
                 None,
                 None,
                 false,
@@ -194,30 +184,27 @@ fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
 }
 
 fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
-    let context = get_context_ord_half_1196175296();
-    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+    let corr_ctx = get_context_ord_half_1196175296();
+    let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
-    let img_timestep_range =
-        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let sel_coarse_chan_range =
-        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-
-    let (mut jones_array, _) = context_to_jones_array(
-        &context,
-        &img_timestep_range,
-        &sel_coarse_chan_range,
-        None,
-        false,
-    )
-    .unwrap();
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+    let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+    vis_sel
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
     crt.bench_function("correct_geometry - ord_half_1196175296", |bch| {
         bch.iter(|| {
             correct_geometry(
-                black_box(&context),
+                black_box(&corr_ctx),
                 black_box(&mut jones_array),
-                black_box(&img_timestep_range),
-                black_box(&sel_coarse_chan_range),
+                black_box(&vis_sel.timestep_range),
+                black_box(&vis_sel.coarse_chan_range),
                 None,
                 None,
                 false,
@@ -227,44 +214,37 @@ fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
 }
 
 fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
-    let context = get_context_ord_half_1196175296();
-    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+    let corr_ctx = get_context_ord_half_1196175296();
+    let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
-    let img_timestep_range =
-        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let sel_coarse_chan_range =
-        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-
-    let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
-
-    let (jones_array, flag_array) = context_to_jones_array(
-        &context,
-        &img_timestep_range,
-        &sel_coarse_chan_range,
-        None,
-        false,
-    )
-    .unwrap();
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+    let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+    vis_sel
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
 
     let tmp_dir = tempdir().unwrap();
     let uvfits_path = tmp_dir.path().join("1196175296.none.uvfits");
 
-    let weight_factor = get_weight_factor(&context);
-    let flag_array = add_dimension(flag_array.view(), 4);
-    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+    let weight_factor = get_weight_factor(&corr_ctx);
+    let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
     crt.bench_function("uvfits_output - ord_half_1196175296", |bch| {
         bch.iter(|| {
             write_uvfits(
                 black_box(uvfits_path.as_path()),
-                black_box(&context),
+                black_box(&corr_ctx),
                 black_box(jones_array.view()),
                 black_box(weight_array.view()),
-                black_box(flag_array.view()),
-                black_box(&img_timestep_range),
-                black_box(&sel_coarse_chan_range),
-                black_box(&img_baseline_idxs),
+                black_box(&vis_sel.timestep_range),
+                black_box(&vis_sel.coarse_chan_range),
+                black_box(&vis_sel.baseline_idxs),
                 None,
                 None,
                 1,
@@ -277,44 +257,37 @@ fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
 }
 
 fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
-    let context = get_context_mwax_half_1247842824();
-    let img_timestep_idxs = get_flaggable_timesteps(&context).unwrap();
+    let corr_ctx = get_context_mwax_half_1247842824();
+    let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
-    let img_timestep_range =
-        *img_timestep_idxs.first().unwrap()..(*img_timestep_idxs.last().unwrap() + 1);
-    let sel_coarse_chan_idxs = &context.common_coarse_chan_indices;
-    let sel_coarse_chan_range =
-        *sel_coarse_chan_idxs.first().unwrap()..(*sel_coarse_chan_idxs.last().unwrap() + 1);
-
-    let img_baseline_idxs: Vec<usize> = (0..context.metafits_context.num_baselines).collect();
-
-    let (jones_array, flag_array) = context_to_jones_array(
-        &context,
-        &img_timestep_range,
-        &sel_coarse_chan_range,
-        None,
-        false,
-    )
-    .unwrap();
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+    let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+    vis_sel
+        .read_mwalib(
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
 
     let tmp_dir = tempdir().unwrap();
     let uvfits_path = tmp_dir.path().join("1247842824.none.uvfits");
 
-    let weight_factor = get_weight_factor(&context);
-    let flag_array = add_dimension(flag_array.view(), 4);
-    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
+    let weight_factor = get_weight_factor(&corr_ctx);
+    let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
     crt.bench_function("uvfits_output - mwax_half_1247842824", |bch| {
         bch.iter(|| {
             write_uvfits(
                 black_box(uvfits_path.as_path()),
-                black_box(&context),
+                black_box(&corr_ctx),
                 black_box(jones_array.view()),
                 black_box(weight_array.view()),
-                black_box(flag_array.view()),
-                black_box(&img_timestep_range),
-                black_box(&sel_coarse_chan_range),
-                black_box(&img_baseline_idxs),
+                black_box(&vis_sel.timestep_range),
+                black_box(&vis_sel.coarse_chan_range),
+                black_box(&vis_sel.baseline_idxs),
                 None,
                 None,
                 1,
@@ -327,11 +300,11 @@ fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
 }
 
 criterion_group!(
-    name = benches;
+    name = expensive_benches;
     config = Criterion::default().sample_size(10);
     targets =
-        bench_context_to_jones_array_mwax_half_1247842824,
-        bench_context_to_jones_array_ord_half_1196175296,
+        bench_read_mwalib_mwax_half_1247842824,
+        bench_read_mwalib_ord_half_1196175296,
         bench_correct_cable_lengths_mwax_half_1247842824,
         bench_correct_cable_lengths_ord_half_1196175296,
         bench_correct_geometry_mwax_half_1247842824,
@@ -339,4 +312,4 @@ criterion_group!(
         bench_uvfits_output_ord_half_1196175296_none,
         bench_uvfits_output_mwax_half_1247842824_none
 );
-criterion_main!(benches);
+criterion_main!(expensive_benches);
