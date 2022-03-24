@@ -1,5 +1,12 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.5.2 (2022-03-17)
+
+- 🐛 bug fixes:
+  - fix <https://github.com/MWATelescope/Birli/issues/58>
+- ➕ dependencies:
+  - Bump clap from 3.0.14 to 3.1.5
+
 # Version 0.5.1 (2022-03-03)
 
 - ✨ new features:
