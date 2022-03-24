@@ -1179,8 +1179,6 @@ impl BirliContext {
             ..ObsContext::from_mwalib(&corr_ctx.metafits_context)
         };
 
-        let tiles_xyz_geod = obs_ctx.ant_positions_geodetic();
-
         let mwa_ctx = MwaObsContext::from_mwalib(&corr_ctx.metafits_context);
 
         prep_ctx.calsols = if let Some(ref calsol_file) = io_ctx.aocalsols_in {
@@ -1346,7 +1344,7 @@ impl BirliContext {
 
             // bake flags into weights
             for (weight, flag) in izip!(weight_array.iter_mut(), flag_array.iter()) {
-                *weight = if *flag { -1. } else { 1. } * (*weight).abs() as f32;
+                *weight = if *flag { -(*weight).abs() } else { (*weight).abs() } as f32;
             }
 
             let chunk_vis_ctx = VisContext::from_mwalib(
@@ -1358,6 +1356,8 @@ impl BirliContext {
                 avg_freq,
             );
 
+            let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
+
             // output uvfits
             if let Some(uvfits_writer) = uvfits_writer.as_mut() {
                 with_increment_duration!(
@@ -1368,7 +1368,7 @@ impl BirliContext {
                             jones_array.view(),
                             weight_array.view(),
                             &chunk_vis_ctx,
-                            &tiles_xyz_geod,
+                            &ant_positions_geodetic,
                             prep_ctx.draw_progress,
                         )
                         .expect("unable to write uvfits")
@@ -1385,7 +1385,7 @@ impl BirliContext {
                             jones_array.view(),
                             weight_array.view(),
                             &chunk_vis_ctx,
-                            &tiles_xyz_geod,
+                            &ant_positions_geodetic,
                             prep_ctx.draw_progress,
                         )
                         .expect("unable to write ms")

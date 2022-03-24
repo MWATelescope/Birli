@@ -124,6 +124,7 @@ impl PreprocessContext {
     /// # Errors
     /// will wrap errors from `correct_digital_gains`, `correct_coarse_passband_gains`
     ///
+    /// TODO: more granular error types: PreprocessingError -> {DigitalGainsError, etc.}
     #[allow(clippy::too_many_arguments)]
     pub fn preprocess(
         &self,

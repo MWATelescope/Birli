@@ -193,11 +193,13 @@ pub fn write_uvfits<T: AsRef<Path>>(
         obs_ctx.name.clone(),
     )?;
 
+    let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
+
     uvfits_writer.write_vis_marlu(
         jones_array,
         weight_array,
         &vis_ctx,
-        &obs_ctx.ant_positions_geodetic(),
+        &ant_positions_geodetic,
         draw_progress,
     )?;
 
@@ -325,12 +327,14 @@ pub fn write_ms<T: AsRef<Path>>(
         .initialize_mwa(&vis_ctx, &obs_ctx, &mwa_ctx, coarse_chan_range)
         .unwrap();
 
+    let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
+
     ms_writer
         .write_vis_marlu(
             jones_array.view(),
             weight_array.view(),
             &vis_ctx,
-            &obs_ctx.ant_positions_geodetic(),
+            &ant_positions_geodetic,
             draw_progress,
         )
         .unwrap();
