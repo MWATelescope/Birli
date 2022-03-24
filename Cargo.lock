@@ -1102,17 +1102,18 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.14"
+version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51b9bbe6c47d51fc3e1a9b945965946b4c44142ab8792c50835a980d362c2710"
+checksum = "6389c490849ff5bc16be905ae24bc913a9c8892e19b2341dbc175e14c341c2b8"
 dependencies = [
  "cfg-if",
 ]
 
 [[package]]
 name = "marlu"
-version = "0.6.0-beta.1"
-source = "git+https://github.com/MWATelescope/Marlu.git?branch=context#f2dcc9aa30830de5f5064a9d6ed4a6c2269f4c92"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5c8d432ac33e98a20277f3f5cb4462d15076ce128bd0fb728856a8bef873dda"
 dependencies = [
  "approx",
  "cfg-if",

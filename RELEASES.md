@@ -1,5 +1,22 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.6.0 (2022-03-24)
+
+- 🏗 api changes:
+  - refactor preprocessing into PreprocessingContext
+  - refactor context_to_jones_array into VisSelection::read_mwalib
+  - refactor flags into FlagContext
+  - refactor io ino IOContext
+  - refactor main into cli::BirliContext::{from_args, run}
+  - refactor pfb gains to take ScrunchType enum
+  - improve error handling in cli and main
+  - separate allocation and filling of vis, weights, flags
+  - bake flags into weights before writing for better performance
+  - move uvfits and selection into Marlu
+  - rename `--flag-antennae` to `--flag-antennas`
+- ➕ dependencies:
+  - Use Marlu 0.6.0
+
 # Version 0.5.2 (2022-03-17)
 
 - 🐛 bug fixes:
