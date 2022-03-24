@@ -6,7 +6,7 @@ readme = "README.md"
 homepage = "https://github.com/MWATelescope/Birli"
 repository = "https://github.com/MWATelescope/Birli"
 authors = [
-    "Derwent McElhinney <derwent.mcelhinney@curtin.edu.au>",
+    "Dev Null <dev.null@curtin.edu.au>",
     "Christopher H. Jordan <christopherjordan87@gmail.com>",
     "Greg Sleap <greg.sleap@curtin.edu.au>",
 ]
