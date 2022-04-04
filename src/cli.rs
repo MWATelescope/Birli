@@ -1250,6 +1250,8 @@ impl BirliContext {
                 .expect("cannot create flag file writer")
         });
 
+        let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
+
         // //////// //
         // Chunking //
         // //////// //
@@ -1359,8 +1361,6 @@ impl BirliContext {
                 avg_time,
                 avg_freq,
             );
-
-            let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
 
             // output uvfits
             if let Some(uvfits_writer) = uvfits_writer.as_mut() {
