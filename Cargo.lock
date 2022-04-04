@@ -1111,9 +1111,9 @@ dependencies = [
 
 [[package]]
 name = "marlu"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5c8d432ac33e98a20277f3f5cb4462d15076ce128bd0fb728856a8bef873dda"
+checksum = "2a64ec6379ed12090bd240dfc59aede2a6f1cb2b9777dff220f654e600918afa"
 dependencies = [
  "approx",
  "cfg-if",
