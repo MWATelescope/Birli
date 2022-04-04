@@ -1,5 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.6.1 (2022-04-04)
+
+- ➕ dependencies:
+  - Use Marlu 0.6.1
+
 # Version 0.6.0 (2022-03-24)
 
 - 🏗 api changes:
