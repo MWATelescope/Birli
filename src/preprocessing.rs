@@ -12,7 +12,7 @@ use crate::{
 };
 use cfg_if::cfg_if;
 use derive_builder::Builder;
-use log::info;
+use log::trace;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
@@ -136,6 +136,7 @@ impl PreprocessContext {
         vis_sel: &VisSelection,
     ) -> Result<(), BirliError> {
         if self.correct_cable_lengths {
+            trace!("correcting cable lengths");
             with_increment_duration!(
                 durations,
                 "correct",
@@ -146,6 +147,7 @@ impl PreprocessContext {
         let sel_ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 
         if self.correct_digital_gains {
+            trace!("correcting digital gains");
             with_increment_duration!(
                 durations,
                 "correct",
@@ -162,7 +164,7 @@ impl PreprocessContext {
 
         // perform pfb passband gain corrections
         if let Some(passband_gains) = self.passband_gains.as_ref() {
-            info!("correcting pfb gains");
+            trace!("correcting pfb gains");
             with_increment_duration!(
                 durations,
                 "correct",
@@ -179,6 +181,7 @@ impl PreprocessContext {
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
                 if let Some(strategy) = self.aoflagger_strategy.as_ref() {
+                    trace!("using aoflagger");
                     let aoflagger = unsafe { cxx_aoflagger_new() };
                     with_increment_duration!(durations,
                         "flag",
@@ -196,7 +199,7 @@ impl PreprocessContext {
         }
 
         if self.correct_geometry {
-            // perform geometric delay corrections
+            trace!("correcting geometric delays");
             with_increment_duration!(
                 durations,
                 "correct",
@@ -213,6 +216,7 @@ impl PreprocessContext {
         }
 
         if let Some(ref calsols) = self.calsols {
+            trace!("applying calibration solutions");
             with_increment_duration!(
                 durations,
                 "calibrate",
