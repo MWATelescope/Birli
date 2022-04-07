@@ -2120,6 +2120,7 @@ mod tests_aoflagger {
             "--no-draw-progress",
             "--pfb-gains", "none",
             "--emulate-cotter",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2198,6 +2199,7 @@ mod tests_aoflagger {
             "--pfb-gains", "none",
             "--emulate-cotter",
             "--sel-time", "0", "1",
+            "--no-flag-dc",
             gpufits_paths[23],
             gpufits_paths[22],
         ];
@@ -2281,6 +2283,7 @@ mod tests_aoflagger {
             "--no-rfi",
             "--emulate-cotter",
             "--apply-di-cal", "tests/data/1254670392_avg/1254690096.bin",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2409,6 +2412,7 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--no-rfi",
             "--emulate-cotter",
+            "--no-flag-dc",
             gpufits_paths[23],
             gpufits_paths[22],
         ];
@@ -2492,6 +2496,7 @@ mod tests_aoflagger {
             "--no-digital-gains",
             "--pfb-gains", "cotter",
             "--emulate-cotter",
+            "--no-flag-dc",
             gpufits_paths[23],
             gpufits_paths[22],
         ];
@@ -2568,6 +2573,7 @@ mod tests_aoflagger {
             "--no-draw-progress",
             "--pfb-gains", "none",
             "--emulate-cotter",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2657,6 +2663,7 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--avg-time-res", "4",
             "--avg-freq-res", "160",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 

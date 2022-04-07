@@ -120,8 +120,7 @@ impl FlagContext {
             *flag = antenna.rfinput_x.flagged || antenna.rfinput_y.flagged;
         }
 
-        result.flag_dc = corr_ctx.mwa_version == MWAVersion::CorrOldLegacy
-                      || corr_ctx.mwa_version == MWAVersion::CorrLegacy;
+        result.flag_dc = matches!(corr_ctx.mwa_version, MWAVersion::CorrOldLegacy | MWAVersion::CorrLegacy);
 
         result
     }
@@ -153,18 +152,18 @@ impl FlagContext {
         let coarse_chan_flags = &self.coarse_chan_flags[coarse_chan_range.clone()];
         let baseline_flags = self.get_baseline_flags(ant_pairs);
 
-        let fine_channel_count = self.fine_chan_flags.len();
+        let fine_chan_count = self.fine_chan_flags.len();
+        let mut fine_chan_flags = self.fine_chan_flags.clone();
+        if self.flag_dc {
+          fine_chan_flags[fine_chan_count / 2] = true;
+        }
         let chan_flags: Vec<_> = coarse_chan_flags
             .iter()
             .flat_map(|coarse_chan_flag| {
                 if *coarse_chan_flag {
-                    vec![true; fine_channel_count]
+                    vec![true; fine_chan_count]
                 } else {
-                    let mut flags = self.fine_chan_flags.clone();
-                    if self.flag_dc {
-                      flags[fine_channel_count / 2] = true;
-                    }
-                    flags
+                    fine_chan_flags.clone()
                 }
             })
             .collect();
@@ -188,7 +187,6 @@ impl FlagContext {
 
         Ok(())
     }
-
 }
 
 /// Create an aoflagger [`CxxImageSet`] for a particular baseline from the given jones array
