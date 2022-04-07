@@ -1,5 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.6.2 (2022-04-11)
+
+- ✨ new features:
+  - Automatic DC channel flagging for old correlator inputs
+  - --flag-dc and --no-flag-dc control DC flagging explicitly
+
 # Version 0.6.1 (2022-04-04)
 
 - ➕ dependencies:

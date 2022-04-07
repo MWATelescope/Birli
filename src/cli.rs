@@ -578,10 +578,12 @@ impl BirliContext {
                     .help_heading("FLAGGING")
                     .multiple_values(true)
                     .required(false),
-                arg!(--"flag-dc" "[WIP] Force flagging of DC centre chans")
-                    .help_heading("FLAGGING"),
-                arg!(--"no-flag-dc" "[WIP] Do not flag DC centre chans")
-                    .help_heading("FLAGGING"),
+                arg!(--"flag-dc" "Force flagging of DC centre chans")
+                    .help_heading("FLAGGING")
+                    .conflicts_with("no-flag-dc"),
+                arg!(--"no-flag-dc" "Do not flag DC centre chans")
+                    .help_heading("FLAGGING")
+                    .conflicts_with("flag-dc"),
                 // -> antennas
                 arg!(--"no-flag-metafits" "[WIP] Ignore antenna flags in metafits")
                     .help_heading("FLAGGING"),
@@ -821,6 +823,12 @@ impl BirliContext {
         };
         if matches.is_present("flag-autos") {
             flag_ctx.autos = true;
+        }
+        if matches.is_present("flag-dc") {
+            flag_ctx.flag_dc = true;
+        }
+        if matches.is_present("no-flag-dc") {
+            flag_ctx.flag_dc = false;
         }
         Ok(flag_ctx)
     }
@@ -1075,8 +1083,6 @@ impl BirliContext {
             "flag-end-steps",
             "flag-edge-width",
             "flag-edge-chans",
-            "flag-dc",
-            "no-flag-dc",
             "no-sel-autos",
             "no-sel-flagged-ants",
             "sel-ants",
@@ -1417,7 +1423,10 @@ impl BirliContext {
 mod tests {
     use tempfile::tempdir;
 
-    use crate::{test_common::get_1254670392_avg_paths, BirliContext};
+    use crate::{
+        test_common::get_1254670392_avg_paths, test_common::get_mwax_data_paths, BirliContext,
+        VisSelection,
+    };
 
     #[test]
     fn test_birli_context_display_doesnt_crash() {
@@ -1455,6 +1464,178 @@ mod tests {
         assert!(display.contains("Will not correct coarse pfb passband gains"));
         assert!(display.contains("Will flag with aoflagger"));
         assert!(display.contains("Will not correct geometry"));
+    }
+
+    /// Middle channel rounded-down is DC flagged when `flag_dc` is set.
+    #[test]
+    fn test_dc_flagging_odd_channel_count() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext {
+            flag_ctx,
+            vis_sel,
+            num_timesteps_per_chunk,
+            corr_ctx,
+            ..
+        } = BirliContext::from_args(&args).unwrap();
+
+        let chunk_size = if let Some(steps) = num_timesteps_per_chunk {
+            steps
+        } else {
+            vis_sel.timestep_range.len()
+        };
+        let chunk_vis_sel = VisSelection {
+            timestep_range: (vis_sel.timestep_range.start
+                ..vis_sel.timestep_range.start + chunk_size),
+            ..vis_sel
+        };
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = chunk_vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        flag_ctx
+            .set_flags(
+                &mut flag_array,
+                &chunk_vis_sel.timestep_range,
+                &chunk_vis_sel.coarse_chan_range,
+                &chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            )
+            .unwrap();
+
+        assert!(flag_array[[0, fine_chans_per_coarse / 2, 0]]);
+        assert!(!flag_array[[0, fine_chans_per_coarse / 2 + 1, 0]]);
+    }
+
+    /// DC flagging is on by default for old correlator inputs.
+    #[test]
+    fn test_automatic_dc_flagging() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.flag_dc);
+    }
+
+    /// DC flagging is off by default for MWAX inputs.
+    #[test]
+    fn test_no_automatic_dc_flagging() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(!flag_ctx.flag_dc);
+    }
+
+    /// DC flagging for old correlator inputs is disabled by `no-flag-dc`.
+    #[test]
+    fn test_suppress_automatic_dc_flagging() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            "--no-flag-dc",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(!flag_ctx.flag_dc);
+    }
+
+    /// DC flagging for MWAX inputs is enabled by `flag-dc`.
+    #[test]
+    fn test_force_dc_flagging() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            "--flag-dc",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.flag_dc);
+    }
+
+    /// Implicit DC flagging for old correlator inputs can be made explicit with `flag-dc`.
+    #[test]
+    fn test_explicit_dc_flagging() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            "--flag-dc",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.flag_dc);
+    }
+
+    /// DC flagging for MWAX can be explicitly disabled with `flag-dc`.
+    #[test]
+    fn test_explicit_disable_dc_flagging() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            "--no-flag-dc",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(!flag_ctx.flag_dc);
     }
 }
 
@@ -1939,6 +2120,7 @@ mod tests_aoflagger {
             "--no-cable-delay",
             "--no-geometric-delay",
             "--emulate-cotter",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2036,6 +2218,7 @@ mod tests_aoflagger {
             "--no-draw-progress",
             "--pfb-gains", "none",
             "--emulate-cotter",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2112,6 +2295,7 @@ mod tests_aoflagger {
             "--no-draw-progress",
             "--pfb-gains", "none",
             "--emulate-cotter",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2190,6 +2374,7 @@ mod tests_aoflagger {
             "--pfb-gains", "none",
             "--emulate-cotter",
             "--sel-time", "0", "1",
+            "--no-flag-dc",
             gpufits_paths[23],
             gpufits_paths[22],
         ];
@@ -2273,6 +2458,7 @@ mod tests_aoflagger {
             "--no-rfi",
             "--emulate-cotter",
             "--apply-di-cal", "tests/data/1254670392_avg/1254690096.bin",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2401,6 +2587,7 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--no-rfi",
             "--emulate-cotter",
+            "--no-flag-dc",
             gpufits_paths[23],
             gpufits_paths[22],
         ];
@@ -2484,6 +2671,7 @@ mod tests_aoflagger {
             "--no-digital-gains",
             "--pfb-gains", "cotter",
             "--emulate-cotter",
+            "--no-flag-dc",
             gpufits_paths[23],
             gpufits_paths[22],
         ];
@@ -2560,6 +2748,7 @@ mod tests_aoflagger {
             "--no-draw-progress",
             "--pfb-gains", "none",
             "--emulate-cotter",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2649,6 +2838,7 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--avg-time-res", "4",
             "--avg-freq-res", "160",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2704,6 +2894,7 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--avg-time-factor", "2",
             "--avg-freq-factor", "4",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2761,6 +2952,7 @@ mod tests_aoflagger {
             "--avg-freq-factor", "4",
             "--sel-time", "0", "2",
             "--time-chunk", "2",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2883,6 +3075,7 @@ mod tests_aoflagger_flagset {
             "--no-draw-progress",
             "--pfb-gains", "none",
             "-f", mwaf_path_template.to_str().unwrap(),
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 

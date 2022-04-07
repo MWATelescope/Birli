@@ -392,7 +392,8 @@ mod tests_aoflagger {
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 
         // Prepare our flagmasks with known bad antennae
-        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+        let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+        flag_ctx.flag_dc = false;
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         flag_ctx

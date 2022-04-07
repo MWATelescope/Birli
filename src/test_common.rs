@@ -60,6 +60,17 @@ pub const fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
     (metafits_path, gpufits_paths)
 }
 
+pub const fn get_mwax_data_paths() -> (&'static str, [&'static str; 4]) {
+    let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
+    let gpufits_paths = [
+        "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+        "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+        "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+        "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+    ];
+    (metafits_path, gpufits_paths)
+}
+
 #[allow(dead_code)]
 pub(crate) fn get_1254670392_avg_context() -> CorrelatorContext {
     let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
@@ -67,13 +78,7 @@ pub(crate) fn get_1254670392_avg_context() -> CorrelatorContext {
 }
 
 pub fn get_mwax_context() -> CorrelatorContext {
-    let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
-    let gpufits_paths = vec![
-        "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
-        "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
-        "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
-        "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
-    ];
+    let (metafits_path, gpufits_paths) = get_mwax_data_paths();
     CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
 }
 
