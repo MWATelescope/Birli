@@ -22,7 +22,7 @@ use cfg_if::cfg_if;
 use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
 use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
-use marlu::{Jones, MwaObsContext, ObsContext, VisContext};
+use marlu::{io::error::BadArrayShape, Jones, MwaObsContext, ObsContext, VisContext};
 use prettytable::{cell, format as prettyformat, row, table};
 use std::{
     collections::HashMap,
@@ -1195,7 +1195,7 @@ impl BirliContext {
     /// # Errors
     ///
     /// can raise:
-    /// - `BirliError::BadArrayShape` if the shape of the calibartion solutions
+    /// - `BadArrayShape` if the shape of the calibartion solutions
     ///     is incompatible with the visibility shape.
     /// - preprocessing errors
     pub fn run(self) -> Result<HashMap<String, Duration>, BirliError> {
@@ -1246,7 +1246,7 @@ impl BirliContext {
             );
             let calsol_chans = calsols.di_jones.dim().2;
             if calsol_chans % corr_ctx.num_coarse_chans != 0 {
-                return Err(BirliError::BadArrayShape {
+                return Err(BirliError::BadArrayShape(BadArrayShape {
                     argument: format!("io_ctx.aocalsols_in={}", calsol_file),
                     expected: format!(
                         "a multiple of metafits_num_coarse_chans={}",
@@ -1254,7 +1254,7 @@ impl BirliContext {
                     ),
                     received: format!("{}", calsol_chans),
                     function: "BirliContext::run".into(),
-                });
+                }));
             }
             let num_calsol_fine_chans_per_coarse = calsol_chans / corr_ctx.num_coarse_chans;
             Some(

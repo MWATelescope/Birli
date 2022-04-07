@@ -1,7 +1,9 @@
 //! Errors that can occur in Birli
 
-use marlu::mwalib;
+use marlu::{io::error::BadArrayShape, mwalib};
 use thiserror::Error;
+
+use crate::corrections::{DigitalGainCorrection, PassbandCorrection};
 
 /// Errors relating to CI
 #[derive(Error, Debug)]
@@ -44,25 +46,24 @@ pub enum BirliError {
     MwalibError(#[from] mwalib::MwalibError),
 
     #[error(transparent)]
-    /// Error derived from [`marlu::selection::SelectionError`]
+    /// Error derived from [`crate::marlu::selection::SelectionError`]
     SelectionError(#[from] marlu::selection::SelectionError),
+
+    #[error(transparent)]
+    /// Error derived from [`crate::corrections::PassbandCorrection`]
+    PassbandCorrection(#[from] PassbandCorrection),
+
+    #[error(transparent)]
+    /// Error derived from [`crate::corrections::DigitalGainCorrection`]
+    DigitalGainCorrection(#[from] DigitalGainCorrection),
 
     #[error("You selected dry run")]
     /// enum variant for when a dry run is selected
     DryRun {},
 
-    #[error("bad array shape supplied to argument {argument} of function {function}. expected {expected}, received {received}")]
+    #[error(transparent)]
     /// Error for bad array shape in provided argument
-    BadArrayShape {
-        /// The argument name within the funciton
-        argument: String,
-        /// The function name
-        function: String,
-        /// The expected shape
-        expected: String,
-        /// The shape that was received instead
-        received: String,
-    },
+    BadArrayShape(#[from] BadArrayShape),
 
     #[error("Insufficient memory available; need {need_gib} GiB of memory.\nPlease specify the maximum amount of memory to use.")]
     /// Error when we asked for too much memory

@@ -9,11 +9,13 @@ use log::trace;
 use marlu::{
     constants::VEL_C,
     hifitime::Epoch,
+    io::error::BadArrayShape,
     mwalib::{CorrelatorContext, MWAVersion},
     precession::precess_time,
     Complex, LatLngHeight, RADec, XyzGeodetic, UVW,
 };
 use std::{f64::consts::PI, ops::Range};
+use thiserror::Error;
 
 /// Perform cable length corrections, given an observation's
 /// [`marlu::mwalib::CorrelatorContext`] and an [`ndarray::Array3`] of [`crate::TestJones`]
@@ -306,6 +308,14 @@ pub fn correct_geometry(
     trace!("end correct_geometry");
 }
 
+#[derive(Error, Debug)]
+/// Error for Passband Corrections
+pub enum DigitalGainCorrection {
+    #[error(transparent)]
+    /// Error for bad array shape in provided argument
+    BadArrayShape(#[from] BadArrayShape),
+}
+
 /// Apply corrections for digital gains for each coarse channel from values in metafits.
 ///
 /// The channels provided in `jones_array` should correspond to the selected coarse channel range in
@@ -323,7 +333,7 @@ pub fn correct_geometry(
 ///   coarse channel indices (increasing sky frequency)
 ///
 /// # Errors
-/// - Will throw [`BirliError::BadArrayShape`] if:
+/// - Will throw [`BadArrayShape`] if:
 ///     - `jones_array.dim().1 != num_fine_chans_per_coarse * coarse_chan_range.len()`
 ///     - `jones_array.dim().2 != ant_pairs.len()`
 pub fn correct_digital_gains(
@@ -332,12 +342,12 @@ pub fn correct_digital_gains(
     coarse_chan_range: &Range<usize>,
     ant_pairs: &[(usize, usize)],
     // TODO: take a VisSelection
-) -> Result<(), BirliError> {
+) -> Result<(), DigitalGainCorrection> {
     let num_fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 
     let vis_dims = jones_array.dim();
     if vis_dims.1 != coarse_chan_range.len() * num_fine_chans_per_coarse {
-        return Err(BirliError::BadArrayShape {
+        return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
             argument: "coarse_chan_range".into(),
             function: "correct_digital_gains".into(),
             expected: format!(
@@ -347,15 +357,15 @@ pub fn correct_digital_gains(
                 vis_dims.1 / num_fine_chans_per_coarse
             ),
             received: format!("{:?}", coarse_chan_range.len()),
-        });
+        }));
     }
     if vis_dims.2 != ant_pairs.len() {
-        return Err(BirliError::BadArrayShape {
+        return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
             argument: "ant_pairs".into(),
             function: "correct_digital_gains".into(),
             expected: format!("vis_dims.2={}", vis_dims.2,),
             received: format!("{:?}", ant_pairs.len()),
-        });
+        }));
     }
     assert!(vis_dims.2 == ant_pairs.len());
 
@@ -378,11 +388,11 @@ fn _correct_digital_gains(
     gains: &Array2<(f64, f64)>,
     ant_pairs: &[(usize, usize)],
     num_fine_chans_per_coarse: usize,
-) -> Result<(), BirliError> {
+) -> Result<(), DigitalGainCorrection> {
     let vis_dims = jones_array.dim();
     let gain_dims = gains.dim();
     if vis_dims.1 != gain_dims.1 * num_fine_chans_per_coarse {
-        return Err(BirliError::BadArrayShape {
+        return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
             argument: "gains".into(),
             function: "_correct_digital_gains".into(),
             expected: format!(
@@ -392,7 +402,7 @@ fn _correct_digital_gains(
                 vis_dims.1 / num_fine_chans_per_coarse
             ),
             received: format!("{:?}", gain_dims),
-        });
+        }));
     }
     assert!(vis_dims.1 == gain_dims.1 * num_fine_chans_per_coarse);
 
@@ -429,6 +439,14 @@ fn _correct_digital_gains(
     Ok(())
 }
 
+#[derive(Error, Debug)]
+/// Error for Passband Corrections
+pub enum PassbandCorrection {
+    #[error(transparent)]
+    /// Error for bad array shape in provided argument
+    BadArrayShape(#[from] BadArrayShape),
+}
+
 /// Correct for coarse pfb bandpass shape in each coarse channel by scaling `passband_gains` to
 /// fit the coarse band.
 ///
@@ -442,7 +460,7 @@ fn _correct_digital_gains(
 ///
 /// # Errors
 ///
-/// Will throw `BirliError::BadArrayShape` if:
+/// Will throw `BadArrayShape` if:
 /// - `num_fine_chans_per_coarse` is zero
 /// - The length of the channel axis in `jones_array` is not a multiple of `num_fine_chans_per_coarse`.
 /// - `jones_array` and `weight_array` have different shapes.
@@ -454,18 +472,18 @@ pub fn correct_coarse_passband_gains(
     passband_gains: &[f64],
     num_fine_chans_per_coarse: usize,
     scrunch_type: &ScrunchType,
-) -> Result<(), BirliError> {
+) -> Result<(), PassbandCorrection> {
     if num_fine_chans_per_coarse == 0 {
-        return Err(BirliError::BadArrayShape {
+        return Err(PassbandCorrection::BadArrayShape(BadArrayShape {
             argument: "num_fine_chans_per_coarse".into(),
             function: "correct_coarse_passband_gains".into(),
             expected: "a number greater than zero".into(),
             received: format!("{:?}", num_fine_chans_per_coarse),
-        });
+        }));
     }
 
     if jones_array.dim().1 % num_fine_chans_per_coarse != 0 {
-        return Err(BirliError::BadArrayShape {
+        return Err(PassbandCorrection::BadArrayShape(BadArrayShape {
             argument: "jones_array".into(),
             function: "correct_coarse_passband_gains".into(),
             expected: format!(
@@ -473,22 +491,22 @@ pub fn correct_coarse_passband_gains(
                 num_fine_chans_per_coarse
             ),
             received: format!("{:?}", jones_array.dim()),
-        });
+        }));
     };
 
     if weight_array.dim() != jones_array.dim() {
-        return Err(BirliError::BadArrayShape {
+        return Err(PassbandCorrection::BadArrayShape(BadArrayShape {
             argument: "weight_array".into(),
             function: "correct_coarse_passband_gains".into(),
             expected: format!("same as jones_array.dim()={:?}", jones_array.dim()),
             received: format!("{:?}", weight_array.dim()),
-        });
+        }));
     };
 
     let fscrunch = if passband_gains.len() % num_fine_chans_per_coarse == 0 {
         passband_gains.len() / num_fine_chans_per_coarse
     } else {
-        return Err(BirliError::BadArrayShape {
+        return Err(PassbandCorrection::BadArrayShape(BadArrayShape {
             argument: "passband_gains".into(),
             function: "correct_coarse_passband_gains".into(),
             expected: format!(
@@ -496,7 +514,7 @@ pub fn correct_coarse_passband_gains(
                 num_fine_chans_per_coarse
             ),
             received: format!("{:?}", passband_gains.len()),
-        });
+        }));
     };
 
     let scrunched_gains = scrunch_gains(passband_gains, fscrunch, scrunch_type);
@@ -665,9 +683,9 @@ mod tests {
     use crate::{
         approx::assert_abs_diff_eq,
         compare_jones,
-        corrections::ScrunchType,
+        corrections::{DigitalGainCorrection, PassbandCorrection, ScrunchType},
         test_common::{get_mwa_ord_context, get_mwax_context},
-        BirliError, TestJones, VisSelection,
+        TestJones, VisSelection,
     };
 
     #[test]
@@ -1495,7 +1513,7 @@ mod tests {
                 &vis_sel.coarse_chan_range,
                 &ant_pairs,
             ),
-            Err(BirliError::BadArrayShape { .. })
+            Err(DigitalGainCorrection::BadArrayShape { .. })
         ));
 
         let channels = vis_sel.coarse_chan_range.len()
@@ -1510,14 +1528,14 @@ mod tests {
                 &vis_sel.coarse_chan_range,
                 &ant_pairs,
             ),
-            Err(BirliError::BadArrayShape { .. })
+            Err(DigitalGainCorrection::BadArrayShape { .. })
         ));
 
         let gains = Array2::from_shape_fn((1, 1), |_| (1., 1.));
 
         assert!(matches!(
             _correct_digital_gains(&mut jones_array, &gains, &ant_pairs, 2),
-            Err(BirliError::BadArrayShape { .. })
+            Err(DigitalGainCorrection::BadArrayShape { .. })
         ));
     }
 
@@ -1725,7 +1743,7 @@ mod tests {
                 0,
                 &ScrunchType::Simple,
             ),
-            Err(BirliError::BadArrayShape { .. })
+            Err(PassbandCorrection::BadArrayShape { .. })
         ));
 
         // test bad jones array shape
@@ -1737,7 +1755,7 @@ mod tests {
                 3,
                 &ScrunchType::Simple,
             ),
-            Err(BirliError::BadArrayShape { .. })
+            Err(PassbandCorrection::BadArrayShape { .. })
         ));
 
         // test weight_array dimension mismatch with jones_array
@@ -1750,7 +1768,7 @@ mod tests {
                 num_fine_chans_per_coarse,
                 &ScrunchType::Simple,
             ),
-            Err(BirliError::BadArrayShape { .. })
+            Err(PassbandCorrection::BadArrayShape { .. })
         ));
 
         // test bad gain shape
@@ -1763,7 +1781,7 @@ mod tests {
                 num_fine_chans_per_coarse,
                 &ScrunchType::Simple,
             ),
-            Err(BirliError::BadArrayShape { .. })
+            Err(PassbandCorrection::BadArrayShape { .. })
         ));
     }
 }
