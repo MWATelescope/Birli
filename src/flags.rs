@@ -14,6 +14,7 @@ use cfg_if::cfg_if;
 use derive_builder::Builder;
 use itertools::izip;
 use log::trace;
+use marlu::io::error::BadArrayShape;
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
@@ -174,12 +175,12 @@ impl FlagContext {
 
         let flag_shape = flag_array.dim();
         if flag_shape.0 > shape.0 || flag_shape.1 > shape.1 || flag_shape.2 > shape.2 {
-            return Err(BirliError::BadArrayShape {
+            return Err(BirliError::BadArrayShape(BadArrayShape {
                 argument: "flag_array".to_string(),
                 function: "FlagContext::set_flags".to_string(),
                 expected: format!("dims less than {:?}", shape),
                 received: format!("{:?}", flag_shape),
-            });
+            }));
         };
 
         flag_array
@@ -683,7 +684,7 @@ mod tests_aoflagger {
 
     use crate::{
         flags::{flag_jones_array, flag_jones_array_existing, FlagContext},
-        VisSelection,
+        BirliError, VisSelection,
     };
     use aoflagger_sys::cxx_aoflagger_new;
 
@@ -855,5 +856,27 @@ mod tests_aoflagger {
         assert!(flag_array.get((1, 0, 95)).unwrap());
         assert!(flag_array.get((1, 0, 111)).unwrap());
         assert!(!flag_array.get((1, 0, 113)).unwrap());
+    }
+
+    #[test]
+    fn test_set_flags_checks_array_shape() {
+        let corr_ctx = get_mwa_ord_context();
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+
+        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+
+        // mess with flag_ctx to make it think it's a different shape
+        vis_sel.timestep_range = 0..1;
+        assert!(matches!(
+            flag_ctx.set_flags(
+                &mut flag_array,
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+            ),
+            Err(BirliError::BadArrayShape(_))
+        ));
     }
 }

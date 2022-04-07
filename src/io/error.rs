@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use marlu::{fitsio, mwalib, mwalib::FitsError};
+use marlu::{fitsio, io::error::BadArrayShape, mwalib, mwalib::FitsError};
 
 #[derive(Error, Debug)]
 #[allow(clippy::upper_case_acronyms)]
@@ -82,18 +82,9 @@ pub enum IOError {
         found: String,
     },
 
-    #[error("bad array shape supplied to argument {argument} of function {function}. expected {expected}, received {received}")]
+    #[error(transparent)]
     /// Error for bad array shape in provided argument
-    BadArrayShape {
-        /// The argument name within the funciton
-        argument: String,
-        /// The function name
-        function: String,
-        /// The expected shape
-        expected: String,
-        /// The shape that was received instead
-        received: String,
-    },
+    BadArrayShape(#[from] BadArrayShape),
 }
 
 #[derive(Error, Debug)]
