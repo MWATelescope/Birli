@@ -2902,6 +2902,7 @@ mod tests_aoflagger_flagset {
             "--no-draw-progress",
             "--pfb-gains", "none",
             "-f", mwaf_path_template.to_str().unwrap(),
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
