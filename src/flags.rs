@@ -120,7 +120,10 @@ impl FlagContext {
             *flag = antenna.rfinput_x.flagged || antenna.rfinput_y.flagged;
         }
 
-        result.flag_dc = matches!(corr_ctx.mwa_version, MWAVersion::CorrOldLegacy | MWAVersion::CorrLegacy);
+        result.flag_dc = matches!(
+            corr_ctx.mwa_version,
+            MWAVersion::CorrOldLegacy | MWAVersion::CorrLegacy
+        );
 
         result
     }
@@ -155,7 +158,7 @@ impl FlagContext {
         let fine_chan_count = self.fine_chan_flags.len();
         let mut fine_chan_flags = self.fine_chan_flags.clone();
         if self.flag_dc {
-          fine_chan_flags[fine_chan_count / 2] = true;
+            fine_chan_flags[fine_chan_count / 2] = true;
         }
         let chan_flags: Vec<_> = coarse_chan_flags
             .iter()
