@@ -1947,6 +1947,7 @@ mod tests_aoflagger {
             "--no-cable-delay",
             "--no-geometric-delay",
             "--emulate-cotter",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2044,6 +2045,7 @@ mod tests_aoflagger {
             "--no-draw-progress",
             "--pfb-gains", "none",
             "--emulate-cotter",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2719,6 +2721,7 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--avg-time-factor", "2",
             "--avg-freq-factor", "4",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2776,6 +2779,7 @@ mod tests_aoflagger {
             "--avg-freq-factor", "4",
             "--sel-time", "0", "2",
             "--time-chunk", "2",
+            "--no-flag-dc",
         ];
         args.extend_from_slice(&gpufits_paths);
 
