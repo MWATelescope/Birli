@@ -579,9 +579,11 @@ impl BirliContext {
                     .multiple_values(true)
                     .required(false),
                 arg!(--"flag-dc" "[WIP] Force flagging of DC centre chans")
-                    .help_heading("FLAGGING"),
+                    .help_heading("FLAGGING")
+                    .conflicts_with("no-flag-dc"),
                 arg!(--"no-flag-dc" "[WIP] Do not flag DC centre chans")
-                    .help_heading("FLAGGING"),
+                    .help_heading("FLAGGING")
+                    .conflicts_with("flag-dc"),
                 // -> antennas
                 arg!(--"no-flag-metafits" "[WIP] Ignore antenna flags in metafits")
                     .help_heading("FLAGGING"),
@@ -821,6 +823,12 @@ impl BirliContext {
         };
         if matches.is_present("flag-autos") {
             flag_ctx.autos = true;
+        }
+        if matches.is_present("flag-dc") {
+            flag_ctx.flag_dc = true;
+        }
+        if matches.is_present("no-flag-dc") {
+            flag_ctx.flag_dc = false;
         }
         Ok(flag_ctx)
     }
@@ -1075,8 +1083,6 @@ impl BirliContext {
             "flag-end-steps",
             "flag-edge-width",
             "flag-edge-chans",
-            "flag-dc",
-            "no-flag-dc",
             "no-sel-autos",
             "no-sel-flagged-ants",
             "sel-ants",
@@ -1097,6 +1103,8 @@ impl BirliContext {
             "flag-antennas",
             "time-chunk",
             "max-memory",
+            "flag-dc",
+            "no-flag-dc",
         ] {
             if matches.is_present(untested_option) {
                 warn!(

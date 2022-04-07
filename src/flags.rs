@@ -5,7 +5,7 @@ use std::ops::Range;
 use crate::{
     io::error::IOError,
     marlu::{
-        mwalib::CorrelatorContext,
+        mwalib::{CorrelatorContext, MWAVersion},
         ndarray::{Array, Array3, ArrayView, Dimension},
     },
     BirliError, FlagFileSet,
@@ -39,6 +39,9 @@ pub struct FlagContext {
     /// Whether auto-correlations are flagged
     #[builder(default = "false")]
     pub autos: bool,
+    /// Whether DC (centre) fine channel indices are flagged
+    #[builder(default = "false")]
+    pub flag_dc: bool,
 }
 
 impl FlagContext {
@@ -117,6 +120,9 @@ impl FlagContext {
             *flag = antenna.rfinput_x.flagged || antenna.rfinput_y.flagged;
         }
 
+        result.flag_dc = corr_ctx.mwa_version == MWAVersion::CorrOldLegacy
+                      || corr_ctx.mwa_version == MWAVersion::CorrLegacy;
+
         result
     }
 
@@ -147,13 +153,18 @@ impl FlagContext {
         let coarse_chan_flags = &self.coarse_chan_flags[coarse_chan_range.clone()];
         let baseline_flags = self.get_baseline_flags(ant_pairs);
 
+        let fine_channel_count = self.fine_chan_flags.len();
         let chan_flags: Vec<_> = coarse_chan_flags
             .iter()
             .flat_map(|coarse_chan_flag| {
                 if *coarse_chan_flag {
-                    vec![true; self.fine_chan_flags.len()]
+                    vec![true; fine_channel_count]
                 } else {
-                    self.fine_chan_flags.clone()
+                    let mut flags = self.fine_chan_flags.clone();
+                    if self.flag_dc {
+                      flags[fine_channel_count / 2] = true;
+                    }
+                    flags
                 }
             })
             .collect();
@@ -177,6 +188,7 @@ impl FlagContext {
 
         Ok(())
     }
+
 }
 
 /// Create an aoflagger [`CxxImageSet`] for a particular baseline from the given jones array
