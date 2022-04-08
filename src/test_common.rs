@@ -60,7 +60,7 @@ pub const fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
     (metafits_path, gpufits_paths)
 }
 
-pub fn get_mwax_data_paths() -> (&'static str, [&'static str; 4]) {
+pub const fn get_mwax_data_paths() -> (&'static str, [&'static str; 4]) {
     let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
     let gpufits_paths = [
         "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
