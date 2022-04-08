@@ -1425,7 +1425,9 @@ impl BirliContext {
 mod tests {
     use tempfile::tempdir;
 
-    use crate::{test_common::get_1254670392_avg_paths, BirliContext};
+    use crate::{
+        test_common::get_1254670392_avg_paths, test_common::get_mwax_data_paths, BirliContext,
+    };
 
     #[test]
     fn test_birli_context_display_doesnt_crash() {
@@ -1463,6 +1465,84 @@ mod tests {
         assert!(display.contains("Will not correct coarse pfb passband gains"));
         assert!(display.contains("Will flag with aoflagger"));
         assert!(display.contains("Will not correct geometry"));
+    }
+
+    #[test]
+    fn test_automatic_dc_flagging() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.flag_dc);
+    }
+
+    #[test]
+    fn test_no_automatic_dc_flagging() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(!flag_ctx.flag_dc);
+    }
+
+    #[test]
+    fn test_suppress_automatic_dc_flagging() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            "--no-flag-dc",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(!flag_ctx.flag_dc);
+    }
+
+    #[test]
+    fn test_force_dc_flagging() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            "--flag-dc",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.flag_dc);
     }
 }
 
