@@ -830,7 +830,57 @@ impl BirliContext {
         if matches.is_present("no-flag-dc") {
             flag_ctx.flag_dc = false;
         }
+        match matches.value_of_t::<usize>("flag-edge-chans") {
+            Ok(n) => {
+                if n >= flag_ctx.fine_chan_flags.len() / 2 {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--flag-edge-chans <COUNT>".into(),
+                        expected: "fewer than N/2-1 fine channels".into(),
+                        received: format!("{}", n),
+                    }));
+                }
+                Self::flag_edge_channels(n, &mut flag_ctx.fine_chan_flags);
+            }
+            Err(err) => match err.kind() {
+                ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
+        };
+        match matches.value_of_t::<usize>("flag-edge-width") {
+            Ok(width) => {
+                let fine_chan_width = corr_ctx.metafits_context.corr_fine_chan_width_hz / 1000;
+                let n = width as f32 / fine_chan_width as f32;
+                if (n - n.floor()).abs() > 0.00001 {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--flag-edge-width <COUNT>".into(),
+                        expected: format!("multiple of fine channel width ({})", fine_chan_width),
+                        received: format!("{}", width),
+                    }));
+                }
+                if n as usize >= flag_ctx.fine_chan_flags.len() / 2 {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--flag-edge-width <COUNT>".into(),
+                        expected: "width equal to fewer than N/2-1 fine channels".into(),
+                        received: format!("{}", n),
+                    }));
+                }
+                Self::flag_edge_channels(n as usize, &mut flag_ctx.fine_chan_flags);
+            }
+            Err(err) => match err.kind() {
+                ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
+        };
         Ok(flag_ctx)
+    }
+
+    fn flag_edge_channels(n: usize, channels: &mut [bool]) {
+        channels.iter_mut().take(n).for_each(|x| {
+            *x = true;
+        });
+        channels.iter_mut().rev().take(n).for_each(|x| {
+            *x = true;
+        });
     }
 
     fn parse_avg_matches(
@@ -1081,8 +1131,6 @@ impl BirliContext {
             "flag-init-steps",
             "flag-end",
             "flag-end-steps",
-            "flag-edge-width",
-            "flag-edge-chans",
             "no-sel-autos",
             "no-sel-flagged-ants",
             "sel-ants",
@@ -1636,6 +1684,83 @@ mod tests {
         let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
 
         assert!(!flag_ctx.flag_dc);
+    }
+
+    /// Flag 3 fine channels on the edge of a coarse channel with `flag-edge-chans`
+    #[test]
+    fn test_flag_edge_chans() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            "--flag-edge-chans", "3",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.fine_chan_flags[0]);
+        assert!(flag_ctx.fine_chan_flags[1]);
+        assert!(flag_ctx.fine_chan_flags[2]);
+        assert!(!flag_ctx.fine_chan_flags[3]);
+        assert!(!flag_ctx.fine_chan_flags[28]);
+        assert!(flag_ctx.fine_chan_flags[29]);
+        assert!(flag_ctx.fine_chan_flags[30]);
+        assert!(flag_ctx.fine_chan_flags[31]);
+    }
+
+    /// Flag 120kHz on the edges of a coarse channel with `flag-edge-width`
+    #[test]
+    fn test_flag_edge_width() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            "--flag-edge-width", "120",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.fine_chan_flags[0]);
+        assert!(flag_ctx.fine_chan_flags[1]);
+        assert!(flag_ctx.fine_chan_flags[2]);
+        assert!(!flag_ctx.fine_chan_flags[3]);
+        assert!(!flag_ctx.fine_chan_flags[28]);
+        assert!(flag_ctx.fine_chan_flags[29]);
+        assert!(flag_ctx.fine_chan_flags[30]);
+        assert!(flag_ctx.fine_chan_flags[31]);
+    }
+
+    /// Refuse to flag edge bandwidth that is not a multiple of fine channel resolution
+    #[test]
+    #[should_panic]
+    #[allow(unused_variables)]
+    fn test_error_flagging_width_not_multiple_of_fine_chan_width() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--emulate-cotter",
+            "--flag-edge-width", "110",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
     }
 }
 

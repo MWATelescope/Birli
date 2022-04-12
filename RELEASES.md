@@ -1,5 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.6.3 (2022-04-20)
+
+- ✨ new features:
+  - --flag-edge-chans and --flag-edge-width for edge channel flagging
+
 # Version 0.6.2 (2022-04-11)
 
 - ✨ new features:
