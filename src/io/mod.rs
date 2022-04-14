@@ -6,7 +6,10 @@ pub mod aocal;
 pub mod error;
 pub mod mwaf;
 
-use std::{ops::Range, path::Path};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 use log::trace;
 use marlu::{MwaObsContext, ObsContext, VisContext};
@@ -27,17 +30,17 @@ use self::error::IOError;
 pub struct IOContext {
     // in
     /// The path to the .metafits input file
-    pub metafits_in: String,
+    pub metafits_in: PathBuf,
     /// A vector of gpufits .fits input paths
-    pub gpufits_in: Vec<String>,
+    pub gpufits_in: Vec<PathBuf>,
     /// Optional path to a .bin ao calibration solutions input file
-    pub aocalsols_in: Option<String>,
+    pub aocalsols_in: Option<PathBuf>,
 
     // out
     /// Optional .uvfits output path
-    pub uvfits_out: Option<String>,
+    pub uvfits_out: Option<PathBuf>,
     /// Optional .ms measurement set output path
-    pub ms_out: Option<String>,
+    pub ms_out: Option<PathBuf>,
     /// Optional .mwaf flag file path template (see `io::mwaf::FlagFileSet`)
     pub flag_template: Option<String>,
 }
@@ -49,7 +52,7 @@ impl IOContext {
     ///
     /// see `mwalib::CorrelatorContext::new`
     pub fn get_corr_ctx(&self) -> Result<CorrelatorContext, MwalibError> {
-        CorrelatorContext::new(&self.metafits_in, &self.gpufits_in)
+        CorrelatorContext::new(self.metafits_in.clone(), &self.gpufits_in)
     }
 
     // TODO: pub fn validate_params(&self), checks permissions
@@ -110,7 +113,7 @@ pub trait ReadableVis: Sync + Send {
 /// let uvfits_out = tmp_dir.path().join("synthetic.uvfits");
 ///
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
-/// let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+/// let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
 ///
 /// // Determine which timesteps and coarse channels we want to use
 /// let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
@@ -190,7 +193,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
         &vis_ctx,
         Some(obs_ctx.array_pos),
         obs_ctx.phase_centre,
-        obs_ctx.name.clone(),
+        obs_ctx.name.as_deref(),
     )?;
 
     let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
@@ -242,7 +245,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
 /// let ms_out = tmp_dir.path().join("synthetic.ms");
 ///
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
-/// let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+/// let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
 ///
 /// // Determine which timesteps and coarse channels we want to use
 /// let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
@@ -383,7 +386,7 @@ mod tests_aoflagger {
         let uvfits_out = tmp_dir.path().join("1297526432.uvfits");
 
         // Create an mwalib::CorrelatorContext for accessing visibilities.
-        let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
 
         // create a CxxAOFlagger object to perform AOFlagger operations
         let aoflagger = unsafe { cxx_aoflagger_new() };

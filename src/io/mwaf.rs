@@ -627,7 +627,7 @@ mod tests {
         let test_dir = Path::new("tests/data/1247842824_flags/");
 
         let context = CorrelatorContext::new(
-            &test_dir.join("1247842824.metafits"),
+            test_dir.join("1247842824.metafits"),
             &[test_dir.join("1247842824_20190722150008_gpubox01_00.fits")],
         )
         .unwrap();
@@ -725,7 +725,7 @@ mod tests {
         let test_dir = Path::new("tests/data/1247842824_flags/");
 
         let context = CorrelatorContext::new(
-            &test_dir.join("1247842824.metafits"),
+            test_dir.join("1247842824.metafits"),
             &[test_dir.join("1247842824_20190722150008_gpubox01_00.fits")],
         )
         .unwrap();

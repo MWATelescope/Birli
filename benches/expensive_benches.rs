@@ -34,7 +34,7 @@ fn get_context_mwax_half_1247842824() -> CorrelatorContext {
         .filter_map(Result::ok)
         .map(|path| path.to_str().unwrap().to_owned())
         .collect();
-    CorrelatorContext::new(&metafits_path, &gpufits_files).unwrap()
+    CorrelatorContext::new(metafits_path, &gpufits_files).unwrap()
 }
 
 fn get_context_ord_half_1196175296() -> CorrelatorContext {
@@ -56,7 +56,7 @@ fn get_context_ord_half_1196175296() -> CorrelatorContext {
         .filter_map(Result::ok)
         .map(|path| path.to_str().unwrap().to_owned())
         .collect();
-    CorrelatorContext::new(&metafits_path, &gpufits_files).unwrap()
+    CorrelatorContext::new(metafits_path, &gpufits_files).unwrap()
 }
 
 fn bench_read_mwalib_mwax_half_1247842824(crt: &mut Criterion) {
