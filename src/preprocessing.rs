@@ -266,7 +266,7 @@ mod tests {
         let expected_csv_path =
             PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.uvfits.csv");
 
-        let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths)
+        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths)
             .expect("unable to get mwalib context");
 
         let mut prep_ctx = PreprocessContext::default();
@@ -356,7 +356,7 @@ mod tests {
     pub fn test_handle_weird_mwa_versions() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
-        let mut corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+        let mut corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
 
         let mut prep_ctx = PreprocessContext::default();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();

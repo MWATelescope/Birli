@@ -39,7 +39,7 @@ use std::{f64::consts::PI, ops::Range};
 /// ];
 ///
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
-/// let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+/// let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
 ///
 /// // Determine which timesteps and coarse channels we want to use
 /// let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
@@ -175,7 +175,7 @@ pub fn correct_cable_lengths(
 /// ];
 ///
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
-/// let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+/// let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
 ///
 /// // Determine which timesteps and coarse channels we want to use
 /// let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
@@ -851,6 +851,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unnecessary_cast)]
     fn test_cable_length_corrections_ord() {
         let corr_ctx = get_mwa_ord_context();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
@@ -1031,6 +1032,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unnecessary_cast)]
     fn test_geometric_corrections_ord() {
         let corr_ctx = get_mwa_ord_context();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();

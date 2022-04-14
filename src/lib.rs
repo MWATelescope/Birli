@@ -31,7 +31,7 @@
 //! let uvfits_out = tmp_dir.path().join("1297526432.uvfits");
 //!
 //! // Create an mwalib::CorrelatorContext for accessing visibilities.
-//! let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+//! let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
 //!
 //! // Determine which timesteps and coarse channels we want to use
 //! let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();

@@ -85,7 +85,7 @@ impl FlagContext {
     /// ];
     ///
     /// // Create an mwalib::CorrelatorContext for accessing visibilities.
-    /// let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+    /// let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
     /// let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
     ///
     /// assert!(!flag_ctx.antenna_flags[0]);
@@ -307,7 +307,7 @@ pub fn flag_baseline_view_to_flagmask(
 /// ];
 ///
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
-/// let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+/// let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
 ///
 /// // create a CxxAOFlagger object to perform AOFlagger operations
 /// let aoflagger = unsafe { cxx_aoflagger_new() };
@@ -460,7 +460,7 @@ pub fn flag_jones_array(
 /// let flag_template = tmp_dir.path().join("Flagfile%%%.mwaf");
 ///
 /// // Create an mwalib::CorrelatorContext for accessing visibilities.
-/// let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+/// let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
 ///
 /// // Determine which timesteps and coarse channels we want to use
 /// let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
@@ -695,7 +695,7 @@ mod tests_aoflagger {
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
             "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
         ];
-        CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+        CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap()
     }
 
     /// Test that flags are sane when not using existing flags.
