@@ -36,7 +36,7 @@ fn get_context_1196175296() -> CorrelatorContext {
         .filter_map(Result::ok)
         .map(|path| path.to_str().unwrap().to_owned())
         .collect();
-    CorrelatorContext::new(&metafits_path, &gpufits_files).unwrap()
+    CorrelatorContext::new(metafits_path, &gpufits_files).unwrap()
 }
 
 fn bench_uvfits_output_1196175296_none(crt: &mut Criterion) {

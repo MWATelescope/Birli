@@ -10,7 +10,7 @@ use crate::{
         },
         hifitime::Epoch,
         io::{ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWritable},
-        mwalib::{CorrelatorContext, GeometricDelaysApplied},
+        mwalib,
         ndarray::s,
         precession::{precess_time, PrecessionInfo},
         LatLngHeight, RADec,
@@ -23,6 +23,7 @@ use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::
 use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
 use marlu::{io::error::BadArrayShape, Jones, MwaObsContext, ObsContext, VisContext};
+use mwalib::{CorrelatorContext, GeometricDelaysApplied};
 use prettytable::{cell, format as prettyformat, row, table};
 use std::{
     collections::HashMap,
@@ -1123,7 +1124,11 @@ impl BirliContext {
         };
         prep_ctx.correct_cable_lengths = {
             let no_cable_delays = matches.is_present("no-cable-delay");
-            let cable_delays_applied = corr_ctx.metafits_context.cable_delays_applied;
+            let cable_delays_applied = match corr_ctx.metafits_context.cable_delays_applied {
+                mwalib::CableDelaysApplied::NoCableDelaysApplied => false,
+                mwalib::CableDelaysApplied::CableAndRecClock
+                | mwalib::CableDelaysApplied::CableAndRecClockAndBeamformerDipoleDelays => true,
+            };
             debug!(
                 "cable corrections: applied={}, desired={}",
                 cable_delays_applied, !no_cable_delays
@@ -1294,7 +1299,7 @@ impl BirliContext {
             let calsol_chans = calsols.di_jones.dim().2;
             if calsol_chans % corr_ctx.num_coarse_chans != 0 {
                 return Err(BirliError::BadArrayShape(BadArrayShape {
-                    argument: format!("io_ctx.aocalsols_in={}", calsol_file),
+                    argument: format!("io_ctx.aocalsols_in={}", calsol_file.display()),
                     expected: format!(
                         "a multiple of metafits_num_coarse_chans={}",
                         corr_ctx.metafits_context.num_metafits_coarse_chans
@@ -1326,7 +1331,7 @@ impl BirliContext {
                     &vis_ctx,
                     Some(obs_ctx.array_pos),
                     obs_ctx.phase_centre,
-                    obs_ctx.name.clone(),
+                    obs_ctx.name.as_deref(),
                 )
                 .expect("unable to initialize uvfits writer")
             })
@@ -1556,7 +1561,10 @@ mod tests {
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
 
         let display = format!("{}", &birli_ctx);
         assert!(display.contains("high_2019B_2458765_EOR0"));
@@ -2411,7 +2419,10 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.uvfits_out,
             Some(uvfits_path.to_str().unwrap().into())
@@ -2461,7 +2472,10 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert_eq!(birli_ctx.prep_ctx.aoflagger_strategy, None);
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.uvfits_out,
             Some(uvfits_path.to_str().unwrap().into())
@@ -2510,7 +2524,10 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.uvfits_out,
             Some(uvfits_path.to_str().unwrap().into())
@@ -2589,7 +2606,10 @@ mod tests_aoflagger {
         assert!(birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
         assert_eq!(birli_ctx.prep_ctx.phase_centre, RADec { ra: 0., dec: 0. });
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.uvfits_out,
             Some(uvfits_path.to_str().unwrap().into())
@@ -2671,7 +2691,10 @@ mod tests_aoflagger {
         assert!(birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
         assert_eq!(birli_ctx.prep_ctx.phase_centre, pointing_centre);
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -2751,7 +2774,10 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, None));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -2803,7 +2829,10 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, None));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -2882,7 +2911,10 @@ mod tests_aoflagger {
         assert!(birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, None));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -2967,7 +2999,10 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, None));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -3042,7 +3077,10 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -3132,7 +3170,10 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -3189,7 +3230,10 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -3248,7 +3292,10 @@ mod tests_aoflagger {
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.ms_out,
             Some(ms_path.to_str().unwrap().into())
@@ -3372,15 +3419,20 @@ mod tests_aoflagger_flagset {
         assert!(birli_ctx.prep_ctx.correct_digital_gains);
         assert!(birli_ctx.prep_ctx.correct_geometry);
         assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
-        assert_eq!(birli_ctx.io_ctx.metafits_in, metafits_path.to_string());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
         assert_eq!(
             birli_ctx.io_ctx.flag_template,
             Some(mwaf_path_template.to_str().unwrap().into())
         );
 
-        let corr_ctx =
-            CorrelatorContext::new(&birli_ctx.io_ctx.metafits_in, &birli_ctx.io_ctx.gpufits_in)
-                .unwrap();
+        let corr_ctx = CorrelatorContext::new(
+            birli_ctx.io_ctx.metafits_in.clone(),
+            &birli_ctx.io_ctx.gpufits_in,
+        )
+        .unwrap();
 
         birli_ctx.run().unwrap();
 

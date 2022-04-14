@@ -74,12 +74,12 @@ pub const fn get_mwax_data_paths() -> (&'static str, [&'static str; 4]) {
 #[allow(dead_code)]
 pub(crate) fn get_1254670392_avg_context() -> CorrelatorContext {
     let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
-    CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+    CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap()
 }
 
 pub fn get_mwax_context() -> CorrelatorContext {
     let (metafits_path, gpufits_paths) = get_mwax_data_paths();
-    CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+    CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap()
 }
 
 pub fn get_mwa_ord_context() -> CorrelatorContext {
@@ -90,7 +90,7 @@ pub fn get_mwa_ord_context() -> CorrelatorContext {
         "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
         "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
     ];
-    CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+    CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap()
 }
 
 /// Get a dummy MWA Ord `corr_ctx` with multiple holes in the data
@@ -110,7 +110,7 @@ pub fn get_mwa_ord_dodgy_context() -> CorrelatorContext {
         "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
         "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
     ];
-    CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+    CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap()
 }
 
 /// Get a dummy MWA Ord `corr_ctx` with no overlapping timesteps
@@ -127,7 +127,7 @@ pub fn get_mwa_ord_no_overlap_context() -> CorrelatorContext {
         "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
         "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
     ];
-    CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap()
+    CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap()
 }
 
 /// Get a dummy MWA Ord `corr_ctx` with no timesteps
