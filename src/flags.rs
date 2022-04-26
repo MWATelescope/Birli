@@ -43,6 +43,10 @@ pub struct FlagContext {
     /// Whether DC (centre) fine channel indices are flagged
     #[builder(default = "false")]
     pub flag_dc: bool,
+    /// How many seconds to flag from the start of the observation
+    pub flag_init: f32,
+    /// How many seconds to flag from the end of the observation
+    pub flag_end: f32,
 }
 
 impl FlagContext {
@@ -126,6 +130,7 @@ impl FlagContext {
             MWAVersion::CorrOldLegacy | MWAVersion::CorrLegacy
         );
 
+        result.flag_init = corr_ctx.metafits_context.quack_time_duration_ms as f32 / 1000.0;
         result
     }
 
@@ -138,6 +143,23 @@ impl FlagContext {
                 self.antenna_flags[ant1] || self.antenna_flags[ant2] || (self.autos && ant1 == ant2)
             })
             .collect()
+    }
+
+    /// Apply timestep flags from `flag_init` and `flag_end`
+    ///
+    /// Default values for these are inferred from metadata, but may be
+    /// overridden by command line arguments, so we apply the flags only after
+    /// both have been considered.
+    ///
+    /// TODO: move DC flagging and other flags that combine contextual defaults
+    /// and command line arguments here.
+    pub fn finalise_flag_settings(&mut self, corr_ctx: &CorrelatorContext) {
+        let flag_before = corr_ctx.common_start_unix_time_ms + (self.flag_init * 1000.0) as u64;
+        let flag_after = corr_ctx.common_end_unix_time_ms - (self.flag_end * 1000.0) as u64;
+        for (flag, timestep) in self.timestep_flags.iter_mut().zip(&corr_ctx.timesteps) {
+            let time = timestep.unix_time_ms;
+            *flag |= !(time >= flag_before && time < flag_after);
+        }
     }
 
     /// Set flags from this context in an existing array.

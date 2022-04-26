@@ -227,16 +227,16 @@ FLAGGING:
         --flag-antennas <ANTS>...         [WIP] Flag antenna indices
         --flag-autos                      [WIP] Flag auto correlations
         --flag-coarse-chans <CHANS>...    [WIP] Flag additional coarse chan indices
-        --flag-dc                         [WIP] Force flagging of DC centre chans
-        --flag-edge-chans <COUNT>         [WIP] Flag <COUNT> fine chans on the ends of each coarse
-        --flag-edge-width <KHZ>           [WIP] Flag bandwidth [kHz] at the ends of each coarse chan
-        --flag-end <SECONDS>              [WIP] Flag seconds before the last provided time
-        --flag-end-steps <COUNT>          [WIP] Flag <COUNT> steps before the last provided
-        --flag-fine-chans <CHANS>...      [WIP] Flag fine chan indices in each coarse chan
-        --flag-init <SECONDS>             [WIP] Flag <SECONDS> after first common time (quack time)
-        --flag-init-steps <COUNT>         [WIP] Flag <COUNT> steps after first common time
-        --flag-times <STEPS>...           [WIP] Flag additional time steps
-        --no-flag-dc                      [WIP] Do not flag DC centre chans
+        --flag-dc                         Force flagging of DC centre chans
+        --flag-edge-chans <COUNT>         Flag <COUNT> fine chans on the ends of each coarse
+        --flag-edge-width <KHZ>           Flag bandwidth [kHz] at the ends of each coarse chan
+        --flag-end <SECONDS>              Flag seconds before the last provided time
+        --flag-end-steps <COUNT>          Flag <COUNT> steps before the last provided
+        --flag-fine-chans <CHANS>...      Flag fine chan indices in each coarse chan
+        --flag-init <SECONDS>             Flag <SECONDS> after first common time (quack time)
+        --flag-init-steps <COUNT>         Flag <COUNT> steps after first common time
+        --flag-times <STEPS>...           Flag additional time steps
+        --no-flag-dc                      Do not flag DC centre chans
         --no-flag-metafits                [WIP] Ignore antenna flags in metafits
 
 CORRECTION:

@@ -871,6 +871,62 @@ impl BirliContext {
                 _ => return Err(err.into()),
             },
         };
+        match matches.value_of_t::<f32>("flag-init") {
+            Ok(init_time) => {
+                let d = corr_ctx.metafits_context.corr_int_time_ms as f32 / 1000.0;
+                if init_time % d < 0.000001 {
+                    flag_ctx.flag_init = init_time;
+                } else {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "flag-init".into(),
+                        expected: format!("A multiple of the timestep length ({})", d),
+                        received: format!("{}", init_time),
+                    }));
+                }
+            }
+            Err(err) => match err.kind() {
+                ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
+        };
+        match matches.value_of_t::<f32>("flag-end") {
+            Ok(end_time) => {
+                let d = corr_ctx.metafits_context.corr_int_time_ms as f32 / 1000.0;
+                if end_time % d < 0.000001 {
+                    flag_ctx.flag_end = end_time;
+                } else {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "flag-end".into(),
+                        expected: format!("A multiple of the timestep length ({})", d),
+                        received: format!("{}", end_time),
+                    }));
+                }
+            }
+            Err(err) => match err.kind() {
+                ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
+        };
+        match matches.value_of_t::<u32>("flag-init-steps") {
+            Ok(init_steps) => {
+                flag_ctx.flag_init =
+                    init_steps as f32 * corr_ctx.metafits_context.corr_int_time_ms as f32 / 1000.0;
+            }
+            Err(err) => match err.kind() {
+                ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
+        };
+        match matches.value_of_t::<u32>("flag-end-steps") {
+            Ok(end_steps) => {
+                flag_ctx.flag_end =
+                    end_steps as f32 * corr_ctx.metafits_context.corr_int_time_ms as f32 / 1000.0;
+            }
+            Err(err) => match err.kind() {
+                ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
+        };
         Ok(flag_ctx)
     }
 
@@ -1126,15 +1182,7 @@ impl BirliContext {
         let matches = Self::get_matches(args)?;
         trace!("arg matches:\n{:?}", &matches);
 
-        for unimplemented_option in &[
-            "flag-init",
-            "flag-init-steps",
-            "flag-end",
-            "flag-end-steps",
-            "no-sel-autos",
-            "no-sel-flagged-ants",
-            "sel-ants",
-        ] {
+        for unimplemented_option in &["no-sel-autos", "no-sel-flagged-ants", "sel-ants"] {
             assert!(
                 !matches.is_present(unimplemented_option),
                 "option not yet implemented: --{}",
@@ -1143,7 +1191,6 @@ impl BirliContext {
         }
 
         for untested_option in &[
-            "flag-times",
             "flag-coarse-chans",
             "flag-fine-chans",
             "flag-autos",
@@ -1164,12 +1211,12 @@ impl BirliContext {
         let corr_ctx = io_ctx.get_corr_ctx()?;
         debug!("mwalib correlator context:\n{}", &corr_ctx);
         let vis_sel = Self::parse_vis_sel_matches(&corr_ctx, &matches)?;
-        let flag_ctx = Self::parse_flag_matches(&corr_ctx, &matches)?;
+        let mut flag_ctx = Self::parse_flag_matches(&corr_ctx, &matches)?;
         let prep_ctx = Self::parse_prep_matches(&matches, &corr_ctx)?;
         let (avg_time, avg_freq) = Self::parse_avg_matches(&matches, &corr_ctx)?;
         let num_timesteps_per_chunk =
             Self::parse_chunk_matches(&corr_ctx, &matches, avg_time, &vis_sel)?;
-
+        flag_ctx.finalise_flag_settings(&corr_ctx);
         let result = Self {
             corr_ctx,
             prep_ctx,
@@ -1525,6 +1572,7 @@ mod tests {
             "-m", metafits_path,
             "--no-draw-progress",
             "--emulate-cotter",
+           "--flag-init", "0",
             gpufits_paths[0],
             gpufits_paths[1],
         ];
@@ -1885,13 +1933,113 @@ mod argparse_tests {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
         #[rustfmt::skip]
-        let mut args = vec!["birli", "-m", metafits_path, "--flag-times", "2", "--"];
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-times", "2", "--flag-init", "0", "--"];
         args.extend_from_slice(&gpufits_paths);
 
         let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
 
         assert!(flag_ctx.timestep_flags[2]);
         assert!(!flag_ctx.timestep_flags[1]);
+    }
+
+    #[test]
+    fn test_parse_flag_init_time() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-init", "2", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.timestep_flags[0]);
+        assert!(!flag_ctx.timestep_flags[1]);
+    }
+
+    #[test]
+    fn test_parse_flag_init_steps() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-init-steps", "1", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.timestep_flags[0]);
+        assert!(!flag_ctx.timestep_flags[1]);
+    }
+
+    #[test]
+    fn test_parse_flag_init_invalid_indivisible() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--flag-init", "1",
+            "--",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_flag_end_time() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-init", "0", "--flag-end", "2", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext {
+            corr_ctx, flag_ctx, ..
+        } = BirliContext::from_args(&args).unwrap();
+        let n = corr_ctx.num_common_timesteps;
+
+        assert!(flag_ctx.timestep_flags[n - 1]);
+        assert!(!flag_ctx.timestep_flags[n - 2]);
+    }
+
+    #[test]
+    fn test_parse_flag_end_steps() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-init", "0", "--flag-end-steps", "1", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext {
+            corr_ctx, flag_ctx, ..
+        } = BirliContext::from_args(&args).unwrap();
+        let n = corr_ctx.num_common_timesteps;
+
+        assert!(flag_ctx.timestep_flags[n - 1]);
+        assert!(!flag_ctx.timestep_flags[n - 2]);
+    }
+
+    #[test]
+    fn test_parse_flag_end_invalid_indivisible() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--flag-end", "1",
+            "--",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
     }
 
     #[test]
@@ -2246,6 +2394,7 @@ mod tests_aoflagger {
             "--no-geometric-delay",
             "--emulate-cotter",
             "--no-flag-dc",
+            "--flag-init", "0",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2344,6 +2493,7 @@ mod tests_aoflagger {
             "--pfb-gains", "none",
             "--emulate-cotter",
             "--no-flag-dc",
+            "--flag-init", "0",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2420,7 +2570,8 @@ mod tests_aoflagger {
             "--no-draw-progress",
             "--pfb-gains", "none",
             "--emulate-cotter",
-            "--no-flag-dc",
+            "--no-flag-dc", 
+            "--flag-init", "0",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -2713,6 +2864,7 @@ mod tests_aoflagger {
             "--no-rfi",
             "--emulate-cotter",
             "--no-flag-dc",
+            "--flag-init", "0",
             gpufits_paths[23],
             gpufits_paths[22],
         ];
@@ -2796,6 +2948,7 @@ mod tests_aoflagger {
             "--no-digital-gains",
             "--pfb-gains", "cotter",
             "--emulate-cotter",
+            "--flag-init", "0",
             "--no-flag-dc",
             gpufits_paths[23],
             gpufits_paths[22],
@@ -2837,7 +2990,6 @@ mod tests_aoflagger {
     ///   -allowmissing \
     ///   -edgewidth 0 \
     ///   -endflag 0 \
-    ///   -initflag 0 \
     ///   -noantennapruning \
     ///   -noflagautos \
     ///   -noflagdcchannels \
@@ -2862,7 +3014,7 @@ mod tests_aoflagger {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
         let expected_csv_path =
-            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.corrected.ms.csv");
+            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.corrected.dequacked.ms.csv");
 
         #[rustfmt::skip]
         let mut args = vec![
@@ -2913,11 +3065,10 @@ mod tests_aoflagger {
     /// ```bash
     /// cotter \
     ///   -m tests/data/1254670392_avg/1254670392.fixed.metafits \
-    ///   -o tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.ms \
+    ///   -o tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.dequacked.ms \
     ///   -allowmissing \
     ///   -edgewidth 0 \
     ///   -endflag 0 \
-    ///   -initflag 0 \
     ///   -noantennapruning \
     ///   -nocablelength \
     ///   -nogeom \
@@ -2926,7 +3077,7 @@ mod tests_aoflagger {
     ///   -nosbgains \
     ///   -sbpassband tests/data/subband-passband-32ch-unitary.txt \
     ///   -nostats \
-    ///   -flag-strategy /usr/share/aoflagger/strategies/mwa-default.lua \
+    ///   -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
     ///   -timeres 4 \
     ///   -freqres 160 \
     ///   tests/data/1254670392_avg/1254670392*gpubox*.fits
@@ -2935,7 +3086,7 @@ mod tests_aoflagger {
     /// then the following casa commands:
     ///
     /// ```python
-    /// tb.open('tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.ms/')
+    /// tb.open('tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.dequacked.ms/')
     /// exec(open('tests/data/casa_dump_ms.py').read())
     /// ```
     #[test]
@@ -2945,8 +3096,9 @@ mod tests_aoflagger {
 
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
-        let expected_csv_path =
-            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.ms.csv");
+        let expected_csv_path = PathBuf::from(
+            "tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.dequacked.ms.csv",
+        );
 
         env_logger::try_init().unwrap_or(());
 
@@ -3001,8 +3153,9 @@ mod tests_aoflagger {
 
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
-        let expected_csv_path =
-            PathBuf::from("tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.ms.csv");
+        let expected_csv_path = PathBuf::from(
+            "tests/data/1254670392_avg/1254670392.cotter.none.avg_4s_160khz.dequacked.ms.csv",
+        );
 
         env_logger::try_init().unwrap_or(());
 
@@ -3078,6 +3231,7 @@ mod tests_aoflagger {
             "--sel-time", "0", "2",
             "--time-chunk", "2",
             "--no-flag-dc",
+            "--flag-init", "0",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -3201,6 +3355,7 @@ mod tests_aoflagger_flagset {
             "--pfb-gains", "none",
             "-f", mwaf_path_template.to_str().unwrap(),
             "--no-flag-dc",
+            "--flag-init", "0",
         ];
         args.extend_from_slice(&gpufits_paths);
 
@@ -3246,7 +3401,7 @@ mod tests_aoflagger_flagset {
         .unwrap();
 
         assert_flagsets_eq!(
-            &corr_ctx,
+            corr_ctx,
             birli_flag_file_set,
             cotter_flag_file_set,
             gpubox_ids

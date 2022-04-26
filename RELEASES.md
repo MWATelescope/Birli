@@ -1,5 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.6.4 (2022-05-04)
+
+- ✨ new features:
+  - Automatic quack time flagging
+  - CLI options for timestep flagging
+
 # Version 0.6.3 (2022-04-20)
 
 - ✨ new features:
