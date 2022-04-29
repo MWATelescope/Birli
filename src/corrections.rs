@@ -407,34 +407,35 @@ fn _correct_digital_gains(
     assert!(vis_dims.1 == gain_dims.1 * num_fine_chans_per_coarse);
 
     // iterate through the selected baselines
-    for (mut jones_array, (ant1_idx, ant2_idx)) in izip!(
-        jones_array.axis_iter_mut(Axis(2)),
-        ant_pairs.iter().copied()
-    ) {
-        // iterate through the selected coarse channels
-        for (mut jones_array, &(gain1x, gain1y), &(gain2x, gain2y)) in izip!(
-            jones_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse),
-            gains.index_axis(Axis(0), ant1_idx),
-            gains.index_axis(Axis(0), ant2_idx),
-        ) {
-            // for all visibilities in the selected coarse channel, for all timesteps
-            for jones in jones_array.iter_mut() {
-                // promote
-                let corrected = Jones::<f64>::from(*jones);
-                // divide by gain and demote
-                *jones = Jones::<f32>::from([
-                    (corrected[0].re / gain1x / gain2x) as _,
-                    (corrected[0].im / gain1x / gain2x) as _,
-                    (corrected[1].re / gain1x / gain2y) as _,
-                    (corrected[1].im / gain1x / gain2y) as _,
-                    (corrected[2].re / gain1y / gain2x) as _,
-                    (corrected[2].im / gain1y / gain2x) as _,
-                    (corrected[3].re / gain1y / gain2y) as _,
-                    (corrected[3].im / gain1y / gain2y) as _,
-                ]);
+    jones_array
+        .axis_iter_mut(Axis(2))
+        .into_par_iter()
+        .zip(ant_pairs)
+        .for_each(|(mut jones_array, &(ant1_idx, ant2_idx))| {
+            // iterate through the selected coarse channels
+            for (mut jones_array, &(gain1x, gain1y), &(gain2x, gain2y)) in izip!(
+                jones_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse),
+                gains.index_axis(Axis(0), ant1_idx),
+                gains.index_axis(Axis(0), ant2_idx),
+            ) {
+                // for all visibilities in the selected coarse channel, for all timesteps
+                for jones in jones_array.iter_mut() {
+                    // promote
+                    let corrected = Jones::<f64>::from(*jones);
+                    // divide by gain and demote
+                    *jones = Jones::<f32>::from([
+                        (corrected[0].re / gain1x / gain2x) as _,
+                        (corrected[0].im / gain1x / gain2x) as _,
+                        (corrected[1].re / gain1x / gain2y) as _,
+                        (corrected[1].im / gain1x / gain2y) as _,
+                        (corrected[2].re / gain1y / gain2x) as _,
+                        (corrected[2].im / gain1y / gain2x) as _,
+                        (corrected[3].re / gain1y / gain2y) as _,
+                        (corrected[3].im / gain1y / gain2y) as _,
+                    ]);
+                }
             }
-        }
-    }
+        });
 
     Ok(())
 }

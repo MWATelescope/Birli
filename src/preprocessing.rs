@@ -139,8 +139,13 @@ impl PreprocessContext {
             trace!("correcting cable lengths");
             with_increment_duration!(
                 durations,
-                "correct",
-                correct_cable_lengths(corr_ctx, jones_array, &vis_sel.coarse_chan_range, false)
+                "correct_cable",
+                correct_cable_lengths(
+                    corr_ctx,
+                    jones_array,
+                    &vis_sel.coarse_chan_range,
+                    self.draw_progress
+                )
             );
         }
 
@@ -150,7 +155,7 @@ impl PreprocessContext {
             trace!("correcting digital gains");
             with_increment_duration!(
                 durations,
-                "correct",
+                "correct_digital",
                 correct_digital_gains(
                     corr_ctx,
                     jones_array,
@@ -167,7 +172,7 @@ impl PreprocessContext {
             trace!("correcting pfb gains");
             with_increment_duration!(
                 durations,
-                "correct",
+                "correct_passband",
                 correct_coarse_passband_gains(
                     jones_array,
                     weight_array,
@@ -202,7 +207,7 @@ impl PreprocessContext {
             trace!("correcting geometric delays");
             with_increment_duration!(
                 durations,
-                "correct",
+                "correct_geom",
                 correct_geometry(
                     corr_ctx,
                     jones_array,
