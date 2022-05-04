@@ -4,9 +4,9 @@ on:
   push:
     tags-ignore:
       - '**'
-    pull_request:
     branches:
     - '**'
+  pull_request:
 
 name: Linux Tests
 
