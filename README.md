@@ -5,9 +5,7 @@
 <img src="img/birli.png" height="200px" alt="Birli logo">
 <br/>
 <a href="https://github.com/MWATelescope/Birli/actions/workflows/linux_test.yml">
-  <img src="https://github.com/MWATelescope/Birli/actions/workflows/linux_test.yml/badge.svg" alt="MacOS Tests"></a>
-<a href="https://github.com/MWATelescope/Birli/actions/workflows/macos_test.yml">
-  <img src="https://github.com/MWATelescope/Birli/actions/workflows/macos_test.yml/badge.svg" alt="Linix Tests"></a>
+  <img src="https://github.com/MWATelescope/Birli/actions/workflows/linux_test.yml/badge.svg" alt="Linux Tests"></a>
 <a href="https://crates.io/crates/birli">
   <img alt="Crates.io" src="https://img.shields.io/crates/d/birli?label=crates.io%20%E2%AC%87%EF%B8%8F"></a>
 <a href="https://docs.rs/crate/birli/">
@@ -44,7 +42,7 @@ descriptor for the speed which this library intends to deliver.
 - [LibERFA](https://github.com/liberfa/erfa) >= 1.7.1
   (Ubuntu > 20.04: apt install liberfa-dev)
 
-for OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) and [macOS](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/macos_test.yml) CI Scripts; the [Makefile.toml](https://github.com/MWATelescope/Birli/blob/main/Makefile.toml); and the [Dockerfile](https://github.com/MWATelescope/Birli/blob/main/Dockerfile) as these are tested regularly. The instructions below may be updated less frequently, but are better documented.
+for OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) CI Script; the [Makefile.toml](https://github.com/MWATelescope/Birli/blob/main/Makefile.toml); and the [Dockerfile](https://github.com/MWATelescope/Birli/blob/main/Dockerfile) as these are tested regularly. The instructions below may be updated less frequently, but are better documented.
 
 ### (Debian/Ubuntu) Linux Setup
 
@@ -66,24 +64,11 @@ cargo make install_deps
 export LD_LIBRARY_PATH="/usr/local/lib/:/usr/lib/x86_64-linux-gnu/"
 ```
 
-### MacOS Setup
-
-```bash
-# Install homebrew
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-# Run the Rustup install script, profile=default, toolchain=stable
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -sSf | sh -s -- -y
-# Cargo make uses Makefile.toml to automate development tasks
-cargo install --force cargo-make
-# Add the MWATelescope homebrew tap
-brew tap mwaTelescope/tap
-# Install prerequisite libraries
-brew cask install casacore-data casacore aoflagger erfa
-```
-
-### Windows Setup
+### Other Operating Systems
 
 Unfortunately most of the prerequisites aren't available on Windows. However, WSL is great, and there is a docker image! You could use VSCode remote for WSL or Docker. Your best best is Ubuntu LTS
+
+Previously macOS was supported, however this has ben dropped due to issues with the [aoflagger Homebrew tap](https://github.com/MWATelescope/homebrew-tap/blob/main/Formula/aoflagger.rb). Any help here would be welcome.
 
 ### Installing the binary
 
