@@ -6,7 +6,7 @@ use crate::{
     io::error::IOError,
     marlu::{
         mwalib::{CorrelatorContext, MWAVersion},
-        ndarray::{Array, Array3, ArrayView, Dimension},
+        ndarray::prelude::*,
     },
     BirliError, FlagFileSet,
 };
@@ -146,7 +146,7 @@ impl FlagContext {
     /// Can throw error if array is not the correct shape.
     pub fn set_flags(
         &self,
-        flag_array: &mut Array3<bool>,
+        mut flag_array: ArrayViewMut3<bool>,
         timestep_range: &Range<usize>,
         coarse_chan_range: &Range<usize>,
         ant_pairs: &[(usize, usize)],
@@ -332,8 +332,8 @@ pub fn flag_baseline_view_to_flagmask(
 /// flag_jones_array_existing(
 ///    &aoflagger,
 ///    &strategy_filename,
-///    &jones_array,
-///    &mut flag_array,
+///    jones_array.view(),
+///    flag_array.view_mut(),
 ///    true,
 ///    false,
 /// );
@@ -342,8 +342,8 @@ pub fn flag_baseline_view_to_flagmask(
 pub fn flag_jones_array_existing(
     aoflagger: &CxxAOFlagger,
     strategy_filename: &str,
-    jones_array: &Array3<Jones<f32>>,
-    flag_array: &mut Array3<bool>,
+    jones_array: ArrayView3<Jones<f32>>,
+    mut flag_array: ArrayViewMut3<bool>,
     re_apply_existing: bool,
     draw_progress: bool,
 ) {
@@ -414,14 +414,14 @@ pub fn flag_jones_array_existing(
 pub fn flag_jones_array(
     aoflagger: &CxxAOFlagger,
     strategy_filename: &str,
-    jones_array: &Array3<Jones<f32>>,
+    jones_array: ArrayView3<Jones<f32>>,
 ) -> Array3<bool> {
     let mut flag_array = Array3::from_elem(jones_array.dim(), false);
     flag_jones_array_existing(
         aoflagger,
         strategy_filename,
         jones_array,
-        &mut flag_array,
+        flag_array.view_mut(),
         false,
         false,
     );
@@ -472,7 +472,7 @@ pub fn flag_jones_array(
 /// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 /// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
 /// flag_ctx.set_flags(
-///     &mut flag_array,
+///     flag_array.view_mut(),
 ///     &vis_sel.timestep_range,
 ///     &vis_sel.coarse_chan_range,
 ///     &vis_sel.get_ant_pairs(&corr_ctx.metafits_context)
@@ -513,7 +513,7 @@ pub fn write_flags(
     );
 
     let mut flag_file_set = FlagFileSet::new(filename_template, &gpubox_ids, corr_ctx.mwa_version)?;
-    flag_file_set.write_flag_array(corr_ctx, flag_array, &gpubox_ids)?;
+    flag_file_set.write_flag_array(corr_ctx, flag_array.view(), &gpubox_ids)?;
 
     trace!("end write_flags");
     Ok(())
@@ -731,7 +731,7 @@ mod tests_aoflagger {
 
         let strategy_filename = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
 
-        let flag_array = flag_jones_array(&aoflagger, &strategy_filename, &jones_array);
+        let flag_array = flag_jones_array(&aoflagger, &strategy_filename, jones_array.view());
 
         assert!(!flag_array.get((0, 0, 0)).unwrap());
         assert!(!flag_array.get((noise_x, noise_y, 0)).unwrap());
@@ -784,8 +784,8 @@ mod tests_aoflagger {
         flag_jones_array_existing(
             &aoflagger,
             &strategy_filename,
-            &jones_array,
-            &mut existing_flag_array,
+            jones_array.view(),
+            existing_flag_array.view_mut(),
             true,
             false,
         );
@@ -814,7 +814,7 @@ mod tests_aoflagger {
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         flag_ctx
             .set_flags(
-                &mut flag_array,
+                flag_array.view_mut(),
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
                 &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
@@ -835,8 +835,8 @@ mod tests_aoflagger {
         flag_jones_array_existing(
             &aoflagger,
             strategy_filename,
-            &jones_array,
-            &mut flag_array,
+            jones_array.view(),
+            flag_array.view_mut(),
             true,
             false,
         );

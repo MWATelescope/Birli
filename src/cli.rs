@@ -1297,19 +1297,25 @@ impl BirliContext {
 
             // only reallocate arrays if the chunk dimensions have changed.
             let chunk_dims = chunk_vis_sel.get_shape(fine_chans_per_coarse);
-            if jones_array.dim() != chunk_dims {
-                jones_array = chunk_vis_sel.allocate_jones(fine_chans_per_coarse)?;
-            }
-            if flag_array.dim() != chunk_dims {
-                flag_array = chunk_vis_sel.allocate_flags(fine_chans_per_coarse)?;
-            }
-            if weight_array.dim() != chunk_dims {
-                weight_array = chunk_vis_sel.allocate_weights(fine_chans_per_coarse)?;
-            }
+            let (mut jones_array, mut flag_array, mut weight_array) = if jones_array.dim()
+                == chunk_dims
+            {
+                (
+                    jones_array.view_mut(),
+                    flag_array.view_mut(),
+                    weight_array.view_mut(),
+                )
+            } else {
+                (
+                    jones_array.slice_mut(s![0..chunk_dims.0, 0..chunk_dims.1, 0..chunk_dims.2]),
+                    flag_array.slice_mut(s![0..chunk_dims.0, 0..chunk_dims.1, 0..chunk_dims.2]),
+                    weight_array.slice_mut(s![0..chunk_dims.0, 0..chunk_dims.1, 0..chunk_dims.2]),
+                )
+            };
 
             // populate flags
             flag_ctx.set_flags(
-                &mut flag_array,
+                flag_array.view_mut(),
                 &chunk_vis_sel.timestep_range,
                 &chunk_vis_sel.coarse_chan_range,
                 &chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
@@ -1332,9 +1338,9 @@ impl BirliContext {
 
             prep_ctx.preprocess(
                 &corr_ctx,
-                &mut jones_array,
-                &mut weight_array,
-                &mut flag_array,
+                jones_array.view_mut(),
+                weight_array.view_mut(),
+                flag_array.view_mut(),
                 &mut durations,
                 &chunk_vis_sel,
             )?;
@@ -1345,7 +1351,7 @@ impl BirliContext {
                     durations,
                     "write",
                     flag_file_set
-                        .write_flag_array(&corr_ctx, &flag_array, &gpubox_ids)
+                        .write_flag_array(&corr_ctx, flag_array.view(), &gpubox_ids)
                         .expect("unable to write flags")
                 );
             }
@@ -1503,7 +1509,7 @@ mod tests {
         let mut flag_array = chunk_vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         flag_ctx
             .set_flags(
-                &mut flag_array,
+                flag_array.view_mut(),
                 &chunk_vis_sel.timestep_range,
                 &chunk_vis_sel.coarse_chan_range,
                 &chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context),

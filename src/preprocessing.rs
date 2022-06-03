@@ -3,11 +3,7 @@ use crate::{
     calibration::apply_di_calsol,
     correct_cable_lengths, correct_geometry,
     corrections::{correct_coarse_passband_gains, correct_digital_gains, ScrunchType},
-    marlu::{
-        mwalib::CorrelatorContext,
-        ndarray::{Array2, Array3},
-        Jones, LatLngHeight, RADec,
-    },
+    marlu::{mwalib::CorrelatorContext, ndarray::prelude::*, Jones, LatLngHeight, RADec},
     with_increment_duration, BirliError, VisSelection,
 };
 use cfg_if::cfg_if;
@@ -129,9 +125,9 @@ impl PreprocessContext {
     pub fn preprocess(
         &self,
         corr_ctx: &CorrelatorContext,
-        jones_array: &mut Array3<Jones<f32>>,
-        weight_array: &mut Array3<f32>,
-        flag_array: &mut Array3<bool>,
+        mut jones_array: ArrayViewMut3<Jones<f32>>,
+        mut weight_array: ArrayViewMut3<f32>,
+        mut flag_array: ArrayViewMut3<bool>,
         durations: &mut HashMap<String, Duration>,
         vis_sel: &VisSelection,
     ) -> Result<(), BirliError> {
@@ -140,7 +136,12 @@ impl PreprocessContext {
             with_increment_duration!(
                 durations,
                 "correct",
-                correct_cable_lengths(corr_ctx, jones_array, &vis_sel.coarse_chan_range, false)
+                correct_cable_lengths(
+                    corr_ctx,
+                    jones_array.view_mut(),
+                    &vis_sel.coarse_chan_range,
+                    false
+                )
             );
         }
 
@@ -153,7 +154,7 @@ impl PreprocessContext {
                 "correct",
                 correct_digital_gains(
                     corr_ctx,
-                    jones_array,
+                    jones_array.view_mut(),
                     &vis_sel.coarse_chan_range,
                     &sel_ant_pairs,
                 )?
@@ -169,8 +170,8 @@ impl PreprocessContext {
                 durations,
                 "correct",
                 correct_coarse_passband_gains(
-                    jones_array,
-                    weight_array,
+                    jones_array.view_mut(),
+                    weight_array.view_mut(),
                     passband_gains,
                     fine_chans_per_coarse,
                     &ScrunchType::from_mwa_version(corr_ctx.metafits_context.mwa_version.unwrap())?,
@@ -188,8 +189,8 @@ impl PreprocessContext {
                         flag_jones_array_existing(
                             &aoflagger,
                             strategy,
-                            jones_array,
-                            flag_array,
+                            jones_array.view(),
+                            flag_array.view_mut(),
                             true,
                             self.draw_progress,
                         )
@@ -205,7 +206,7 @@ impl PreprocessContext {
                 "correct",
                 correct_geometry(
                     corr_ctx,
-                    jones_array,
+                    jones_array.view_mut(),
                     &vis_sel.timestep_range,
                     &vis_sel.coarse_chan_range,
                     Some(self.array_pos),
@@ -290,7 +291,7 @@ mod tests {
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         flag_ctx
             .set_flags(
-                &mut flag_array,
+                flag_array.view_mut(),
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
                 &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
@@ -315,9 +316,9 @@ mod tests {
         prep_ctx
             .preprocess(
                 &corr_ctx,
-                &mut jones_array,
-                &mut weight_array,
-                &mut flag_array,
+                jones_array.view_mut(),
+                weight_array.view_mut(),
+                flag_array.view_mut(),
                 &mut durations,
                 &vis_sel,
             )
@@ -392,9 +393,9 @@ mod tests {
         assert!(matches!(
             prep_ctx.preprocess(
                 &corr_ctx,
-                &mut jones_array,
-                &mut weight_array,
-                &mut flag_array,
+                jones_array.view_mut(),
+                weight_array.view_mut(),
+                flag_array.view_mut(),
                 &mut HashMap::new(),
                 &vis_sel
             ),
@@ -405,9 +406,9 @@ mod tests {
 
         let result = prep_ctx.preprocess(
             &corr_ctx,
-            &mut jones_array,
-            &mut weight_array,
-            &mut flag_array,
+            jones_array.view_mut(),
+            weight_array.view_mut(),
+            flag_array.view_mut(),
             &mut HashMap::new(),
             &vis_sel,
         );

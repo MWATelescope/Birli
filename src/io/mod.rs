@@ -398,7 +398,7 @@ mod tests_aoflagger {
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         flag_ctx
             .set_flags(
-                &mut flag_array,
+                flag_array.view_mut(),
                 &vis_sel.timestep_range,
                 &vis_sel.coarse_chan_range,
                 &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
@@ -421,8 +421,8 @@ mod tests_aoflagger {
         flag_jones_array_existing(
             &aoflagger,
             strategy_filename,
-            &jones_array,
-            &mut flag_array,
+            jones_array.view(),
+            flag_array.view_mut(),
             true,
             false,
         );

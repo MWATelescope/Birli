@@ -1,6 +1,6 @@
 //! Corrections that can be performed on visibility data
 use crate::{
-    ndarray::{parallel::prelude::*, Array2, Array3, Axis},
+    ndarray::{parallel::prelude::*, prelude::*},
     BirliError, Jones,
 };
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -54,7 +54,7 @@ use std::{f64::consts::PI, ops::Range};
 ///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, &mut jones_array, &vis_sel.coarse_chan_range, false);
+/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, false);
 /// ```
 ///
 /// # Accuracy
@@ -71,7 +71,7 @@ use std::{f64::consts::PI, ops::Range};
 /// - an Antenna's rfinput is the same for X and Y
 pub fn correct_cable_lengths(
     corr_ctx: &CorrelatorContext,
-    jones_array: &mut Array3<Jones<f32>>,
+    mut jones_array: ArrayViewMut3<Jones<f32>>,
     coarse_chan_range: &Range<usize>,
     // TODO: allow subset of baselines
     // baseline_idxs: &[usize],
@@ -194,11 +194,11 @@ pub fn correct_cable_lengths(
 ///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, &mut jones_array, &vis_sel.coarse_chan_range, false);
+/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, false);
 ///
 /// correct_geometry(
 ///     &corr_ctx,
-///     &mut jones_array,
+///     jones_array.view_mut(),
 ///     &vis_sel.timestep_range,
 ///     &vis_sel.coarse_chan_range,
 ///     None,
@@ -209,7 +209,7 @@ pub fn correct_cable_lengths(
 #[allow(clippy::too_many_arguments)]
 pub fn correct_geometry(
     corr_ctx: &CorrelatorContext,
-    jones_array: &mut Array3<Jones<f32>>,
+    mut jones_array: ArrayViewMut3<Jones<f32>>,
     timestep_range: &Range<usize>,
     coarse_chan_range: &Range<usize>,
     // TODO: allow subset of baselines
@@ -328,7 +328,7 @@ pub fn correct_geometry(
 ///     - `jones_array.dim().2 != ant_pairs.len()`
 pub fn correct_digital_gains(
     corr_ctx: &CorrelatorContext,
-    jones_array: &mut Array3<Jones<f32>>,
+    jones_array: ArrayViewMut3<Jones<f32>>,
     coarse_chan_range: &Range<usize>,
     ant_pairs: &[(usize, usize)],
     // TODO: take a VisSelection
@@ -374,7 +374,7 @@ pub fn correct_digital_gains(
 }
 
 fn _correct_digital_gains(
-    jones_array: &mut Array3<Jones<f32>>,
+    mut jones_array: ArrayViewMut3<Jones<f32>>,
     gains: &Array2<(f64, f64)>,
     ant_pairs: &[(usize, usize)],
     num_fine_chans_per_coarse: usize,
@@ -449,8 +449,8 @@ fn _correct_digital_gains(
 /// - The length of the coarse band gains is not a multiple of `num_fine_chans_per_coarse`, or vice versa.
 ///
 pub fn correct_coarse_passband_gains(
-    jones_array: &mut Array3<Jones<f32>>,
-    weight_array: &mut Array3<f32>,
+    mut jones_array: ArrayViewMut3<Jones<f32>>,
+    mut weight_array: ArrayViewMut3<f32>,
     passband_gains: &[f64],
     num_fine_chans_per_coarse: usize,
     scrunch_type: &ScrunchType,
@@ -789,7 +789,7 @@ mod tests {
 
         correct_cable_lengths(
             &corr_ctx,
-            &mut jones_array,
+            jones_array.view_mut(),
             &vis_sel.coarse_chan_range,
             false,
         );
@@ -969,7 +969,7 @@ mod tests {
 
         correct_cable_lengths(
             &corr_ctx,
-            &mut jones_array,
+            jones_array.view_mut(),
             &vis_sel.coarse_chan_range,
             false,
         );
@@ -1147,7 +1147,7 @@ mod tests {
 
         correct_geometry(
             &corr_ctx,
-            &mut jones_array,
+            jones_array.view_mut(),
             &vis_sel.timestep_range,
             &vis_sel.coarse_chan_range,
             None,
@@ -1331,7 +1331,7 @@ mod tests {
 
         correct_geometry(
             &corr_ctx,
-            &mut jones_array,
+            jones_array.view_mut(),
             &vis_sel.timestep_range,
             &vis_sel.coarse_chan_range,
             None,
@@ -1448,11 +1448,11 @@ mod tests {
         // ts 0, last chan, baseline 1 (0 vs 1)
         let jones_0_max_1 = jones_array[(0, max_chan, 1)];
 
-        let mut out_jones_array = jones_array.slice(s![.., .., sel_baseline_range]).to_owned();
+        let mut out_jones_array = jones_array.slice_mut(s![.., .., sel_baseline_range]);
 
         correct_digital_gains(
             &corr_ctx,
-            &mut out_jones_array,
+            out_jones_array.view_mut(),
             &vis_sel.coarse_chan_range,
             &ant_pairs,
         )
@@ -1491,7 +1491,7 @@ mod tests {
         assert!(matches!(
             correct_digital_gains(
                 &corr_ctx,
-                &mut jones_array,
+                jones_array.view_mut(),
                 &vis_sel.coarse_chan_range,
                 &ant_pairs,
             ),
@@ -1506,7 +1506,7 @@ mod tests {
         assert!(matches!(
             correct_digital_gains(
                 &corr_ctx,
-                &mut jones_array,
+                jones_array.view_mut(),
                 &vis_sel.coarse_chan_range,
                 &ant_pairs,
             ),
@@ -1516,7 +1516,7 @@ mod tests {
         let gains = Array2::from_shape_fn((1, 1), |_| (1., 1.));
 
         assert!(matches!(
-            _correct_digital_gains(&mut jones_array, &gains, &ant_pairs, 2),
+            _correct_digital_gains(jones_array.view_mut(), &gains, &ant_pairs, 2),
             Err(BirliError::BadArrayShape { .. })
         ));
     }
@@ -1622,8 +1622,8 @@ mod tests {
         let passband_gains = vec![0.1, 0.2];
 
         correct_coarse_passband_gains(
-            &mut jones_array,
-            &mut weight_array,
+            jones_array.view_mut(),
+            weight_array.view_mut(),
             &passband_gains,
             num_fine_chans_per_coarse,
             &ScrunchType::Simple,
@@ -1654,8 +1654,8 @@ mod tests {
         let passband_gains = vec![0.1, 0.2, 0.3, 0.4];
 
         correct_coarse_passband_gains(
-            &mut jones_array,
-            &mut weight_array,
+            jones_array.view_mut(),
+            weight_array.view_mut(),
             &passband_gains,
             num_fine_chans_per_coarse,
             &ScrunchType::Simple,
@@ -1686,8 +1686,8 @@ mod tests {
         let passband_gains = vec![0.1, 0.2, 0.3, 100., 0.5, 0.6, 0.7, 100.];
 
         correct_coarse_passband_gains(
-            &mut jones_array,
-            &mut weight_array,
+            jones_array.view_mut(),
+            weight_array.view_mut(),
             &passband_gains,
             num_fine_chans_per_coarse,
             &ScrunchType::Simple,
@@ -1719,8 +1719,8 @@ mod tests {
         // test num_fine_chans_per_coarse=0
         assert!(matches!(
             correct_coarse_passband_gains(
-                &mut jones_array,
-                &mut weight_array,
+                jones_array.view_mut(),
+                weight_array.view_mut(),
                 &passband_gains,
                 0,
                 &ScrunchType::Simple,
@@ -1731,8 +1731,8 @@ mod tests {
         // test bad jones array shape
         assert!(matches!(
             correct_coarse_passband_gains(
-                &mut jones_array,
-                &mut weight_array,
+                jones_array.view_mut(),
+                weight_array.view_mut(),
                 &passband_gains,
                 3,
                 &ScrunchType::Simple,
@@ -1744,8 +1744,8 @@ mod tests {
         let mut bad_weight_array: Array3<f32> = Array3::from_shape_fn((2, 4, 3), |_| 1.0);
         assert!(matches!(
             correct_coarse_passband_gains(
-                &mut jones_array,
-                &mut bad_weight_array,
+                jones_array.view_mut(),
+                bad_weight_array.view_mut(),
                 &passband_gains,
                 num_fine_chans_per_coarse,
                 &ScrunchType::Simple,
@@ -1757,8 +1757,8 @@ mod tests {
         let bad_passband_gains = vec![0.1, 0.2, 0.3];
         assert!(matches!(
             correct_coarse_passband_gains(
-                &mut jones_array,
-                &mut weight_array,
+                jones_array.view_mut(),
+                weight_array.view_mut(),
                 &bad_passband_gains,
                 num_fine_chans_per_coarse,
                 &ScrunchType::Simple,
