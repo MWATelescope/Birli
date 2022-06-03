@@ -12,10 +12,7 @@ use super::error::{
     IOError,
     IOError::{FitsIO, FitsOpen, InvalidFlagFilenameTemplate, InvalidGpuBox, MwafInconsistent},
 };
-use crate::{
-    error::BirliError,
-    ndarray::{Array3, Axis},
-};
+use crate::{error::BirliError, ndarray::prelude::*};
 use clap::crate_version;
 use fitsio::{
     hdu::FitsHdu,
@@ -282,7 +279,7 @@ impl FlagFileSet {
     pub fn write_flag_array(
         &mut self,
         context: &CorrelatorContext,
-        flag_array: &Array3<bool>,
+        flag_array: ArrayView3<bool>,
         gpubox_ids: &[usize],
     ) -> Result<(), IOError> {
         let flag_dims = flag_array.dim();
@@ -832,7 +829,7 @@ mod tests {
         )
         .unwrap();
         flag_file_set
-            .write_flag_array(&corr_ctx, &flag_array, &gpubox_ids)
+            .write_flag_array(&corr_ctx, flag_array.view(), &gpubox_ids)
             .unwrap();
         drop(flag_file_set);
 
