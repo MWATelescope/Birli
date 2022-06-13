@@ -1,5 +1,12 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.7.0-pre2 (2022-06-13)
+
+Pre-release version - expect further breaking changes in 0.7.0.
+
+- 🐛 bug fixes:
+  - fix unnecessary allocations for smaller chunks
+
 # Version 0.6.4 (2022-05-04)
 
 - ✨ new features:
