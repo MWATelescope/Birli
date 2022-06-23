@@ -108,6 +108,40 @@ impl Display for PreprocessContext {
 }
 
 impl PreprocessContext {
+    /// A one line description of the tasks preprocessing will do.
+    pub fn as_comment(&self) -> String {
+        [
+            if self.correct_cable_lengths {
+                Some("cable length corrections".to_string())
+            } else {
+                None
+            },
+            if self.correct_digital_gains {
+                Some("digital gains".to_string())
+            } else {
+                None
+            },
+            if self.passband_gains.is_some() {
+                Some("pfb gains".to_string())
+            } else {
+                None
+            },
+            #[cfg(feature = "aoflagger")]
+            self.aoflagger_strategy
+                .as_ref()
+                .map(|strategy| format!("aoflagging with {}", strategy)),
+            if self.correct_geometry {
+                Some("geometric corrections".to_string())
+            } else {
+                None
+            },
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<String>>()
+        .join(", ")
+    }
+
     /// Preprocess visibilities for a chunk of correlator data
     ///
     /// # Arguments

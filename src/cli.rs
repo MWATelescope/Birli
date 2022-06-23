@@ -9,11 +9,11 @@ use crate::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
         },
         hifitime::Epoch,
-        io::{ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWritable},
+        io::{error::BadArrayShape, ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWritable},
         mwalib,
         ndarray::s,
         precession::{precess_time, PrecessionInfo},
-        LatLngHeight, RADec,
+        History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext,
     },
     passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
     with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection,
@@ -22,7 +22,6 @@ use cfg_if::cfg_if;
 use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
 use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
-use marlu::{io::error::BadArrayShape, Jones, MwaObsContext, ObsContext, VisContext};
 use mwalib::{CorrelatorContext, GeometricDelaysApplied};
 use prettytable::{cell, format as prettyformat, row, table};
 use std::{
@@ -39,6 +38,9 @@ cfg_if! {
         use aoflagger_sys::{cxx_aoflagger_new};
     }
 }
+
+const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 
 /// Args for preprocessing a correlator context.
 pub struct BirliContext {
@@ -58,6 +60,8 @@ pub struct BirliContext {
     pub avg_freq: usize,
     /// temporal chunking factor
     pub num_timesteps_per_chunk: Option<usize>,
+    /// information about how Birli was called.
+    pub history: History,
 }
 
 // Add build-time information from the "built" crate.
@@ -118,12 +122,7 @@ fn time_details(
 
 impl Display for BirliContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(
-            f,
-            "{} version {}",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION"),
-        )?;
+        writeln!(f, "{} version {}", PKG_NAME, PKG_VERSION,)?;
 
         fmt_build_info(f)?;
 
@@ -1184,7 +1183,11 @@ impl BirliContext {
     {
         debug!("args:\n{:?}", &args);
 
-        let matches = Self::get_matches(args)?;
+        let args_os_str = args
+            .into_iter()
+            .map(std::convert::Into::into)
+            .collect::<Vec<OsString>>();
+        let matches = Self::get_matches(args_os_str.clone())?;
         trace!("arg matches:\n{:?}", &matches);
 
         for unimplemented_option in &["no-sel-autos", "no-sel-flagged-ants", "sel-ants"] {
@@ -1222,6 +1225,17 @@ impl BirliContext {
         let num_timesteps_per_chunk =
             Self::parse_chunk_matches(&corr_ctx, &matches, avg_time, &vis_sel)?;
         flag_ctx.finalise_flag_settings(&corr_ctx);
+        // some tomfoolery is needed to convert Iter<OsString> to Iter<&str>
+        let args_str = args_os_str
+            .into_iter()
+            .map(|arg| arg.into_string().unwrap())
+            .collect_vec();
+        let cmd_line = shlex::join(args_str.iter().map(std::convert::AsRef::as_ref));
+        let history = History {
+            cmd_line: Some(cmd_line),
+            application: Some(format!("{} {}", PKG_NAME, PKG_VERSION)),
+            message: Some(prep_ctx.as_comment()),
+        };
         let result = Self {
             corr_ctx,
             prep_ctx,
@@ -1231,6 +1245,7 @@ impl BirliContext {
             avg_time,
             avg_freq,
             num_timesteps_per_chunk,
+            history,
         };
 
         info!("{}", &result);
@@ -1260,6 +1275,7 @@ impl BirliContext {
             avg_time,
             avg_freq,
             num_timesteps_per_chunk,
+            history,
         } = self;
 
         // used to time large operations
@@ -1332,6 +1348,7 @@ impl BirliContext {
                     Some(obs_ctx.array_pos),
                     obs_ctx.phase_centre,
                     obs_ctx.name.as_deref(),
+                    Some(history.clone()),
                 )
                 .expect("unable to initialize uvfits writer")
             })
@@ -1341,7 +1358,13 @@ impl BirliContext {
                 MeasurementSetWriter::new(ms_out, obs_ctx.phase_centre, Some(obs_ctx.array_pos));
             with_increment_duration!(durations, "init", {
                 writer
-                    .initialize_mwa(&vis_ctx, &obs_ctx, &mwa_ctx, &vis_sel.coarse_chan_range)
+                    .initialize_mwa(
+                        &vis_ctx,
+                        &obs_ctx,
+                        &mwa_ctx,
+                        Some(history),
+                        &vis_sel.coarse_chan_range,
+                    )
                     .expect("unable to initialize ms writer");
             });
             writer
@@ -1573,6 +1596,14 @@ mod tests {
         assert!(display.contains("Will not correct coarse pfb passband gains"));
         assert!(display.contains("Will flag with aoflagger"));
         assert!(display.contains("Will not correct geometry"));
+
+        let comment = birli_ctx.prep_ctx.as_comment();
+
+        assert!(!comment.contains("cable length corrections"));
+        assert!(!comment.contains("digital gains"));
+        assert!(!comment.contains("pfb gains"));
+        assert!(comment.contains("aoflagging with"));
+        assert!(!comment.contains("geometric corrections"));
     }
 
     /// Middle channel rounded-down is DC flagged when `flag_dc` is set.
@@ -2593,7 +2624,7 @@ mod tests_aoflagger {
             "--no-draw-progress",
             "--pfb-gains", "none",
             "--emulate-cotter",
-            "--no-flag-dc", 
+            "--no-flag-dc",
             "--flag-init", "0",
         ];
         args.extend_from_slice(&gpufits_paths);
@@ -2924,6 +2955,10 @@ mod tests_aoflagger {
         assert!(display.contains("Will correct digital gains"));
         assert!(display.contains("Will not flag with aoflagger"));
 
+        let comment = birli_ctx.prep_ctx.as_comment();
+        assert!(comment.contains("digital gain"));
+        assert!(!comment.contains("aoflag"));
+
         birli_ctx.run().unwrap();
 
         compare_ms_with_csv(
@@ -3011,6 +3046,9 @@ mod tests_aoflagger {
         let display = format!("{}", &birli_ctx);
         assert!(display.contains("Will correct coarse pfb passband gains"));
 
+        let comment = birli_ctx.prep_ctx.as_comment();
+        assert!(comment.contains("pfb gains"));
+
         birli_ctx.run().unwrap();
 
         compare_ms_with_csv(
@@ -3092,6 +3130,14 @@ mod tests_aoflagger {
         assert!(display.contains("Will not correct coarse pfb passband gains"));
         assert!(display.contains("Will flag with aoflagger"));
         assert!(display.contains("Will correct geometry"));
+
+        let comment = birli_ctx.prep_ctx.as_comment();
+
+        assert!(comment.contains("cable length corrections"));
+        assert!(!comment.contains("digital gains"));
+        assert!(!comment.contains("pfb gains"));
+        assert!(comment.contains("aoflagging with"));
+        assert!(comment.contains("geometric corrections"));
 
         birli_ctx.run().unwrap();
 
