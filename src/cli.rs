@@ -60,8 +60,6 @@ pub struct BirliContext {
     pub avg_freq: usize,
     /// temporal chunking factor
     pub num_timesteps_per_chunk: Option<usize>,
-    /// information about how Birli was called.
-    pub history: History,
 }
 
 // Add build-time information from the "built" crate.
@@ -1183,11 +1181,7 @@ impl BirliContext {
     {
         debug!("args:\n{:?}", &args);
 
-        let args_os_str = args
-            .into_iter()
-            .map(std::convert::Into::into)
-            .collect::<Vec<OsString>>();
-        let matches = Self::get_matches(args_os_str.clone())?;
+        let matches = Self::get_matches(args)?;
         trace!("arg matches:\n{:?}", &matches);
 
         for unimplemented_option in &["no-sel-autos", "no-sel-flagged-ants", "sel-ants"] {
@@ -1225,17 +1219,6 @@ impl BirliContext {
         let num_timesteps_per_chunk =
             Self::parse_chunk_matches(&corr_ctx, &matches, avg_time, &vis_sel)?;
         flag_ctx.finalise_flag_settings(&corr_ctx);
-        // some tomfoolery is needed to convert Iter<OsString> to Iter<&str>
-        let args_str = args_os_str
-            .into_iter()
-            .map(|arg| arg.into_string().unwrap())
-            .collect_vec();
-        let cmd_line = shlex::join(args_str.iter().map(std::convert::AsRef::as_ref));
-        let history = History {
-            cmd_line: Some(cmd_line),
-            application: Some(format!("{} {}", PKG_NAME, PKG_VERSION)),
-            message: Some(prep_ctx.as_comment()),
-        };
         let result = Self {
             corr_ctx,
             prep_ctx,
@@ -1245,7 +1228,6 @@ impl BirliContext {
             avg_time,
             avg_freq,
             num_timesteps_per_chunk,
-            history,
         };
 
         info!("{}", &result);
@@ -1275,7 +1257,6 @@ impl BirliContext {
             avg_time,
             avg_freq,
             num_timesteps_per_chunk,
-            history,
         } = self;
 
         // used to time large operations
@@ -1340,6 +1321,15 @@ impl BirliContext {
             None
         };
 
+        let args_strings = env::args().collect_vec();
+        let cmd_line = shlex::join(args_strings.iter().map(String::as_str));
+        let application = format!("{} {}", PKG_NAME, PKG_VERSION);
+        let message = prep_ctx.as_comment();
+        let history = History {
+            cmd_line: Some(&cmd_line),
+            application: Some(&application),
+            message: Some(&message),
+        };
         let mut uvfits_writer = io_ctx.uvfits_out.map(|uvfits_out| {
             with_increment_duration!(durations, "init", {
                 UvfitsWriter::from_marlu(
@@ -1348,7 +1338,7 @@ impl BirliContext {
                     Some(obs_ctx.array_pos),
                     obs_ctx.phase_centre,
                     obs_ctx.name.as_deref(),
-                    Some(history.clone()),
+                    Some(&history),
                 )
                 .expect("unable to initialize uvfits writer")
             })
@@ -1362,7 +1352,7 @@ impl BirliContext {
                         &vis_ctx,
                         &obs_ctx,
                         &mwa_ctx,
-                        Some(history),
+                        Some(&history),
                         &vis_sel.coarse_chan_range,
                     )
                     .expect("unable to initialize ms writer");
