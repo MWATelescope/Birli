@@ -12,7 +12,7 @@ authors = [
     "Luke A. Williams <luke.a.williams@curtin.edu.au>",
 ]
 edition = "2021"
-rust-version = "1.58"
+rust-version = "1.60"
 license = "MPL-2.0"
 keywords = ["radioastronomy", "mwa", "astronomy", "aoflagger", "cotter"]
 categories = ["science", "parsing"]
@@ -72,5 +72,5 @@ opt-level = 3
 
 [patch.crates-io]
 # marlu = { path = "../Marlu" }
-marlu = { git = "https://github.com/MWATelescope/Marlu.git", branch = "history" }
+marlu = { git = "https://github.com/MWATelescope/Marlu.git" }
 # mwalib = { git = "https://github.com/MWATelescope/mwalib", branch = "v0.14.0" }

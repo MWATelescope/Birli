@@ -1105,7 +1105,7 @@ dependencies = [
 [[package]]
 name = "marlu"
 version = "0.7.0"
-source = "git+https://github.com/MWATelescope/Marlu.git?branch=history#fa8cb3ff1fd63c8e964e713ce3639bb9892c7fce"
+source = "git+https://github.com/MWATelescope/Marlu.git#5b5a0d77a9426f0e7a49b540c1a747a0af721a62"
 dependencies = [
  "approx",
  "cfg-if",
