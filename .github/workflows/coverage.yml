@@ -14,28 +14,19 @@ name: Generate Coverage report
 jobs:
   coverage:
     runs-on: ubuntu-latest
-    container: mwatelescope/marlu:latest
+    container: mwatelescope/birli:latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
-      - uses: taiki-e/github-actions/install-rust@main
-        with:
-          toolchain: nightly-2022-05-20
-          component: llvm-tools-preview
-
-      - name: install cargo-llvm-cov
-        run: cargo +nightly-2022-05-20 install cargo-llvm-cov
-
       - name: Generate test lcov coverage into coverage/ dir
         run: |
-          export PATH="${HOME}/.cargo/bin:${PATH}"
           mkdir -p coverage
-          cargo +nightly-2022-05-20 llvm-cov --all --lcov --output-path coverage/coverage.lcov
+          /opt/cargo/bin/cargo llvm-cov --all --lcov --output-path coverage/coverage.lcov
           # this uses the result of the previous run to generate a text summary
-          cargo +nightly-2022-05-20 llvm-cov --no-run
+          /opt/cargo/bin/cargo llvm-cov --no-run
 
       - name: Upload reports to codecov.io
         uses: codecov/codecov-action@v2
