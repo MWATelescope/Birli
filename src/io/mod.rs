@@ -12,13 +12,12 @@ use std::{
 };
 
 use log::trace;
-use marlu::{MwaObsContext, ObsContext, VisContext};
 
 use crate::{
     marlu::{
         io::{ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWritable},
         mwalib::{CorrelatorContext, MwalibError},
-        Jones, LatLngHeight, RADec,
+        Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext,
     },
     ndarray::{ArrayView3, ArrayViewMut3},
 };
@@ -194,6 +193,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
         Some(obs_ctx.array_pos),
         obs_ctx.phase_centre,
         obs_ctx.name.as_deref(),
+        None,
     )?;
 
     let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
@@ -327,7 +327,7 @@ pub fn write_ms<T: AsRef<Path>>(
         MeasurementSetWriter::new(path, obs_ctx.phase_centre, Some(obs_ctx.array_pos));
 
     ms_writer
-        .initialize_mwa(&vis_ctx, &obs_ctx, &mwa_ctx, coarse_chan_range)
+        .initialize_mwa(&vis_ctx, &obs_ctx, &mwa_ctx, None, coarse_chan_range)
         .unwrap();
 
     let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
