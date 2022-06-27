@@ -1,5 +1,19 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.7.0 (unreleased)
+
+- ⚡ performance:
+  - Fix unnecessary allocation for smaller visibility chunks to improve memory performance
+  - better uvfits performance from marlu 0.7.0
+- 🙏 quality of life:
+  - write `history` metadata in ms and uvfits
+- 🏗 api changes:
+  - use array views for flagging
+- ➕ dependencies:
+  - use Marlu 0.7.0
+  - use rust version 1.60
+  - use shlex for command line argument escaping
+
 # Version 0.6.4 (2022-05-04)
 
 - ✨ new features:

@@ -155,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "birli"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "aoflagger_sys",
  "approx",
@@ -1105,7 +1105,8 @@ dependencies = [
 [[package]]
 name = "marlu"
 version = "0.7.0"
-source = "git+https://github.com/MWATelescope/Marlu.git#5b5a0d77a9426f0e7a49b540c1a747a0af721a62"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5624a18fc8cef0d3192003ccb215a9beeca3edb231ef0d8bac131e305ffa767a"
 dependencies = [
  "approx",
  "cfg-if",
@@ -1814,9 +1815,9 @@ checksum = "5bd2fe26506023ed7b5e1e315add59d6f584c621d037f9368fea9cfb988f368c"
 
 [[package]]
 name = "unicode-normalization"
-version = "0.1.19"
+version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d54590932941a9e9266f0832deed84ebe1bf2e4c9e4a3554d393d18f5e854bf9"
+checksum = "81dee68f85cab8cf68dec42158baf3a79a1cdc065a8b103025965d6ccb7f6cbd"
 dependencies = [
  "tinyvec",
 ]
