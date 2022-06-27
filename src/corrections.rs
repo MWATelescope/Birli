@@ -4,7 +4,7 @@ use crate::{
     BirliError, Jones,
 };
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use itertools::izip;
+use itertools::{izip, Itertools};
 use log::trace;
 use marlu::{
     constants::VEL_C,
@@ -14,7 +14,7 @@ use marlu::{
     precession::precess_time,
     Complex, LatLngHeight, RADec, XyzGeodetic, UVW,
 };
-use std::{f64::consts::PI, ops::Range};
+use std::{f64::consts::TAU, ops::Range};
 use thiserror::Error;
 
 /// Perform cable length corrections, given an observation's
@@ -61,16 +61,7 @@ use thiserror::Error;
 ///
 /// # Accuracy
 ///
-/// This follows the Cotter implementation of cable length correction, however
-/// there is a slower but more accurate version of the calculation which
-/// uses f64 values for the `sin_cos`. According to benchmarks, the Cotter
-/// implementation is about 32% faster (5.9 seconds vs 8.6) than the more
-/// precise implementation, and they vary by about three parts in four million.
-/// Therefore it was decided that the Cotter implementation was more favourable.
-///
-/// # Assumptions
-///
-/// - an Antenna's rfinput is the same for X and Y
+/// Corrections are performed in double precision, which is more accurate than Cotter.
 pub fn correct_cable_lengths(
     corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
@@ -81,12 +72,15 @@ pub fn correct_cable_lengths(
 ) {
     trace!("start correct_cable_lengths");
 
-    let baselines = &corr_ctx.metafits_context.baselines;
-    let antennas = &corr_ctx.metafits_context.antennas;
+    let meta_ctx = &corr_ctx.metafits_context;
 
     let all_freqs_hz =
         corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>());
-    let jones_dims = jones_array.dim();
+
+    let ant_pairs = (meta_ctx.baselines)
+        .iter()
+        .map(|b| (b.ant1_index, b.ant2_index))
+        .collect::<Vec<_>>();
 
     let draw_target = if draw_progress {
         ProgressDrawTarget::stderr()
@@ -95,7 +89,7 @@ pub fn correct_cable_lengths(
     };
 
     // Create a progress bar to show the status of the correction
-    let correction_progress = ProgressBar::with_draw_target(jones_dims.2 as u64, draw_target);
+    let correction_progress = ProgressBar::with_draw_target(ant_pairs.len() as u64, draw_target);
     correction_progress.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -105,18 +99,17 @@ pub fn correct_cable_lengths(
     );
     correction_progress.set_message("cable corrections");
 
-    // TODO: his whole thing is pretty inelegant, needs a re-do.
     jones_array
         .axis_iter_mut(Axis(2))
         .into_par_iter()
-        .zip(baselines)
-        .for_each(|(mut jones_baseline_view, baseline)| {
-            if baseline.ant1_index == baseline.ant2_index {
+        .zip_eq(&ant_pairs)
+        .for_each(|(mut jones_array, &(ant1_idx, ant2_idx))| {
+            if ant1_idx == ant2_idx {
                 return;
             }
 
-            let ant1 = &antennas[baseline.ant1_index];
-            let ant2 = &antennas[baseline.ant2_index];
+            let ant1 = &meta_ctx.antennas[ant1_idx];
+            let ant2 = &meta_ctx.antennas[ant2_idx];
 
             let pol_lengths = [
                 ant2.rfinput_x.electrical_length_m - ant1.rfinput_x.electrical_length_m,
@@ -125,23 +118,16 @@ pub fn correct_cable_lengths(
                 ant2.rfinput_x.electrical_length_m - ant1.rfinput_y.electrical_length_m,
             ];
 
-            for (mut jones_chan_view, freq_hz) in jones_baseline_view
-                .axis_iter_mut(Axis(1))
-                .zip(all_freqs_hz.clone())
+            for (mut jones_array, &freq_hz) in
+                jones_array.axis_iter_mut(Axis(1)).zip_eq(&all_freqs_hz)
             {
-                let pol_sin_cos = pol_lengths
-                    .iter()
-                    .map(|electrical_length_m| {
-                        let angle: f64 = -2.0 * PI * electrical_length_m * (freq_hz as f64) / VEL_C;
-                        let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
-                        Complex::new(cos_angle_f64 as f32, sin_angle_f64 as f32)
-                    })
-                    .collect::<Vec<_>>();
-
-                for jones in jones_chan_view.iter_mut() {
-                    for (pol_complex, rotation) in jones.iter_mut().zip(pol_sin_cos.iter()) {
-                        *pol_complex *= rotation;
+                for jones in jones_array.iter_mut() {
+                    // promote, correct, demote
+                    let mut corrected = Jones::<f64>::from(*jones);
+                    for (complex, length) in corrected.iter_mut().zip_eq(&pol_lengths) {
+                        *complex *= Complex::from_polar(1., -TAU * length * freq_hz / VEL_C);
                     }
+                    *jones = Jones::<f32>::from(corrected);
                 }
             }
             correction_progress.inc(1);
@@ -158,6 +144,10 @@ pub fn correct_cable_lengths(
 ///
 /// Complex visibilities are phase-shifted by an angle determined by the length
 /// of the w-coordinate for the baseline and the channel's frequency.
+///
+/// # Accuracy
+///
+/// Corrections are performed in double precision, which is more accurate than Cotter.
 ///
 /// # Examples
 ///
@@ -217,7 +207,7 @@ pub fn correct_geometry(
     // TODO: allow subset of baselines
     // baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
-    phase_centre_ra: Option<RADec>,
+    phase_centre: Option<RADec>,
     draw_progress: bool,
 ) {
     trace!("start correct_geometry");
@@ -243,11 +233,27 @@ pub fn correct_geometry(
 
     let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
 
-    let phase_centre_ra = match phase_centre_ra {
+    let phase_centre = match phase_centre {
         Some(pc) => pc,
         None => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
     };
     let tiles_xyz_geod = XyzGeodetic::get_tiles(&corr_ctx.metafits_context, array_pos.latitude_rad);
+
+    let ant_pairs = baselines
+        .iter()
+        .map(|b| (b.ant1_index, b.ant2_index))
+        .collect::<Vec<_>>();
+    let centroid_timestamps = timesteps
+        .iter()
+        .map(|t| Epoch::from_gpst_seconds(t.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0))
+        .collect::<Vec<_>>();
+    let part_uvws = calc_part_uvws(
+        &ant_pairs,
+        &centroid_timestamps,
+        phase_centre,
+        array_pos,
+        &tiles_xyz_geod,
+    );
 
     // Create a progress bar to show the status of the correction
     let draw_target = if draw_progress {
@@ -268,35 +274,18 @@ pub fn correct_geometry(
     jones_array
         .outer_iter_mut()
         .into_par_iter()
-        .zip(timesteps)
-        .for_each(|(mut jones_timestep_view, timestep)| {
-            let epoch = Epoch::from_gpst_seconds(
-                timestep.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
-            );
-
-            let prec_info = precess_time(
-                phase_centre_ra,
-                epoch,
-                array_pos.longitude_rad,
-                array_pos.latitude_rad,
-            );
-
-            let tiles_xyz_precessed = prec_info.precess_xyz_parallel(&tiles_xyz_geod);
-
-            for (mut jones_baseline_view, baseline) in
-                jones_timestep_view.axis_iter_mut(Axis(1)).zip(baselines)
+        .zip_eq(part_uvws.outer_iter())
+        .for_each(|(mut jones_array, part_uvws)| {
+            for (mut jones_array, &(ant1, ant2)) in
+                jones_array.axis_iter_mut(Axis(1)).zip_eq(&ant_pairs)
             {
-                let ant1_idx = baseline.ant1_index;
-                let ant2_idx = baseline.ant2_index;
+                let uvw = part_uvws[[ant1]] - part_uvws[[ant2]];
 
-                let baseline_xyz_precessed =
-                    tiles_xyz_precessed[ant1_idx] - tiles_xyz_precessed[ant2_idx];
-                let uvw = UVW::from_xyz(baseline_xyz_precessed, prec_info.hadec_j2000);
-
-                for (jones, freq_hz) in jones_baseline_view.iter_mut().zip(all_freqs_hz.clone()) {
-                    let angle = -2.0 * PI * uvw.w * (freq_hz as f64) / VEL_C;
-                    let (sin_angle_f64, cos_angle_f64) = angle.sin_cos();
-                    *jones *= Complex::new(cos_angle_f64 as f32, sin_angle_f64 as f32);
+                for (jones, freq_hz) in jones_array.iter_mut().zip_eq(&all_freqs_hz) {
+                    // promote, correct, demote
+                    let mut corrected = Jones::<f64>::from(*jones);
+                    corrected *= Complex::from_polar(1., -TAU * uvw.w * freq_hz / VEL_C);
+                    *jones = Jones::<f32>::from(corrected);
                 }
             }
 
@@ -327,6 +316,7 @@ pub enum DigitalGainCorrection {
 /// - `jones_array` - The array of Jones matrices to be corrected, [timestep][channel][baseleine].
 /// - `coarse_chan_range` - The range of mwalib coarse channels which are used in in the channel
 ///     dimension of the jones array.
+/// - `ant_pairs` - a slice of tuples of antenna indices for each baseline in the visibilities.
 ///
 /// # Assumptions
 /// - the digital gains are provided in [`marlu::mwalib::Rfinput.digital_gains`] in the same order as the
@@ -372,7 +362,7 @@ pub fn correct_digital_gains(
     let gains = Array2::from_shape_fn(
         (corr_ctx.metafits_context.num_ants, coarse_chan_range.len()),
         |(ant_idx, coarse_chan_idx)| {
-            let ant = corr_ctx.metafits_context.antennas[ant_idx].clone();
+            let ant = &corr_ctx.metafits_context.antennas[ant_idx];
             (
                 ant.rfinput_x.digital_gains[coarse_chan_range.clone()][coarse_chan_idx],
                 ant.rfinput_y.digital_gains[coarse_chan_range.clone()][coarse_chan_idx],
@@ -410,7 +400,7 @@ fn _correct_digital_gains(
     jones_array
         .axis_iter_mut(Axis(2))
         .into_par_iter()
-        .zip(ant_pairs)
+        .zip_eq(ant_pairs)
         .for_each(|(mut jones_array, &(ant1_idx, ant2_idx))| {
             // iterate through the selected coarse channels
             for (mut jones_array, &(gain1x, gain1y), &(gain2x, gain2y)) in izip!(
@@ -420,19 +410,13 @@ fn _correct_digital_gains(
             ) {
                 // for all visibilities in the selected coarse channel, for all timesteps
                 for jones in jones_array.iter_mut() {
-                    // promote
-                    let corrected = Jones::<f64>::from(*jones);
-                    // divide by gain and demote
-                    *jones = Jones::<f32>::from([
-                        (corrected[0].re / gain1x / gain2x) as _,
-                        (corrected[0].im / gain1x / gain2x) as _,
-                        (corrected[1].re / gain1x / gain2y) as _,
-                        (corrected[1].im / gain1x / gain2y) as _,
-                        (corrected[2].re / gain1y / gain2x) as _,
-                        (corrected[2].im / gain1y / gain2x) as _,
-                        (corrected[3].re / gain1y / gain2y) as _,
-                        (corrected[3].im / gain1y / gain2y) as _,
-                    ]);
+                    // promote, correct, demote
+                    let mut corrected = Jones::<f64>::from(*jones);
+                    corrected[0] /= gain1x * gain2x;
+                    corrected[1] /= gain1x * gain2y;
+                    corrected[2] /= gain1y * gain2x;
+                    corrected[3] /= gain1y * gain2y;
+                    *jones = Jones::<f32>::from(corrected);
                 }
             }
         });
@@ -664,6 +648,35 @@ pub fn scrunch_gains(
     }
 }
 
+// Calculate partial uvw components for each antenna and timestep.
+//
+// UVWs are in units of meters. To get the UVWs in units of wavelengths, divide by the wavelength.
+// uvw at ts, (ant1, ant2) = part_uvw[ant1] - part_uvw[ant2]
+fn calc_part_uvws(
+    ant_pairs: &[(usize, usize)],
+    centroid_timestamps: &[Epoch],
+    phase_centre: RADec,
+    array_pos: LatLngHeight,
+    tile_xyzs: &[XyzGeodetic],
+) -> Array2<UVW> {
+    let max_ant = ant_pairs.iter().map(|&(a, b)| a.max(b)).max().unwrap();
+    let mut part_uvws = Array2::from_elem((centroid_timestamps.len(), max_ant + 1), UVW::default());
+    for (t, &epoch) in centroid_timestamps.iter().enumerate() {
+        let prec = precess_time(
+            phase_centre,
+            epoch,
+            array_pos.longitude_rad,
+            array_pos.latitude_rad,
+        );
+        let tiles_xyz_prec = prec.precess_xyz_parallel(tile_xyzs);
+        for (a, &xyz) in tiles_xyz_prec.iter().enumerate() {
+            let uvw = UVW::from_xyz(xyz, prec.hadec_j2000);
+            part_uvws[[t, a]] = uvw;
+        }
+    }
+    part_uvws
+}
+
 #[cfg(test)]
 #[allow(clippy::similar_names)]
 mod tests {
@@ -775,36 +788,20 @@ mod tests {
 
         // baseline 1, pol XX, chan 0 (cc 0, fc 0)
         let angle_1_xx_0: f64 = -2.0 * PI * length_m_1_xx * (all_freqs_hz[0] as f64) / VEL_C;
-        let (sin_1_xx_0_f64, cos_1_xx_0_f64) = angle_1_xx_0.sin_cos();
-        let (sin_1_xx_0, cos_1_xx_0) = (sin_1_xx_0_f64 as f32, cos_1_xx_0_f64 as f32);
         // baseline 1, pol XY, chan 0 (cc 0, fc 0)
         let angle_1_xy_0: f64 = -2.0 * PI * length_m_1_xy * (all_freqs_hz[0] as f64) / VEL_C;
-        let (sin_1_xy_0_f64, cos_1_xy_0_f64) = angle_1_xy_0.sin_cos();
-        let (sin_1_xy_0, cos_1_xy_0) = (sin_1_xy_0_f64 as f32, cos_1_xy_0_f64 as f32);
         // baseline 1, pol YX, chan 0 (cc 0, fc 0)
         let angle_1_yx_0: f64 = -2.0 * PI * length_m_1_yx * (all_freqs_hz[0] as f64) / VEL_C;
-        let (sin_1_yx_0_f64, cos_1_yx_0_f64) = angle_1_yx_0.sin_cos();
-        let (sin_1_yx_0, cos_1_yx_0) = (sin_1_yx_0_f64 as f32, cos_1_yx_0_f64 as f32);
         // baseline 1, pol YY, chan 0 (cc 0, fc 0)
         let angle_1_yy_0: f64 = -2.0 * PI * length_m_1_yy * (all_freqs_hz[0] as f64) / VEL_C;
-        let (sin_1_yy_0_f64, cos_1_yy_0_f64) = angle_1_yy_0.sin_cos();
-        let (sin_1_yy_0, cos_1_yy_0) = (sin_1_yy_0_f64 as f32, cos_1_yy_0_f64 as f32);
         // baseline 1, pol XX, chan 3 (cc 1, fc 1)
         let angle_1_xx_3: f64 = -2.0 * PI * length_m_1_xx * (all_freqs_hz[3] as f64) / VEL_C;
-        let (sin_1_xx_3_f64, cos_1_xx_3_f64) = angle_1_xx_3.sin_cos();
-        let (sin_1_xx_3, cos_1_xx_3) = (sin_1_xx_3_f64 as f32, cos_1_xx_3_f64 as f32);
         // baseline 1, pol XY, chan 3 (cc 1, fc 1)
         let angle_1_xy_3: f64 = -2.0 * PI * length_m_1_xy * (all_freqs_hz[3] as f64) / VEL_C;
-        let (sin_1_xy_3_f64, cos_1_xy_3_f64) = angle_1_xy_3.sin_cos();
-        let (sin_1_xy_3, cos_1_xy_3) = (sin_1_xy_3_f64 as f32, cos_1_xy_3_f64 as f32);
         // baseline 1, pol YX, chan 3 (cc 1, fc 1)
         let angle_1_yx_3: f64 = -2.0 * PI * length_m_1_yx * (all_freqs_hz[3] as f64) / VEL_C;
-        let (sin_1_yx_3_f64, cos_1_yx_3_f64) = angle_1_yx_3.sin_cos();
-        let (sin_1_yx_3, cos_1_yx_3) = (sin_1_yx_3_f64 as f32, cos_1_yx_3_f64 as f32);
         // baseline 1, pol YY, chan 3 (cc 1, fc 1)
         let angle_1_yy_3: f64 = -2.0 * PI * length_m_1_yy * (all_freqs_hz[3] as f64) / VEL_C;
-        let (sin_1_yy_3_f64, cos_1_yy_3_f64) = angle_1_yy_3.sin_cos();
-        let (sin_1_yy_3, cos_1_yy_3) = (sin_1_yy_3_f64 as f32, cos_1_yy_3_f64 as f32);
 
         correct_cable_lengths(
             &corr_ctx,
@@ -820,51 +817,26 @@ mod tests {
         ////
         // baseline 1 should be rotated
         ////
-        // ts 0, chan 0 (cc 0, fc 0), baseline 1
-        // -> pol XX
-        let rot_1_xx_0_0_re = (cos_1_xx_0 * viz_0_0_1[0].re - sin_1_xx_0 * viz_0_0_1[0].im) as f32;
-        let rot_1_xx_0_0_im = (sin_1_xx_0 * viz_0_0_1[0].re + cos_1_xx_0 * viz_0_0_1[0].im) as f32;
-        // -> pol XY
-        let rot_1_xy_0_0_re = (cos_1_xy_0 * viz_0_0_1[1].re - sin_1_xy_0 * viz_0_0_1[1].im) as f32;
-        let rot_1_xy_0_0_im = (sin_1_xy_0 * viz_0_0_1[1].re + cos_1_xy_0 * viz_0_0_1[1].im) as f32;
-        // -> pol YX
-        let rot_1_yx_0_0_re = (cos_1_yx_0 * viz_0_0_1[2].re - sin_1_yx_0 * viz_0_0_1[2].im) as f32;
-        let rot_1_yx_0_0_im = (sin_1_yx_0 * viz_0_0_1[2].re + cos_1_yx_0 * viz_0_0_1[2].im) as f32;
-        // -> pol YY
-        let rot_1_yy_0_0_re = (cos_1_yy_0 * viz_0_0_1[3].re - sin_1_yy_0 * viz_0_0_1[3].im) as f32;
-        let rot_1_yy_0_0_im = (sin_1_yy_0 * viz_0_0_1[3].re + cos_1_yy_0 * viz_0_0_1[3].im) as f32;
-
+        let viz_0_0_1_f64 = Jones::<f64>::from(viz_0_0_1);
         compare_jones!(
             jones_array[(0, 0, 1)],
-            Jones::from([
-                Complex::new(rot_1_xx_0_0_re, rot_1_xx_0_0_im),
-                Complex::new(rot_1_xy_0_0_re, rot_1_xy_0_0_im),
-                Complex::new(rot_1_yx_0_0_re, rot_1_yx_0_0_im),
-                Complex::new(rot_1_yy_0_0_re, rot_1_yy_0_0_im),
+            Jones::<f64>::from([
+                viz_0_0_1_f64[0] * Complex::from_polar(1., angle_1_xx_0),
+                viz_0_0_1_f64[1] * Complex::from_polar(1., angle_1_xy_0),
+                viz_0_0_1_f64[2] * Complex::from_polar(1., angle_1_yx_0),
+                viz_0_0_1_f64[3] * Complex::from_polar(1., angle_1_yy_0),
             ])
         );
 
         // ts 3 (batch 1, scan 1), chan 3 (cc 1, fc 1), baseline 1
-        // -> pol XX
-        let rot_1_xx_3_3_re = (cos_1_xx_3 * viz_3_3_1[0].re - sin_1_xx_3 * viz_3_3_1[0].im) as f32;
-        let rot_1_xx_3_3_im = (sin_1_xx_3 * viz_3_3_1[0].re + cos_1_xx_3 * viz_3_3_1[0].im) as f32;
-        // -> pol XY
-        let rot_1_xy_3_3_re = (cos_1_xy_3 * viz_3_3_1[1].re - sin_1_xy_3 * viz_3_3_1[1].im) as f32;
-        let rot_1_xy_3_3_im = (sin_1_xy_3 * viz_3_3_1[1].re + cos_1_xy_3 * viz_3_3_1[1].im) as f32;
-        // -> pol YX
-        let rot_1_yx_3_3_re = (cos_1_yx_3 * viz_3_3_1[2].re - sin_1_yx_3 * viz_3_3_1[2].im) as f32;
-        let rot_1_yx_3_3_im = (sin_1_yx_3 * viz_3_3_1[2].re + cos_1_yx_3 * viz_3_3_1[2].im) as f32;
-        // -> pol YY
-        let rot_1_yy_3_3_re = (cos_1_yy_3 * viz_3_3_1[3].re - sin_1_yy_3 * viz_3_3_1[3].im) as f32;
-        let rot_1_yy_3_3_im = (sin_1_yy_3 * viz_3_3_1[3].re + cos_1_yy_3 * viz_3_3_1[3].im) as f32;
-
+        let viz_3_3_1_f64 = Jones::<f64>::from(viz_3_3_1);
         compare_jones!(
             jones_array[(3, 3, 1)],
-            Jones::from([
-                Complex::new(rot_1_xx_3_3_re, rot_1_xx_3_3_im),
-                Complex::new(rot_1_xy_3_3_re, rot_1_xy_3_3_im),
-                Complex::new(rot_1_yx_3_3_re, rot_1_yx_3_3_im),
-                Complex::new(rot_1_yy_3_3_re, rot_1_yy_3_3_im),
+            Jones::<f64>::from([
+                viz_3_3_1_f64[0] * Complex::from_polar(1., angle_1_xx_3),
+                viz_3_3_1_f64[1] * Complex::from_polar(1., angle_1_xy_3),
+                viz_3_3_1_f64[2] * Complex::from_polar(1., angle_1_yx_3),
+                viz_3_3_1_f64[3] * Complex::from_polar(1., angle_1_yy_3),
             ])
         );
     }
@@ -956,36 +928,20 @@ mod tests {
 
         // baseline 5, pol XX, chan 0 (cc 0, fc 0)
         let angle_5_xx_0: f64 = -2.0 * PI * length_m_5_xx * (all_freqs_hz[0] as f64) / VEL_C;
-        let (sin_5_xx_0_f64, cos_5_xx_0_f64) = angle_5_xx_0.sin_cos();
-        let (sin_5_xx_0, cos_5_xx_0) = (sin_5_xx_0_f64 as f32, cos_5_xx_0_f64 as f32);
         // baseline 5, pol XY, chan 0 (cc 0, fc 0)
         let angle_5_xy_0: f64 = -2.0 * PI * length_m_5_xy * (all_freqs_hz[0] as f64) / VEL_C;
-        let (sin_5_xy_0_f64, cos_5_xy_0_f64) = angle_5_xy_0.sin_cos();
-        let (sin_5_xy_0, cos_5_xy_0) = (sin_5_xy_0_f64 as f32, cos_5_xy_0_f64 as f32);
         // baseline 5, pol YX, chan 0 (cc 0, fc 0)
         let angle_5_yx_0: f64 = -2.0 * PI * length_m_5_yx * (all_freqs_hz[0] as f64) / VEL_C;
-        let (sin_5_yx_0_f64, cos_5_yx_0_f64) = angle_5_yx_0.sin_cos();
-        let (sin_5_yx_0, cos_5_yx_0) = (sin_5_yx_0_f64 as f32, cos_5_yx_0_f64 as f32);
         // baseline 5, pol YY, chan 0 (cc 0, fc 0)
         let angle_5_yy_0: f64 = -2.0 * PI * length_m_5_yy * (all_freqs_hz[0] as f64) / VEL_C;
-        let (sin_5_yy_0_f64, cos_5_yy_0_f64) = angle_5_yy_0.sin_cos();
-        let (sin_5_yy_0, cos_5_yy_0) = (sin_5_yy_0_f64 as f32, cos_5_yy_0_f64 as f32);
         // baseline 5, pol XX, chan 3 (cc 1, fc 1)
         let angle_5_xx_3: f64 = -2.0 * PI * length_m_5_xx * (all_freqs_hz[3] as f64) / VEL_C;
-        let (sin_5_xx_3_f64, cos_5_xx_3_f64) = angle_5_xx_3.sin_cos();
-        let (sin_5_xx_3, cos_5_xx_3) = (sin_5_xx_3_f64 as f32, cos_5_xx_3_f64 as f32);
         // baseline 5, pol XY, chan 3 (cc 1, fc 1)
         let angle_5_xy_3: f64 = -2.0 * PI * length_m_5_xy * (all_freqs_hz[3] as f64) / VEL_C;
-        let (sin_5_xy_3_f64, cos_5_xy_3_f64) = angle_5_xy_3.sin_cos();
-        let (sin_5_xy_3, cos_5_xy_3) = (sin_5_xy_3_f64 as f32, cos_5_xy_3_f64 as f32);
         // baseline 5, pol YX, chan 3 (cc 1, fc 1)
         let angle_5_yx_3: f64 = -2.0 * PI * length_m_5_yx * (all_freqs_hz[3] as f64) / VEL_C;
-        let (sin_5_yx_3_f64, cos_5_yx_3_f64) = angle_5_yx_3.sin_cos();
-        let (sin_5_yx_3, cos_5_yx_3) = (sin_5_yx_3_f64 as f32, cos_5_yx_3_f64 as f32);
         // baseline 5, pol YY, chan 3 (cc 1, fc 1)
         let angle_5_yy_3: f64 = -2.0 * PI * length_m_5_yy * (all_freqs_hz[3] as f64) / VEL_C;
-        let (sin_5_yy_3_f64, cos_5_yy_3_f64) = angle_5_yy_3.sin_cos();
-        let (sin_5_yy_3, cos_5_yy_3) = (sin_5_yy_3_f64 as f32, cos_5_yy_3_f64 as f32);
 
         correct_cable_lengths(
             &corr_ctx,
@@ -1001,51 +957,28 @@ mod tests {
         ////
         // baseline 5 should be rotated
         ////
-        // ts 0 (batch 0, scan 0), chan 0 (cc 0, fc 0), baseline 5
-        // -> pol XX
-        let rot_5_xx_0_0_re = (cos_5_xx_0 * viz_0_0_5[0].re - sin_5_xx_0 * viz_0_0_5[0].im) as f32;
-        let rot_5_xx_0_0_im = (sin_5_xx_0 * viz_0_0_5[0].re + cos_5_xx_0 * viz_0_0_5[0].im) as f32;
-        // -> pol XY
-        let rot_5_xy_0_0_re = (cos_5_xy_0 * viz_0_0_5[1].re - sin_5_xy_0 * viz_0_0_5[1].im) as f32;
-        let rot_5_xy_0_0_im = (sin_5_xy_0 * viz_0_0_5[1].re + cos_5_xy_0 * viz_0_0_5[1].im) as f32;
-        // -> pol YX
-        let rot_5_yx_0_0_re = (cos_5_yx_0 * viz_0_0_5[2].re - sin_5_yx_0 * viz_0_0_5[2].im) as f32;
-        let rot_5_yx_0_0_im = (sin_5_yx_0 * viz_0_0_5[2].re + cos_5_yx_0 * viz_0_0_5[2].im) as f32;
-        // -> pol YY
-        let rot_5_yy_0_0_re = (cos_5_yy_0 * viz_0_0_5[3].re - sin_5_yy_0 * viz_0_0_5[3].im) as f32;
-        let rot_5_yy_0_0_im = (sin_5_yy_0 * viz_0_0_5[3].re + cos_5_yy_0 * viz_0_0_5[3].im) as f32;
 
+        let viz_0_0_5_f64 = Jones::<f64>::from(viz_0_0_5);
         compare_jones!(
             jones_array[(0, 0, 5)],
-            Jones::from([
-                Complex::new(rot_5_xx_0_0_re, rot_5_xx_0_0_im),
-                Complex::new(rot_5_xy_0_0_re, rot_5_xy_0_0_im),
-                Complex::new(rot_5_yx_0_0_re, rot_5_yx_0_0_im),
-                Complex::new(rot_5_yy_0_0_re, rot_5_yy_0_0_im),
+            Jones::<f64>::from([
+                viz_0_0_5_f64[0] * Complex::from_polar(1., angle_5_xx_0),
+                viz_0_0_5_f64[1] * Complex::from_polar(1., angle_5_xy_0),
+                viz_0_0_5_f64[2] * Complex::from_polar(1., angle_5_yx_0),
+                viz_0_0_5_f64[3] * Complex::from_polar(1., angle_5_yy_0),
             ])
         );
 
         // ts 3 (batch 1, scan 1), chan 3 (cc 1, fc 1), baseline 5
-        // -> pol XX
-        let rot_5_xx_3_3_re = (cos_5_xx_3 * viz_3_3_5[0].re - sin_5_xx_3 * viz_3_3_5[0].im) as f32;
-        let rot_5_xx_3_3_im = (sin_5_xx_3 * viz_3_3_5[0].re + cos_5_xx_3 * viz_3_3_5[0].im) as f32;
-        // -> pol XY
-        let rot_5_xy_3_3_re = (cos_5_xy_3 * viz_3_3_5[1].re - sin_5_xy_3 * viz_3_3_5[1].im) as f32;
-        let rot_5_xy_3_3_im = (sin_5_xy_3 * viz_3_3_5[1].re + cos_5_xy_3 * viz_3_3_5[1].im) as f32;
-        // -> pol YX
-        let rot_5_yx_3_3_re = (cos_5_yx_3 * viz_3_3_5[2].re - sin_5_yx_3 * viz_3_3_5[2].im) as f32;
-        let rot_5_yx_3_3_im = (sin_5_yx_3 * viz_3_3_5[2].re + cos_5_yx_3 * viz_3_3_5[2].im) as f32;
-        // -> pol YY
-        let rot_5_yy_3_3_re = (cos_5_yy_3 * viz_3_3_5[3].re - sin_5_yy_3 * viz_3_3_5[3].im) as f32;
-        let rot_5_yy_3_3_im = (sin_5_yy_3 * viz_3_3_5[3].re + cos_5_yy_3 * viz_3_3_5[3].im) as f32;
 
+        let viz_3_3_5_f64 = Jones::<f64>::from(viz_3_3_5);
         compare_jones!(
             jones_array[(3, 3, 5)],
             Jones::from([
-                Complex::new(rot_5_xx_3_3_re, rot_5_xx_3_3_im),
-                Complex::new(rot_5_xy_3_3_re, rot_5_xy_3_3_im),
-                Complex::new(rot_5_yx_3_3_re, rot_5_yx_3_3_im),
-                Complex::new(rot_5_yy_3_3_re, rot_5_yy_3_3_im),
+                viz_3_3_5_f64[0] * Complex::from_polar(1., angle_5_xx_3),
+                viz_3_3_5_f64[1] * Complex::from_polar(1., angle_5_xy_3),
+                viz_3_3_5_f64[2] * Complex::from_polar(1., angle_5_yx_3),
+                viz_3_3_5_f64[3] * Complex::from_polar(1., angle_5_yy_3),
             ])
         );
     }
@@ -1156,15 +1089,9 @@ mod tests {
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 5
         let angle_0_0_5 = -2.0 * PI * w_0_5 * (all_freqs_hz[0] as f64) / VEL_C;
-        let (sin_0_0_5_f64, cos_0_0_5_f64) = angle_0_0_5.sin_cos();
-        let (sin_0_0_5, cos_0_0_5) = (sin_0_0_5_f64 as f32, cos_0_0_5_f64 as f32);
 
         // ts 3, chan 3 (cc 1, fc 1), baseline 5
         let angle_3_3_5 = -2.0 * PI * w_3_5 * (all_freqs_hz[3] as f64) / VEL_C;
-        let (sin_3_3_5_f64, cos_3_3_5_f64) = angle_3_3_5.sin_cos();
-        let (sin_3_3_5, cos_3_3_5) = (sin_3_3_5_f64 as f32, cos_3_3_5_f64 as f32);
-
-        // let angle_5_3 = -2.0 * PI * w_5_3 * (all_freqs_hz[3] as f64) / VEL_C;
 
         correct_geometry(
             &corr_ctx,
@@ -1184,51 +1111,16 @@ mod tests {
         // baseline 5 should be rotated
         ////
         // ts 0 (batch 0, scan 0), chan 0 (cc 0, fc 0), baseline 5
-        // -> pol XX
-        let rot_5_xx_0_0_re = (cos_0_0_5 * viz_0_0_5[0].re - sin_0_0_5 * viz_0_0_5[0].im) as f32;
-        let rot_5_xx_0_0_im = (sin_0_0_5 * viz_0_0_5[0].re + cos_0_0_5 * viz_0_0_5[0].im) as f32;
-        // -> pol XY
-        let rot_5_xy_0_0_re = (cos_0_0_5 * viz_0_0_5[1].re - sin_0_0_5 * viz_0_0_5[1].im) as f32;
-        let rot_5_xy_0_0_im = (sin_0_0_5 * viz_0_0_5[1].re + cos_0_0_5 * viz_0_0_5[1].im) as f32;
-        // -> pol YX
-        let rot_5_yx_0_0_re = (cos_0_0_5 * viz_0_0_5[2].re - sin_0_0_5 * viz_0_0_5[2].im) as f32;
-        let rot_5_yx_0_0_im = (sin_0_0_5 * viz_0_0_5[2].re + cos_0_0_5 * viz_0_0_5[2].im) as f32;
-        // -> pol YY
-        let rot_5_yy_0_0_re = (cos_0_0_5 * viz_0_0_5[3].re - sin_0_0_5 * viz_0_0_5[3].im) as f32;
-        let rot_5_yy_0_0_im = (sin_0_0_5 * viz_0_0_5[3].re + cos_0_0_5 * viz_0_0_5[3].im) as f32;
-
         compare_jones!(
             jones_array[(0, 0, 5)],
-            Jones::from([
-                Complex::new(rot_5_xx_0_0_re, rot_5_xx_0_0_im),
-                Complex::new(rot_5_xy_0_0_re, rot_5_xy_0_0_im),
-                Complex::new(rot_5_yx_0_0_re, rot_5_yx_0_0_im),
-                Complex::new(rot_5_yy_0_0_re, rot_5_yy_0_0_im),
-            ])
+            Jones::<f64>::from(viz_0_0_5) * Complex::from_polar(1., angle_0_0_5)
         );
 
         // ts 3 (batch 1, scan 1), chan 3 (cc 1, fc 1), baseline 5
-        // -> pol XX
-        let rot_5_xx_3_3_re = (cos_3_3_5 * viz_3_3_5[0].re - sin_3_3_5 * viz_3_3_5[0].im) as f32;
-        let rot_5_xx_3_3_im = (sin_3_3_5 * viz_3_3_5[0].re + cos_3_3_5 * viz_3_3_5[0].im) as f32;
-        // -> pol XY
-        let rot_5_xy_3_3_re = (cos_3_3_5 * viz_3_3_5[1].re - sin_3_3_5 * viz_3_3_5[1].im) as f32;
-        let rot_5_xy_3_3_im = (sin_3_3_5 * viz_3_3_5[1].re + cos_3_3_5 * viz_3_3_5[1].im) as f32;
-        // -> pol YX
-        let rot_5_yx_3_3_re = (cos_3_3_5 * viz_3_3_5[2].re - sin_3_3_5 * viz_3_3_5[2].im) as f32;
-        let rot_5_yx_3_3_im = (sin_3_3_5 * viz_3_3_5[2].re + cos_3_3_5 * viz_3_3_5[2].im) as f32;
-        // -> pol YY
-        let rot_5_yy_3_3_re = (cos_3_3_5 * viz_3_3_5[3].re - sin_3_3_5 * viz_3_3_5[3].im) as f32;
-        let rot_5_yy_3_3_im = (sin_3_3_5 * viz_3_3_5[3].re + cos_3_3_5 * viz_3_3_5[3].im) as f32;
 
         compare_jones!(
             jones_array[(3, 3, 5)],
-            Jones::from([
-                Complex::new(rot_5_xx_3_3_re, rot_5_xx_3_3_im),
-                Complex::new(rot_5_xy_3_3_re, rot_5_xy_3_3_im),
-                Complex::new(rot_5_yx_3_3_re, rot_5_yx_3_3_im),
-                Complex::new(rot_5_yy_3_3_re, rot_5_yy_3_3_im),
-            ])
+            Jones::<f64>::from(viz_3_3_5) * Complex::from_polar(1., angle_3_3_5)
         );
     }
 
@@ -1340,15 +1232,9 @@ mod tests {
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 1
         let angle_0_0_1 = -2.0 * PI * w_0_1 * (all_freqs_hz[0] as f64) / VEL_C;
-        let (sin_0_0_1_f64, cos_0_0_1_f64) = angle_0_0_1.sin_cos();
-        let (sin_0_0_1, cos_0_0_1) = (sin_0_0_1_f64 as f32, cos_0_0_1_f64 as f32);
 
         // ts 3, chan 3 (cc 1, fc 1), baseline 1
         let angle_3_3_1 = -2.0 * PI * w_3_1 * (all_freqs_hz[3] as f64) / VEL_C;
-        let (sin_3_3_1_f64, cos_3_3_1_f64) = angle_3_3_1.sin_cos();
-        let (sin_3_3_1, cos_3_3_1) = (sin_3_3_1_f64 as f32, cos_3_3_1_f64 as f32);
-
-        // let angle_5_3 = -2.0 * PI * w_5_3 * (all_freqs_hz[3] as f64) / VEL_C;
 
         correct_geometry(
             &corr_ctx,
@@ -1367,51 +1253,15 @@ mod tests {
         // baseline 1 should be rotated
         ////
         // ts 0 (batch 0, scan 0), chan 0 (cc 0, fc 0), baseline 1
-        // -> pol XX
-        let rot_1_xx_0_0_re = (cos_0_0_1 * viz_0_0_1[0].re - sin_0_0_1 * viz_0_0_1[0].im) as f32;
-        let rot_1_xx_0_0_im = (sin_0_0_1 * viz_0_0_1[0].re + cos_0_0_1 * viz_0_0_1[0].im) as f32;
-        // -> pol XY
-        let rot_1_xy_0_0_re = (cos_0_0_1 * viz_0_0_1[1].re - sin_0_0_1 * viz_0_0_1[1].im) as f32;
-        let rot_1_xy_0_0_im = (sin_0_0_1 * viz_0_0_1[1].re + cos_0_0_1 * viz_0_0_1[1].im) as f32;
-        // -> pol YX
-        let rot_1_yx_0_0_re = (cos_0_0_1 * viz_0_0_1[2].re - sin_0_0_1 * viz_0_0_1[2].im) as f32;
-        let rot_1_yx_0_0_im = (sin_0_0_1 * viz_0_0_1[2].re + cos_0_0_1 * viz_0_0_1[2].im) as f32;
-        // -> pol YY
-        let rot_1_yy_0_0_re = (cos_0_0_1 * viz_0_0_1[3].re - sin_0_0_1 * viz_0_0_1[3].im) as f32;
-        let rot_1_yy_0_0_im = (sin_0_0_1 * viz_0_0_1[3].re + cos_0_0_1 * viz_0_0_1[3].im) as f32;
-
         compare_jones!(
             jones_array[(0, 0, 1)],
-            Jones::from([
-                Complex::new(rot_1_xx_0_0_re, rot_1_xx_0_0_im),
-                Complex::new(rot_1_xy_0_0_re, rot_1_xy_0_0_im),
-                Complex::new(rot_1_yx_0_0_re, rot_1_yx_0_0_im),
-                Complex::new(rot_1_yy_0_0_re, rot_1_yy_0_0_im),
-            ])
+            Jones::<f64>::from(viz_0_0_1) * Complex::from_polar(1., angle_0_0_1)
         );
 
         // ts 3 (batch 1, scan 1), chan 3 (cc 1, fc 1), baseline 1
-        // -> pol XX
-        let rot_1_xx_3_3_re = (cos_3_3_1 * viz_3_3_1[0].re - sin_3_3_1 * viz_3_3_1[0].im) as f32;
-        let rot_1_xx_3_3_im = (sin_3_3_1 * viz_3_3_1[0].re + cos_3_3_1 * viz_3_3_1[0].im) as f32;
-        // -> pol XY
-        let rot_1_xy_3_3_re = (cos_3_3_1 * viz_3_3_1[1].re - sin_3_3_1 * viz_3_3_1[1].im) as f32;
-        let rot_1_xy_3_3_im = (sin_3_3_1 * viz_3_3_1[1].re + cos_3_3_1 * viz_3_3_1[1].im) as f32;
-        // -> pol YX
-        let rot_1_yx_3_3_re = (cos_3_3_1 * viz_3_3_1[2].re - sin_3_3_1 * viz_3_3_1[2].im) as f32;
-        let rot_1_yx_3_3_im = (sin_3_3_1 * viz_3_3_1[2].re + cos_3_3_1 * viz_3_3_1[2].im) as f32;
-        // -> pol YY
-        let rot_1_yy_3_3_re = (cos_3_3_1 * viz_3_3_1[3].re - sin_3_3_1 * viz_3_3_1[3].im) as f32;
-        let rot_1_yy_3_3_im = (sin_3_3_1 * viz_3_3_1[3].re + cos_3_3_1 * viz_3_3_1[3].im) as f32;
-
         compare_jones!(
             jones_array[(3, 3, 1)],
-            Jones::from([
-                Complex::new(rot_1_xx_3_3_re, rot_1_xx_3_3_im),
-                Complex::new(rot_1_xy_3_3_re, rot_1_xy_3_3_im),
-                Complex::new(rot_1_yx_3_3_re, rot_1_yx_3_3_im),
-                Complex::new(rot_1_yy_3_3_re, rot_1_yy_3_3_im),
-            ])
+            Jones::<f64>::from(viz_3_3_1) * Complex::from_polar(1., angle_3_3_1)
         );
     }
 
@@ -1481,19 +1331,19 @@ mod tests {
 
         compare_jones!(
             out_jones_array[(0, 0, 0)],
-            jones_0_min_0 / ((gain_first_0 * gain_first_0) as f32)
+            Jones::<f64>::from(jones_0_min_0) / (gain_first_0 * gain_first_0)
         );
         compare_jones!(
             out_jones_array[(0, 0, 1)],
-            jones_0_min_1 / ((gain_first_0 * gain_first_1) as f32)
+            Jones::<f64>::from(jones_0_min_1) / (gain_first_0 * gain_first_1)
         );
         compare_jones!(
             out_jones_array[(0, max_chan, 0)],
-            jones_0_max_0 / ((gain_last_0 * gain_last_0) as f32)
+            Jones::<f64>::from(jones_0_max_0) / (gain_last_0 * gain_last_0)
         );
         compare_jones!(
             out_jones_array[(0, max_chan, 1)],
-            jones_0_max_1 / ((gain_last_0 * gain_last_1) as f32)
+            Jones::<f64>::from(jones_0_max_1) / (gain_last_0 * gain_last_1)
         );
     }
 
