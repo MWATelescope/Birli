@@ -51,7 +51,7 @@ impl IOContext {
     ///
     /// see `mwalib::CorrelatorContext::new`
     pub fn get_corr_ctx(&self) -> Result<CorrelatorContext, MwalibError> {
-        CorrelatorContext::new(self.metafits_in.clone(), &self.gpufits_in)
+        CorrelatorContext::new(&self.metafits_in, &self.gpufits_in)
     }
 
     // TODO: pub fn validate_params(&self), checks permissions
@@ -130,7 +130,7 @@ pub trait ReadableVis: Sync + Send {
 /// // write the visibilities to disk as .uvfits
 /// let num_pols = corr_ctx.metafits_context.num_visibility_pols;
 /// let weight_factor = get_weight_factor(&corr_ctx);
-/// let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
+/// let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 ///
 /// write_uvfits(
 ///     uvfits_out.as_path(),
@@ -264,7 +264,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///
 /// let num_pols = corr_ctx.metafits_context.num_visibility_pols;
 /// let weight_factor = get_weight_factor(&corr_ctx);
-/// let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
+/// let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 /// // time and frequency averaging
 /// let (avg_time, avg_freq) = (1, 1);
 /// write_ms(
@@ -431,7 +431,7 @@ mod tests_aoflagger {
         );
 
         let weight_factor = get_weight_factor(&corr_ctx);
-        let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
+        let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
         // write the visibilities to disk as .uvfits
 

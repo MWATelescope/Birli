@@ -233,7 +233,7 @@ fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
     let uvfits_path = tmp_dir.path().join("1196175296.none.uvfits");
 
     let weight_factor = get_weight_factor(&corr_ctx);
-    let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
+    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
     crt.bench_function("uvfits_output - ord_half_1196175296", |bch| {
         bch.iter(|| {
@@ -276,7 +276,7 @@ fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
     let uvfits_path = tmp_dir.path().join("1247842824.none.uvfits");
 
     let weight_factor = get_weight_factor(&corr_ctx);
-    let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
+    let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
     crt.bench_function("uvfits_output - mwax_half_1247842824", |bch| {
         bch.iter(|| {

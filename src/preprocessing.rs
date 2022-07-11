@@ -336,7 +336,7 @@ mod tests {
 
         // generate weights
         let weight_factor = get_weight_factor(&corr_ctx);
-        let mut weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
+        let mut weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
         prep_ctx
             .preprocess(
@@ -352,7 +352,7 @@ mod tests {
         let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
 
         write_uvfits(
-            uvfits_path.clone(),
+            &uvfits_path,
             &corr_ctx,
             jones_array.view(),
             weight_array.view(),
