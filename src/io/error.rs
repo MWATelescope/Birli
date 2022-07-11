@@ -62,29 +62,23 @@ pub enum IOError {
     /// Error derived from [`marlu::io::error::UvfitsWriteError`]
     UvfitsWriteError(#[from] marlu::io::error::UvfitsWriteError),
 
-    /// Error to describe some kind of inconsistent state within an mwaf file.
-    #[error("Inconsistent mwaf file (file: {file}, expected: {expected}, found: {found})")]
-    MwafInconsistent {
-        /// The filename of the fits file where the error occurred
-        file: String,
-        /// The value that was expected
-        expected: String,
-        /// The unexpected value that was found
-        found: String,
-    },
-
-    #[error("Invalid GPUBox ID {found}, expected on of {expected}")]
-    /// Error for an unexpected gpubox ID
-    InvalidGpuBox {
-        /// The value that was expected
-        expected: String,
-        /// The unexpected value that was found
-        found: String,
+    /// Error describing the number of baseline flags that were written not
+    /// maching the number expected.
+    #[error("Attempted to finalise mwaf files with {count} rows, but {expected} were expected")]
+    MwafIncorrectFlagCount {
+        /// The number of flag rows written
+        count: u64,
+        /// The expected number of flag rows to be written
+        expected: u64,
     },
 
     #[error(transparent)]
     /// Error for bad array shape in provided argument
     BadArrayShape(#[from] BadArrayShape),
+
+    #[error(transparent)]
+    /// Generic IO error
+    IO(#[from] std::io::Error),
 }
 
 #[derive(Error, Debug)]

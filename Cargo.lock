@@ -165,7 +165,6 @@ dependencies = [
  "cfg-if",
  "clap 3.2.6",
  "criterion",
- "crossbeam-channel",
  "crossbeam-utils",
  "csv",
  "derive_builder",

@@ -1076,10 +1076,6 @@ impl BirliContext {
 
         // validate chunk size
         if let Some(chunk_size) = num_timesteps_per_chunk {
-            assert!(
-                matches.value_of("flag-template").is_none(),
-                "chunking is not supported when writing .mwaf files using --flag-template"
-            );
             info!("chunking output to {} timesteps per chunk", chunk_size);
         }
 
@@ -1360,13 +1356,36 @@ impl BirliContext {
             writer
         });
 
-        let gpubox_ids = corr_ctx.coarse_chans[vis_sel.coarse_chan_range.clone()]
-            .iter()
-            .map(|chan| chan.gpubox_number)
-            .collect::<Vec<_>>();
+        #[cfg(feature = "aoflagger")]
+        let (aoflagger_version, aoflagger_strategy) = {
+            let mut major = 0;
+            let mut minor = 0;
+            let mut subminor = 0;
+            unsafe {
+                aoflagger_sys::cxx_aoflagger_new().GetVersion(
+                    &mut major,
+                    &mut minor,
+                    &mut subminor,
+                );
+            }
+            (
+                Some(format!("v{major}.{minor}.{subminor}")),
+                prep_ctx.aoflagger_strategy.clone(),
+            )
+        };
+        #[cfg(not(feature = "aoflagger"))]
+        let (aoflagger_version, aoflagger_strategy) = (None, None);
+
         let mut flag_file_set = io_ctx.flag_template.map(|flag_template| {
-            FlagFileSet::new(&flag_template, &gpubox_ids, corr_ctx.mwa_version)
-                .expect("cannot create flag file writer")
+            FlagFileSet::new(
+                &flag_template,
+                &corr_ctx,
+                vis_sel.timestep_range.clone(),
+                vis_sel.coarse_chan_range.clone(),
+                aoflagger_version,
+                aoflagger_strategy,
+            )
+            .expect("cannot create flag file writer")
         });
 
         let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
@@ -1464,7 +1483,7 @@ impl BirliContext {
                     durations,
                     "write",
                     flag_file_set
-                        .write_flag_array(&corr_ctx, flag_array.view(), &gpubox_ids)
+                        .write_flag_array(flag_array.view(), prep_ctx.draw_progress)
                         .expect("unable to write flags")
                 );
             }
@@ -1532,6 +1551,13 @@ impl BirliContext {
                     .expect("couldn't write antenna table to uvfits")
             );
         };
+
+        // Finalise the mwaf files.
+        if let Some(flag_file_set) = flag_file_set {
+            flag_file_set
+                .finalise()
+                .expect("couldn't finalise mwaf files");
+        }
 
         Ok(durations)
     }
@@ -3363,6 +3389,7 @@ mod tests_aoflagger_flagset {
     use crate::{io::mwaf::FlagFileSet, BirliContext};
     use itertools::izip;
     use marlu::mwalib::CorrelatorContext;
+    use ndarray::prelude::*;
     use tempfile::tempdir;
 
     macro_rules! assert_flagsets_eq {
@@ -3377,53 +3404,44 @@ mod tests_aoflagger_flagset {
             assert!(num_rows > 0);
             assert!(num_flags_per_row > 0);
 
-            let right_chan_header_flags_raw =
-            $right_flagset.read_chan_header_flags_raw().unwrap();
+            let left_header = &$left_flagset.header;
+            let right_header = &$right_flagset.header;
+            assert_eq!(left_header.obs_id, right_header.obs_id);
+            assert_eq!(left_header.num_channels, right_header.num_channels);
+            assert_eq!(left_header.num_ants, right_header.num_ants);
+            assert_eq!(left_header.num_timesteps as usize, num_common_timesteps);
+            assert_eq!(left_header.num_pols, right_header.num_pols);
+            assert_eq!(left_header.bytes_per_row, right_header.bytes_per_row);
+            assert_eq!(left_header.num_rows, right_header.num_rows);
+            assert_eq!(left_header.num_rows as usize, num_rows);
 
-            let left_chan_header_flags_raw = $left_flagset.read_chan_header_flags_raw().unwrap();
+            let left_flags = $left_flagset.read_flags().unwrap().into_raw_vec();
+            let right_flags = $right_flagset.read_flags().unwrap().into_raw_vec();
+            assert_eq!(left_flags.len(), right_flags.len());
+            assert_eq!(
+                left_flags.len(),
+                num_common_timesteps * num_baselines * num_flags_per_row
+            );
 
-            for gpubox_id in $gpubox_ids {
-                let (left_header, left_flags) = left_chan_header_flags_raw.get(&gpubox_id).unwrap();
-                let (right_header, right_flags) =
-                    right_chan_header_flags_raw.get(&gpubox_id).unwrap();
-                assert_eq!(left_header.obs_id, right_header.obs_id);
-                assert_eq!(left_header.num_channels, right_header.num_channels);
-                assert_eq!(left_header.num_ants, right_header.num_ants);
-                // assert_eq!(left_header.num_common_timesteps, right_header.num_common_timesteps);
-                assert_eq!(left_header.num_timesteps, num_common_timesteps);
-                assert_eq!(left_header.num_pols, right_header.num_pols);
-                assert_eq!(left_header.gpubox_id, right_header.gpubox_id);
-                assert_eq!(left_header.bytes_per_row, right_header.bytes_per_row);
-                // assert_eq!(left_header.num_rows, right_header.num_rows);
-                assert_eq!(left_header.num_rows, num_rows);
-
-                // assert_eq!(left_flags.len(), right_flags.len());
-                assert_eq!(
-                    left_flags.len(),
-                    num_common_timesteps * num_baselines * num_flags_per_row
-                );
-
+            izip!(
+                left_flags.chunks(num_flags_per_timestep),
+                right_flags.chunks(num_flags_per_timestep)
+            ).enumerate().for_each(|(common_timestep_idx, (left_timestep_chunk, right_timestep_chunk))| {
                 izip!(
-                    left_flags.chunks(num_flags_per_timestep),
-                    right_flags.chunks(num_flags_per_timestep)
-                ).enumerate().for_each(|(common_timestep_idx, (left_timestep_chunk, right_timestep_chunk))| {
-                    izip!(
-                        $context.metafits_context.baselines.iter(),
-                        left_timestep_chunk.chunks(num_flags_per_row),
-                        right_timestep_chunk.chunks(num_flags_per_row)
-                    ).enumerate().for_each(|(baseline_idx, (baseline, left_baseline_chunk, right_baseline_chunk))| {
-                        if baseline.ant1_index == baseline.ant2_index {
-                            return
-                        }
-
-                        assert_eq!(
-                            left_baseline_chunk, right_baseline_chunk,
-                            "flag chunks for common timestep {}, baseline {} (ants {}, {}) do not match! \nbirli:\n{:?}\ncotter:\n{:?}",
-                            common_timestep_idx, baseline_idx, baseline.ant1_index, baseline.ant2_index, left_baseline_chunk, right_baseline_chunk
-                        )
-                    });
+                    $context.metafits_context.baselines.iter(),
+                    left_timestep_chunk.chunks(num_flags_per_row),
+                    right_timestep_chunk.chunks(num_flags_per_row)
+                ).enumerate().for_each(|(baseline_idx, (baseline, left_baseline_chunk, right_baseline_chunk))| {
+                    if baseline.ant1_index == baseline.ant2_index {
+                        return
+                    }
+                    assert_eq!(
+                        left_baseline_chunk, right_baseline_chunk,
+                        "flag chunks for common timestep {}, baseline {} (ants {}, {}) do not match! \nbirli:\n{:?}\ncotter:\n{:?}",
+                        common_timestep_idx, baseline_idx, baseline.ant1_index, baseline.ant2_index, left_baseline_chunk, right_baseline_chunk
+                    )
                 });
-            }
+            });
         };
     }
 
@@ -3480,19 +3498,20 @@ mod tests_aoflagger_flagset {
 
         assert!(!gpubox_ids.is_empty());
 
-        let mut birli_flag_file_set = FlagFileSet::open(
+        let birli_flag_file_set = FlagFileSet::open(
             mwaf_path_template.to_str().unwrap(),
             &gpubox_ids,
             corr_ctx.mwa_version,
         )
         .unwrap();
 
-        let mut cotter_flag_file_set = FlagFileSet::open(
+        let (cotter_flag_file_set, date) = FlagFileSet::open_cotter(
             "tests/data/1247842824_flags/FlagfileCotterMWA%%.mwaf",
             &gpubox_ids,
             corr_ctx.mwa_version,
         )
         .unwrap();
+        assert_eq!(date, "2020-08-10");
 
         assert_flagsets_eq!(
             corr_ctx,
@@ -3503,7 +3522,6 @@ mod tests_aoflagger_flagset {
     }
 
     #[test]
-    #[should_panic]
     fn aoflagger_outputs_flags_chunked() {
         let tmp_dir = tempdir().unwrap();
         let mwaf_path_template = tmp_dir.path().join("Flagfile%%.mwaf");
@@ -3512,6 +3530,10 @@ mod tests_aoflagger_flagset {
         let gpufits_paths =
             vec!["tests/data/1247842824_flags/1247842824_20190722150008_gpubox01_00.fits"];
 
+        // There are two "chunked" mwaf files; one for timestep 1, another for
+        // timestep 2. When running Birli with chunking, the flags for the first
+        // chunk should match the first file, and second chunk second file.
+
         #[rustfmt::skip]
         let mut args = vec![
             "birli",
@@ -3519,10 +3541,73 @@ mod tests_aoflagger_flagset {
             "--no-draw-progress",
             "--pfb-gains", "none",
             "--time-chunk", "1",
+            "--sel-time", "1", "2",
+            "--flag-init-steps", "0",
             "-f", mwaf_path_template.to_str().unwrap(),
         ];
         args.extend_from_slice(&gpufits_paths);
 
         BirliContext::from_args(&args).unwrap();
+
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+
+        assert!(birli_ctx.prep_ctx.correct_cable_lengths);
+        assert!(matches!(birli_ctx.prep_ctx.passband_gains, None));
+        assert!(birli_ctx.prep_ctx.correct_digital_gains);
+        assert!(birli_ctx.prep_ctx.correct_geometry);
+        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
+        assert_eq!(
+            birli_ctx.io_ctx.flag_template,
+            Some(mwaf_path_template.to_str().unwrap().into())
+        );
+
+        let corr_ctx = CorrelatorContext::new(
+            birli_ctx.io_ctx.metafits_in.clone(),
+            &birli_ctx.io_ctx.gpufits_in,
+        )
+        .unwrap();
+
+        birli_ctx.run().unwrap();
+
+        let gpubox_ids: Vec<usize> = corr_ctx
+            .common_coarse_chan_indices
+            .iter()
+            .map(|&chan| corr_ctx.coarse_chans[chan].gpubox_number)
+            .collect();
+
+        assert!(!gpubox_ids.is_empty());
+
+        let our_flags = FlagFileSet::open(
+            mwaf_path_template.to_str().unwrap(),
+            &gpubox_ids,
+            corr_ctx.mwa_version,
+        )
+        .unwrap()
+        .read_flags()
+        .unwrap();
+
+        let disk_flags_ts1 = FlagFileSet::open(
+            "tests/data/1247842824_flags/FlagfileBirli%%_ts1.mwaf",
+            &gpubox_ids,
+            corr_ctx.mwa_version,
+        )
+        .unwrap()
+        .read_flags()
+        .unwrap();
+        let disk_flags_ts2 = FlagFileSet::open(
+            "tests/data/1247842824_flags/FlagfileBirli%%_ts2.mwaf",
+            &gpubox_ids,
+            corr_ctx.mwa_version,
+        )
+        .unwrap()
+        .read_flags()
+        .unwrap();
+
+        assert_eq!(our_flags.slice(s![0..1, .., ..]), disk_flags_ts1);
+        assert_eq!(our_flags.slice(s![1..2, .., ..]), disk_flags_ts2);
     }
 }

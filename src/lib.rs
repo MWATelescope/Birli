@@ -56,9 +56,17 @@
 //!     .unwrap();
 //!
 //! // write the flags to disk as .mwaf
-//! write_flags(&corr_ctx, &flag_array, flag_template.to_str().unwrap(), &vis_sel.coarse_chan_range).unwrap();
-//! // write the visibilities to disk as .uvfits
+//! write_flags(flag_template.to_str().unwrap(),
+//!             &corr_ctx,
+//!             vis_sel.timestep_range.clone(),
+//!             vis_sel.coarse_chan_range.clone(),
+//!             flag_array.view(),
+//!             true,
+//!             None,
+//!             None,
+//! ).unwrap();
 //!
+//! // write the visibilities to disk as .uvfits
 //! let num_pols = corr_ctx.metafits_context.num_visibility_pols;
 //! let weight_factor = get_weight_factor(&corr_ctx);
 //! let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);

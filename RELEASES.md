@@ -5,10 +5,24 @@
 - ⚡ performance:
   - Fix unnecessary allocation for smaller visibility chunks to improve memory performance
   - better uvfits performance from marlu 0.7.0
+  - mwaf files are written in parallel
 - 🙏 quality of life:
   - write `history` metadata in ms and uvfits
+  - mwaf files
+    - are overwritten if they already exist (previous versions simply panicked)
+    - can be written out when chunking the observation
+    - are now version 2.0 of the format
+    - `GPSTIME` -> `OBSID` (less ambiguous)
+    - add `GPSSTART` (the centroid timestep of the first scan of flags)
+    - `COTVER` -> `SOFTWARE`
+    - remove `COTVDATE`
+    - write `AO_VER` (AOFlagger version used)
+    - write `AO_STRAT` (AOFlagger strategy file used)
+    - write `CMDLINE`
+    - add `OCCUPANCY` HDU
 - 🏗 api changes:
   - use array views for flagging
+  - mwaf files have a new interface
 - ➕ dependencies:
   - use Marlu 0.7.0
   - use rust version 1.60

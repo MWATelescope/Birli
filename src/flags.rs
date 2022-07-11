@@ -488,6 +488,9 @@ pub fn flag_jones_array(
 /// // Determine which timesteps and coarse channels we want to use
 /// let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
 ///
+/// // Get the GPS time of the first timestep
+/// let gps_start = corr_ctx.timesteps[vis_sel.timestep_range.start].gps_time_ms as f64 / 1e3;
+///
 /// // Prepare our flagmasks with known bad antennae
 /// let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
 ///
@@ -508,19 +511,31 @@ pub fn flag_jones_array(
 ///     .unwrap();
 ///
 /// // write the flags to disk as .mwaf
-/// write_flags(&corr_ctx, &flag_array, flag_template.to_str().unwrap(), &vis_sel.coarse_chan_range).unwrap();
+/// write_flags(flag_template.to_str().unwrap(),
+///             &corr_ctx,
+///             vis_sel.timestep_range.clone(),
+///             vis_sel.coarse_chan_range.clone(),
+///             flag_array.view(),
+///             true,
+///             None,
+///             None,
+/// ).unwrap();
 /// ```
 ///
 /// # Errors
 ///
 /// - Will error with [`IOError::FitsOpen`] if there are files already present at the paths specified in filename template.
 /// - Will error with [`IOError::InvalidFlagFilenameTemplate`] if an invalid flag filename template is provided (wrong number of percents).
-
+#[allow(clippy::too_many_arguments)]
 pub fn write_flags(
-    corr_ctx: &CorrelatorContext,
-    flag_array: &Array3<bool>,
     filename_template: &str,
-    coarse_chan_range: &Range<usize>,
+    corr_ctx: &CorrelatorContext,
+    timestep_range: Range<usize>,
+    coarse_chan_range: Range<usize>,
+    flag_array: ArrayView3<bool>,
+    draw_progress: bool,
+    aoflagger_version: Option<String>,
+    aoflagger_strategy: Option<String>,
 ) -> Result<(), IOError> {
     trace!("start write_flags");
 
@@ -529,14 +544,18 @@ pub fn write_flags(
         .map(|chan| chan.gpubox_number)
         .collect::<Vec<_>>();
 
-    trace!(
-        "writing flags to template: {}, gpubox ids: {:?}",
-        filename_template,
-        gpubox_ids
-    );
+    trace!("writing flags to template: {filename_template}, gpubox ids: {gpubox_ids:?}");
 
-    let mut flag_file_set = FlagFileSet::new(filename_template, &gpubox_ids, corr_ctx.mwa_version)?;
-    flag_file_set.write_flag_array(corr_ctx, flag_array.view(), &gpubox_ids)?;
+    let mut flag_file_set = FlagFileSet::new(
+        filename_template,
+        corr_ctx,
+        timestep_range,
+        coarse_chan_range,
+        aoflagger_version,
+        aoflagger_strategy,
+    )?;
+    flag_file_set.write_flag_array(flag_array, draw_progress)?;
+    flag_file_set.finalise()?;
 
     trace!("end write_flags");
     Ok(())
@@ -619,10 +638,14 @@ mod tests {
         let selected_gpuboxes = gpubox_ids[..1].to_vec();
 
         write_flags(
-            &corr_ctx,
-            &flag_array,
             filename_template.to_str().unwrap(),
-            &vis_sel.coarse_chan_range,
+            &corr_ctx,
+            vis_sel.timestep_range,
+            vis_sel.coarse_chan_range,
+            flag_array.view(),
+            false,
+            None,
+            None,
         )
         .unwrap();
 
@@ -630,27 +653,38 @@ mod tests {
 
         assert_eq!(flag_files.count(), selected_gpuboxes.len());
 
-        let mut flag_file_set = FlagFileSet::open(
+        let flag_file_set = FlagFileSet::open(
             filename_template.to_str().unwrap(),
             &selected_gpuboxes,
             corr_ctx.mwa_version,
         )
         .unwrap();
-        let chan_header_flags_raw = flag_file_set.read_chan_header_flags_raw().unwrap();
-        let (chan1_header, chan1_flags_raw) =
-            chan_header_flags_raw.get(&selected_gpuboxes[0]).unwrap();
-        assert_eq!(chan1_header.gpubox_id, gpubox_ids[0]);
-        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        assert_eq!(flag_file_set.gpuboxes.len(), 1);
+        assert_eq!(flag_file_set.gpuboxes[0].0, gpubox_ids[0]);
+        let flags = flag_file_set.read_flags().unwrap();
 
-        let num_baselines = chan1_header.num_ants * (chan1_header.num_ants + 1) / 2;
-        assert_eq!(chan1_header.num_timesteps, corr_ctx.num_timesteps);
-        assert_eq!(num_baselines, corr_ctx.metafits_context.num_baselines);
-        assert_eq!(chan1_header.num_channels, fine_chans_per_coarse);
+        let num_baselines =
+            (flag_file_set.header.num_ants * (flag_file_set.header.num_ants + 1)) / 2;
         assert_eq!(
-            chan1_flags_raw.len(),
-            chan1_header.num_timesteps * num_baselines * chan1_header.num_channels
+            flag_file_set.header.num_timesteps,
+            corr_ctx.num_timesteps as u32
         );
-        dbg!(&chan1_flags_raw);
+        assert_eq!(
+            num_baselines,
+            corr_ctx.metafits_context.num_baselines as u32
+        );
+        assert_eq!(
+            flag_file_set.header.num_channels,
+            fine_chans_per_coarse as u32
+        );
+        assert_eq!(
+            flags.dim(),
+            (
+                flag_file_set.header.num_timesteps as usize,
+                num_baselines as usize,
+                flag_file_set.header.num_channels as usize,
+            )
+        );
 
         let tests = [
             (0, 0, 0, i8::from(false)),
@@ -668,11 +702,10 @@ mod tests {
         ];
         for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests {
             let row_idx = timestep_idx * num_baselines + baseline_idx;
-            let offset = row_idx * fine_chans_per_coarse + fine_chan_idx;
+            let offset = row_idx as usize * fine_chans_per_coarse + fine_chan_idx as usize;
             assert_eq!(
-                chan1_flags_raw[offset], expected_flag,
-                "with timestep {}, baseline {}, fine_chan {}, expected {} at row_idx {}, offset {}",
-                timestep_idx, baseline_idx, fine_chan_idx, expected_flag, row_idx, offset
+                *flags.iter().nth(offset as usize).unwrap(), expected_flag,
+                "with timestep {timestep_idx}, baseline {baseline_idx}, fine_chan {fine_chan_idx}, expected {expected_flag} at row_idx {row_idx}, offset {offset}"
             );
         }
     }
