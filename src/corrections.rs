@@ -18,8 +18,8 @@ use std::{f64::consts::TAU, ops::Range};
 use thiserror::Error;
 
 /// Perform cable length corrections, given an observation's
-/// [`marlu::mwalib::CorrelatorContext`] and an [`ndarray::Array3`] of [`crate::TestJones`]
-/// visibilities
+/// [`mwalib::CorrelatorContext`](crate::mwalib::CorrelatorContext) and an
+/// [`ndarray::Array3`](crate::ndarray::Array3) of [`marlu::Jones`] visibilities
 ///
 /// Cable lengths are determined by the difference between a baseline's rfInput
 /// electrical lengths in the metafits. Complex visibilities are phase-shifted
@@ -61,7 +61,8 @@ use thiserror::Error;
 ///
 /// # Accuracy
 ///
-/// Corrections are performed in double precision, which is more accurate than Cotter.
+/// Corrections are performed in double precision, which is more accurate than
+/// Cotter.
 pub fn correct_cable_lengths(
     corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
@@ -139,15 +140,16 @@ pub fn correct_cable_lengths(
 }
 
 /// Perform geometric corrections, given an observation's
-/// [`crate::mwalib::CorrelatorContext`] and an [`ndarray::Array3`] of [`crate::TestJones`]
-/// visibilities
+/// [`mwalib::CorrelatorContext`](crate::mwalib::CorrelatorContext) and an
+/// [`ndarray::Array3`](crate::ndarray::Array3) of [`marlu::Jones`] visibilities
 ///
 /// Complex visibilities are phase-shifted by an angle determined by the length
 /// of the w-coordinate for the baseline and the channel's frequency.
 ///
 /// # Accuracy
 ///
-/// Corrections are performed in double precision, which is more accurate than Cotter.
+/// Corrections are performed in double precision, which is more accurate than
+/// Cotter.
 ///
 /// # Examples
 ///
@@ -370,12 +372,17 @@ pub fn correct_digital_gains(
         },
     );
 
-    _correct_digital_gains(jones_array, &gains, ant_pairs, num_fine_chans_per_coarse)
+    _correct_digital_gains(
+        jones_array,
+        gains.view(),
+        ant_pairs,
+        num_fine_chans_per_coarse,
+    )
 }
 
 fn _correct_digital_gains(
     mut jones_array: ArrayViewMut3<Jones<f32>>,
-    gains: &Array2<(f64, f64)>,
+    gains: ArrayView2<(f64, f64)>,
     ant_pairs: &[(usize, usize)],
     num_fine_chans_per_coarse: usize,
 ) -> Result<(), DigitalGainCorrection> {
@@ -1387,7 +1394,7 @@ mod tests {
         let gains = Array2::from_shape_fn((1, 1), |_| (1., 1.));
 
         assert!(matches!(
-            _correct_digital_gains(jones_array.view_mut(), &gains, &ant_pairs, 2),
+            _correct_digital_gains(jones_array.view_mut(), gains.view(), &ant_pairs, 2),
             Err(DigitalGainCorrection::BadArrayShape { .. })
         ));
     }

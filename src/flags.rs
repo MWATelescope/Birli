@@ -223,14 +223,11 @@ impl FlagContext {
 /// - imageset is timesteps wide, and channels high
 /// - jones matrics are always XX, YY, XY, YX
 ///
-/// # Errors
-///
-/// TODO: this doesn't actually throw any errors?
 #[cfg(feature = "aoflagger")]
 pub fn jones_baseline_view_to_imageset(
     aoflagger: &CxxAOFlagger,
-    baseline_jones_view: &ArrayView2<Jones<f32>>,
-) -> Result<UniquePtr<CxxImageSet>, BirliError> {
+    baseline_jones_view: ArrayView2<Jones<f32>>,
+) -> UniquePtr<CxxImageSet> {
     let array_dims = baseline_jones_view.dim();
     let img_count = 8;
     let imgset = unsafe {
@@ -263,7 +260,7 @@ pub fn jones_baseline_view_to_imageset(
         }
     }
 
-    Ok(imgset)
+    imgset
 }
 
 /// Create an aoflagger [`CxxFlagMask`] for a from the given flag array view
@@ -273,14 +270,11 @@ pub fn jones_baseline_view_to_imageset(
 /// - flag array view is [timestep][channel] for one baseline
 /// - flagmask is timesteps wide, and channels high
 ///
-/// # Errors
-///
-/// TODO: this doesn't actually throw any errors?
 #[cfg(feature = "aoflagger")]
 pub fn flag_baseline_view_to_flagmask(
     aoflagger: &CxxAOFlagger,
-    baseline_flag_view: &ArrayView2<bool>,
-) -> Result<UniquePtr<CxxFlagMask>, BirliError> {
+    baseline_flag_view: ArrayView2<bool>,
+) -> UniquePtr<CxxFlagMask> {
     let array_dims = baseline_flag_view.dim();
     let mut flag_mask = unsafe { aoflagger.MakeFlagMask(array_dims.0, array_dims.1, false) };
     let stride = flag_mask.HorizontalStride();
@@ -294,15 +288,16 @@ pub fn flag_baseline_view_to_flagmask(
                 *singular_flag_view.get(()).unwrap();
         }
     }
-    Ok(flag_mask)
+    flag_mask
 }
 
-/// Flag an ndarray of [`Jones`] visibilities, given a [`CxxAOFlagger`] instance,
-/// a [`CxxStrategy`] filename, returning an [`ndarray::Array3`] of boolean flags.
+/// Flag an ndarray of [`Jones`] visibilities, given a [`CxxAOFlagger`]
+/// instance, a [`CxxStrategy`] filename, returning an
+/// [`ndarray::Array3`](crate::ndarray::Array3) of boolean flags.
 ///
-/// Providing some existing flags is optional, however these flags must be the same
-/// dimension as the provided Jones array. If these are not provided, an empty flag
-/// array is created instead
+/// Providing some existing flags is optional, however these flags must be the
+/// same dimension as the provided Jones array. If these are not provided, an
+/// empty flag array is created instead
 ///
 /// if [`re_apply_existing`] is true, then the new flags are binary or'd with
 /// the existing flags, otherwise they overwrite them.
@@ -399,12 +394,12 @@ pub fn flag_jones_array_existing(
         .into_par_iter()
         .zip(flag_array.axis_iter_mut(Axis(2)))
         .for_each(|(jones_baseline_view, mut flag_baseine_view)| {
-            let imgset = jones_baseline_view_to_imageset(aoflagger, &jones_baseline_view).unwrap();
+            let imgset = jones_baseline_view_to_imageset(aoflagger, jones_baseline_view.view());
             let flag_strategy = aoflagger.LoadStrategyFile(&strategy_filename.to_string());
             let flag_baseline_view_immutable = flag_baseine_view.view();
             // This lets us pass in our mutable flag array view to something not expecting a mutable.
             let mut flagmask =
-                flag_baseline_view_to_flagmask(aoflagger, &flag_baseline_view_immutable).unwrap();
+                flag_baseline_view_to_flagmask(aoflagger, flag_baseline_view_immutable.view());
             let new_flagmask = flag_strategy.RunExisting(&imgset, &flagmask);
 
             if re_apply_existing {
@@ -725,7 +720,8 @@ pub fn get_weight_factor(corr_ctx: &CorrelatorContext) -> f64 {
 }
 
 /// Convert the given ndarray of boolean flags to an ndarray of float weights
-pub fn flag_to_weight_array<D>(flag_array: &ArrayView<bool, D>, weight_factor: f64) -> Array<f32, D>
+#[allow(clippy::needless_pass_by_value)]
+pub fn flag_to_weight_array<D>(flag_array: ArrayView<bool, D>, weight_factor: f64) -> Array<f32, D>
 where
     D: Dimension,
 {

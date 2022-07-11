@@ -1240,11 +1240,11 @@ impl<'a> BirliContext<'a> {
     /// # Errors
     ///
     /// can raise:
-    /// - `BadArrayShape` if the shape of the calibartion solutions
+    /// - `BadArrayShape` if the shape of the calibration solutions
     ///     is incompatible with the visibility shape.
     /// - preprocessing errors
     pub fn run(self) -> Result<HashMap<String, Duration>, BirliError> {
-        let BirliContext {
+        let Self {
             corr_ctx,
             mut prep_ctx,
             vis_sel,
@@ -3475,11 +3475,9 @@ mod tests_aoflagger_flagset {
             Some(mwaf_path_template.to_str().unwrap().into())
         );
 
-        let corr_ctx = CorrelatorContext::new(
-            birli_ctx.io_ctx.metafits_in.clone(),
-            &birli_ctx.io_ctx.gpufits_in,
-        )
-        .unwrap();
+        let corr_ctx =
+            CorrelatorContext::new(&birli_ctx.io_ctx.metafits_in, &birli_ctx.io_ctx.gpufits_in)
+                .unwrap();
 
         birli_ctx.run().unwrap();
 

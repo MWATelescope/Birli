@@ -69,7 +69,7 @@
 //! // write the visibilities to disk as .uvfits
 //! let num_pols = corr_ctx.metafits_context.num_visibility_pols;
 //! let weight_factor = get_weight_factor(&corr_ctx);
-//! let weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
+//! let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 //! write_uvfits(
 //!     uvfits_out.as_path(),
 //!     &corr_ctx,
