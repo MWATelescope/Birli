@@ -1255,9 +1255,6 @@ impl<'a> BirliContext<'a> {
             num_timesteps_per_chunk,
         } = self;
 
-        // used to time large operations
-        let mut durations = HashMap::<String, Duration>::new();
-
         // ////////// //
         // Prepare IO //
         // ////////// //
@@ -1327,7 +1324,7 @@ impl<'a> BirliContext<'a> {
             message: Some(&message),
         };
         let mut uvfits_writer = io_ctx.uvfits_out.map(|uvfits_out| {
-            with_increment_duration!(durations, "init", {
+            with_increment_duration!("init", {
                 UvfitsWriter::from_marlu(
                     uvfits_out,
                     &vis_ctx,
@@ -1342,7 +1339,7 @@ impl<'a> BirliContext<'a> {
         let mut ms_writer = io_ctx.ms_out.map(|ms_out| {
             let writer =
                 MeasurementSetWriter::new(ms_out, obs_ctx.phase_centre, Some(obs_ctx.array_pos));
-            with_increment_duration!(durations, "init", {
+            with_increment_duration!("init", {
                 writer
                     .initialize_mwa(
                         &vis_ctx,
@@ -1455,7 +1452,6 @@ impl<'a> BirliContext<'a> {
 
             // populate visibilities
             with_increment_duration!(
-                durations,
                 "read",
                 chunk_vis_sel.read_mwalib(
                     &corr_ctx,
@@ -1473,14 +1469,12 @@ impl<'a> BirliContext<'a> {
                 jones_array.view_mut(),
                 weight_array.view_mut(),
                 flag_array.view_mut(),
-                &mut durations,
                 &chunk_vis_sel,
             )?;
 
             // output flags (before averaging)
             if let Some(flag_file_set) = flag_file_set.as_mut() {
                 with_increment_duration!(
-                    durations,
                     "write",
                     flag_file_set
                         .write_flag_array(flag_array.view(), prep_ctx.draw_progress)
@@ -1509,7 +1503,6 @@ impl<'a> BirliContext<'a> {
             // output uvfits
             if let Some(uvfits_writer) = uvfits_writer.as_mut() {
                 with_increment_duration!(
-                    durations,
                     "write",
                     uvfits_writer
                         .write_vis_marlu(
@@ -1526,7 +1519,6 @@ impl<'a> BirliContext<'a> {
             // output ms
             if let Some(ms_writer) = ms_writer.as_mut() {
                 with_increment_duration!(
-                    durations,
                     "write",
                     ms_writer
                         .write_vis_marlu(
@@ -1544,7 +1536,6 @@ impl<'a> BirliContext<'a> {
         // Finalise the uvfits writer.
         if let Some(uvfits_writer) = uvfits_writer {
             with_increment_duration!(
-                durations,
                 "write",
                 uvfits_writer
                     .write_ants_from_mwalib(&corr_ctx.metafits_context)
@@ -1559,6 +1550,8 @@ impl<'a> BirliContext<'a> {
                 .expect("couldn't finalise mwaf files");
         }
 
+        // Copy the global durations out to the caller.
+        let durations = crate::DURATIONS.lock().unwrap().clone();
         Ok(durations)
     }
 }

@@ -211,10 +211,16 @@ cfg_if! {
 #[cfg(test)]
 pub mod test_common;
 
+lazy_static::lazy_static! {
+    static ref DURATIONS: std::sync::Mutex<std::collections::HashMap<String, std::time::Duration>> = {
+        std::sync::Mutex::new(std::collections::HashMap::new())
+    };
+}
+
 #[macro_export]
 /// Time a statement and increment the timer given by name in the hashmap of durations
 macro_rules! with_increment_duration {
-    ($durs:expr, $name:literal, $($s:stmt);+ $(;)?) => {
+    ($name:literal, $($s:stmt);+ $(;)?) => {
         {
             let _now = std::time::Instant::now();
             let _res = {
@@ -222,7 +228,8 @@ macro_rules! with_increment_duration {
                     $s
                 )*
             };
-            *$durs.entry($name.into()).or_insert(Duration::default()) += _now.elapsed();
+            let mut durations = $crate::DURATIONS.lock().unwrap();
+            *durations.entry($name.into()).or_insert(Duration::default()) += _now.elapsed();
             _res
         }
     };
