@@ -21,6 +21,7 @@
     - write `CMDLINE`
     - add `OCCUPANCY` HDU
   - PFB gains are now borrowed instead of cloned
+  - when using --max-memory, chunk sizes are now more even
 - 🏗 api changes:
   - use array views for flagging
   - mwaf files have a new interface
