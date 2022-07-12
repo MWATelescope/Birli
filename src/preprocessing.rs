@@ -26,7 +26,7 @@ cfg_if! {
 
 /// Options for preprocessing a chunk of correlator data
 #[derive(Builder, Debug, Default)]
-pub struct PreprocessContext {
+pub struct PreprocessContext<'a> {
     /// The array position used for geometric corrections
     pub array_pos: LatLngHeight,
     /// The phase centre used for geometric corrections
@@ -39,7 +39,7 @@ pub struct PreprocessContext {
     #[builder(default = "true")]
     pub correct_digital_gains: bool,
     /// the pfb passband gains to use for corrections
-    pub passband_gains: Option<Vec<f64>>,
+    pub passband_gains: Option<&'a [f64]>,
     /// The calibration solutions to apply
     pub calsols: Option<Array2<Jones<f64>>>,
     /// Whether geometric corrections are enabled
@@ -56,7 +56,7 @@ pub struct PreprocessContext {
     pub draw_progress: bool,
 }
 
-impl Display for PreprocessContext {
+impl Display for PreprocessContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
@@ -107,7 +107,7 @@ impl Display for PreprocessContext {
     }
 }
 
-impl PreprocessContext {
+impl<'a> PreprocessContext<'a> {
     /// A one line description of the tasks preprocessing will do.
     pub fn as_comment(&self) -> String {
         [
@@ -198,7 +198,7 @@ impl PreprocessContext {
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 
         // perform pfb passband gain corrections
-        if let Some(passband_gains) = self.passband_gains.as_ref() {
+        if let Some(passband_gains) = self.passband_gains {
             trace!("correcting pfb gains");
             with_increment_duration!(
                 durations,
@@ -406,7 +406,7 @@ mod tests {
         prep_ctx.correct_digital_gains = false;
         prep_ctx.correct_geometry = false;
         prep_ctx.draw_progress = false;
-        prep_ctx.passband_gains = Some(PFB_JAKE_2022_200HZ.to_vec());
+        prep_ctx.passband_gains = Some(PFB_JAKE_2022_200HZ);
 
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();

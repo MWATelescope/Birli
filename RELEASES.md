@@ -20,6 +20,7 @@
     - write `AO_STRAT` (AOFlagger strategy file used)
     - write `CMDLINE`
     - add `OCCUPANCY` HDU
+  - PFB gains are now borrowed instead of cloned
 - 🏗 api changes:
   - use array views for flagging
   - mwaf files have a new interface

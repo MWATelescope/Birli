@@ -43,11 +43,11 @@ const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 
 /// Args for preprocessing a correlator context.
-pub struct BirliContext {
+pub struct BirliContext<'a> {
     /// mwalib::CorrelatorContext
     pub corr_ctx: CorrelatorContext,
     /// Preprocessing parameters
-    pub prep_ctx: PreprocessContext,
+    pub prep_ctx: PreprocessContext<'a>,
     /// selected visibility indices
     pub vis_sel: VisSelection,
     /// Flagging Parameters
@@ -118,7 +118,7 @@ fn time_details(
     )
 }
 
-impl Display for BirliContext {
+impl Display for BirliContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{} version {}", PKG_NAME, PKG_VERSION,)?;
 
@@ -479,7 +479,7 @@ impl Display for BirliContext {
     }
 }
 
-impl BirliContext {
+impl<'a> BirliContext<'a> {
     // TODO: try struct instead of builder
     #[allow(clippy::cognitive_complexity)]
     fn get_matches<I, T>(args: I) -> Result<clap::ArgMatches, BirliError>
@@ -1085,7 +1085,7 @@ impl BirliContext {
     fn parse_prep_matches(
         matches: &clap::ArgMatches,
         corr_ctx: &CorrelatorContext,
-    ) -> Result<PreprocessContext, BirliError> {
+    ) -> Result<PreprocessContext<'a>, BirliError> {
         let mut prep_ctx = PreprocessContext {
             draw_progress: !matches.is_present("no-draw-progress"),
             ..PreprocessContext::default()
@@ -1131,8 +1131,8 @@ impl BirliContext {
         prep_ctx.correct_digital_gains = !matches.is_present("no-digital-gains");
         prep_ctx.passband_gains = match matches.value_of("passband-gains") {
             None | Some("none") => None,
-            Some("jake") => Some(PFB_JAKE_2022_200HZ.to_vec()),
-            Some("cotter") => Some(PFB_COTTER_2014_10KHZ.to_vec()),
+            Some("jake") => Some(PFB_JAKE_2022_200HZ),
+            Some("cotter") => Some(PFB_COTTER_2014_10KHZ),
             Some(option) => panic!("unknown option for --passband-gains: {}", option),
         };
         prep_ctx.correct_geometry = {
