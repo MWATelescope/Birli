@@ -10,7 +10,6 @@ use cfg_if::cfg_if;
 use derive_builder::Builder;
 use log::trace;
 use std::{
-    collections::HashMap,
     fmt::{Debug, Display},
     time::Duration,
 };
@@ -162,13 +161,11 @@ impl<'a> PreprocessContext<'a> {
         mut jones_array: ArrayViewMut3<Jones<f32>>,
         mut weight_array: ArrayViewMut3<f32>,
         mut flag_array: ArrayViewMut3<bool>,
-        durations: &mut HashMap<String, Duration>,
         vis_sel: &VisSelection,
     ) -> Result<(), BirliError> {
         if self.correct_cable_lengths {
             trace!("correcting cable lengths");
             with_increment_duration!(
-                durations,
                 "correct_cable",
                 correct_cable_lengths(
                     corr_ctx,
@@ -184,7 +181,6 @@ impl<'a> PreprocessContext<'a> {
         if self.correct_digital_gains {
             trace!("correcting digital gains");
             with_increment_duration!(
-                durations,
                 "correct_digital",
                 correct_digital_gains(
                     corr_ctx,
@@ -201,7 +197,6 @@ impl<'a> PreprocessContext<'a> {
         if let Some(passband_gains) = self.passband_gains {
             trace!("correcting pfb gains");
             with_increment_duration!(
-                durations,
                 "correct_passband",
                 correct_coarse_passband_gains(
                     jones_array.view_mut(),
@@ -218,7 +213,7 @@ impl<'a> PreprocessContext<'a> {
                 if let Some(strategy) = self.aoflagger_strategy.as_ref() {
                     trace!("using aoflagger");
                     let aoflagger = unsafe { cxx_aoflagger_new() };
-                    with_increment_duration!(durations,
+                    with_increment_duration!(
                         "flag",
                         flag_jones_array_existing(
                             &aoflagger,
@@ -236,7 +231,6 @@ impl<'a> PreprocessContext<'a> {
         if self.correct_geometry {
             trace!("correcting geometric delays");
             with_increment_duration!(
-                durations,
                 "correct_geom",
                 correct_geometry(
                     corr_ctx,
@@ -253,7 +247,6 @@ impl<'a> PreprocessContext<'a> {
         if let Some(ref calsols) = self.calsols {
             trace!("applying calibration solutions");
             with_increment_duration!(
-                durations,
                 "calibrate",
                 apply_di_calsol(
                     calsols.view(),
@@ -345,15 +338,12 @@ mod tests {
         let weight_factor = get_weight_factor(&corr_ctx);
         let mut weight_array = flag_to_weight_array(&flag_array.view(), weight_factor);
 
-        let mut durations = HashMap::new();
-
         prep_ctx
             .preprocess(
                 &corr_ctx,
                 jones_array.view_mut(),
                 weight_array.view_mut(),
                 flag_array.view_mut(),
-                &mut durations,
                 &vis_sel,
             )
             .unwrap();
@@ -430,8 +420,7 @@ mod tests {
                 jones_array.view_mut(),
                 weight_array.view_mut(),
                 flag_array.view_mut(),
-                &mut HashMap::new(),
-                &vis_sel
+                &vis_sel,
             ),
             Ok(_)
         ));
@@ -443,7 +432,6 @@ mod tests {
             jones_array.view_mut(),
             weight_array.view_mut(),
             flag_array.view_mut(),
-            &mut HashMap::new(),
             &vis_sel,
         );
 
