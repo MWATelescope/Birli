@@ -19,7 +19,8 @@
     - write `AO_VER` (AOFlagger version used)
     - write `AO_STRAT` (AOFlagger strategy file used)
     - write `CMDLINE`
-    - add `OCCUPANCY` HDU
+    - add `CH_OCC` (channel occupancy), `BL_OCC` (baseline occupancy) and
+      `TILES` (unflagged tile information) HDUs
   - PFB gains are now borrowed instead of cloned
 - 🏗 api changes:
   - use array views for flagging

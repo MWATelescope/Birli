@@ -14,7 +14,7 @@ use cfg_if::cfg_if;
 use derive_builder::Builder;
 use itertools::izip;
 use log::trace;
-use marlu::io::error::BadArrayShape;
+use marlu::{io::error::BadArrayShape, VisSelection};
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
@@ -508,8 +508,7 @@ pub fn flag_jones_array(
 /// // write the flags to disk as .mwaf
 /// write_flags(flag_template.to_str().unwrap(),
 ///             &corr_ctx,
-///             vis_sel.timestep_range.clone(),
-///             vis_sel.coarse_chan_range.clone(),
+///             &vis_sel,
 ///             flag_array.view(),
 ///             true,
 ///             None,
@@ -525,8 +524,7 @@ pub fn flag_jones_array(
 pub fn write_flags(
     filename_template: &str,
     corr_ctx: &CorrelatorContext,
-    timestep_range: Range<usize>,
-    coarse_chan_range: Range<usize>,
+    vis_sel: &VisSelection,
     flag_array: ArrayView3<bool>,
     draw_progress: bool,
     aoflagger_version: Option<String>,
@@ -534,7 +532,7 @@ pub fn write_flags(
 ) -> Result<(), IOError> {
     trace!("start write_flags");
 
-    let gpubox_ids = corr_ctx.coarse_chans[coarse_chan_range.clone()]
+    let gpubox_ids = corr_ctx.coarse_chans[vis_sel.coarse_chan_range.clone()]
         .iter()
         .map(|chan| chan.gpubox_number)
         .collect::<Vec<_>>();
@@ -544,8 +542,7 @@ pub fn write_flags(
     let mut flag_file_set = FlagFileSet::new(
         filename_template,
         corr_ctx,
-        timestep_range,
-        coarse_chan_range,
+        vis_sel,
         aoflagger_version,
         aoflagger_strategy,
     )?;
@@ -635,8 +632,7 @@ mod tests {
         write_flags(
             filename_template.to_str().unwrap(),
             &corr_ctx,
-            vis_sel.timestep_range,
-            vis_sel.coarse_chan_range,
+            &vis_sel,
             flag_array.view(),
             false,
             None,
@@ -655,7 +651,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(flag_file_set.gpuboxes.len(), 1);
-        assert_eq!(flag_file_set.gpuboxes[0].0, gpubox_ids[0]);
+        assert_eq!(flag_file_set.gpuboxes[0].id, gpubox_ids[0]);
         let flags = flag_file_set.read_flags().unwrap();
 
         let num_baselines =
