@@ -130,5 +130,6 @@ def main(argv):
         makedirs(dirname(args.out_file))
     new_gpu_fits.writeto(args.out_file, overwrite=True)
 
+
 if __name__ == '__main__':
     main(sys.argv[1:])

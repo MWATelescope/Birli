@@ -44,6 +44,7 @@ def parse_args(argv):
     )
     return parser.parse_args(argv)
 
+
 def dump_img_hdu(scan_idx, img_hdu):
 
     print("")
@@ -60,6 +61,7 @@ def dump_flag_hdu(scan_idx, flag_hdu):
     print("")
 
     print(repr(flag_hdu.header))
+
 
 def main(argv):
     args = parse_args(argv)

@@ -149,6 +149,8 @@ singularity pull --dir . docker://mwatelescope/birli:latest
 singularity exec  /pawsey/mwa/singularity/birli/birli_latest.sif /app/target/release/birli ${YOUR_BIRLI_ARGS}
 ```
 
+see this gist for an example of [a Garrawarla SLURM job using Birli](https://gist.github.com/d3v-null/9ce233114ebb16dc18072303845257e5)
+
 ### Singularity on HPC (debug mode)
 
 This will give you much more information about any problem you're having with Birli, however the
@@ -329,6 +331,18 @@ GPUBox files that the coarse channel data came from. For legacy data, use two pe
 since the coarse channel identifier is the GPUBox number. However, for MWAX data, the coarse channel
 identifier is the channel number, which needs three digits.
 
+Example: automatically determine flag template
+
+```bash
+export flag_template='Flagfile%%.mwaf'
+if [ ${obsid} -gt 1300000000 ]; then
+    flag_template='Flagfile_ch%%%.mwaf'
+fi
+birli \
+  -f $flag_template \
+  ...
+```
+
 ### Comparison with Cotter
 
 The following table shows how Birli options map onto Cotter options:
@@ -349,11 +363,11 @@ The following table shows how Birli options map onto Cotter options:
 | `--apply-di-cal <PATH>`             | `-full-apply <file>`    | Apply a solution file before averaging.
 | `--no-digital-gains`                | `-nosbgains`            | Do not correct for the digital gains.
 | `--max-memory` (WIP)                | `-absmem <gb>`          | Use at most the given amount of memory, specified in gigabytes.
-| `--flag-edge-width <kHz>` (WIP)     | `-edgewidth <kHz>`      | Flag the given width of edge channels of each sub-band (default: 80 kHz).
-| `--flag-init <sec>` (WIP)           | `-initflag <sec>`       | Specify number of seconds to flag at beginning of observation (default: QUACK)
-| `--flag-end <sec>` (WIP)            | `-endflag <sec>`        | Specify number of seconds to flag extra at end of observation (default: 0s).
-| `--flag-dc` (WIP)                   | `-flagdcchannels`       | Flag the centre channel of each sub-band (currently the default).
-| `--no-flag-dc` (WIP)                | `-noflagdcchannels`     | Do not flag the centre channel of each sub-band.
+| `--flag-edge-width <kHz>`           | `-edgewidth <kHz>`      | Flag the given width of edge channels of each sub-band (default: 80 kHz).
+| `--flag-init <sec>`                 | `-initflag <sec>`       | Specify number of seconds to flag at beginning of observation (default: QUACK)
+| `--flag-end <sec>`                  | `-endflag <sec>`        | Specify number of seconds to flag extra at end of observation (default: 0s).
+| `--flag-dc`                         | `-flagdcchannels`       | Flag the centre channel of each sub-band (currently the default).
+| `--no-flag-dc`                      | `-noflagdcchannels`     | Do not flag the centre channel of each sub-band.
 | `--flag-antennae <ANTS>...` (WIP)   | `-flagantenna <lst>`    | Mark the comma-separated list of zero-indexed antennae as flagged antennae.
 | `--flag-coarse-chans <CHANS>` (WIP) | `-flagsubband <lst>`    | Flag the comma-separated list of zero-indexed sub-bands.
 | `--no-sel-autos` (WIP)              | `-noautos`              | Do not output auto-correlations.
@@ -400,7 +414,6 @@ In this example, we use the aoflagger subcommand to:
 - Perform RFI flagging using the MWA-default flagging strategy
 - Perform geometric and cable length corrections
 - average the data to 4 seconds, 160khz
-- disable passband correction
 - Output visibilities to .uvfits (`-u`)
 
 ```bash
@@ -421,12 +434,8 @@ cotter \
   -m tests/data/1254670392_avg/1254670392.metafits \
   -o "tests/data/1254670392_avg/1254670392.cotter.uvfits" \
   -allowmissing \
-  -edgewidth 0 \
-  -endflag 0 \
-  -initflag 0 \
   -noantennapruning \
   -noflagautos \
-  -noflagdcchannels \
   -nostats \
   -timeres 4 \
   -freqres 160 \

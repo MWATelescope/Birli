@@ -27,6 +27,7 @@ def parse_args(argv):
     )
     return parser.parse_args(argv)
 
+
 def main(argv):
     args = parse_args(argv)
     hdus = fits.open(args.file)
@@ -66,7 +67,7 @@ def main(argv):
 
     # pass
 
+
 if __name__ == '__main__':
     main(sys.argv[1:])
     # main(["tests/data/1196175296_mwa_ord/1196175296.metafits"])
-
