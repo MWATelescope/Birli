@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from itertools import combinations_with_replacement, combinations
 from os.path import abspath, exists, dirname
 from os.path import join as path_join, exists as path_exists
 from os import makedirs
@@ -29,10 +30,12 @@ def parse_args(argv):
     )
     return parser.parse_args(argv)
 
+
 def chunk(iterable, n):
     "Collect data into fixed-length chunks or blocks"
     args = [iter(iterable)] * n
     return zip(*args)
+
 
 def main(argv):
     args = parse_args(argv)
@@ -40,31 +43,47 @@ def main(argv):
     hdus = fits.open(args.file)
     print(f"-> hdus.info():")
     hdus.info()
-    
+
     print("")
     print("HEADER")
     print("")
 
-    print(repr(hdus[0].header))
-    
-    num_scans = hdus[0].header['NSCANS']
-    num_antenna = hdus[0].header['NANTENNA'] 
-    num_baselines = (num_antenna * (num_antenna + 1) // 2)
+    print(repr(hdus['PRIMARY'].header))
+
+    num_scans = hdus['PRIMARY'].header['NSCANS']
+    print(f" -> num scans: hdus['PRIMARY'].header['NSCANS']={num_scans}")
+    num_antenna = hdus['PRIMARY'].header['NANTENNA']
+    print(f" -> num scans: hdus['PRIMARY'].header['NANTENNA']={num_antenna}")
+    num_chans = hdus['FLAGS'].header['NAXIS1']
+    print(f" -> num chans: hdus['FLAGS'].header['NAXIS1']={num_chans}")
+    num_rows = hdus['FLAGS'].header['NAXIS2']
+    assert num_rows % num_scans == 0
+    num_baselines = num_rows // num_scans
     print(f" -> num baselines: {num_baselines}")
+
+    ant_pairs = [*combinations_with_replacement(range(num_antenna), 2)]
+    if len(ant_pairs) != num_baselines:
+        ant_pairs_noautos = [*combinations(range(num_antenna), 2)]
+        if len(ant_pairs_noautos) != num_baselines:
+            raise ValueError(
+                f"num_baselines={num_baselines}"
+                f" != len(ant_pairs_noautos)={len(ant_pairs_noautos)}"
+                f" or len(ant_pairs_autos)={len(ant_pairs)}")
+        ant_pairs = ant_pairs_noautos
 
     print("")
     print("FLAG DATA")
     print("")
 
-    print(repr(hdus[1].header))
+    print(repr(hdus['FLAGS'].header))
 
-    flag_data = hdus[1].data
+    flag_data = hdus['FLAGS'].data
     print(f"flags shape {flag_data.shape}")
-    rows = flag_data.shape[0]
-    
-    timestep_limit = rows // num_baselines
-    if rows != num_scans * num_baselines:
-        print(f"num_scans ({num_scans}) * num_baselines({num_baselines}) != rows({rows})")
+    assert flag_data.shape[0] == num_rows
+
+    timestep_limit = num_rows // num_baselines
+    if num_rows != num_scans * num_baselines:
+        print(f"num_scans ({num_scans}) * num_baselines({num_baselines}) != num_rows({num_rows})")
     print(f"actual num_scans: {timestep_limit}")
     if args.timestep_limit:
         timestep_limit = min(args.timestep_limit, timestep_limit)
@@ -72,14 +91,14 @@ def main(argv):
     if args.baseline_limit:
         baseline_limit = min(args.baseline_limit, baseline_limit)
     print(f"-> limits: baseline={baseline_limit}, timestep={timestep_limit}")
-    for baseline_idx in range(baseline_limit):
-        print(f"-> bl {baseline_idx:04d}:")
+    for baseline_idx, (ant1, ant2) in enumerate(ant_pairs):
+        print(f"-> bl {baseline_idx:04d} ({ant1:03d},{ant2:03d}):")
         for timestep_idx in range(timestep_limit):
             flags = flag_data[timestep_idx * num_baselines + baseline_idx][0]
             flag_display = "".join([f"{'#' if flag else '.'}" for flag in flags])
-            print(f" --> ts {timestep_idx:04d}: {flag_display}")    
+            print(f" --> ts {timestep_idx:04d}: {flag_display}")
+
 
 if __name__ == '__main__':
     main(sys.argv[1:])
     # main(["tests/data/1196175296_mwa_ord/FlagfileCotter01.mwaf"])
-
