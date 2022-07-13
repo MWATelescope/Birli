@@ -58,8 +58,7 @@
 //! // write the flags to disk as .mwaf
 //! write_flags(flag_template.to_str().unwrap(),
 //!             &corr_ctx,
-//!             vis_sel.timestep_range.clone(),
-//!             vis_sel.coarse_chan_range.clone(),
+//!             &vis_sel,
 //!             flag_array.view(),
 //!             true,
 //!             None,

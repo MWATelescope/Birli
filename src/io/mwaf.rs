@@ -8,16 +8,13 @@
 //! one column. Each cell in the table contains a binary vector of flags for each fine channel in
 //! the coarse channel.
 
-use std::{
-    ops::Range,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use clap::crate_version;
 use fitsio::{tables::ColumnDataType, tables::ColumnDescription, FitsFile};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::Itertools;
-use marlu::{fitsio, fitsio_sys, mwalib, ndarray, rayon};
+use marlu::{fitsio, fitsio_sys, mwalib, ndarray, rayon, VisSelection};
 use mwalib::{
     CorrelatorContext, MWAVersion, _get_required_fits_key, _open_hdu, fits_open_hdu,
     get_required_fits_key,
@@ -32,7 +29,7 @@ use super::error::{
 };
 
 /// flag metadata which for a particular flag file in the set.
-pub struct FlagFileHeader {
+pub(crate) struct FlagFileHeader {
     /// The `VERSION` key from the primary hdu
     // TODO: what is this actually used for?
     pub version: String,
@@ -52,9 +49,8 @@ pub struct FlagFileHeader {
     pub num_pols: u8,
     /// The name of the software used to generate this flag file.
     pub software: String,
-    /// The width of each fine channel mask vector in bytes, or the `NAXIS1` key from the table hdu
-    pub bytes_per_row: u32,
     /// The number of rows (timesteps × baselines), and the `NAXIS2` key from the table hdu.
+    #[cfg(test)]
     pub num_rows: u32,
     /// The version of aoflagger used to generate these flags.
     pub aoflagger_version: Option<String>,
@@ -62,18 +58,28 @@ pub struct FlagFileHeader {
     pub aoflagger_strategy: Option<String>,
 }
 
-/// A group of .mwaf Files for the same observation
+/// A poorly-named container for a gpubox's index, filename, channel flag count
+/// and baseline flag count.
+pub(crate) struct Gpubox {
+    pub(crate) index: usize,
+    filename: PathBuf,
+    channel_flag_count: Vec<u64>,
+    baseline_flag_count: Vec<u64>,
+}
+
+/// A group of .mwaf files for the same observation
 pub struct FlagFileSet {
-    /// A map associating gpubox numbers with filenames as well as the flag
-    /// counts for that gpubox (used to determine occupancy which is written to
-    /// the mwaf files after all flags are written).
-    pub(crate) gpuboxes: Vec<(usize, PathBuf, Vec<u64>)>,
+    pub(crate) gpuboxes: Vec<Gpubox>,
     /// Flag file header.
     pub(crate) header: FlagFileHeader,
     /// The number of baseline rows that have been written.
     row_count: u64,
     /// The number of baseline rows that are expected when writing is complete.
     expected_rows: u64,
+    /// The names of the antennas used in the flags.
+    ant_names: Vec<String>,
+    /// The indices of the antennas used in the flags.
+    ant_indices: Vec<u32>,
 }
 
 impl FlagFileSet {
@@ -81,7 +87,7 @@ impl FlagFileSet {
         mwa_version: MWAVersion,
         filename_template: &str,
         gpubox_ids: &[usize],
-    ) -> Result<Vec<(usize, PathBuf, Vec<u64>)>, IOError> {
+    ) -> Result<Vec<Gpubox>, IOError> {
         let num_percents = match mwa_version {
             MWAVersion::CorrOldLegacy | MWAVersion::CorrLegacy => 2,
             _ => 3,
@@ -98,19 +104,18 @@ impl FlagFileSet {
 
         Ok(gpubox_ids
             .iter()
-            .map(|&gpubox_id| {
-                (
-                    gpubox_id,
-                    PathBuf::from(
-                        re_percents
-                            .replace(
-                                filename_template,
-                                format!("{:0width$}", gpubox_id, width = num_percents),
-                            )
-                            .to_string(),
-                    ),
-                    vec![],
-                )
+            .map(|&gpubox_id| Gpubox {
+                index: gpubox_id,
+                filename: PathBuf::from(
+                    re_percents
+                        .replace(
+                            filename_template,
+                            format!("{:0width$}", gpubox_id, width = num_percents),
+                        )
+                        .to_string(),
+                ),
+                channel_flag_count: vec![],
+                baseline_flag_count: vec![],
             })
             .collect())
     }
@@ -155,11 +160,13 @@ impl FlagFileSet {
     pub fn new(
         filename_template: &str,
         corr_ctx: &CorrelatorContext,
-        timestep_range: Range<usize>,
-        coarse_chan_range: Range<usize>,
+        vis_sel: &VisSelection,
         aoflagger_version: Option<String>,
         aoflagger_strategy: Option<String>,
     ) -> Result<Self, IOError> {
+        let timestep_range = vis_sel.timestep_range.clone();
+        let coarse_chan_range = vis_sel.coarse_chan_range.clone();
+
         let gpubox_ids = coarse_chan_range
             .into_iter()
             .map(|i| corr_ctx.coarse_chans[i].gpubox_number)
@@ -171,50 +178,85 @@ impl FlagFileSet {
         let first_timestep = timestep_range.start;
         let gps_start = corr_ctx.timesteps[first_timestep].gps_time_ms as f64 / 1e3
             + corr_ctx.metafits_context.corr_int_time_ms as f64 / 2e3;
-        let num_rows = timestep_range.len() * corr_ctx.metafits_context.num_baselines;
+
+        let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+        let mut autos_included = false;
+        for &(a, b) in &ant_pairs {
+            if a == b {
+                autos_included = true;
+                break;
+            }
+        }
+
+        let unique_ant_indices = ant_pairs
+            .into_iter()
+            .flat_map(|(a, b)| [a, b].into_iter())
+            .collect::<std::collections::HashSet<_>>();
+        let mut unique_ant_indices_sorted = unique_ant_indices.into_iter().collect::<Vec<_>>();
+        unique_ant_indices_sorted.sort_unstable();
+
+        let num_ants = unique_ant_indices_sorted.len();
+        let mut num_baselines = (num_ants * (num_ants + 1)) / 2;
+        if !autos_included {
+            num_baselines -= num_ants;
+        }
+        let num_rows = timestep_range.len() * num_baselines;
 
         let header = FlagFileHeader {
             version: "2.0".to_string(),
             obs_id: corr_ctx.metafits_context.obs_id,
             gps_start,
             num_channels: num_fine_per_coarse,
-            num_ants: corr_ctx.metafits_context.num_ants as u32,
+            num_ants: num_ants as u32,
             num_timesteps: timestep_range.len() as u32,
             num_pols: 1,
             // TODO: use something like https://github.com/rustyhorde/vergen
             software: format!("Birli-{}", crate_version!()),
-            bytes_per_row: num_fine_per_coarse / 8 + u32::from(num_fine_per_coarse % 8 != 0),
+            #[cfg(test)]
             num_rows: num_rows as u32,
             aoflagger_version,
             aoflagger_strategy,
         };
 
-        gpuboxes
-            .par_iter_mut()
-            .try_for_each(|(gpubox_id, filename, counts)| {
-                // `counts` is currently 0 capacity; make it the right length.
-                counts.resize(num_fine_per_coarse as usize, 0);
+        gpuboxes.par_iter_mut().try_for_each(|gpubox| {
+            // The flag counts are currently 0 capacity; make them the right
+            // length.
+            gpubox
+                .channel_flag_count
+                .resize(num_fine_per_coarse as usize, 0);
+            gpubox.baseline_flag_count.resize(num_baselines, 0);
 
-                if filename.exists() {
-                    std::fs::remove_file(&filename)?;
-                }
+            if gpubox.filename.exists() {
+                std::fs::remove_file(&gpubox.filename)?;
+            }
 
-                match FitsFile::create(Path::new(filename)).open() {
-                    Ok(mut fptr) => Self::write_primary_hdu(&mut fptr, &header, Some(*gpubox_id)),
-                    Err(fits_error) => Err(FitsOpen {
-                        fits_error,
-                        fits_filename: filename.display().to_string(),
-                        source_file: file!(),
-                        source_line: line!(),
-                    }),
-                }
-            })?;
+            match FitsFile::create(&gpubox.filename).open() {
+                Ok(mut fptr) => Self::write_primary_hdu(&mut fptr, &header, Some(gpubox.index)),
+                Err(fits_error) => Err(FitsOpen {
+                    fits_error,
+                    fits_filename: gpubox.filename.display().to_string(),
+                    source_file: file!(),
+                    source_line: line!(),
+                }),
+            }
+        })?;
+
+        let ant_names = unique_ant_indices_sorted
+            .iter()
+            .map(|&i| corr_ctx.metafits_context.antennas[i].tile_name.clone())
+            .collect();
+        let ant_indices = unique_ant_indices_sorted
+            .iter()
+            .map(|&i| corr_ctx.metafits_context.antennas[i].ant)
+            .collect();
 
         Ok(Self {
             gpuboxes,
             header,
             row_count: 0,
             expected_rows: num_rows as u64,
+            ant_names,
+            ant_indices,
         })
     }
 
@@ -232,8 +274,8 @@ impl FlagFileSet {
             num_timesteps,
             num_pols,
             software,
-            bytes_per_row: _,
-            num_rows: _,
+            #[cfg(test)]
+                num_rows: _,
             aoflagger_version,
             aoflagger_strategy,
         } = header;
@@ -338,7 +380,7 @@ impl FlagFileSet {
         let progress_bars = self
             .gpuboxes
             .iter()
-            .map(|(gpubox_id, _, _)| {
+            .map(|gpubox| {
                 multi_progress.add({
                     let pb = ProgressBar::new((num_timesteps * num_baselines) as _)
                         .with_style(
@@ -347,7 +389,7 @@ impl FlagFileSet {
                                 .progress_chars("=> "),
                         )
                         .with_position(0)
-                        .with_message(format!("mwaf {:03}", gpubox_id));
+                        .with_message(format!("mwaf {:03}", gpubox.index));
                     pb.set_draw_delta(500); // Not setting this slows things down because the PB updates so quickly!
                     pb
                 })
@@ -372,17 +414,16 @@ impl FlagFileSet {
                             .into_par_iter(),
                     )
                     .zip(progress_bars)
-                    .try_for_each(
-                        |(((_, filename, counts), flag_coarse_chan_view), channel_progress)| {
-                            Self::write_flag_array_inner(
-                                filename,
-                                flag_coarse_chan_view,
-                                &channel_progress,
-                                num_fine_chans_per_coarse,
-                                counts,
-                            )
-                        },
-                    )
+                    .try_for_each(|((gpubox, flag_coarse_chan_view), channel_progress)| {
+                        Self::write_flag_array_inner(
+                            &gpubox.filename,
+                            flag_coarse_chan_view,
+                            &channel_progress,
+                            num_fine_chans_per_coarse,
+                            &mut gpubox.channel_flag_count,
+                            &mut gpubox.baseline_flag_count,
+                        )
+                    })
             });
             h.join()
         });
@@ -408,7 +449,8 @@ impl FlagFileSet {
         flag_coarse_chan_view: ArrayView3<bool>,
         channel_progress: &ProgressBar,
         num_fine_chans_per_coarse: usize,
-        counts: &mut [u64],
+        channel_flag_counts: &mut [u64],
+        baseline_flag_counts: &mut [u64],
     ) -> Result<(), IOError> {
         let mut fptr = FitsFile::edit(filename)?;
         // If the FLAGS HDU doesn't exist, create it.
@@ -430,17 +472,21 @@ impl FlagFileSet {
 
         let mut flag_cell = vec![0; flag_coarse_chan_view.len_of(Axis(1))];
         for flag_timestep_view in flag_coarse_chan_view.outer_iter() {
-            for flag_baseline_view in flag_timestep_view.axis_iter(Axis(1)) {
+            for (flag_baseline_view, baseline_flag_count) in flag_timestep_view
+                .axis_iter(Axis(1))
+                .zip_eq(baseline_flag_counts.iter_mut())
+            {
                 flag_cell
                     .iter_mut()
                     .zip_eq(flag_baseline_view)
-                    .zip_eq(counts.iter_mut())
+                    .zip_eq(channel_flag_counts.iter_mut())
                     .for_each(|((a, &b), count)| {
                         *a = i8::from(b);
                         if b {
                             *count += 1;
                         }
                     });
+                *baseline_flag_count += flag_cell.iter().map(|i| *i as u64).sum::<u64>();
 
                 unsafe {
                     fitsio_sys::ffpclx(
@@ -476,7 +522,7 @@ impl FlagFileSet {
     /// # Errors
     ///
     /// Will error if fewer than expected number of flag rows are written, or
-    /// there are problems in creating the OCCUPANCY table in the mwaf files.
+    /// there are problems in creating fits tables in the mwaf files.
     ///
     pub fn finalise(self) -> Result<(), IOError> {
         // Complain if not enough rows were written.
@@ -487,50 +533,102 @@ impl FlagFileSet {
             });
         }
 
-        // Write the occupancy stats into a new HDU ("OCCUPANCY").
-        self.gpuboxes
-            .into_par_iter()
-            .try_for_each(|(_, filename, counts)| {
-                Self::finalise_inner(filename, counts, self.expected_rows as f64)
-            })?;
+        // Write occupancy stats and tile info into new HDUs.
+        self.gpuboxes.into_par_iter().try_for_each(|gpubox| {
+            Self::finalise_inner(
+                gpubox,
+                self.expected_rows as f64,
+                &self.ant_names,
+                &self.ant_indices,
+            )
+        })?;
 
         Ok(())
     }
 
     /// This fallible function is run in parallel from `finalise`.
     fn finalise_inner(
-        filename: PathBuf,
-        counts: Vec<u64>,
+        gpubox: Gpubox,
         total_row_count: f64,
+        ant_names: &[String],
+        ant_indices: &[u32],
     ) -> Result<(), IOError> {
-        let mut fptr = FitsFile::edit(filename)?;
-        let index_col = ColumnDescription::new("Index")
-            .with_type(ColumnDataType::Int)
-            .create()?;
-        let count_col = ColumnDescription::new("Count")
-            .with_type(ColumnDataType::Long)
-            .create()?;
-        let occ_col = ColumnDescription::new("Occupancy")
-            .with_type(ColumnDataType::Double)
-            .create()?;
-        let hdu = fptr.create_table("OCCUPANCY", &[index_col, count_col, occ_col])?;
-        hdu.write_col(
-            &mut fptr,
-            "Index",
-            &(0..counts.len())
-                .into_iter()
-                .map(|i| i as u32)
-                .collect::<Vec<u32>>(),
-        )?;
-        hdu.write_col(&mut fptr, "Count", &counts)?;
-        hdu.write_col(
-            &mut fptr,
-            "Occupancy",
-            &counts
-                .into_iter()
-                .map(|c| c as f64 / total_row_count)
-                .collect::<Vec<f64>>(),
-        )?;
+        let mut fptr = FitsFile::edit(gpubox.filename)?;
+
+        {
+            let index_col = ColumnDescription::new("Index")
+                .with_type(ColumnDataType::Int)
+                .create()?;
+            let count_col = ColumnDescription::new("Count")
+                .with_type(ColumnDataType::Long)
+                .create()?;
+            let occ_col = ColumnDescription::new("Occupancy")
+                .with_type(ColumnDataType::Double)
+                .create()?;
+            let hdu = fptr.create_table("CH_OCC", &[index_col, count_col, occ_col])?;
+            hdu.write_col(
+                &mut fptr,
+                "Index",
+                &(0..gpubox.channel_flag_count.len())
+                    .into_iter()
+                    .map(|i| i as u32)
+                    .collect::<Vec<u32>>(),
+            )?;
+            hdu.write_col(&mut fptr, "Count", &gpubox.channel_flag_count)?;
+            hdu.write_col(
+                &mut fptr,
+                "Occupancy",
+                &gpubox
+                    .channel_flag_count
+                    .into_iter()
+                    .map(|c| c as f64 / total_row_count)
+                    .collect::<Vec<f64>>(),
+            )?;
+        }
+
+        {
+            let index_col = ColumnDescription::new("Index")
+                .with_type(ColumnDataType::Int)
+                .create()?;
+            let count_col = ColumnDescription::new("Count")
+                .with_type(ColumnDataType::Long)
+                .create()?;
+            let occ_col = ColumnDescription::new("Occupancy")
+                .with_type(ColumnDataType::Double)
+                .create()?;
+            let hdu = fptr.create_table("BL_OCC", &[index_col, count_col, occ_col])?;
+            hdu.write_col(
+                &mut fptr,
+                "Index",
+                &(0..gpubox.baseline_flag_count.len())
+                    .into_iter()
+                    .map(|i| i as u32)
+                    .collect::<Vec<u32>>(),
+            )?;
+            hdu.write_col(&mut fptr, "Count", &gpubox.baseline_flag_count)?;
+            hdu.write_col(
+                &mut fptr,
+                "Occupancy",
+                &gpubox
+                    .baseline_flag_count
+                    .into_iter()
+                    .map(|c| c as f64 / total_row_count)
+                    .collect::<Vec<f64>>(),
+            )?;
+        }
+
+        {
+            let index_col = ColumnDescription::new("Antenna")
+                .with_type(ColumnDataType::Int)
+                .create()?;
+            let name_col = ColumnDescription::new("TileName")
+                .with_type(ColumnDataType::String)
+                .that_repeats(8)
+                .create()?;
+            let hdu = fptr.create_table("TILES", &[index_col, name_col])?;
+            hdu.write_col(&mut fptr, "Antenna", ant_indices)?;
+            hdu.write_col(&mut fptr, "TileName", ant_names)?;
+        }
 
         Ok(())
     }
@@ -553,7 +651,6 @@ impl FlagFileSet {
         let aoflagger_strategy = get_optional_fits_key!(fptr, &hdu0, "AO_STRAT")?;
 
         let hdu1 = fits_open_hdu!(fptr, 1)?;
-        let bytes_per_row = get_required_fits_key!(fptr, &hdu1, "NAXIS1")?;
         let num_rows = get_required_fits_key!(fptr, &hdu1, "NAXIS2")?;
 
         let header = FlagFileHeader {
@@ -565,7 +662,6 @@ impl FlagFileSet {
             num_timesteps,
             num_pols,
             software,
-            bytes_per_row,
             num_rows,
             aoflagger_version,
             aoflagger_strategy,
@@ -593,8 +689,8 @@ impl FlagFileSet {
         let gpuboxes = Self::get_gpubox_filenames(mwa_version, filename_template, gpubox_ids)
             .map_err(|e| e.to_string())?;
         let mut header = None;
-        for (_, fits_filename, _) in &gpuboxes {
-            match FitsFile::open(Path::new(&fits_filename)) {
+        for gpubox in &gpuboxes {
+            match FitsFile::open(&gpubox.filename) {
                 Ok(mut fptr) => {
                     if header.is_none() {
                         header = Some(Self::read_header(&mut fptr).map_err(|e| e.to_string())?.0);
@@ -603,7 +699,7 @@ impl FlagFileSet {
                 Err(fits_error) => {
                     return Err(FitsOpen {
                         fits_error,
-                        fits_filename: fits_filename.display().to_string(),
+                        fits_filename: gpubox.filename.display().to_string(),
                         source_file: file!(),
                         source_line: line!(),
                     }
@@ -612,11 +708,16 @@ impl FlagFileSet {
             }
         }
 
+        let header = header.unwrap();
+        let num_ants = header.num_ants as usize;
+
         Ok(Self {
             gpuboxes,
-            header: header.unwrap(),
+            header,
             row_count: 0,
             expected_rows: 0,
+            ant_names: vec![String::new(); num_ants],
+            ant_indices: vec![0; num_ants],
         })
     }
 
@@ -632,8 +733,8 @@ impl FlagFileSet {
         let mut gpubox_ids = Vec::with_capacity(gpuboxes.len());
         let mut date = None;
 
-        for (gpubox_id, fits_filename, _) in &gpuboxes {
-            match FitsFile::open(Path::new(&fits_filename)) {
+        for gpubox in &gpuboxes {
+            match FitsFile::open(&gpubox.filename) {
                 Ok(mut fptr) => {
                     let hdu0 = fits_open_hdu!(&mut fptr, 0).unwrap();
                     let version = get_required_fits_key!(&mut fptr, &hdu0, "VERSION").unwrap();
@@ -642,17 +743,16 @@ impl FlagFileSet {
                     let num_ants = get_required_fits_key!(&mut fptr, &hdu0, "NANTENNA").unwrap();
                     let num_timesteps = get_required_fits_key!(&mut fptr, &hdu0, "NSCANS").unwrap();
                     let num_pols = get_required_fits_key!(&mut fptr, &hdu0, "NPOLS").unwrap();
-                    let fgpubox_id: u32 =
+                    let gpubox_id: u32 =
                         get_required_fits_key!(&mut fptr, &hdu0, "GPUBOXNO").unwrap();
                     let software = get_required_fits_key!(&mut fptr, &hdu0, "COTVER").unwrap();
                     let fdate = get_required_fits_key!(&mut fptr, &hdu0, "COTVDATE").unwrap();
 
                     let hdu1 = fits_open_hdu!(&mut fptr, 1).unwrap();
-                    let bytes_per_row = get_required_fits_key!(&mut fptr, &hdu1, "NAXIS1").unwrap();
                     let num_rows = get_required_fits_key!(&mut fptr, &hdu1, "NAXIS2").unwrap();
 
-                    assert_eq!(*gpubox_id as u32, fgpubox_id);
-                    gpubox_ids.push(fgpubox_id);
+                    assert_eq!(gpubox.index, gpubox_id as usize);
+                    gpubox_ids.push(gpubox_id);
 
                     if header.is_none() {
                         header = Some(FlagFileHeader {
@@ -664,7 +764,6 @@ impl FlagFileSet {
                             num_timesteps,
                             num_pols,
                             software,
-                            bytes_per_row,
                             num_rows,
                             aoflagger_version: None,
                             aoflagger_strategy: None,
@@ -678,7 +777,7 @@ impl FlagFileSet {
                 Err(fits_error) => {
                     return Err(FitsOpen {
                         fits_error,
-                        fits_filename: fits_filename.display().to_string(),
+                        fits_filename: gpubox.filename.display().to_string(),
                         source_file: file!(),
                         source_line: line!(),
                     }
@@ -693,6 +792,8 @@ impl FlagFileSet {
                 header: header.unwrap(),
                 row_count: 0,
                 expected_rows: 0,
+                ant_names: vec![],
+                ant_indices: vec![],
             },
             date.unwrap(),
         ))
@@ -700,8 +801,8 @@ impl FlagFileSet {
 
     #[cfg(test)]
     pub(crate) fn read_flags(&self) -> Result<Array3<i8>, IOError> {
-        let (_, filename, _) = &self.gpuboxes[0];
-        let mut fptr = FitsFile::open(filename)?;
+        let gpubox = &self.gpuboxes[0];
+        let mut fptr = FitsFile::open(&gpubox.filename)?;
         let hdu = fits_open_hdu!(&mut fptr, 0)?;
         let num_timesteps = get_required_fits_key!(&mut fptr, &hdu, "NSCANS")?;
         let num_channels_per_mwaf: usize = get_required_fits_key!(&mut fptr, &hdu, "NCHANS")?;
@@ -717,8 +818,8 @@ impl FlagFileSet {
         drop(hdu);
 
         let mut row_flags = Array1::zeros(num_channels_per_mwaf);
-        for (i_gpubox, (_, filename, _)) in self.gpuboxes.iter().enumerate() {
-            let mut fptr = FitsFile::open(filename)?;
+        for (i_gpubox, gpubox) in self.gpuboxes.iter().enumerate() {
+            let mut fptr = FitsFile::open(&gpubox.filename)?;
             fits_open_hdu!(&mut fptr, 1)?;
             let mut status = 0;
             // cfitsio won't allow you to read everything in at once. So we read
@@ -793,13 +894,13 @@ mod tests {
 
         macro_rules! test_percent_enforcement {
             ($template_suffix:expr, $corr_ctx:expr, $timestep_range:expr, $coarse_chan_range:expr, $expected:pat) => {
+                let vis_sel = VisSelection::from_mwalib(&$corr_ctx).unwrap();
                 let tmp_dir = tempdir().unwrap();
                 assert!(matches!(
                     FlagFileSet::new(
                         tmp_dir.path().join($template_suffix).to_str().unwrap(),
                         $corr_ctx,
-                        $timestep_range,
-                        $coarse_chan_range,
+                        &vis_sel,
                         None,
                         None
                     ),
@@ -854,6 +955,7 @@ mod tests {
     #[test]
     fn test_flagfileset_new_passes_with_existing() {
         let context = get_mwax_context();
+        let mut vis_sel = VisSelection::from_mwalib(&context).unwrap();
         let tmp_dir = tempdir().unwrap();
         let filename_template = tmp_dir.path().join("Flagfile%%%.mwaf");
 
@@ -867,23 +969,23 @@ mod tests {
             File::create(colliding_filename.to_str().unwrap()).unwrap();
         }
 
+        vis_sel.coarse_chan_range = ok_gpuboxes;
         assert!(matches!(
             FlagFileSet::new(
                 filename_template.to_str().unwrap(),
                 &context,
-                0..1,
-                ok_gpuboxes,
+                &vis_sel,
                 None,
                 None
             ),
             Ok(FlagFileSet { .. })
         ));
+        vis_sel.coarse_chan_range = colliding_gpuboxes;
         assert!(matches!(
             FlagFileSet::new(
                 filename_template.to_str().unwrap(),
                 &context,
-                0..1,
-                colliding_gpuboxes,
+                &vis_sel,
                 None,
                 None
             ),
@@ -938,8 +1040,8 @@ mod tests {
         )
         .unwrap();
 
-        for (_, filename, _) in gpuboxes {
-            let mut fptr = FitsFile::open(filename).unwrap();
+        for gpubox in gpuboxes {
+            let mut fptr = FitsFile::open(gpubox.filename).unwrap();
             let hdu0 = fptr.primary_hdu().unwrap();
 
             let version: String = get_required_fits_key!(&mut fptr, &hdu0, "VERSION").unwrap();
@@ -1057,8 +1159,6 @@ mod tests {
                     num_timesteps: context.num_timesteps as u32,
                     num_pols: 1,
                     software: format!("Birli-{}", crate_version!()),
-                    bytes_per_row: num_fine_per_coarse / 8
-                        + u32::from(num_fine_per_coarse % 8 != 0),
                     num_rows: (context.num_common_timesteps
                         * context.metafits_context.num_baselines)
                         as u32,
@@ -1106,6 +1206,7 @@ mod tests {
             &[test_dir.join("1247842824_20190722150008_gpubox01_00.fits")],
         )
         .unwrap();
+        let vis_sel = VisSelection::from_mwalib(&context).unwrap();
 
         let gpubox_ids: Vec<usize> = context
             .common_coarse_chan_indices
@@ -1124,8 +1225,6 @@ mod tests {
         assert!(result.is_err());
 
         // Generate new flags for testing.
-        let timestep_range = *context.common_timestep_indices.first().unwrap()
-            ..*context.common_timestep_indices.last().unwrap() + 1;
         let temp_dir = tempdir().unwrap();
         let template = temp_dir
             .path()
@@ -1134,7 +1233,7 @@ mod tests {
             .unwrap()
             .to_string();
         let mut flag_file_set =
-            FlagFileSet::new(&template, &context, timestep_range, 0..1, None, None).unwrap();
+            FlagFileSet::new(&template, &context, &vis_sel, None, None).unwrap();
         let (num_timesteps, num_channels, num_baselines) = (2, 128, 8256);
         let mut flag_array = Array3::from_elem((num_timesteps, num_channels, num_baselines), false);
         flag_array.slice_mut(s![.., 0..8, ..]).fill(true);

@@ -1384,8 +1384,7 @@ impl<'a> BirliContext<'a> {
             FlagFileSet::new(
                 &flag_template,
                 &corr_ctx,
-                vis_sel.timestep_range.clone(),
-                vis_sel.coarse_chan_range.clone(),
+                &vis_sel,
                 aoflagger_version,
                 aoflagger_strategy,
             )
@@ -3411,7 +3410,6 @@ mod tests_aoflagger_flagset {
             assert_eq!(left_header.num_ants, right_header.num_ants);
             assert_eq!(left_header.num_timesteps as usize, num_common_timesteps);
             assert_eq!(left_header.num_pols, right_header.num_pols);
-            assert_eq!(left_header.bytes_per_row, right_header.bytes_per_row);
             assert_eq!(left_header.num_rows, right_header.num_rows);
             assert_eq!(left_header.num_rows as usize, num_rows);
 
