@@ -376,17 +376,13 @@ The following table shows how Birli options map onto Cotter options:
 | (not `--no-sel-flagged-ants`, WIP)  | `-noantennapruning`     | Do not remove the flagged antennae.
 | (default)                           | `-allowmissing`         | Do not abort when not all GPU box files are available (default is to abort).
 
-Birli will eventually perform all the same default preprocessing steps as Cotter when no flags are provided. The exceptions are that we have not yet implemented flagging of edge / centre fine channels / quack timesteps / auto-correlations, pruning of flagged antennas. This means that `birli <in/out args>` is equivalent to:
+Birli performs all the same default preprocessing steps as Cotter when no flags are provided. The exceptions are that we have not yet implemented flagging of auto-correlations, pruning of flagged antennas. This means that `birli <in/out args>` is equivalent to:
 
 ```bash
  cotter \
   -allowmissing \
-  -edgewidth 0 \
-  -endflag 0 \
-  -initflag 0 \
   -noantennapruning \
   -noflagautos \
-  -noflagdcchannels \
   -nostats \
   -flag-strategy <mwa default aoflagger strategy>
   <in/out args>
