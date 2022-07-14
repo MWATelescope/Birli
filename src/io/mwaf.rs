@@ -86,6 +86,17 @@ pub struct FlagFileSet {
     ant_indices: Vec<u32>,
 }
 
+// helper to get the sorted unique antenna indices from ant pairs
+pub(super) fn ant_indices(ant_pairs: &[(usize, usize)]) -> Vec<u32> {
+    let unique_ant_indices = ant_pairs
+        .iter()
+        .flat_map(|(a, b)| [*a as u32, *b as u32].into_iter())
+        .collect::<std::collections::HashSet<_>>();
+    let mut unique_ant_indices_sorted = unique_ant_indices.into_iter().collect::<Vec<_>>();
+    unique_ant_indices_sorted.sort_unstable();
+    unique_ant_indices_sorted
+}
+
 impl FlagFileSet {
     fn get_gpubox_filenames(
         mwa_version: MWAVersion,
@@ -143,10 +154,8 @@ impl FlagFileSet {
     ///
     /// * `corr_ctx` is an [`mwalib::CorrelatorContext`].
     ///
-    /// * `coarse_chan_range` is the... range of coarse channel indices.
-    ///
-    /// * `first_timestep` is the index corresponding to the first timestep used
-    ///   in the [`mwalib::CorrelatorContext`].
+    /// * `vis_sel` contains the selection of coarse channels, timesteps and
+    ///    baselines corresponding to the flags that will be written.
     ///
     /// * `aoflagger_version` is the version of `aoflagger` used to generate the
     ///   flags that will be provided to this `FlagFileSet`.
@@ -184,26 +193,10 @@ impl FlagFileSet {
             + corr_ctx.metafits_context.corr_int_time_ms as f64 / 2e3;
 
         let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
-        let mut autos_included = false;
-        for &(a, b) in &ant_pairs {
-            if a == b {
-                autos_included = true;
-                break;
-            }
-        }
+        let ant_indices = ant_indices(&ant_pairs);
 
-        let unique_ant_indices = ant_pairs
-            .iter()
-            .flat_map(|&(a, b)| [a, b].into_iter())
-            .collect::<std::collections::HashSet<_>>();
-        let mut unique_ant_indices_sorted = unique_ant_indices.into_iter().collect::<Vec<_>>();
-        unique_ant_indices_sorted.sort_unstable();
-
-        let num_ants = unique_ant_indices_sorted.len();
-        let mut num_baselines = (num_ants * (num_ants + 1)) / 2;
-        if !autos_included {
-            num_baselines -= num_ants;
-        }
+        let num_ants = ant_indices.len();
+        let num_baselines = ant_pairs.len();
         let num_rows = timestep_range.len() * num_baselines;
 
         let header = FlagFileHeader {
@@ -245,13 +238,13 @@ impl FlagFileSet {
             }
         })?;
 
-        let ant_names = unique_ant_indices_sorted
+        let ant_names = ant_indices
             .iter()
-            .map(|&i| corr_ctx.metafits_context.antennas[i].tile_name.clone())
-            .collect();
-        let ant_indices = unique_ant_indices_sorted
-            .iter()
-            .map(|&i| corr_ctx.metafits_context.antennas[i].ant)
+            .map(|&i| {
+                corr_ctx.metafits_context.antennas[i as usize]
+                    .tile_name
+                    .clone()
+            })
             .collect();
 
         Ok(Self {
@@ -375,6 +368,7 @@ impl FlagFileSet {
         let num_timesteps = flag_dims.0;
         let num_baselines = flag_dims.2;
         let num_fine_chans_per_coarse = self.header.num_channels as usize;
+        assert_eq!(num_fine_chans_per_coarse * self.gpuboxes.len(), flag_dims.1);
 
         let multi_progress = MultiProgress::with_draw_target(if draw_progress {
             ProgressDrawTarget::stderr()
@@ -747,6 +741,7 @@ impl FlagFileSet {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn open_cotter(
         filename_template: &str,
         gpubox_ids: &[usize],
@@ -833,11 +828,15 @@ impl FlagFileSet {
         let num_timesteps = get_required_fits_key!(&mut fptr, &hdu, "NSCANS")?;
         let num_channels_per_mwaf: usize = get_required_fits_key!(&mut fptr, &hdu, "NCHANS")?;
         let total_num_channels = num_channels_per_mwaf * self.gpuboxes.len();
-        let num_ants: usize = get_required_fits_key!(&mut fptr, &hdu, "NANTENNA")?;
-        let num_baselines = (num_ants * (num_ants + 1)) / 2;
         let hdu = fits_open_hdu!(&mut fptr, 1)?;
         let num_rows: usize = get_required_fits_key!(&mut fptr, &hdu, "NAXIS2")?;
-        assert_eq!(num_rows, num_timesteps * num_baselines);
+        assert_eq!(
+            num_rows % num_timesteps,
+            0,
+            "num_rows={num_rows} should be a multiple of num_timesteps={num_timesteps}"
+        );
+        let num_baselines = num_rows / num_timesteps;
+        let hdu = fits_open_hdu!(&mut fptr, 1)?;
 
         let mut out = Array3::zeros((num_timesteps, num_baselines, total_num_channels));
         drop(fptr);
@@ -881,6 +880,84 @@ impl FlagFileSet {
 
         Ok(out)
     }
+
+    #[cfg(test)]
+    pub(crate) fn read_ch_occ(&self) -> Result<(Vec<u32>, Vec<f32>), IOError> {
+        use itertools::izip;
+
+        let gpubox = &self.gpuboxes[0];
+        let mut fptr = FitsFile::open(&gpubox.filename)?;
+        let hdu = fits_open_hdu!(&mut fptr, 2)?;
+        let num_rows: usize = get_required_fits_key!(&mut fptr, &hdu, "NAXIS2")?;
+        let total_num_channels = num_rows * self.gpuboxes.len();
+
+        let mut out_count = vec![0_u32; total_num_channels];
+        let mut out_occ = vec![0.; total_num_channels];
+        drop(fptr);
+        drop(hdu);
+
+        for (gpubox, out_count, out_occ) in izip!(
+            self.gpuboxes.iter(),
+            out_count.chunks_mut(num_rows),
+            out_occ.chunks_mut(num_rows),
+        ) {
+            let mut fptr = FitsFile::open(&gpubox.filename)?;
+            let hdu = fits_open_hdu!(&mut fptr, 2)?;
+            let tmp_count: Vec<u32> = hdu.read_col(&mut fptr, "Count").unwrap();
+            assert_eq!(tmp_count.len(), out_count.len());
+            out_count.copy_from_slice(&tmp_count);
+            let tmp_occ: Vec<f32> = hdu.read_col(&mut fptr, "Occupancy").unwrap();
+            assert_eq!(tmp_occ.len(), out_occ.len());
+            out_occ.copy_from_slice(&tmp_occ);
+        }
+
+        Ok((out_count, out_occ))
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn read_bl_occ(
+        &self,
+    ) -> Result<(Vec<(u32, u32)>, Array2<u32>, Array2<f32>), IOError> {
+        use itertools::izip;
+
+        let gpubox = &self.gpuboxes[0];
+        let mut fptr = FitsFile::open(&gpubox.filename)?;
+        let hdu = fits_open_hdu!(&mut fptr, 3)?;
+        let num_rows: usize = get_required_fits_key!(&mut fptr, &hdu, "NAXIS2")?;
+
+        let ant1s: Vec<u32> = hdu.read_col(&mut fptr, "Antenna1").unwrap();
+        let ant2s: Vec<u32> = hdu.read_col(&mut fptr, "Antenna2").unwrap();
+        let ant_pairs = izip!(ant1s.into_iter(), ant2s.into_iter()).collect::<Vec<_>>();
+        let num_coarse_chans = self.gpuboxes.len();
+        let total_num_baselines = num_rows * num_coarse_chans;
+
+        let mut out_count = vec![0_u32; total_num_baselines];
+        let mut out_occ = vec![0.; total_num_baselines];
+        drop(fptr);
+        drop(hdu);
+
+        for (gpubox, out_count, out_occ) in izip!(
+            self.gpuboxes.iter(),
+            out_count.chunks_mut(num_rows),
+            out_occ.chunks_mut(num_rows),
+        ) {
+            let mut fptr = FitsFile::open(&gpubox.filename)?;
+            let hdu = fits_open_hdu!(&mut fptr, 3)?;
+            let tmp_count: Vec<u32> = hdu.read_col(&mut fptr, "Count").unwrap();
+            assert_eq!(tmp_count.len(), out_count.len());
+            out_count.copy_from_slice(&tmp_count);
+            let tmp_occ: Vec<f32> = hdu.read_col(&mut fptr, "Occupancy").unwrap();
+            assert_eq!(tmp_occ.len(), out_occ.len());
+            out_occ.copy_from_slice(&tmp_occ);
+        }
+
+        Ok((
+            ant_pairs,
+            Array2::from_shape_vec((num_coarse_chans, num_rows), out_count).unwrap(),
+            Array2::from_shape_vec((num_coarse_chans, num_rows), out_occ).unwrap(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -899,9 +976,11 @@ mod tests {
     use crate::{
         io::error::IOError::InvalidFlagFilenameTemplate,
         test_common::{get_mwa_ord_context, get_mwax_context},
+        FlagContext,
     };
-    use approx::assert_abs_diff_eq;
+    use approx::{abs_diff_eq, assert_abs_diff_eq};
     use fitsio::FitsFile;
+    use itertools::izip;
     use marlu::{
         fitsio,
         mwalib::{
@@ -1221,6 +1300,149 @@ mod tests {
             let gpubox_no: i32 = get_required_fits_key!(&mut flag_fptr, &hdu, "GPUBOXNO").unwrap();
             assert_eq!(gpubox_no, gpubox_id as i32);
         }
+    }
+
+    #[test]
+    fn test_write_occupancy_legacy() {
+        let test_dir = Path::new("tests/data/1247842824_flags/");
+
+        let corr_ctx = CorrelatorContext::new(
+            test_dir.join("1247842824.metafits"),
+            &[test_dir.join("1247842824_20190722150008_gpubox01_00.fits")],
+        )
+        .unwrap();
+        let meta_ctx = &corr_ctx.metafits_context;
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        // TODO: only select a subset of baselines
+        #[rustfmt::skip]
+        let ant_pairs = vec![
+            (0, 0), (0, 1), (0, 2), (0, 3),
+            (1, 1), (1, 2), (1, 3),
+            (2, 2), (2, 3),
+            (3, 3),
+        ];
+        vis_sel.baseline_idxs = meta_ctx
+            .baselines
+            .iter()
+            .enumerate()
+            .filter(|(_, bl)| ant_pairs.contains(&(bl.ant1_index, bl.ant2_index)))
+            .map(|(bl_idx, _)| bl_idx)
+            .collect();
+        vis_sel.timestep_range = 0..5;
+        vis_sel.coarse_chan_range = 0..3;
+        let fine_chans_per_coarse = meta_ctx.num_corr_fine_chans_per_coarse;
+
+        let num_coarse_chans = vis_sel.coarse_chan_range.len();
+        let num_timesteps = vis_sel.timestep_range.len();
+        // let (num_timesteps, num_chans, num_baselines) = vis_sel.get_shape(fine_chans_per_coarse);
+        let ant_indices = ant_indices(&vis_sel.get_ant_pairs(meta_ctx));
+        let num_ants = ant_indices.len();
+
+        let tmp_dir = tempdir().unwrap();
+        let flag_template = tmp_dir.path().join("Flagfile%%.mwaf");
+        let flag_template = flag_template.to_str().unwrap();
+
+        let gpubox_ids: Vec<usize> = vis_sel
+            .coarse_chan_range
+            .clone()
+            .map(|chan| corr_ctx.coarse_chans[chan].gpubox_number)
+            .collect();
+
+        #[cfg(feature = "aoflagger")]
+        let (aoflagger_version, aoflagger_strategy) = {
+            let mut major = 0;
+            let mut minor = 0;
+            let mut subminor = 0;
+            unsafe {
+                aoflagger_sys::cxx_aoflagger_new().GetVersion(
+                    &mut major,
+                    &mut minor,
+                    &mut subminor,
+                );
+            }
+            (
+                Some(format!("v{major}.{minor}.{subminor}")),
+                Some("amazing_flagging_strategy.lua".to_string()),
+            )
+        };
+        #[cfg(not(feature = "aoflagger"))]
+        let (aoflagger_version, aoflagger_strategy) = (None, None);
+
+        let mut flag_set = FlagFileSet::new(
+            flag_template,
+            &corr_ctx,
+            &vis_sel,
+            aoflagger_version,
+            aoflagger_strategy,
+        )
+        .unwrap();
+
+        let mut flag_ctx = FlagContext::blank_from_dimensions(
+            num_timesteps,
+            num_coarse_chans,
+            fine_chans_per_coarse,
+            num_ants,
+        );
+        let int_time = 1e-3 * meta_ctx.corr_int_time_ms as f32;
+        dbg!(int_time);
+        flag_ctx.flag_init = int_time;
+        flag_ctx.flag_end = int_time;
+        flag_ctx.timestep_flags[1] = true;
+        flag_ctx.coarse_chan_flags[1] = true;
+        flag_ctx.fine_chan_flags[1] = true;
+        flag_ctx.antenna_flags[1] = true;
+        flag_ctx.flag_dc = true;
+        flag_ctx.autos = true;
+
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        flag_ctx
+            .set_flags(
+                flag_array.view_mut(),
+                &vis_sel.timestep_range,
+                &vis_sel.coarse_chan_range,
+                &ant_pairs,
+            )
+            .unwrap();
+
+        flag_set.write_flag_array(flag_array.view(), false).unwrap();
+        flag_set.finalise().unwrap();
+
+        let flag_set =
+            FlagFileSet::open(flag_template, &gpubox_ids, MWAVersion::CorrLegacy).unwrap();
+
+        let (_, ch_occ) = flag_set.read_ch_occ().unwrap();
+        for (cc_idx, occ) in ch_occ.chunks(fine_chans_per_coarse).enumerate() {
+            if cc_idx == 1 {
+                assert!(occ.iter().all(|&x| abs_diff_eq!(x, 1.)));
+            } else {
+                assert_abs_diff_eq!(occ[0], 0.76);
+                assert_abs_diff_eq!(occ[1], 1.);
+                assert_abs_diff_eq!(occ[2], 0.76);
+            }
+        }
+
+        let (result_ant_pairs, _, bl_occ) = flag_set.read_bl_occ().unwrap();
+
+        assert_eq!(
+            result_ant_pairs,
+            ant_pairs
+                .iter()
+                .map(|(a, b)| (*a as u32, *b as u32))
+                .collect_vec()
+        );
+        for ((ant1, ant2), occ) in izip!(result_ant_pairs, bl_occ.axis_iter(Axis(1))) {
+            if ant1 == ant2 || ant1 == 1 || ant2 == 1 {
+                // assert_abs_diff_eq!(occ[0], 1.);
+                // assert!(occ.)
+                assert!(occ.iter().all(|&x| abs_diff_eq!(x, 1.)));
+            } else {
+                assert_abs_diff_eq!(occ[0], 0.2125);
+                assert_abs_diff_eq!(occ[1], 1.);
+                assert_abs_diff_eq!(occ[2], 0.2125);
+            }
+        }
+
+        // TODO: finish test for bl_occ
     }
 
     #[test]
