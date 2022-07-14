@@ -14,20 +14,9 @@ from tabulate import tabulate
 
 def parse_args(argv):
     parser = ArgumentParser()
-    parser.add_argument(
-        "file",
-        type=str
-    )
-    parser.add_argument(
-        "--timestep-limit",
-        type=int,
-        default=0
-    )
-    parser.add_argument(
-        "--baseline-limit",
-        type=int,
-        default=0
-    )
+    parser.add_argument("file", type=str)
+    parser.add_argument("--timestep-limit", type=int, default=0)
+    parser.add_argument("--baseline-limit", type=int, default=0)
     return parser.parse_args(argv)
 
 
@@ -37,6 +26,13 @@ def chunk(iterable, n):
     return zip(*args)
 
 
+def print_heading(heading):
+    print("")
+    print(f"{'-' * len(heading)}")
+    print(heading)
+    print(f"{'-' * len(heading)}")
+
+
 def main(argv):
     args = parse_args(argv)
     print(f"-> args {vars(args)}")
@@ -44,19 +40,17 @@ def main(argv):
     print(f"-> hdus.info():")
     hdus.info()
 
-    print("")
-    print("HEADER")
-    print("")
+    print_heading("HEADER")
 
-    print(repr(hdus['PRIMARY'].header))
+    print(repr(hdus["PRIMARY"].header))
 
-    num_scans = hdus['PRIMARY'].header['NSCANS']
+    num_scans = hdus["PRIMARY"].header["NSCANS"]
     print(f" -> num scans: hdus['PRIMARY'].header['NSCANS']={num_scans}")
-    num_antenna = hdus['PRIMARY'].header['NANTENNA']
+    num_antenna = hdus["PRIMARY"].header["NANTENNA"]
     print(f" -> num scans: hdus['PRIMARY'].header['NANTENNA']={num_antenna}")
-    num_chans = hdus['FLAGS'].header['NAXIS1']
-    print(f" -> num chans: hdus['FLAGS'].header['NAXIS1']={num_chans}")
-    num_rows = hdus['FLAGS'].header['NAXIS2']
+    num_chans = hdus["FLAGS"].header["NAXIS1"] * 8
+    print(f" -> num chans: hdus['FLAGS'].header['NAXIS1']*8={num_chans}")
+    num_rows = hdus["FLAGS"].header["NAXIS2"]
     assert num_rows % num_scans == 0
     num_baselines = num_rows // num_scans
     print(f" -> num baselines: {num_baselines}")
@@ -68,16 +62,15 @@ def main(argv):
             raise ValueError(
                 f"num_baselines={num_baselines}"
                 f" != len(ant_pairs_noautos)={len(ant_pairs_noautos)}"
-                f" or len(ant_pairs_autos)={len(ant_pairs)}")
+                f" or len(ant_pairs_autos)={len(ant_pairs)}"
+            )
         ant_pairs = ant_pairs_noautos
 
-    print("")
-    print("FLAG DATA")
-    print("")
+    print_heading("FLAG DATA")
 
-    print(repr(hdus['FLAGS'].header))
+    print(repr(hdus["FLAGS"].header))
 
-    flag_data = hdus['FLAGS'].data
+    flag_data = hdus["FLAGS"].data
     print(f"flags shape {flag_data.shape}")
     assert flag_data.shape[0] == num_rows
 
@@ -98,7 +91,29 @@ def main(argv):
             flag_display = "".join([f"{'#' if flag else '.'}" for flag in flags])
             print(f" --> ts {timestep_idx:04d}: {flag_display}")
 
+    if "CH_OCC" in hdus:
+        print_heading("CH_OCC")
+        print(repr(hdus["CH_OCC"].header))
+        ch_occ_data = hdus["CH_OCC"].data
+        print(f"ch_occ shape {ch_occ_data.shape}")
+        assert ch_occ_data.shape[0] == num_chans
+        print(tabulate(ch_occ_data, headers=["ch", "count", "occupancy"]))
+    if "BL_OCC" in hdus:
+        print_heading("BL_OCC")
+        print(repr(hdus["BL_OCC"].header))
+        bl_occ_data = hdus["BL_OCC"].data[0:baseline_limit]
+        print(f"bl_occ shape {bl_occ_data.shape}")
+        assert bl_occ_data.shape[0] == num_baselines
+        print(tabulate(bl_occ_data, headers=["bl", "count", "occupancy"]))
+    if "TILES" in hdus:
+        print_heading("TILES")
+        print(repr(hdus["TILES"].header))
+        tiles_data = hdus["TILES"].data
+        print(f"tiles shape {tiles_data.shape}")
+        assert tiles_data.shape[0] == num_antenna
+        print(tabulate(tiles_data, headers=["ant", "name"]))
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main(sys.argv[1:])
     # main(["tests/data/1196175296_mwa_ord/FlagfileCotter01.mwaf"])
