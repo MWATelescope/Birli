@@ -55,16 +55,22 @@ def main(argv):
     num_baselines = num_rows // num_scans
     print(f" -> num baselines: {num_baselines}")
 
-    ant_pairs = [*combinations_with_replacement(range(num_antenna), 2)]
-    if len(ant_pairs) != num_baselines:
-        ant_pairs_noautos = [*combinations(range(num_antenna), 2)]
-        if len(ant_pairs_noautos) != num_baselines:
-            raise ValueError(
-                f"num_baselines={num_baselines}"
-                f" != len(ant_pairs_noautos)={len(ant_pairs_noautos)}"
-                f" or len(ant_pairs_autos)={len(ant_pairs)}"
-            )
-        ant_pairs = ant_pairs_noautos
+    if "BL_OCC" in hdus:
+        headers = hdus["BL_OCC"].data.dtype.names
+        ant1s = hdus["BL_OCC"].data.field("Antenna1")
+        ant2s = hdus["BL_OCC"].data.field("Antenna2")
+        ant_pairs = [*zip(ant1s, ant2s)]
+    else:
+        ant_pairs = [*combinations_with_replacement(range(num_antenna), 2)]
+        if len(ant_pairs) != num_baselines:
+            ant_pairs_noautos = [*combinations(range(num_antenna), 2)]
+            if len(ant_pairs_noautos) != num_baselines:
+                raise ValueError(
+                    f"num_baselines={num_baselines}"
+                    f" != len(ant_pairs_noautos)={len(ant_pairs_noautos)}"
+                    f" or len(ant_pairs_autos)={len(ant_pairs)}"
+                )
+            ant_pairs = ant_pairs_noautos
 
     print_heading("FLAG DATA")
 
@@ -96,22 +102,25 @@ def main(argv):
         print(repr(hdus["CH_OCC"].header))
         ch_occ_data = hdus["CH_OCC"].data
         print(f"ch_occ shape {ch_occ_data.shape}")
+        headers = hdus["CH_OCC"].data.dtype.names
         assert ch_occ_data.shape[0] == num_chans
-        print(tabulate(ch_occ_data, headers=["ch", "count", "occupancy"]))
+        print(tabulate(ch_occ_data, headers=headers))
     if "BL_OCC" in hdus:
         print_heading("BL_OCC")
         print(repr(hdus["BL_OCC"].header))
         bl_occ_data = hdus["BL_OCC"].data[0:baseline_limit]
         print(f"bl_occ shape {bl_occ_data.shape}")
+        headers = hdus["BL_OCC"].data.dtype.names
         assert bl_occ_data.shape[0] == num_baselines
-        print(tabulate(bl_occ_data, headers=["bl", "count", "occupancy"]))
+        print(tabulate(bl_occ_data, headers=headers))
     if "TILES" in hdus:
         print_heading("TILES")
         print(repr(hdus["TILES"].header))
         tiles_data = hdus["TILES"].data
         print(f"tiles shape {tiles_data.shape}")
+        headers = hdus["TILES"].data.dtype.names
         assert tiles_data.shape[0] == num_antenna
-        print(tabulate(tiles_data, headers=["ant", "name"]))
+        print(tabulate(tiles_data, headers=headers))
 
 
 if __name__ == "__main__":
