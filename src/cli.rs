@@ -1066,7 +1066,14 @@ impl<'a> BirliContext<'a> {
                             received: format!("{}GiB", max_mem_bytes as f64 / 1024.0_f64.powi(3)),
                         }));
                     }
-                    Some((max_mem_bytes / bytes_per_avg_time as f64).floor() as usize * avg_time)
+                    let num_timesteps_per_max_mem_chunk =
+                        (max_mem_bytes / bytes_per_avg_time as f64).floor() as usize * avg_time;
+                    // Rather than use the entire chunk, use the same number of
+                    // chunks with an even number of timesteps.
+                    let num_chunks = (vis_sel.timestep_range.len() as f64
+                        / num_timesteps_per_max_mem_chunk as f64)
+                        .ceil();
+                    Some((vis_sel.timestep_range.len() as f64 / num_chunks).ceil() as usize)
                 } else {
                     None
                 }

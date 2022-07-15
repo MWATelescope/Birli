@@ -1,7 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.7.0 (unreleased)
+# Unreleased
+- 🙏 quality of life:
+  - when using --max-memory, chunk sizes are now more even
 
+# Version 0.7.0 (unreleased)
 - ⚡ performance:
   - Fix unnecessary allocation for smaller visibility chunks to improve memory performance
   - better uvfits performance from marlu 0.7.0
