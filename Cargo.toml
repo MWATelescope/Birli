@@ -31,7 +31,7 @@ all-static = ["erfa-static", "cfitsio-static"]
 aoflagger_sys = { version = "0.1.*", optional = true }
 byteorder = "1.4.3"
 cfg-if = "1.0.0"
-clap = { version = "3.1.8", features = ["cargo"] }
+clap = { version = "3.2.14", features = ["cargo"] }
 crossbeam-utils = "0.8.10"
 derive_builder = "0.11.1"
 env_logger = "0.9"
