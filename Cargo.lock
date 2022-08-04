@@ -1103,11 +1103,12 @@ dependencies = [
 
 [[package]]
 name = "marlu"
-version = "0.7.0"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5624a18fc8cef0d3192003ccb215a9beeca3edb231ef0d8bac131e305ffa767a"
+checksum = "507de30748d54f0089596cd46baf056832f62f275b3d5b14f69819d45d8f82ff"
 dependencies = [
  "approx",
+ "built",
  "cfg-if",
  "crossbeam-channel",
  "crossbeam-utils",
