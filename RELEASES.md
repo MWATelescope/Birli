@@ -22,11 +22,12 @@
     - add `CH_OCC` (channel occupancy), `BL_OCC` (baseline occupancy) and
       `TILES` (unflagged tile information) HDUs
   - PFB gains are now borrowed instead of cloned
+  - log library version info, and applied delay types
 - 🏗 api changes:
   - use array views for flagging
   - mwaf files have a new interface
 - ➕ dependencies:
-  - use Marlu 0.7.0
+  - use Marlu 0.7.2
   - use rust version 1.60
   - use shlex for command line argument escaping
 
