@@ -1139,17 +1139,16 @@ impl<'a> BirliContext<'a> {
             _ => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
         };
         prep_ctx.correct_cable_lengths = {
-            let no_cable_delays = matches.is_present("no-cable-delay");
-            let cable_delays_applied = match corr_ctx.metafits_context.cable_delays_applied {
-                mwalib::CableDelaysApplied::NoCableDelaysApplied => false,
-                mwalib::CableDelaysApplied::CableAndRecClock
-                | mwalib::CableDelaysApplied::CableAndRecClockAndBeamformerDipoleDelays => true,
-            };
+            let cable_delays_disabled = matches.is_present("no-cable-delay");
+            let cable_delays_applied = corr_ctx.metafits_context.cable_delays_applied;
             debug!(
-                "cable corrections: applied={}, desired={}",
-                cable_delays_applied, !no_cable_delays
+                "cable corrections: applied={}, disabled={}",
+                cable_delays_applied, cable_delays_disabled
             );
-            !cable_delays_applied && !no_cable_delays
+            matches!(
+                cable_delays_applied,
+                CableDelaysApplied::NoCableDelaysApplied
+            ) && !cable_delays_disabled
         };
         prep_ctx.correct_digital_gains = !matches.is_present("no-digital-gains");
         prep_ctx.passband_gains = match matches.value_of("passband-gains") {
@@ -1159,13 +1158,14 @@ impl<'a> BirliContext<'a> {
             Some(option) => panic!("unknown option for --passband-gains: {}", option),
         };
         prep_ctx.correct_geometry = {
-            let no_geometric_delays = matches.is_present("no-geometric-delay");
+            let geometric_delays_disabled = matches.is_present("no-geometric-delay");
             let geometric_delays_applied = corr_ctx.metafits_context.geometric_delays_applied;
             debug!(
-                "geometric corrections: applied={:?}, desired={}",
-                geometric_delays_applied, !no_geometric_delays
+                "geometric corrections: applied={:?}, disabled={}",
+                geometric_delays_applied, !geometric_delays_disabled
             );
-            matches!(geometric_delays_applied, GeometricDelaysApplied::No) && !no_geometric_delays
+            matches!(geometric_delays_applied, GeometricDelaysApplied::No)
+                && !geometric_delays_disabled
         };
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
