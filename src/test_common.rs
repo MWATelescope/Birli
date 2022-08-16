@@ -25,7 +25,7 @@ use std::{
 #[macro_export]
 macro_rules! compare_jones {
     ($a:expr, $b:expr) => {
-        assert_abs_diff_eq!(TestJones::<f32>::from($a), TestJones::<f32>::from($b));
+        assert_abs_diff_eq!(Jones::<f32>::from($a), Jones::<f32>::from($b));
     };
 }
 

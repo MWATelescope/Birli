@@ -175,8 +175,6 @@ pub mod calibration;
 pub mod flags;
 #[cfg(test)]
 pub use approx;
-#[cfg(test)]
-pub(crate) mod types;
 pub use flags::{flag_to_weight_array, get_weight_factor, write_flags, FlagContext};
 pub mod passband_gains;
 pub use marlu;
@@ -188,8 +186,6 @@ pub use marlu::{
     selection::VisSelection,
     Complex, Jones,
 };
-#[cfg(test)]
-pub(crate) use types::TestJones;
 
 mod error;
 pub use error::BirliError;

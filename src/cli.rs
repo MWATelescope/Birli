@@ -9,12 +9,12 @@ use crate::{
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
         },
-        hifitime::Epoch,
-        io::{error::BadArrayShape, ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWritable},
+        hifitime::{self, Epoch, Unit},
+        io::{error::BadArrayShape, ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
         mwalib,
         ndarray::s,
         precession::{precess_time, PrecessionInfo},
-        History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext,
+        History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
     },
     passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
     with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection,
@@ -27,7 +27,7 @@ use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, fitsio_sys::CFITSIO_VERSION, CableDelaysApplied,
     CorrelatorContext, GeometricDelaysApplied,
 };
-use prettytable::{cell, format as prettyformat, row, table};
+use prettytable::{format as prettyformat, row, table};
 use std::{
     collections::HashMap,
     convert::Into,
@@ -64,6 +64,8 @@ pub struct BirliContext<'a> {
     pub avg_freq: usize,
     /// temporal chunking factor
     pub num_timesteps_per_chunk: Option<usize>,
+    /// Are we ignoring DUT1?
+    pub ignore_dut1: bool,
 }
 
 // Add build-time information from the "built" crate.
@@ -116,16 +118,18 @@ pub fn fmt_build_info(f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 
 fn time_details(
     gps_time_ms: u64,
+    dut1: hifitime::Duration,
     phase_centre: RADec,
     array_pos: LatLngHeight,
 ) -> (String, String, f64, PrecessionInfo) {
     let epoch = Epoch::from_gpst_seconds(gps_time_ms as f64 / 1e3);
     let (y, mo, d, h, mi, s, ms) = epoch.as_gregorian_utc();
     let precession_info = precess_time(
-        phase_centre,
-        epoch,
         array_pos.longitude_rad,
         array_pos.latitude_rad,
+        phase_centre,
+        epoch,
+        dut1,
     );
     (
         format!("{:02}-{:02}-{:02}", y, mo, d),
@@ -192,9 +196,18 @@ impl Display for BirliContext<'_> {
             .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
             .collect();
 
+        let dut1 = if self.ignore_dut1 {
+            hifitime::Duration::from_total_nanoseconds(0)
+        } else {
+            hifitime::Duration::from_f64(
+                self.corr_ctx.metafits_context.dut1.unwrap_or(0.0),
+                Unit::Second,
+            )
+        };
         let (sched_start_date, sched_start_time, sched_start_mjd_s, sched_start_prec) =
             time_details(
                 self.corr_ctx.metafits_context.sched_start_gps_time_ms,
+                dut1,
                 self.prep_ctx.phase_centre,
                 self.prep_ctx.array_pos,
             );
@@ -211,6 +224,7 @@ impl Display for BirliContext<'_> {
         )?;
         let (sched_end_date, sched_end_time, sched_end_mjd_s, sched_end_prec) = time_details(
             self.corr_ctx.metafits_context.sched_end_gps_time_ms,
+            dut1,
             self.prep_ctx.phase_centre,
             self.prep_ctx.array_pos,
         );
@@ -315,9 +329,9 @@ impl Display for BirliContext<'_> {
         ]);
         timestep_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
 
-        let provided_timestep_indices = self.corr_ctx.provided_timestep_indices.clone();
-        let common_timestep_indices = self.corr_ctx.common_timestep_indices.clone();
-        let common_good_timestep_indices = self.corr_ctx.common_good_timestep_indices.clone();
+        let provided_timestep_indices = &self.corr_ctx.provided_timestep_indices;
+        let common_timestep_indices = &self.corr_ctx.common_timestep_indices;
+        let common_good_timestep_indices = &self.corr_ctx.common_good_timestep_indices;
         for (timestep_idx, timestep) in self.corr_ctx.timesteps.iter().enumerate() {
             let provided = provided_timestep_indices.contains(&timestep_idx);
             let selected = self.vis_sel.timestep_range.contains(&timestep_idx);
@@ -327,6 +341,7 @@ impl Display for BirliContext<'_> {
 
             let (_, time, ..) = time_details(
                 timestep.gps_time_ms,
+                dut1,
                 self.prep_ctx.phase_centre,
                 self.prep_ctx.array_pos,
             );
@@ -370,9 +385,9 @@ impl Display for BirliContext<'_> {
         ]);
         coarse_chan_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
         // coarse_chan_table
-        let provided_coarse_chan_indices = self.corr_ctx.provided_coarse_chan_indices.clone();
-        let common_coarse_chan_indices = self.corr_ctx.common_coarse_chan_indices.clone();
-        let common_good_coarse_chan_indices = self.corr_ctx.common_good_coarse_chan_indices.clone();
+        let provided_coarse_chan_indices = &self.corr_ctx.provided_coarse_chan_indices;
+        let common_coarse_chan_indices = &self.corr_ctx.common_coarse_chan_indices;
+        let common_good_coarse_chan_indices = &self.corr_ctx.common_good_coarse_chan_indices;
         for (chan_idx, chan) in self.corr_ctx.coarse_chans.iter().enumerate() {
             let provided = provided_coarse_chan_indices.contains(&chan_idx);
             let selected = self.vis_sel.coarse_chan_range.contains(&chan_idx);
@@ -534,6 +549,7 @@ impl<'a> BirliContext<'a> {
                     .required(false),
                 arg!(--"pointing-centre" "Use pointing instead phase centre")
                     .conflicts_with("phase-centre"),
+                arg!(--"ignore-dut1" "Do not use the DUT1 value, if available, in the metafits"),
                 arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's"),
                 arg!(--"dry-run" "Just print the summary and exit"),
                 arg!(--"no-draw-progress" "do not show progress bars"),
@@ -1247,6 +1263,7 @@ impl<'a> BirliContext<'a> {
             avg_time,
             avg_freq,
             num_timesteps_per_chunk,
+            ignore_dut1: matches.is_present("ignore-dut1"),
         };
 
         info!("{}", &result);
@@ -1276,6 +1293,7 @@ impl<'a> BirliContext<'a> {
             avg_time,
             avg_freq,
             num_timesteps_per_chunk,
+            ignore_dut1,
         } = self;
 
         // ////////// //
@@ -1312,13 +1330,13 @@ impl<'a> BirliContext<'a> {
             let calsol_chans = calsols.di_jones.dim().2;
             if calsol_chans % corr_ctx.num_coarse_chans != 0 {
                 return Err(BirliError::BadArrayShape(BadArrayShape {
-                    argument: format!("io_ctx.aocalsols_in={}", calsol_file.display()),
+                    argument: "input AO calibration solutions",
+                    function: "BirliContext::run",
                     expected: format!(
                         "a multiple of metafits_num_coarse_chans={}",
                         corr_ctx.metafits_context.num_metafits_coarse_chans
                     ),
                     received: format!("{}", calsol_chans),
-                    function: "BirliContext::run".into(),
                 }));
             }
             let num_calsol_fine_chans_per_coarse = calsol_chans / corr_ctx.num_coarse_chans;
@@ -1346,22 +1364,53 @@ impl<'a> BirliContext<'a> {
             application: Some(&application),
             message: Some(&message),
         };
+        let (s_lat, c_lat) = obs_ctx.array_pos.latitude_rad.sin_cos();
+        let (antenna_names, antenna_positions): (Vec<String>, Vec<marlu::XyzGeodetic>) = corr_ctx
+            .metafits_context
+            .antennas
+            .iter()
+            .map(|a| {
+                let enh = ENH {
+                    e: a.east_m,
+                    n: a.north_m,
+                    h: a.height_m,
+                };
+                let xyz = enh.to_xyz_inner(s_lat, c_lat);
+                (a.tile_name.clone(), xyz)
+            })
+            .unzip();
+        let dut1 = if ignore_dut1 {
+            hifitime::Duration::from_total_nanoseconds(0)
+        } else {
+            hifitime::Duration::from_f64(
+                corr_ctx.metafits_context.dut1.unwrap_or(0.0),
+                Unit::Second,
+            )
+        };
         let mut uvfits_writer = io_ctx.uvfits_out.map(|uvfits_out| {
             with_increment_duration!("init", {
                 UvfitsWriter::from_marlu(
                     uvfits_out,
                     &vis_ctx,
-                    Some(obs_ctx.array_pos),
+                    obs_ctx.array_pos,
                     obs_ctx.phase_centre,
+                    dut1,
                     obs_ctx.name.as_deref(),
+                    antenna_names,
+                    antenna_positions.clone(),
                     Some(&history),
                 )
                 .expect("unable to initialize uvfits writer")
             })
         });
         let mut ms_writer = io_ctx.ms_out.map(|ms_out| {
-            let writer =
-                MeasurementSetWriter::new(ms_out, obs_ctx.phase_centre, Some(obs_ctx.array_pos));
+            let writer = MeasurementSetWriter::new(
+                ms_out,
+                obs_ctx.phase_centre,
+                obs_ctx.array_pos,
+                antenna_positions,
+                dut1,
+            );
             with_increment_duration!("init", {
                 writer
                     .initialize_mwa(
@@ -1406,8 +1455,6 @@ impl<'a> BirliContext<'a> {
             )
             .expect("cannot create flag file writer")
         });
-
-        let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
 
         // //////// //
         // Chunking //
@@ -1527,11 +1574,10 @@ impl<'a> BirliContext<'a> {
                 with_increment_duration!(
                     "write",
                     uvfits_writer
-                        .write_vis_marlu(
+                        .write_vis(
                             jones_array.view(),
                             weight_array.view(),
                             &chunk_vis_ctx,
-                            &ant_positions_geodetic,
                             prep_ctx.draw_progress,
                         )
                         .expect("unable to write uvfits")
@@ -1543,11 +1589,10 @@ impl<'a> BirliContext<'a> {
                 with_increment_duration!(
                     "write",
                     ms_writer
-                        .write_vis_marlu(
+                        .write_vis(
                             jones_array.view(),
                             weight_array.view(),
                             &chunk_vis_ctx,
-                            &ant_positions_geodetic,
                             prep_ctx.draw_progress,
                         )
                         .expect("unable to write ms")
@@ -1556,13 +1601,18 @@ impl<'a> BirliContext<'a> {
         }
 
         // Finalise the uvfits writer.
-        if let Some(uvfits_writer) = uvfits_writer {
+        if let Some(uvfits_writer) = uvfits_writer.as_mut() {
             with_increment_duration!(
                 "write",
                 uvfits_writer
-                    .write_ants_from_mwalib(&corr_ctx.metafits_context)
+                    .finalise()
                     .expect("couldn't write antenna table to uvfits")
             );
+        };
+
+        // Finalise the MS writer.
+        if let Some(ms_writer) = ms_writer.as_mut() {
+            with_increment_duration!("write", ms_writer.finalise().expect("couldn't finalise MS"));
         };
 
         // Finalise the mwaf files.
@@ -3595,11 +3645,9 @@ mod tests_aoflagger_flagset {
             Some(mwaf_path_template.to_str().unwrap().into())
         );
 
-        let corr_ctx = CorrelatorContext::new(
-            birli_ctx.io_ctx.metafits_in.clone(),
-            &birli_ctx.io_ctx.gpufits_in,
-        )
-        .unwrap();
+        let corr_ctx =
+            CorrelatorContext::new(&birli_ctx.io_ctx.metafits_in, &birli_ctx.io_ctx.gpufits_in)
+                .unwrap();
 
         birli_ctx.run().unwrap();
 

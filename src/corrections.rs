@@ -8,7 +8,7 @@ use itertools::{izip, Itertools};
 use log::trace;
 use marlu::{
     constants::VEL_C,
-    hifitime::Epoch,
+    hifitime::{Duration, Epoch, Unit},
     io::error::BadArrayShape,
     mwalib::{CorrelatorContext, MWAVersion},
     precession::precess_time,
@@ -90,12 +90,14 @@ pub fn correct_cable_lengths(
     };
 
     // Create a progress bar to show the status of the correction
-    let correction_progress = ProgressBar::with_draw_target(ant_pairs.len() as u64, draw_target);
+    let correction_progress =
+        ProgressBar::with_draw_target(Some(ant_pairs.len() as u64), draw_target);
     correction_progress.set_style(
         ProgressStyle::default_bar()
             .template(
                 "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
             )
+            .unwrap()
             .progress_chars("=> "),
     );
     correction_progress.set_message("cable corrections");
@@ -249,9 +251,11 @@ pub fn correct_geometry(
         .iter()
         .map(|t| Epoch::from_gpst_seconds(t.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0))
         .collect::<Vec<_>>();
+    let dut1 = Duration::from_f64(corr_ctx.metafits_context.dut1.unwrap_or(0.0), Unit::Second);
     let part_uvws = calc_part_uvws(
         &ant_pairs,
         &centroid_timestamps,
+        dut1,
         phase_centre,
         array_pos,
         &tiles_xyz_geod,
@@ -263,12 +267,13 @@ pub fn correct_geometry(
     } else {
         ProgressDrawTarget::hidden()
     };
-    let correction_progress = ProgressBar::with_draw_target(jones_dims.0 as u64, draw_target);
+    let correction_progress = ProgressBar::with_draw_target(Some(jones_dims.0 as u64), draw_target);
     correction_progress.set_style(
         ProgressStyle::default_bar()
             .template(
                 "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
             )
+            .unwrap()
             .progress_chars("=> "),
     );
     correction_progress.set_message("geom corrections");
@@ -340,8 +345,8 @@ pub fn correct_digital_gains(
     let vis_dims = jones_array.dim();
     if vis_dims.1 != coarse_chan_range.len() * num_fine_chans_per_coarse {
         return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
-            argument: "coarse_chan_range".into(),
-            function: "correct_digital_gains".into(),
+            argument: "coarse_chan_range",
+            function: "correct_digital_gains",
             expected: format!(
                 "(vis_dims.1={}) / (num_fine_chans_per_coarse={}) = {}",
                 vis_dims.1,
@@ -353,8 +358,8 @@ pub fn correct_digital_gains(
     }
     if vis_dims.2 != ant_pairs.len() {
         return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
-            argument: "ant_pairs".into(),
-            function: "correct_digital_gains".into(),
+            argument: "ant_pairs",
+            function: "correct_digital_gains",
             expected: format!("vis_dims.2={}", vis_dims.2,),
             received: format!("{:?}", ant_pairs.len()),
         }));
@@ -390,8 +395,8 @@ fn _correct_digital_gains(
     let gain_dims = gains.dim();
     if vis_dims.1 != gain_dims.1 * num_fine_chans_per_coarse {
         return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
-            argument: "gains".into(),
-            function: "_correct_digital_gains".into(),
+            argument: "gains",
+            function: "_correct_digital_gains",
             expected: format!(
                 "(_, n, _), where n = (vis_dims.1={}) / (num_fine_chans_per_coarse={}) = {}",
                 vis_dims.1,
@@ -467,8 +472,8 @@ pub fn correct_coarse_passband_gains(
 ) -> Result<(), PassbandCorrection> {
     if num_fine_chans_per_coarse == 0 {
         return Err(PassbandCorrection::BadArrayShape(BadArrayShape {
-            argument: "num_fine_chans_per_coarse".into(),
-            function: "correct_coarse_passband_gains".into(),
+            argument: "num_fine_chans_per_coarse",
+            function: "correct_coarse_passband_gains",
             expected: "a number greater than zero".into(),
             received: format!("{:?}", num_fine_chans_per_coarse),
         }));
@@ -476,8 +481,8 @@ pub fn correct_coarse_passband_gains(
 
     if jones_array.dim().1 % num_fine_chans_per_coarse != 0 {
         return Err(PassbandCorrection::BadArrayShape(BadArrayShape {
-            argument: "jones_array".into(),
-            function: "correct_coarse_passband_gains".into(),
+            argument: "jones_array",
+            function: "correct_coarse_passband_gains",
             expected: format!(
                 "(_, n, _), where n is a multiple of num_fine_chans_per_coarse={}",
                 num_fine_chans_per_coarse
@@ -488,8 +493,8 @@ pub fn correct_coarse_passband_gains(
 
     if weight_array.dim() != jones_array.dim() {
         return Err(PassbandCorrection::BadArrayShape(BadArrayShape {
-            argument: "weight_array".into(),
-            function: "correct_coarse_passband_gains".into(),
+            argument: "weight_array",
+            function: "correct_coarse_passband_gains",
             expected: format!("same as jones_array.dim()={:?}", jones_array.dim()),
             received: format!("{:?}", weight_array.dim()),
         }));
@@ -499,8 +504,8 @@ pub fn correct_coarse_passband_gains(
         passband_gains.len() / num_fine_chans_per_coarse
     } else {
         return Err(PassbandCorrection::BadArrayShape(BadArrayShape {
-            argument: "passband_gains".into(),
-            function: "correct_coarse_passband_gains".into(),
+            argument: "passband_gains",
+            function: "correct_coarse_passband_gains",
             expected: format!(
                 "n, where n is a multiple of num_fine_chans_per_coarse={}",
                 num_fine_chans_per_coarse
@@ -662,6 +667,7 @@ pub fn scrunch_gains(
 fn calc_part_uvws(
     ant_pairs: &[(usize, usize)],
     centroid_timestamps: &[Epoch],
+    dut1: Duration,
     phase_centre: RADec,
     array_pos: LatLngHeight,
     tile_xyzs: &[XyzGeodetic],
@@ -670,10 +676,11 @@ fn calc_part_uvws(
     let mut part_uvws = Array2::from_elem((centroid_timestamps.len(), max_ant + 1), UVW::default());
     for (t, &epoch) in centroid_timestamps.iter().enumerate() {
         let prec = precess_time(
-            phase_centre,
-            epoch,
             array_pos.longitude_rad,
             array_pos.latitude_rad,
+            phase_centre,
+            epoch,
+            dut1,
         );
         let tiles_xyz_prec = prec.precess_xyz_parallel(tile_xyzs);
         for (a, &xyz) in tiles_xyz_prec.iter().enumerate() {
@@ -695,8 +702,9 @@ mod tests {
     use float_cmp::assert_approx_eq;
     use itertools::izip;
     use marlu::{
-        hifitime::Epoch, precession::precess_time, Complex, Jones, LatLngHeight, RADec,
-        XyzGeodetic, UVW,
+        hifitime::{Duration, Epoch, Unit},
+        precession::precess_time,
+        Complex, Jones, LatLngHeight, RADec, XyzGeodetic, UVW,
     };
     use ndarray::{s, Array2, Array3, Axis};
     use std::f64::consts::PI;
@@ -706,7 +714,7 @@ mod tests {
         compare_jones,
         corrections::{DigitalGainCorrection, PassbandCorrection, ScrunchType},
         test_common::{get_mwa_ord_context, get_mwax_context},
-        TestJones, VisSelection,
+        VisSelection,
     };
 
     #[test]
@@ -1054,6 +1062,9 @@ mod tests {
         );
 
         let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
+        // Don't let a DUT1 value present in the metafits upset the
+        // already-existing test values.
+        let dut1 = Duration::from_f64(0.0, Unit::Second);
 
         // timestep 0
         let timestep_0 = &corr_ctx.timesteps[vis_sel.timestep_range.clone()][0];
@@ -1061,10 +1072,11 @@ mod tests {
             timestep_0.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
         );
         let prec_info_0 = precess_time(
-            phase_centre_ra,
-            epoch_0,
             array_pos.longitude_rad,
             array_pos.latitude_rad,
+            phase_centre_ra,
+            epoch_0,
+            dut1,
         );
         let phase_centre_ha_j2000_0 = prec_info_0.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
         let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
@@ -1074,10 +1086,11 @@ mod tests {
             timestep_3.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
         );
         let prec_info_3 = precess_time(
-            phase_centre_ra,
-            epoch_3,
             array_pos.longitude_rad,
             array_pos.latitude_rad,
+            phase_centre_ra,
+            epoch_3,
+            dut1,
         );
         let phase_centre_ha_j2000_3 = prec_info_3.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_3.lmst_j2000);
         let tiles_xyz_precessed_3 = prec_info_3.precess_xyz_parallel(&tiles_xyz_geod);
@@ -1197,6 +1210,9 @@ mod tests {
         );
 
         let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
+        // Don't let a DUT1 value present in the metafits upset the
+        // already-existing test values.
+        let dut1 = Duration::from_f64(0.0, Unit::Second);
 
         // timestep 0
         let timestep_0 = &corr_ctx.timesteps[vis_sel.timestep_range.clone()][0];
@@ -1204,10 +1220,11 @@ mod tests {
             timestep_0.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
         );
         let prec_info_0 = precess_time(
-            phase_centre_ra,
-            epoch_0,
             array_pos.longitude_rad,
             array_pos.latitude_rad,
+            phase_centre_ra,
+            epoch_0,
+            dut1,
         );
         let phase_centre_ha_j2000_0 = prec_info_0.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
         let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
@@ -1217,10 +1234,11 @@ mod tests {
             timestep_3.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0,
         );
         let prec_info_3 = precess_time(
-            phase_centre_ra,
-            epoch_3,
             array_pos.longitude_rad,
             array_pos.latitude_rad,
+            phase_centre_ra,
+            epoch_3,
+            dut1,
         );
         let phase_centre_ha_j2000_3 = prec_info_3.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_3.lmst_j2000);
         let tiles_xyz_precessed_3 = prec_info_3.precess_xyz_parallel(&tiles_xyz_geod);

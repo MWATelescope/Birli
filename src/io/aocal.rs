@@ -151,8 +151,6 @@ impl AOCalSols {
 mod tests {
     use approx::assert_abs_diff_eq;
 
-    use crate::types::TestJones;
-
     use super::*;
 
     #[test]
@@ -178,9 +176,9 @@ mod tests {
         // values from cotter debugger at breakpoint https://github.com/MWATelescope/cotter/blob/0f99a09cb21721666d2ba328ab2257484b4cd183/applysolutionswriter.cpp#L33
 
         assert_abs_diff_eq!(
-            TestJones::from(sols.di_jones[(0, 0, 0)]),
+            sols.di_jones[(0, 0, 0)],
             // -exec p this._solutions[0 * this._nSolutionChannels + 0]
-            TestJones::from([
+            Jones::from([
                 Complex::new(-0.05711880819681107, 0.8909723224701427),
                 Complex::new(0., 0.),
                 Complex::new(0., 0.),
@@ -188,9 +186,9 @@ mod tests {
             ])
         );
         assert_abs_diff_eq!(
-            TestJones::from(sols.di_jones[(0, 127, 0)]),
+            sols.di_jones[(0, 127, 0)],
             // -exec p this._solutions[127 * this._nSolutionChannels + 0]
-            TestJones::from([
+            Jones::from([
                 Complex::new(-0.6573012593247391, -0.16069224007242128),
                 Complex::new(0., 0.),
                 Complex::new(0., 0.),
@@ -198,9 +196,9 @@ mod tests {
             ])
         );
         assert_abs_diff_eq!(
-            TestJones::from(sols.di_jones[(0, 0, 767)]),
+            sols.di_jones[(0, 0, 767)],
             // -exec p this._solutions[0 * this._nSolutionChannels + 767]
-            TestJones::from([
+            Jones::from([
                 Complex::new(-0.8662694860974055, 0.9154347855961527),
                 Complex::new(0.0, 0.0),
                 Complex::new(0.0, 0.0),
@@ -208,9 +206,9 @@ mod tests {
             ])
         );
         assert_abs_diff_eq!(
-            TestJones::from(sols.di_jones[(0, 127, 767)]),
+            sols.di_jones[(0, 127, 767)],
             // -exec p this._solutions[127 * this._nSolutionChannels + 767]
-            TestJones::from([
+            Jones::from([
                 Complex::new(-0.985537320263424, -0.21269260191492487),
                 Complex::new(0.0, 0.0),
                 Complex::new(0.0, 0.0),

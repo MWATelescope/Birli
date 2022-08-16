@@ -1,7 +1,7 @@
 [package]
 name = "birli"
 description = "A preprocessing pipeline for the Murchison Widefield Array"
-version = "0.7.0"
+version = "0.8.0"
 readme = "README.md"
 homepage = "https://github.com/MWATelescope/Birli"
 repository = "https://github.com/MWATelescope/Birli"
@@ -12,7 +12,7 @@ authors = [
     "Luke A. Williams <luke.a.williams@curtin.edu.au>",
 ]
 edition = "2021"
-rust-version = "1.60"
+rust-version = "1.63"
 license = "MPL-2.0"
 keywords = ["radioastronomy", "mwa", "astronomy", "aoflagger", "cotter"]
 categories = ["science", "parsing"]
@@ -28,32 +28,32 @@ cfitsio-static = ["marlu/cfitsio-static"]
 all-static = ["erfa-static", "cfitsio-static"]
 
 [dependencies]
-aoflagger_sys = { version = "0.1.*", optional = true }
+aoflagger_sys = { version = "0.1.0", optional = true }
 byteorder = "1.4.3"
 cfg-if = "1.0.0"
 clap = { version = "3.1.8", features = ["cargo"] }
-crossbeam-utils = "0.8.10"
 derive_builder = "0.11.1"
 env_logger = "0.9"
-indicatif = { version = "0.16", features = ["rayon"] }
+indicatif = { version = "0.17.0", features = ["rayon"] }
 itertools = "0.10"
 lazy_static = "1.4.0"
 log = "0.4"
-marlu = "0.7.2"
-prettytable-rs = "0.8.0"
+marlu = "0.8.0"
+prettytable-rs = "0.9.0"
 regex = "1.4"
 thiserror = "1.0"
 shlex = "1.1.0"
 
 [dev-dependencies]
-approx = { version = "0.5.*", features = ["num-complex"] }
+approx = { version = "0.5.0", features = ["num-complex"] }
 assert_cli = "0.6"
 criterion = "0.3"
 csv = "1.1"
 float-cmp = "0.9"
 glob = "0.3"
 lexical = "6.0"
-ndarray = { version = ">=0.15.4,<0.16", features = ["approx-0_5"] }
+marlu = { version = "0.8.0", features = ["approx"] }
+ndarray = { version = "0.15.4", features = ["approx-0_5"] }
 tempfile = "3.3"
 
 [build-dependencies]
@@ -71,5 +71,6 @@ opt-level = 3
 
 [patch.crates-io]
 # marlu = { path = "../Marlu" }
-# marlu = { git = "https://github.com/MWATelescope/Marlu.git" }
-# mwalib = { git = "https://github.com/MWATelescope/mwalib", branch = "v0.14.0" }
+# marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "DUT1" }
+# mwalib = { path = "../mwalib" }
+# mwalib = { git = "https://github.com/MWATelescope/mwalib", branch = "digital_gains_plus" }

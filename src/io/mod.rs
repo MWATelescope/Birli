@@ -15,9 +15,11 @@ use log::trace;
 
 use crate::{
     marlu::{
-        io::{ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWritable},
+        constants::MWA_LAT_RAD,
+        hifitime::{Duration, Unit},
+        io::{ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
         mwalib::{CorrelatorContext, MwalibError},
-        Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext,
+        Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
     },
     ndarray::{ArrayView3, ArrayViewMut3},
 };
@@ -183,30 +185,48 @@ pub fn write_uvfits<T: AsRef<Path>>(
     if let Some(phase_centre) = phase_centre {
         obs_ctx.phase_centre = phase_centre;
     }
-    if let Some(array_pos) = array_pos {
-        obs_ctx.array_pos = array_pos;
-    }
+
+    let array_latitude = match array_pos {
+        Some(array_pos) => {
+            obs_ctx.array_pos = array_pos;
+            array_pos.latitude_rad
+        }
+        None => {
+            // The writer will assume MWA, so we do here too.
+            MWA_LAT_RAD
+        }
+    };
+    let (antenna_names, antenna_positions) = corr_ctx
+        .metafits_context
+        .antennas
+        .iter()
+        .map(|a| {
+            let enh = ENH {
+                e: a.east_m,
+                n: a.north_m,
+                h: a.height_m,
+            };
+            let (s_lat, c_lat) = array_latitude.sin_cos();
+            let xyz = enh.to_xyz_inner(s_lat, c_lat);
+            (a.tile_name.clone(), xyz)
+        })
+        .unzip();
 
     let mut uvfits_writer = UvfitsWriter::from_marlu(
         path,
         &vis_ctx,
-        Some(obs_ctx.array_pos),
+        obs_ctx.array_pos,
         obs_ctx.phase_centre,
+        Duration::from_f64(corr_ctx.metafits_context.dut1.unwrap_or(0.0), Unit::Second),
         obs_ctx.name.as_deref(),
+        antenna_names,
+        antenna_positions,
         None,
     )?;
 
-    let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
+    uvfits_writer.write_vis(jones_array, weight_array, &vis_ctx, draw_progress)?;
 
-    uvfits_writer.write_vis_marlu(
-        jones_array,
-        weight_array,
-        &vis_ctx,
-        &ant_positions_geodetic,
-        draw_progress,
-    )?;
-
-    uvfits_writer.write_ants_from_mwalib(&corr_ctx.metafits_context)?;
+    uvfits_writer.finalise()?;
 
     trace!("end write_uvfits");
 
@@ -323,21 +343,23 @@ pub fn write_ms<T: AsRef<Path>>(
     }
     let mwa_ctx = MwaObsContext::from_mwalib(&corr_ctx.metafits_context);
 
-    let mut ms_writer =
-        MeasurementSetWriter::new(path, obs_ctx.phase_centre, Some(obs_ctx.array_pos));
+    let mut ms_writer = MeasurementSetWriter::new(
+        path,
+        obs_ctx.phase_centre,
+        obs_ctx.array_pos,
+        obs_ctx.ant_positions_geodetic().collect(),
+        Duration::from_f64(corr_ctx.metafits_context.dut1.unwrap_or(0.0), Unit::Second),
+    );
 
     ms_writer
         .initialize_mwa(&vis_ctx, &obs_ctx, &mwa_ctx, None, coarse_chan_range)
         .unwrap();
 
-    let ant_positions_geodetic: Vec<_> = obs_ctx.ant_positions_geodetic().collect();
-
     ms_writer
-        .write_vis_marlu(
+        .write_vis(
             jones_array.view(),
             weight_array.view(),
             &vis_ctx,
-            &ant_positions_geodetic,
             draw_progress,
         )
         .unwrap();

@@ -1,6 +1,14 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.7.0 (unreleased)
+# Version 0.8.0 (2022-08-24)
+
+- ✨ new features:
+  - use DUT1 functionality as part of Marlu 0.8.0
+- ➕ dependencies:
+  - use Marlu 0.8.0
+  - MSRV 1.63
+
+# Version 0.7.0 (2022-08-04)
 
 - ⚡ performance:
   - Fix unnecessary allocation for smaller visibility chunks to improve memory performance

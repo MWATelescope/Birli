@@ -198,8 +198,8 @@ impl FlagContext {
         let flag_shape = flag_array.dim();
         if flag_shape.0 > shape.0 || flag_shape.1 > shape.1 || flag_shape.2 > shape.2 {
             return Err(BirliError::BadArrayShape(BadArrayShape {
-                argument: "flag_array".to_string(),
-                function: "FlagContext::set_flags".to_string(),
+                argument: "flag_array",
+                function: "FlagContext::set_flags",
                 expected: format!("dims less than {:?}", shape),
                 received: format!("{:?}", flag_shape),
             }));
@@ -378,12 +378,13 @@ pub fn flag_jones_array_existing(
     };
 
     // The total reading progress.
-    let flag_progress = ProgressBar::with_draw_target(jones_shape.2 as _, draw_target)
+    let flag_progress = ProgressBar::with_draw_target(Some(jones_shape.2 as _), draw_target)
         .with_style(
             ProgressStyle::default_bar()
                 .template(
                     "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
                 )
+                .unwrap()
                 .progress_chars("=> "),
         )
         .with_position(0)

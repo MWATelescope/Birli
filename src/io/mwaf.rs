@@ -381,61 +381,37 @@ impl FlagFileSet {
             .iter()
             .map(|gpubox| {
                 multi_progress.add({
-                    let pb = ProgressBar::new((num_timesteps * num_baselines) as _)
+                    ProgressBar::new((num_timesteps * num_baselines) as _)
                         .with_style(
                             ProgressStyle::default_bar()
                                 .template("{msg:16}: [{wide_bar:.blue}] {pos:4}/{len:4}")
+                                .unwrap()
                                 .progress_chars("=> "),
                         )
                         .with_position(0)
-                        .with_message(format!("mwaf {:03}", gpubox.id));
-                    pb.set_draw_delta(500); // Not setting this slows things down because the PB updates so quickly!
-                    pb
+                        .with_message(format!("mwaf {:03}", gpubox.id))
                 })
             })
             .collect::<Vec<_>>();
 
-        // Can't use rayon::join or rayon::scope because one thread is dedicated
-        // to the multi-progress bar, and if the system only has 1 CPU thread,
-        // no work gets done, and the program deadlocks! crossbeam is overkill
-        // but works well.
-        let scoped_threads_result = crossbeam_utils::thread::scope(|s| {
-            s.spawn(move |_| {
-                multi_progress.join().unwrap();
-            });
-
-            let h = s.spawn(|_| {
-                self.gpuboxes
-                    .par_iter_mut()
-                    .zip(
-                        flag_array
-                            .axis_chunks_iter(Axis(1), num_fine_chans_per_coarse)
-                            .into_par_iter(),
-                    )
-                    .zip(progress_bars)
-                    .try_for_each(|((gpubox, flag_coarse_chan_view), channel_progress)| {
-                        Self::write_flag_array_inner(
-                            &gpubox.filename,
-                            flag_coarse_chan_view,
-                            &channel_progress,
-                            num_fine_chans_per_coarse,
-                            &mut gpubox.channel_flag_count,
-                            &mut gpubox.baseline_flag_count,
-                        )
-                    })
-            });
-            h.join()
-        });
-        match scoped_threads_result {
-            // Propagate anything that didn't panic.
-            Ok(Ok(r)) => r?,
-            // A panic. This ideally only happens because a programmer made a
-            // mistake, but it could happen in drastic situations (e.g. hardware
-            // failure).
-            Err(_) | Ok(Err(_)) => panic!(
-                "A panic occurred; the message should be above. You may need to disable progress bars."
-            ),
-        };
+        self.gpuboxes
+            .par_iter_mut()
+            .zip(
+                flag_array
+                    .axis_chunks_iter(Axis(1), num_fine_chans_per_coarse)
+                    .into_par_iter(),
+            )
+            .zip(progress_bars)
+            .try_for_each(|((gpubox, flag_coarse_chan_view), channel_progress)| {
+                Self::write_flag_array_inner(
+                    &gpubox.filename,
+                    flag_coarse_chan_view,
+                    &channel_progress,
+                    num_fine_chans_per_coarse,
+                    &mut gpubox.channel_flag_count,
+                    &mut gpubox.baseline_flag_count,
+                )
+            })?;
 
         self.row_count += (flag_array.len_of(Axis(0)) * flag_array.len_of(Axis(2))) as u64;
 

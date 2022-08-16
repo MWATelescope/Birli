@@ -134,7 +134,7 @@ pub fn apply_di_calsol(
 mod tests {
     use approx::assert_abs_diff_eq;
 
-    use crate::{compare_jones, types::TestJones, Complex};
+    use crate::{compare_jones, Complex};
 
     use ndarray::{array, Array2, Array3};
 
