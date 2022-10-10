@@ -23,7 +23,7 @@ A Rust library for common preprocessing tasks performed in the data pipeline of 
 Widefield Array (MWA), located on the land of the Wajarri Yamatji people in Murchison Shire, Western
 Australia.
 
-Birl reads MWA correlator visibilities in the gpufits file format using
+Birli reads MWA correlator visibilities in the gpufits file format using
 [mwalib](https://github.com/MWATelescope/mwalib), which supports the existing "legacy" MWA
 correlator, as well as the in-development "MWAX" correlator.
 
