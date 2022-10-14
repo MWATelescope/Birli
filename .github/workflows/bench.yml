@@ -3,10 +3,10 @@
 on:
   push:
     tags-ignore:
-      - '**'
+      - "**"
     pull_request:
     branches:
-      - 'main'
+      - "**"
 
 name: Benchmarks
 
@@ -20,14 +20,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Copied from https://github.com/jul-sh/oak/blob/64b240a1f573c87f992e43ec7f5919c6004ff8be/.github/workflows/ci.yaml
-      - name: Free disk space
+      - name: checks
         run: |
           df --human-readable
-          sudo find /tmp -name '.tmp*' ! -atime 1;
-          sudo apt clean
-          docker system prune -f
-          df --human-readable
+          ls -al /home/runner/data/*/*.metafits
 
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
@@ -41,12 +37,7 @@ jobs:
           cargo bench
         env:
           LD_LIBRARY_PATH: /usr/local/lib/
-          BIRLI_TEST_DIR: /mnt/data
-
-      - name: install zip
-        run: |
-          sudo apt-get update \
-          && sudo apt-get install -y zip
+          BIRLI_TEST_DIR: /home/runner/data
 
       - name: Zip benchmark results
         run: zip -r criterion.zip target/criterion/*
