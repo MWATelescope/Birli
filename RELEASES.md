@@ -1,5 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Unreleased
+
+- 🙏 quality of life:
+  - report error messages properly, not as Rust-internal representation
+
 # Version 0.8.0 (2022-08-24)
 
 - ✨ new features:
