@@ -17,7 +17,7 @@ where
         }
         Err(BirliError::ClapError(inner)) => inner.exit(),
         Err(e) => {
-            eprintln!("error parsing args: {:?}", e);
+            eprintln!("error parsing args: {}", e);
             return 1;
         }
     };
