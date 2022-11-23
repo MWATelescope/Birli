@@ -36,6 +36,9 @@ jobs:
       run: |
         cargo make install_deps
 
+    - name: Check semver
+      uses: obi1kenobi/cargo-semver-checks-action@v1
+
     - run: cargo package
     - uses: taiki-e/create-gh-release-action@v1
       with:
