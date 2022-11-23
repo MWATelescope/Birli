@@ -5,6 +5,10 @@
 - ✨ new features:
   - support for non-contiguous coarse channel selections (picket fence!) 🎉
 - 🙏 quality of life:
+  - Use a newer aoflagger_sys crate
+    - This allows for AOFLAGGER_INCLUDE_DIR and AOFLAGGER_LIB to be set and
+      point to where aoflagger is installed, rather than searching in a default
+      location
   - report error messages properly, not as Rust-internal representation
 
 # Version 0.8.0 (2022-08-24)

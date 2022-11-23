@@ -28,7 +28,7 @@ cfitsio-static = ["marlu/cfitsio-static"]
 all-static = ["erfa-static", "cfitsio-static"]
 
 [dependencies]
-aoflagger_sys = { version = "0.1.0", optional = true }
+aoflagger_sys = { version = "0.1.1", optional = true }
 byteorder = "1.4.3"
 cfg-if = "1.0.0"
 clap = { version = "3.1.8", features = ["cargo"] }
