@@ -482,7 +482,7 @@ pub fn compare_ms_with_csv(
     let freq_start_header = indices.get("0").unwrap().to_owned();
 
     // Test the ms file has been correctly populated.
-    let mut main_table = Table::open(&ms_path, TableOpenMode::Read).unwrap();
+    let mut main_table = Table::open(ms_path, TableOpenMode::Read).unwrap();
     let num_rows = main_table.n_rows();
     let data_tabledesc = main_table.get_col_desc("DATA").unwrap();
     let data_shape = data_tabledesc.shape().unwrap();

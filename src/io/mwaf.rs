@@ -295,9 +295,9 @@ impl FlagFileSet {
         // For some silly reason, writing `gps_start` as a float truncates;
         // writing a string works fine.
         hdu.write_key(fptr, "GPSSTART", gps_start.to_string())?;
-        hdu.write_key(fptr, "NCHANS", *num_channels as u32)?;
-        hdu.write_key(fptr, "NANTENNA", *num_ants as u32)?;
-        hdu.write_key(fptr, "NSCANS", *num_timesteps as u32)?;
+        hdu.write_key(fptr, "NCHANS", *num_channels)?;
+        hdu.write_key(fptr, "NANTENNA", *num_ants)?;
+        hdu.write_key(fptr, "NSCANS", *num_timesteps)?;
         hdu.write_key(fptr, "NPOLS", *num_pols as u32)?;
         if let Some(gpubox_id) = gpubox_id {
             hdu.write_key(fptr, "GPUBOXNO", gpubox_id as u32)?;
@@ -547,7 +547,6 @@ impl FlagFileSet {
                 &mut fptr,
                 "Index",
                 &(0..gpubox.channel_flag_count.len())
-                    .into_iter()
                     .map(|i| i as u32)
                     .collect::<Vec<u32>>(),
             )?;
@@ -586,10 +585,7 @@ impl FlagFileSet {
             hdu.write_col(
                 &mut fptr,
                 "Index",
-                &(0..ant_pairs.len())
-                    .into_iter()
-                    .map(|i| i as u32)
-                    .collect::<Vec<u32>>(),
+                &(0..ant_pairs.len()).map(|i| i as u32).collect::<Vec<u32>>(),
             )?;
             let (ant1s, ant2s): (Vec<u32>, Vec<u32>) = ant_pairs
                 .iter()
@@ -1133,7 +1129,6 @@ mod tests {
             let num_ants: i32 = get_required_fits_key!(&mut fptr, &hdu0, "NANTENNA").unwrap();
             let num_timesteps: i32 = get_required_fits_key!(&mut fptr, &hdu0, "NSCANS").unwrap();
             let num_pols: i32 = get_required_fits_key!(&mut fptr, &hdu0, "NPOLS").unwrap();
-            let gpubox_id = get_optional_fits_key!(&mut fptr, &hdu0, "GPUBOXNO").unwrap();
             let software: Option<String> =
                 get_optional_fits_key!(&mut fptr, &hdu0, "SOFTWARE").unwrap();
             let aoflagger_version: Option<String> =
@@ -1152,7 +1147,6 @@ mod tests {
             assert_eq!(num_ants, 128);
             assert_eq!(num_timesteps, 2);
             assert_eq!(num_pols, 1);
-            assert_eq!(gpubox_id, gpubox_id.map(|g| g as u32));
             assert_eq!(software, None);
             assert_eq!(aoflagger_version, None);
             assert_eq!(aoflagger_strategy, None);

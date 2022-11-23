@@ -5,6 +5,7 @@
 - ✨ new features:
   - support for non-contiguous coarse channel selections (picket fence!) 🎉
 - 🙏 quality of life:
+  - Clippy lints
   - Update Marlu
     - The ERFA C library is no longer needed, so all mentions of it and
       installations of it have been removed.

@@ -84,19 +84,19 @@ mod tests {
 
     #[test]
     fn main_with_version_succeeds() {
-        assert_eq!(main_with_args(&["birli", "--version"]), 0);
+        assert_eq!(main_with_args(["birli", "--version"]), 0);
     }
 
     #[test]
     fn main_with_help_succeeds() {
-        assert_eq!(main_with_args(&["birli", "--help"]), 0);
+        assert_eq!(main_with_args(["birli", "--help"]), 0);
     }
 
     #[test]
     fn main_with_dry_run_doesnt_crash() {
         #[rustfmt::skip]
         assert_eq!(
-            main_with_args(&[
+            main_with_args([
                 "birli",
                 "-m", "tests/data/1254670392_avg/1254670392.fixed.metafits",
                 "--dry-run",
@@ -110,7 +110,7 @@ mod tests {
     fn main_with_bad_arg_returns_1() {
         #[rustfmt::skip]
         assert_ne!(
-            main_with_args(&[
+            main_with_args([
                 "birli",
                 "-m", "tests/data/1254670392_avg/1254670392.fixed.metafits",
                 "--avg-time-factor", "0",
@@ -184,7 +184,7 @@ mod tests {
         assert!(uvfits_path_2.metadata().unwrap().len() > 0);
 
         // check frequencies are correct.
-        let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
         let cc1 = &corr_ctx.coarse_chans[1];
         let cc2 = &corr_ctx.coarse_chans[2];
         let cc3 = &corr_ctx.coarse_chans[3];

@@ -794,14 +794,12 @@ impl<'a> BirliContext<'a> {
 
     fn parse_io_matches(matches: &clap::ArgMatches) -> IOContext {
         IOContext {
-            metafits_in: match matches.value_of_t("metafits") {
-                Ok(path) => path,
-                _ => unreachable!("--metafits <PATH> is required, enforced by clap"),
-            },
-            gpufits_in: match matches.values_of_t("fits_paths") {
-                Ok(path) => path,
-                _ => unreachable!("<PATHS> is required, enforced by clap"),
-            },
+            metafits_in: matches
+                .value_of_t("metafits")
+                .unwrap_or_else(|_| panic!("--metafits <PATH> is required, enforced by clap")),
+            gpufits_in: matches
+                .values_of_t("fits_paths")
+                .unwrap_or_else(|_| panic!("<PATHS> is required, enforced by clap")),
             aocalsols_in: matches.value_of("apply-di-cal").map(Into::into),
             uvfits_out: matches.value_of("uvfits-out").map(Into::into),
             ms_out: matches.value_of("ms-out").map(Into::into),
@@ -842,6 +840,7 @@ impl<'a> BirliContext<'a> {
     ) -> Result<ChannelRanges, BirliError> {
         let sel_chan_ranges = ChannelRanges::all(corr_ctx);
         if matches.is_present("sel-chan-ranges") {
+            #[allow(clippy::option_if_let_else)]
             match matches.value_of("sel-chan-ranges") {
                 Some(range_str) => ChannelRanges::new(range_str),
                 None => Err(BirliError::CLIError(InvalidCommandLineArgument {
@@ -1206,7 +1205,7 @@ impl<'a> BirliContext<'a> {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--max-memory <GIBIBYTES>".into(),
                             expected: format!("at least enough memory for an averaged timestep ({} * {:.02} = {:.02} GiB)", avg_time, bytes_per_timestep as f64 / 1024.0_f64.powi(3), bytes_per_avg_time as f64 / 1024.0_f64.powi(3)),
-                            received: format!("{}GiB", max_mem_bytes as f64 / 1024.0_f64.powi(3)),
+                            received: format!("{}GiB", max_mem_bytes / 1024.0_f64.powi(3)),
                         }));
                     }
                     Some((max_mem_bytes / bytes_per_avg_time as f64).floor() as usize * avg_time)
@@ -1726,7 +1725,7 @@ impl<'a> BirliContext<'a> {
                     -(*weight).abs()
                 } else {
                     (*weight).abs()
-                } as f32;
+                };
             }
 
             let chunk_vis_ctx = VisContext::from_mwalib(
@@ -2711,7 +2710,7 @@ mod channel_range_tests {
     fn test_picket_range() {
         let (metafits_path, gpufits_paths) = get_1119683928_picket_paths();
 
-        let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
 
         let channel_range_sel = ChannelRanges::all(&corr_ctx);
 

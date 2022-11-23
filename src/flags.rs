@@ -696,7 +696,7 @@ mod tests {
             let row_idx = timestep_idx * num_baselines + baseline_idx;
             let offset = row_idx as usize * fine_chans_per_coarse + fine_chan_idx as usize;
             assert_eq!(
-                *flags.iter().nth(offset as usize).unwrap(), expected_flag,
+                *flags.iter().nth(offset).unwrap(), expected_flag,
                 "with timestep {timestep_idx}, baseline {baseline_idx}, fine_chan {fine_chan_idx}, expected {expected_flag} at row_idx {row_idx}, offset {offset}"
             );
         }

@@ -216,16 +216,13 @@ pub fn correct_geometry(
 ) {
     trace!("start correct_geometry");
 
-    let array_pos = match array_pos {
-        Some(pos) => pos,
-        None => {
-            // The results here are slightly different to those given by cotter.
-            // This is at least partly due to different constants (the altitude is
-            // definitely slightly different), but possibly also because ERFA is
-            // more accurate than cotter's "homebrewed" Geodetic2XYZ.
-            LatLngHeight::mwa()
-        }
-    };
+    let array_pos = array_pos.unwrap_or_else(|| {
+        // The results here are slightly different to those given by cotter.
+        // This is at least partly due to different constants (the altitude is
+        // definitely slightly different), but possibly also because ERFA is
+        // more accurate than cotter's "homebrewed" Geodetic2XYZ.
+        LatLngHeight::mwa()
+    });
 
     let timesteps = &corr_ctx.timesteps[timestep_range.clone()];
 
@@ -237,10 +234,8 @@ pub fn correct_geometry(
 
     let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
 
-    let phase_centre = match phase_centre {
-        Some(pc) => pc,
-        None => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
-    };
+    let phase_centre = phase_centre
+        .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context));
     let tiles_xyz_geod = XyzGeodetic::get_tiles(&corr_ctx.metafits_context, array_pos.latitude_rad);
 
     let ant_pairs = baselines
@@ -802,21 +797,21 @@ mod tests {
         let length_m_1_yy = length_1_2_y - length_1_1_y;
 
         // baseline 1, pol XX, chan 0 (cc 0, fc 0)
-        let angle_1_xx_0: f64 = -2.0 * PI * length_m_1_xx * (all_freqs_hz[0] as f64) / VEL_C;
+        let angle_1_xx_0: f64 = -2.0 * PI * length_m_1_xx * all_freqs_hz[0] / VEL_C;
         // baseline 1, pol XY, chan 0 (cc 0, fc 0)
-        let angle_1_xy_0: f64 = -2.0 * PI * length_m_1_xy * (all_freqs_hz[0] as f64) / VEL_C;
+        let angle_1_xy_0: f64 = -2.0 * PI * length_m_1_xy * all_freqs_hz[0] / VEL_C;
         // baseline 1, pol YX, chan 0 (cc 0, fc 0)
-        let angle_1_yx_0: f64 = -2.0 * PI * length_m_1_yx * (all_freqs_hz[0] as f64) / VEL_C;
+        let angle_1_yx_0: f64 = -2.0 * PI * length_m_1_yx * all_freqs_hz[0] / VEL_C;
         // baseline 1, pol YY, chan 0 (cc 0, fc 0)
-        let angle_1_yy_0: f64 = -2.0 * PI * length_m_1_yy * (all_freqs_hz[0] as f64) / VEL_C;
+        let angle_1_yy_0: f64 = -2.0 * PI * length_m_1_yy * all_freqs_hz[0] / VEL_C;
         // baseline 1, pol XX, chan 3 (cc 1, fc 1)
-        let angle_1_xx_3: f64 = -2.0 * PI * length_m_1_xx * (all_freqs_hz[3] as f64) / VEL_C;
+        let angle_1_xx_3: f64 = -2.0 * PI * length_m_1_xx * all_freqs_hz[3] / VEL_C;
         // baseline 1, pol XY, chan 3 (cc 1, fc 1)
-        let angle_1_xy_3: f64 = -2.0 * PI * length_m_1_xy * (all_freqs_hz[3] as f64) / VEL_C;
+        let angle_1_xy_3: f64 = -2.0 * PI * length_m_1_xy * all_freqs_hz[3] / VEL_C;
         // baseline 1, pol YX, chan 3 (cc 1, fc 1)
-        let angle_1_yx_3: f64 = -2.0 * PI * length_m_1_yx * (all_freqs_hz[3] as f64) / VEL_C;
+        let angle_1_yx_3: f64 = -2.0 * PI * length_m_1_yx * all_freqs_hz[3] / VEL_C;
         // baseline 1, pol YY, chan 3 (cc 1, fc 1)
-        let angle_1_yy_3: f64 = -2.0 * PI * length_m_1_yy * (all_freqs_hz[3] as f64) / VEL_C;
+        let angle_1_yy_3: f64 = -2.0 * PI * length_m_1_yy * all_freqs_hz[3] / VEL_C;
 
         correct_cable_lengths(
             &corr_ctx,
@@ -1256,10 +1251,10 @@ mod tests {
         let w_3_1 = UVW::from_xyz(xyz_3_1, phase_centre_ha_j2000_3).w;
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 1
-        let angle_0_0_1 = -2.0 * PI * w_0_1 * (all_freqs_hz[0] as f64) / VEL_C;
+        let angle_0_0_1 = -2.0 * PI * w_0_1 * all_freqs_hz[0] / VEL_C;
 
         // ts 3, chan 3 (cc 1, fc 1), baseline 1
-        let angle_3_3_1 = -2.0 * PI * w_3_1 * (all_freqs_hz[3] as f64) / VEL_C;
+        let angle_3_3_1 = -2.0 * PI * w_3_1 * all_freqs_hz[3] / VEL_C;
 
         correct_geometry(
             &corr_ctx,
@@ -1434,13 +1429,12 @@ mod tests {
         let base: i32 = 2;
         let ultrafine_gains: Vec<f64> = (0..12).map(|x| (base.pow(x)) as _).collect();
         let expected_gains: Vec<f64> = (0..12 / 2)
-            .map(|x| -> f64 {
-                let left = ultrafine_gains
-                    [(2 * x as i32 - 1).rem_euclid(ultrafine_gains.len() as i32) as usize]
-                    as f64;
-                let center = ultrafine_gains[2 * x as usize] as f64;
-                let right = ultrafine_gains[(2 * x + 1) as usize] as f64;
-                (left / 4. + center / 2. + right / 4.) as f64
+            .map(|x: i32| -> f64 {
+                let left =
+                    ultrafine_gains[(2 * x - 1).rem_euclid(ultrafine_gains.len() as i32) as usize];
+                let center = ultrafine_gains[2 * x as usize];
+                let right = ultrafine_gains[(2 * x + 1) as usize];
+                left / 4. + center / 2. + right / 4.
             })
             .collect();
         let scrunched_gains = scrunch_gains(
@@ -1458,11 +1452,10 @@ mod tests {
         let expected_gains: Vec<f64> = (0..12 / 3)
             .map(|x| -> f64 {
                 let left = ultrafine_gains
-                    [(3 * x as i32 - 1).rem_euclid(ultrafine_gains.len() as i32) as usize]
-                    as f64;
-                let center = ultrafine_gains[3 * x] as f64;
-                let right = ultrafine_gains[3 * x + 1] as f64;
-                (left / 3. + center / 3. + right / 3.) as f64
+                    [(3 * x as i32 - 1).rem_euclid(ultrafine_gains.len() as i32) as usize];
+                let center = ultrafine_gains[3 * x];
+                let right = ultrafine_gains[3 * x + 1];
+                left / 3. + center / 3. + right / 3.
             })
             .collect();
         let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, &ScrunchType::CenterSymmetric);
@@ -1475,14 +1468,13 @@ mod tests {
         let ultrafine_gains: Vec<f64> = (0..12).map(|x| (base.pow(x)) as _).collect();
         let expected_gains: Vec<f64> = (0..12 / 4)
             .map(|x| -> f64 {
-                let left = ultrafine_gains[4 * x] as f64;
-                let center1 = ultrafine_gains[4 * x + 1] as f64;
-                let center2 = ultrafine_gains[4 * x + 2] as f64;
-                let center3 = ultrafine_gains[4 * x + 3] as f64;
+                let left = ultrafine_gains[4 * x];
+                let center1 = ultrafine_gains[4 * x + 1];
+                let center2 = ultrafine_gains[4 * x + 2];
+                let center3 = ultrafine_gains[4 * x + 3];
                 let right = ultrafine_gains
-                    [(4 * x as i32 + 4).rem_euclid(ultrafine_gains.len() as i32) as usize]
-                    as f64;
-                (left / 8. + center1 / 4. + center2 / 4. + center3 / 4. + right / 8.) as f64
+                    [(4 * x as i32 + 4).rem_euclid(ultrafine_gains.len() as i32) as usize];
+                left / 8. + center1 / 4. + center2 / 4. + center3 / 4. + right / 8.
             })
             .collect();
         let scrunched_gains = scrunch_gains(&ultrafine_gains, 4, &ScrunchType::CenterSymmetric);
@@ -1495,13 +1487,12 @@ mod tests {
         let ultrafine_gains: Vec<f64> = (0..15).map(|x| (base.pow(x)) as _).collect();
         let expected_gains: Vec<f64> = (0..15 / 3)
             .map(|x| -> f64 {
-                let left = ultrafine_gains[3 * x] as f64;
-                let center1 = ultrafine_gains[3 * x + 1] as f64;
-                let center2 = ultrafine_gains[3 * x + 2] as f64;
+                let left = ultrafine_gains[3 * x];
+                let center1 = ultrafine_gains[3 * x + 1];
+                let center2 = ultrafine_gains[3 * x + 2];
                 let right = ultrafine_gains
-                    [(3 * x as i32 + 3).rem_euclid(ultrafine_gains.len() as i32) as usize]
-                    as f64;
-                (left / 6. + center1 / 3. + center2 / 3. + right / 6.) as f64
+                    [(3 * x as i32 + 3).rem_euclid(ultrafine_gains.len() as i32) as usize];
+                left / 6. + center1 / 3. + center2 / 3. + right / 6.
             })
             .collect();
         let scrunched_gains = scrunch_gains(&ultrafine_gains, 3, &ScrunchType::CenterSymmetric);
