@@ -1,8 +1,7 @@
 //! Corrections that can be performed on visibility data
-use crate::{
-    ndarray::{parallel::prelude::*, prelude::*},
-    BirliError, Jones,
-};
+
+use std::{f64::consts::TAU, ops::Range};
+
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::{izip, Itertools};
 use log::trace;
@@ -11,11 +10,198 @@ use marlu::{
     hifitime::{Duration, Epoch},
     io::error::BadArrayShape,
     mwalib::{CorrelatorContext, MWAVersion},
+    ndarray::{parallel::prelude::*, prelude::*},
     precession::precess_time,
-    Complex, LatLngHeight, RADec, XyzGeodetic, UVW,
+    rayon::prelude::*,
+    Complex, Jones, LatLngHeight, RADec, XyzGeodetic, UVW,
 };
-use std::{f64::consts::TAU, ops::Range};
 use thiserror::Error;
+
+use crate::BirliError;
+
+fn correct(
+    corr_ctx: &CorrelatorContext,
+    mut jones_tfb: ArrayViewMut3<Jones<f32>>,
+    timestep_range: &Range<usize>,
+    coarse_chan_range: &Range<usize>,
+    array_pos: Option<LatLngHeight>,
+    phase_centre: Option<RADec>,
+    correct_cable_lengths: bool,
+    correct_gemoetry: bool,
+    correct_digital_gains: bool,
+    progress_bar: Option<&ProgressBar>,
+) -> Result<(), DigitalGainCorrection> {
+    // Nothing to do, don't bother going forward.
+    if !correct_cable_lengths && !correct_gemoetry && !correct_digital_gains {
+        return Ok(());
+    }
+
+    let meta_ctx = &corr_ctx.metafits_context;
+    let num_fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let num_ants = meta_ctx.num_ants;
+    assert_eq!(meta_ctx.antennas.len(), num_ants);
+
+    let integration_time: Duration = {
+        let int_time_ns: i128 = i128::from(meta_ctx.corr_int_time_ms)
+            .checked_mul(1_000_000)
+            .expect("does not overflow i128");
+        Duration::from_total_nanoseconds(int_time_ns)
+    };
+    let centroid_timestamps: Vec<Epoch> = corr_ctx.timesteps[timestep_range.clone()]
+        .iter()
+        .map(|t| {
+            let gps_nanoseconds: u64 = t
+                .gps_time_ms
+                .checked_mul(1_000_000)
+                .expect("does not overflow u64");
+            Epoch::from_gpst_nanoseconds(gps_nanoseconds) + integration_time / 2
+        })
+        .collect();
+    let dut1 = Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or_default());
+
+    let all_lambdas_m = corr_ctx
+        .get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>())
+        .into_iter()
+        .map(|f| f / VEL_C)
+        .collect::<Vec<_>>();
+
+    let array_pos = array_pos.unwrap_or_else(|| {
+        // The results here are slightly different to those given by cotter.
+        // This is at least partly due to different constants (the altitude is
+        // definitely slightly different), but possibly also because ERFA is
+        // more accurate than cotter's "homebrewed" Geodetic2XYZ.
+        LatLngHeight::mwa()
+    });
+    let phase_centre = phase_centre
+        .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context));
+    let ant_pairs = meta_ctx
+        .baselines
+        .iter()
+        .map(|b| (b.ant1_index, b.ant2_index))
+        .collect::<Vec<_>>();
+
+    let vis_dims = jones_tfb.dim();
+    if vis_dims.1 != coarse_chan_range.len() * num_fine_chans_per_coarse {
+        return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
+            argument: "coarse_chan_range",
+            function: "correct_digital_gains",
+            expected: format!(
+                "(vis_dims.1={}) / (num_fine_chans_per_coarse={}) = {}",
+                vis_dims.1,
+                num_fine_chans_per_coarse,
+                vis_dims.1 / num_fine_chans_per_coarse
+            ),
+            received: format!("{:?}", coarse_chan_range.len()),
+        }));
+    }
+    if vis_dims.2 != ant_pairs.len() {
+        return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
+            argument: "ant_pairs",
+            function: "correct_digital_gains",
+            expected: format!("vis_dims.2={}", vis_dims.2,),
+            received: format!("{:?}", ant_pairs.len()),
+        }));
+    }
+    assert!(vis_dims.2 == ant_pairs.len());
+
+    let tiles_xyz_geod = XyzGeodetic::get_tiles(&corr_ctx.metafits_context, array_pos.latitude_rad);
+    let tile_ws = calc_part_uvws(
+        &ant_pairs,
+        &centroid_timestamps,
+        dut1,
+        phase_centre,
+        array_pos,
+        &tiles_xyz_geod,
+    )
+    .mapv(|UVW { w, .. }| w);
+    assert!(tile_ws.len() >= num_ants);
+
+    let electrical_lengths = meta_ctx
+        .antennas
+        .iter()
+        .map(|a| {
+            let x = a.rfinput_x.electrical_length_m;
+            let y = a.rfinput_y.electrical_length_m;
+            (x, y)
+        })
+        .collect::<Vec<_>>();
+    let gains = Array2::from_shape_fn(
+        (corr_ctx.metafits_context.num_ants, coarse_chan_range.len()),
+        |(ant_idx, coarse_chan_idx)| {
+            let ant = &corr_ctx.metafits_context.antennas[ant_idx];
+            (
+                ant.rfinput_x.digital_gains[coarse_chan_range.clone()][coarse_chan_idx],
+                ant.rfinput_y.digital_gains[coarse_chan_range.clone()][coarse_chan_idx],
+            )
+        },
+    );
+    assert!(jones_tfb.len_of(Axis(1)) == gains.len_of(Axis(1)) * num_fine_chans_per_coarse);
+
+    jones_tfb
+        .as_slice_mut()
+        .expect("is contiguous")
+        .par_chunks_exact_mut(vis_dims.2)
+        .enumerate()
+        .for_each(|(i, jones_array)| {
+            let timestep_idx = i / all_lambdas_m.len();
+            let chan_idx = i % all_lambdas_m.len();
+            let coarse_chan_idx = chan_idx / num_fine_chans_per_coarse;
+            let gains = gains.slice(s![.., coarse_chan_idx]);
+            let tile_ws = tile_ws.slice(s![timestep_idx, ..]);
+
+            let phase_const = -TAU * all_lambdas_m[chan_idx];
+            let mut ant1_idx = 0;
+            let mut ant2_idx = 0;
+
+            // Baseline axis.
+            jones_array.iter_mut().for_each(|jones| {
+                // These are magnitudes and phases that eventually
+                // need to be converted to complex numbers.
+                let mut args = [(1.0, 0.0); 4];
+
+                if correct_cable_lengths {
+                    let (ant1_x, ant1_y) = electrical_lengths[ant1_idx];
+                    let (ant2_x, ant2_y) = electrical_lengths[ant2_idx];
+                    args[0].1 += ant2_x - ant1_x;
+                    args[1].1 += ant2_y - ant1_y;
+                    args[2].1 += ant2_y - ant1_x;
+                    args[3].1 += ant2_x - ant1_y;
+                }
+                if ant1_idx != ant2_idx {
+                    if correct_gemoetry {
+                        let w = tile_ws[ant1_idx] - tile_ws[ant2_idx];
+                        args[0].1 += w;
+                        args[1].1 += w;
+                        args[2].1 += w;
+                        args[3].1 += w;
+                    }
+                }
+                if correct_digital_gains {
+                    let (gain1x, gain1y) = gains[ant1_idx];
+                    let (gain2x, gain2y) = gains[ant2_idx];
+                    args[0].0 /= gain1x * gain2x;
+                    args[1].0 /= gain1x * gain2y;
+                    args[2].0 /= gain1y * gain2x;
+                    args[3].0 /= gain1y * gain2y;
+                }
+
+                // promote, correct, demote
+                let mut corrected = Jones::<f64>::from(*jones);
+                for (complex, arg) in corrected.iter_mut().zip(args) {
+                    *complex *= Complex::from_polar(arg.0, arg.1 * phase_const);
+                }
+                *jones = Jones::<f32>::from(corrected);
+
+                ant2_idx += 1;
+                if ant2_idx == num_ants {
+                    ant1_idx += 1;
+                    ant2_idx = ant1_idx;
+                }
+            });
+        });
+
+    Ok(())
+}
 
 /// Perform cable length corrections, given an observation's
 /// [`mwalib::CorrelatorContext`](crate::mwalib::CorrelatorContext) and an
@@ -48,14 +234,14 @@ use thiserror::Error;
 ///
 /// // Create a blank array to store flags and visibilities
 /// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
-/// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
-/// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+/// let mut flags_tfb = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+/// let mut jones_tfb = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 ///
 /// // read visibilities out of the gpubox files
-/// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
+/// read_mwalib(&vis_sel, &corr_ctx, jones_tfb.view_mut(), flags_tfb.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, false);
+/// correct_cable_lengths(&corr_ctx, jones_tfb.view_mut(), &vis_sel.coarse_chan_range, false);
 /// ```
 ///
 /// # Accuracy
@@ -64,33 +250,24 @@ use thiserror::Error;
 /// Cotter.
 pub fn correct_cable_lengths(
     corr_ctx: &CorrelatorContext,
-    mut jones_array: ArrayViewMut3<Jones<f32>>,
+    jones_tfb: ArrayViewMut3<Jones<f32>>,
     coarse_chan_range: &Range<usize>,
     // TODO: allow subset of baselines
     // baseline_idxs: &[usize],
     draw_progress: bool,
 ) {
-    trace!("start correct_cable_lengths");
-
-    let meta_ctx = &corr_ctx.metafits_context;
-
-    let all_freqs_hz =
-        corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>());
-
-    let ant_pairs = (meta_ctx.baselines)
-        .iter()
-        .map(|b| (b.ant1_index, b.ant2_index))
-        .collect::<Vec<_>>();
-
-    let draw_target = if draw_progress {
-        ProgressDrawTarget::stderr()
-    } else {
-        ProgressDrawTarget::hidden()
-    };
+    let (num_timesteps, num_baselines, _) = jones_tfb.dim();
+    let timestep_range = 0..num_timesteps;
 
     // Create a progress bar to show the status of the correction
-    let correction_progress =
-        ProgressBar::with_draw_target(Some(ant_pairs.len() as u64), draw_target);
+    let correction_progress = ProgressBar::with_draw_target(
+        Some(num_baselines as u64),
+        if draw_progress {
+            ProgressDrawTarget::stdout()
+        } else {
+            ProgressDrawTarget::hidden()
+        },
+    );
     correction_progress.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -101,42 +278,21 @@ pub fn correct_cable_lengths(
     );
     correction_progress.set_message("cable corrections");
 
-    jones_array
-        .axis_iter_mut(Axis(2))
-        .into_par_iter()
-        .zip_eq(&ant_pairs)
-        .for_each(|(mut jones_array, &(ant1_idx, ant2_idx))| {
-            if ant1_idx == ant2_idx {
-                return;
-            }
-
-            let ant1 = &meta_ctx.antennas[ant1_idx];
-            let ant2 = &meta_ctx.antennas[ant2_idx];
-
-            let pol_lengths = [
-                ant2.rfinput_x.electrical_length_m - ant1.rfinput_x.electrical_length_m,
-                ant2.rfinput_y.electrical_length_m - ant1.rfinput_y.electrical_length_m,
-                ant2.rfinput_y.electrical_length_m - ant1.rfinput_x.electrical_length_m,
-                ant2.rfinput_x.electrical_length_m - ant1.rfinput_y.electrical_length_m,
-            ];
-
-            for (mut jones_array, &freq_hz) in
-                jones_array.axis_iter_mut(Axis(1)).zip_eq(&all_freqs_hz)
-            {
-                for jones in jones_array.iter_mut() {
-                    // promote, correct, demote
-                    let mut corrected = Jones::<f64>::from(*jones);
-                    for (complex, length) in corrected.iter_mut().zip_eq(&pol_lengths) {
-                        *complex *= Complex::from_polar(1., -TAU * length * freq_hz / VEL_C);
-                    }
-                    *jones = Jones::<f32>::from(corrected);
-                }
-            }
-            correction_progress.inc(1);
-        });
+    correct(
+        corr_ctx,
+        jones_tfb,
+        &timestep_range,
+        coarse_chan_range,
+        None,
+        None,
+        true,
+        false,
+        false,
+        Some(&correction_progress),
+    )
+    .expect("cannot fail");
 
     correction_progress.finish();
-
     trace!("end correct_cable_lengths");
 }
 
@@ -181,18 +337,18 @@ pub fn correct_cable_lengths(
 ///
 /// // Create a blank array to store flags and visibilities
 /// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
-/// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
-/// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+/// let mut flags_tfb = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+/// let mut jones_tfb = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 ///
 /// // read visibilities out of the gpubox files
-/// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
+/// read_mwalib(&vis_sel, &corr_ctx, jones_tfb.view_mut(), flags_tfb.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, false);
+/// correct_cable_lengths(&corr_ctx, jones_tfb.view_mut(), &vis_sel.coarse_chan_range, false);
 ///
 /// correct_geometry(
 ///     &corr_ctx,
-///     jones_array.view_mut(),
+///     jones_tfb.view_mut(),
 ///     &vis_sel.timestep_range,
 ///     &vis_sel.coarse_chan_range,
 ///     None,
@@ -203,7 +359,7 @@ pub fn correct_cable_lengths(
 #[allow(clippy::too_many_arguments)]
 pub fn correct_geometry(
     corr_ctx: &CorrelatorContext,
-    mut jones_array: ArrayViewMut3<Jones<f32>>,
+    jones_tfb: ArrayViewMut3<Jones<f32>>,
     timestep_range: &Range<usize>,
     coarse_chan_range: &Range<usize>,
     // TODO: allow subset of baselines
@@ -214,53 +370,18 @@ pub fn correct_geometry(
 ) {
     trace!("start correct_geometry");
 
-    let array_pos = array_pos.unwrap_or_else(|| {
-        // The results here are slightly different to those given by cotter.
-        // This is at least partly due to different constants (the altitude is
-        // definitely slightly different), but possibly also because ERFA is
-        // more accurate than cotter's "homebrewed" Geodetic2XYZ.
-        LatLngHeight::mwa()
-    });
-
-    let timesteps = &corr_ctx.timesteps[timestep_range.clone()];
-
-    let baselines = &corr_ctx.metafits_context.baselines;
-
-    let all_freqs_hz =
-        corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>());
-    let jones_dims = jones_array.dim();
-
-    let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
-
-    let phase_centre = phase_centre
-        .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context));
-    let tiles_xyz_geod = XyzGeodetic::get_tiles(&corr_ctx.metafits_context, array_pos.latitude_rad);
-
-    let ant_pairs = baselines
-        .iter()
-        .map(|b| (b.ant1_index, b.ant2_index))
-        .collect::<Vec<_>>();
-    let centroid_timestamps = timesteps
-        .iter()
-        .map(|t| Epoch::from_gpst_seconds(t.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0))
-        .collect::<Vec<_>>();
-    let dut1 = Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or(0.0));
-    let part_uvws = calc_part_uvws(
-        &ant_pairs,
-        &centroid_timestamps,
-        dut1,
-        phase_centre,
-        array_pos,
-        &tiles_xyz_geod,
-    );
+    let (num_timesteps, num_baselines, _) = jones_tfb.dim();
+    let timestep_range = 0..num_timesteps;
 
     // Create a progress bar to show the status of the correction
-    let draw_target = if draw_progress {
-        ProgressDrawTarget::stderr()
-    } else {
-        ProgressDrawTarget::hidden()
-    };
-    let correction_progress = ProgressBar::with_draw_target(Some(jones_dims.0 as u64), draw_target);
+    let correction_progress = ProgressBar::with_draw_target(
+        Some(num_baselines as u64),
+        if draw_progress {
+            ProgressDrawTarget::stdout()
+        } else {
+            ProgressDrawTarget::hidden()
+        },
+    );
     correction_progress.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -271,29 +392,21 @@ pub fn correct_geometry(
     );
     correction_progress.set_message("geom corrections");
 
-    jones_array
-        .outer_iter_mut()
-        .into_par_iter()
-        .zip_eq(part_uvws.outer_iter())
-        .for_each(|(mut jones_array, part_uvws)| {
-            for (mut jones_array, &(ant1, ant2)) in
-                jones_array.axis_iter_mut(Axis(1)).zip_eq(&ant_pairs)
-            {
-                let uvw = part_uvws[[ant1]] - part_uvws[[ant2]];
-
-                for (jones, freq_hz) in jones_array.iter_mut().zip_eq(&all_freqs_hz) {
-                    // promote, correct, demote
-                    let mut corrected = Jones::<f64>::from(*jones);
-                    corrected *= Complex::from_polar(1., -TAU * uvw.w * freq_hz / VEL_C);
-                    *jones = Jones::<f32>::from(corrected);
-                }
-            }
-
-            correction_progress.inc(1);
-        });
+    correct(
+        corr_ctx,
+        jones_tfb,
+        &timestep_range,
+        coarse_chan_range,
+        array_pos,
+        phase_centre,
+        false,
+        true,
+        false,
+        Some(&correction_progress),
+    )
+    .expect("cannot fail");
 
     correction_progress.finish();
-
     trace!("end correct_geometry");
 }
 
@@ -307,13 +420,13 @@ pub enum DigitalGainCorrection {
 
 /// Apply corrections for digital gains for each coarse channel from values in metafits.
 ///
-/// The channels provided in `jones_array` should correspond to the selected coarse channel range in
-/// `coarse_chan_range`, such that `jones_array.dim().1 = num_fine_chans_per_coarse * coarse_chan_range.len()`
+/// The channels provided in `jones_tfb` should correspond to the selected coarse channel range in
+/// `coarse_chan_range`, such that `jones_tfb.dim().1 = num_fine_chans_per_coarse * coarse_chan_range.len()`
 ///
 /// # Arguments
 ///
 /// - `corr_ctx` - The correlator [`marlu::mwalib::CorrelatorContext`].
-/// - `jones_array` - The array of Jones matrices to be corrected, `[timestep][channel][baseleine]`.
+/// - `jones_tfb` - The array of Jones matrices to be corrected, `[timestep][channel][baseline]`.
 /// - `coarse_chan_range` - The range of mwalib coarse channels which are used in in the channel
 ///     dimension of the jones array.
 /// - `ant_pairs` - a slice of tuples of antenna indices for each baseline in the visibilities.
@@ -324,67 +437,81 @@ pub enum DigitalGainCorrection {
 ///
 /// # Errors
 /// - Will throw [`BadArrayShape`] if:
-///     - `jones_array.dim().1 != num_fine_chans_per_coarse * coarse_chan_range.len()`
-///     - `jones_array.dim().2 != ant_pairs.len()`
+///     - `jones_tfb.dim().1 != num_fine_chans_per_coarse * coarse_chan_range.len()`
+///     - `jones_tfb.dim().2 != ant_pairs.len()`
 pub fn correct_digital_gains(
     corr_ctx: &CorrelatorContext,
-    jones_array: ArrayViewMut3<Jones<f32>>,
+    jones_tfb: ArrayViewMut3<Jones<f32>>,
     coarse_chan_range: &Range<usize>,
     ant_pairs: &[(usize, usize)],
     // TODO: take a VisSelection
 ) -> Result<(), DigitalGainCorrection> {
-    let num_fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    // let num_fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 
-    let vis_dims = jones_array.dim();
-    if vis_dims.1 != coarse_chan_range.len() * num_fine_chans_per_coarse {
-        return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
-            argument: "coarse_chan_range",
-            function: "correct_digital_gains",
-            expected: format!(
-                "(vis_dims.1={}) / (num_fine_chans_per_coarse={}) = {}",
-                vis_dims.1,
-                num_fine_chans_per_coarse,
-                vis_dims.1 / num_fine_chans_per_coarse
-            ),
-            received: format!("{:?}", coarse_chan_range.len()),
-        }));
-    }
-    if vis_dims.2 != ant_pairs.len() {
-        return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
-            argument: "ant_pairs",
-            function: "correct_digital_gains",
-            expected: format!("vis_dims.2={}", vis_dims.2,),
-            received: format!("{:?}", ant_pairs.len()),
-        }));
-    }
-    assert!(vis_dims.2 == ant_pairs.len());
+    // let vis_dims = jones_array.dim();
+    // if vis_dims.1 != coarse_chan_range.len() * num_fine_chans_per_coarse {
+    //     return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
+    //         argument: "coarse_chan_range",
+    //         function: "correct_digital_gains",
+    //         expected: format!(
+    //             "(vis_dims.1={}) / (num_fine_chans_per_coarse={}) = {}",
+    //             vis_dims.1,
+    //             num_fine_chans_per_coarse,
+    //             vis_dims.1 / num_fine_chans_per_coarse
+    //         ),
+    //         received: format!("{:?}", coarse_chan_range.len()),
+    //     }));
+    // }
+    // if vis_dims.2 != ant_pairs.len() {
+    //     return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
+    //         argument: "ant_pairs",
+    //         function: "correct_digital_gains",
+    //         expected: format!("vis_dims.2={}", vis_dims.2,),
+    //         received: format!("{:?}", ant_pairs.len()),
+    //     }));
+    // }
+    // assert!(vis_dims.2 == ant_pairs.len());
 
-    let gains = Array2::from_shape_fn(
-        (corr_ctx.metafits_context.num_ants, coarse_chan_range.len()),
-        |(ant_idx, coarse_chan_idx)| {
-            let ant = &corr_ctx.metafits_context.antennas[ant_idx];
-            (
-                ant.rfinput_x.digital_gains[coarse_chan_range.clone()][coarse_chan_idx],
-                ant.rfinput_y.digital_gains[coarse_chan_range.clone()][coarse_chan_idx],
-            )
-        },
-    );
+    // let gains = Array2::from_shape_fn(
+    //     (corr_ctx.metafits_context.num_ants, coarse_chan_range.len()),
+    //     |(ant_idx, coarse_chan_idx)| {
+    //         let ant = &corr_ctx.metafits_context.antennas[ant_idx];
+    //         (
+    //             ant.rfinput_x.digital_gains[coarse_chan_range.clone()][coarse_chan_idx],
+    //             ant.rfinput_y.digital_gains[coarse_chan_range.clone()][coarse_chan_idx],
+    //         )
+    //     },
+    // );
 
-    _correct_digital_gains(
-        jones_array,
-        gains.view(),
-        ant_pairs,
-        num_fine_chans_per_coarse,
+    // _correct_digital_gains(
+    //     jones_array,
+    //     gains.view(),
+    //     ant_pairs,
+    //     num_fine_chans_per_coarse,
+    // )
+
+    let timestep_range = 0..jones_tfb.len_of(Axis(0));
+    correct(
+        corr_ctx,
+        jones_tfb,
+        &timestep_range,
+        coarse_chan_range,
+        None,
+        None,
+        true,
+        false,
+        false,
+        None,
     )
 }
 
 fn _correct_digital_gains(
-    mut jones_array: ArrayViewMut3<Jones<f32>>,
+    mut jones_tfb: ArrayViewMut3<Jones<f32>>,
     gains: ArrayView2<(f64, f64)>,
     ant_pairs: &[(usize, usize)],
     num_fine_chans_per_coarse: usize,
 ) -> Result<(), DigitalGainCorrection> {
-    let vis_dims = jones_array.dim();
+    let vis_dims = jones_tfb.dim();
     let gain_dims = gains.dim();
     if vis_dims.1 != gain_dims.1 * num_fine_chans_per_coarse {
         return Err(DigitalGainCorrection::BadArrayShape(BadArrayShape {
@@ -402,19 +529,19 @@ fn _correct_digital_gains(
     assert!(vis_dims.1 == gain_dims.1 * num_fine_chans_per_coarse);
 
     // iterate through the selected baselines
-    jones_array
+    jones_tfb
         .axis_iter_mut(Axis(2))
         .into_par_iter()
         .zip_eq(ant_pairs)
-        .for_each(|(mut jones_array, &(ant1_idx, ant2_idx))| {
+        .for_each(|(mut jones_tf, &(ant1_idx, ant2_idx))| {
             // iterate through the selected coarse channels
-            for (mut jones_array, &(gain1x, gain1y), &(gain2x, gain2y)) in izip!(
-                jones_array.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse),
+            for (mut jones_tf, &(gain1x, gain1y), &(gain2x, gain2y)) in izip!(
+                jones_tf.axis_chunks_iter_mut(Axis(1), num_fine_chans_per_coarse),
                 gains.index_axis(Axis(0), ant1_idx),
                 gains.index_axis(Axis(0), ant2_idx),
             ) {
                 // for all visibilities in the selected coarse channel, for all timesteps
-                for jones in jones_array.iter_mut() {
+                for jones in jones_tf.iter_mut() {
                     // promote, correct, demote
                     let mut corrected = Jones::<f64>::from(*jones);
                     corrected[0] /= gain1x * gain2x;
@@ -442,8 +569,8 @@ pub enum PassbandCorrection {
 ///
 /// # Arguments
 ///
-/// - `jones_array` - The array of Jones matrices to be corrected, `[timestep][channel][baseleine]`.
-/// - `weight_array` - The array of weights to be corrected, same dimensions are `jones_array`.
+/// - `jones_tfb` - The array of Jones matrices to be corrected, `[timestep][channel][baseline]`.
+/// - `weight_tfb` - The array of weights to be corrected, same dimensions are `jones_tfb`.
 /// - `passband_gains` - a slice of gains to be applied to each coarse channel.
 /// - `num_fine_chans_per_coarse` - The number of fine channels in each coarse.
 /// - `mwax` - Whether to emulate the MWAX correlator (true) or legacy (false)
@@ -452,8 +579,8 @@ pub enum PassbandCorrection {
 ///
 /// Will throw `BadArrayShape` if:
 /// - `num_fine_chans_per_coarse` is zero
-/// - The length of the channel axis in `jones_array` is not a multiple of `num_fine_chans_per_coarse`.
-/// - `jones_array` and `weight_array` have different shapes.
+/// - The length of the channel axis in `jones_tfb` is not a multiple of `num_fine_chans_per_coarse`.
+/// - `jones_tfb` and `weight_tfb` have different shapes.
 /// - The length of the coarse band gains is not a multiple of `num_fine_chans_per_coarse`, or vice versa.
 ///
 pub fn correct_coarse_passband_gains(
