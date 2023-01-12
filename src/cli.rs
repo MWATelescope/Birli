@@ -546,6 +546,7 @@ impl<'a> BirliContext<'a> {
                 // processing options
                 arg!(--"phase-centre" "Override Phase centre from metafits (degrees)")
                     .value_names(&["RA", "DEC"])
+                    .allow_hyphen_values(true)
                     .required(false),
                 arg!(--"pointing-centre" "Use pointing instead phase centre")
                     .conflicts_with("phase-centre"),
@@ -1940,6 +1941,8 @@ mod tests {
 
 #[cfg(test)]
 mod argparse_tests {
+    use marlu::RADec;
+
     use crate::{error::BirliError, test_common::get_1254670392_avg_paths, BirliContext};
 
     #[test]
@@ -2473,6 +2476,26 @@ mod argparse_tests {
         } = BirliContext::from_args(&args).unwrap();
 
         assert_eq!(num_timesteps_per_chunk, Some(2));
+    }
+
+    #[test]
+    fn test_parse_custom_phase_negative() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--phase-centre", "-1.0", "-2.0",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+
+        assert_eq!(
+            birli_ctx.prep_ctx.phase_centre,
+            RADec::new_degrees(-1., -2.)
+        );
     }
 }
 
