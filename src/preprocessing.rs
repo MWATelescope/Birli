@@ -87,7 +87,7 @@ impl Display for PreprocessContext<'_> {
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
                 if let Some(strategy) = &self.aoflagger_strategy {
-                    writeln!(f, "Will flag with aoflagger strategy {}", strategy)?;
+                    writeln!(f, "Will flag with aoflagger strategy {strategy}")?;
                 } else {
                     writeln!(f, "Will not flag with aoflagger")?;
                 }
@@ -128,7 +128,7 @@ impl<'a> PreprocessContext<'a> {
             #[cfg(feature = "aoflagger")]
             self.aoflagger_strategy
                 .as_ref()
-                .map(|strategy| format!("aoflagging with {}", strategy)),
+                .map(|strategy| format!("aoflagging with {strategy}")),
             if self.correct_geometry {
                 Some("geometric corrections".to_string())
             } else {

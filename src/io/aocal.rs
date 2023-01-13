@@ -36,7 +36,7 @@ impl AOCalSols {
         let file_str = file.as_ref().display().to_string();
         // open the file, wrapping the IO Error in one which displays the file path
         let mut bin_file = BufReader::new(File::open(file).map_err(|e| {
-            std::io::Error::new(e.kind(), format!("{} when accessing {}", e, file_str))
+            std::io::Error::new(e.kind(), format!("{e} when accessing {file_str}"))
         })?);
         // The first 7 bytes should be ASCII "MWAOCAL".
         let mwaocal_str = String::from_utf8(vec![

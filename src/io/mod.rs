@@ -573,11 +573,7 @@ mod tests_aoflagger {
                         *exp_group_param,
                         F32Margin::default()
                     ),
-                    "cells don't match in param {}, row {}. {:?} != {:?}",
-                    param_idx,
-                    row_idx,
-                    obs_group_params,
-                    exp_group_params
+                    "cells don't match in param {param_idx}, row {row_idx}. {obs_group_params:?} != {exp_group_params:?}"
                 );
             }
 

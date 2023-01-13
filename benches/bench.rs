@@ -67,7 +67,7 @@ fn bench_uvfits_output_1196175296_none(crt: &mut Criterion) {
     let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
     crt.bench_function(
-        format!("uvfits_output - 1196175296 {} timesteps", NUM_TIMESTEPS).as_str(),
+        format!("uvfits_output - 1196175296 {NUM_TIMESTEPS} timesteps").as_str(),
         |bch| {
             bch.iter(|| {
                 write_uvfits(
@@ -116,7 +116,7 @@ fn bench_ms_output_1196175296_none(crt: &mut Criterion) {
     let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
 
     crt.bench_function(
-        format!("ms_output - 1196175296 {} timesteps", NUM_TIMESTEPS).as_str(),
+        format!("ms_output - 1196175296 {NUM_TIMESTEPS} timesteps").as_str(),
         |bch| {
             bch.iter(|| {
                 write_ms(

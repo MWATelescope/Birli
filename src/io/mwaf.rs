@@ -107,7 +107,7 @@ impl FlagFileSet {
             MWAVersion::CorrOldLegacy | MWAVersion::CorrLegacy => 2,
             _ => 3,
         };
-        let re_percents = Regex::new(format!("%{{{},}}+", num_percents).as_str()).unwrap();
+        let re_percents = Regex::new(format!("%{{{num_percents},}}+").as_str()).unwrap();
 
         if !re_percents.is_match(filename_template) {
             return Err(InvalidFlagFilenameTemplate {
@@ -123,10 +123,7 @@ impl FlagFileSet {
                 id: gpubox_id,
                 filename: PathBuf::from(
                     re_percents
-                        .replace(
-                            filename_template,
-                            format!("{:0width$}", gpubox_id, width = num_percents),
-                        )
+                        .replace(filename_template, format!("{gpubox_id:0num_percents$}"))
                         .to_string(),
                 ),
                 channel_flag_count: vec![],
@@ -1040,9 +1037,7 @@ mod tests {
         let colliding_gpuboxes = 1..3;
 
         for gpubox_id in colliding_gpuboxes.clone() {
-            let colliding_filename = tmp_dir
-                .path()
-                .join(format!("Flagfile{:03}.mwaf", gpubox_id));
+            let colliding_filename = tmp_dir.path().join(format!("Flagfile{gpubox_id:03}.mwaf"));
             File::create(colliding_filename.to_str().unwrap()).unwrap();
         }
 
@@ -1194,9 +1189,7 @@ mod tests {
         for &gpubox_id in &gpubox_ids {
             gpubox_paths.insert(
                 gpubox_id,
-                tmp_dir
-                    .path()
-                    .join(format!("Flagfile{:03}.mwaf", gpubox_id)),
+                tmp_dir.path().join(format!("Flagfile{gpubox_id:03}.mwaf")),
             );
         }
 

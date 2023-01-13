@@ -93,16 +93,16 @@ pub fn fmt_build_info(f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 GIT_COMMIT_HASH.unwrap(),
                 if dirty { " (dirty)" } else { "" }
             )?;
-            writeln!(f, "            git head ref: {}", hr)?;
+            writeln!(f, "            git head ref: {hr}")?;
         }
         None => writeln!(f, "Compiled on git commit hash: <no git info>")?,
     }
-    writeln!(f, "            {}", BUILT_TIME_UTC)?;
-    writeln!(f, "         with compiler {}", RUSTC_VERSION)?;
+    writeln!(f, "            {BUILT_TIME_UTC}")?;
+    writeln!(f, "         with compiler {RUSTC_VERSION}")?;
     writeln!(f, "libraries:")?;
-    writeln!(f, "- marlu v{}", MARLU_PKG_VERSION)?;
-    writeln!(f, "- mwalib v{}", MWALIB_PKG_VERSION)?;
-    writeln!(f, "- cfitsio (bindings) v{}", CFITSIO_VERSION)?;
+    writeln!(f, "- marlu v{MARLU_PKG_VERSION}")?;
+    writeln!(f, "- mwalib v{MWALIB_PKG_VERSION}")?;
+    writeln!(f, "- cfitsio (bindings) v{CFITSIO_VERSION}")?;
 
     cfg_if! {
         if #[cfg(feature = "aoflagger")] {
@@ -115,7 +115,7 @@ pub fn fmt_build_info(f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             assert!(major >= 3);
             assert!(minor >= 0);
             assert!(sub_minor >= 0);
-            writeln!(f, "- aoflagger v{}.{}.{}", major, minor, sub_minor)?;
+            writeln!(f, "- aoflagger v{major}.{minor}.{sub_minor}")?;
         }
     }
     writeln!(f)?;
@@ -138,7 +138,7 @@ fn time_details(
         dut1,
     );
     (
-        format!("{:02}-{:02}-{:02}", y, mo, d),
+        format!("{y:02}-{mo:02}-{d:02}"),
         format!(
             "{:02}:{:02}:{:02}.{:03}",
             h,
@@ -221,7 +221,7 @@ impl ChannelRanges {
 
 impl Display for BirliContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{} version {}", PKG_NAME, PKG_VERSION,)?;
+        writeln!(f, "{PKG_NAME} version {PKG_VERSION}")?;
 
         fmt_build_info(f)?;
 
@@ -389,7 +389,7 @@ impl Display for BirliContext<'_> {
 
         let mut timestep_table = table!([
             "",
-            format!("{:02}-{:02}-{:02} UTC +", y, mo, d),
+            format!("{y:02}-{mo:02}-{d:02} UTC +"),
             "unix [s]",
             "gps [s]",
             "p",
@@ -417,7 +417,7 @@ impl Display for BirliContext<'_> {
                 self.prep_ctx.array_pos,
             );
             let row = row![r =>
-                format!("ts{}:", timestep_idx),
+                format!("ts{timestep_idx}:"),
                 time,
                 format!("{:.3}", timestep.unix_time_ms as f64 / 1e3),
                 format!("{:.3}", timestep.gps_time_ms as f64 / 1e3),
@@ -473,7 +473,7 @@ impl Display for BirliContext<'_> {
                 .enumerate()
                 .find(|(_idx, (start, end))| chan_idx >= *start && chan_idx <= *end);
             let row = row![r =>
-                format!("cc{}:", chan_idx),
+                format!("cc{chan_idx}:"),
                 chan.gpubox_number,
                 chan.corr_chan_number,
                 chan.rec_chan_number,
@@ -821,7 +821,7 @@ impl<'a> BirliContext<'a> {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--sel-time <FROM> <TO>".into(),
                         expected: format!("from <= to < num_timesteps={}", corr_ctx.num_timesteps),
-                        received: format!("from={} to={}", from, to),
+                        received: format!("from={from} to={to}"),
                     }));
                 }
                 vis_sel.timestep_range = from..(to + 1);
@@ -870,8 +870,7 @@ impl<'a> BirliContext<'a> {
                                 corr_ctx.num_timesteps
                             ),
                             received: format!(
-                                "timestep_idxs[{}]={}. all:{:?}",
-                                value_idx, timestep_idx, timestep_idxs
+                                "timestep_idxs[{value_idx}]={timestep_idx}. all:{timestep_idxs:?}"
                             ),
                         }));
                     }
@@ -894,8 +893,7 @@ impl<'a> BirliContext<'a> {
                                 corr_ctx.num_coarse_chans
                             ),
                             received: format!(
-                                "coarse_chan_idxs[{}]={}. all:{:?}",
-                                value_idx, coarse_chan_idx, coarse_chan_idxs
+                                "coarse_chan_idxs[{value_idx}]={coarse_chan_idx}. all:{coarse_chan_idxs:?}"
                             ),
                         }));
                     }
@@ -915,12 +913,10 @@ impl<'a> BirliContext<'a> {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--flag-fine-chans <CHANS>...".into(),
                             expected: format!(
-                                "fine_chan_idx < num_fine_chans={}",
-                                fine_chans_per_coarse
+                                "fine_chan_idx < num_fine_chans={fine_chans_per_coarse}"
                             ),
                             received: format!(
-                                "fine_chan_idxs[{}]={}. all:{:?}",
-                                value_idx, fine_chan_idx, fine_chan_idxs
+                                "fine_chan_idxs[{value_idx}]={fine_chan_idx}. all:{fine_chan_idxs:?}"
                             ),
                         }));
                     }
@@ -948,8 +944,7 @@ impl<'a> BirliContext<'a> {
                                 corr_ctx.metafits_context.num_ants
                             ),
                             received: format!(
-                                "antenna_idxs[{}]={}. all:{:?}",
-                                value_idx, antenna_idx, antenna_idxs
+                                "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
                             ),
                         }));
                     }
@@ -976,7 +971,7 @@ impl<'a> BirliContext<'a> {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--flag-edge-chans <COUNT>".into(),
                         expected: "fewer than N/2-1 fine channels".into(),
-                        received: format!("{}", n),
+                        received: format!("{n}"),
                     }));
                 }
                 Self::flag_edge_channels(n, &mut flag_ctx.fine_chan_flags);
@@ -993,15 +988,15 @@ impl<'a> BirliContext<'a> {
                 if (n - n.floor()).abs() > 0.00001 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--flag-edge-width <COUNT>".into(),
-                        expected: format!("multiple of fine channel width ({})", fine_chan_width),
-                        received: format!("{}", width),
+                        expected: format!("multiple of fine channel width ({fine_chan_width})"),
+                        received: format!("{width}"),
                     }));
                 }
                 if n as usize >= flag_ctx.fine_chan_flags.len() / 2 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--flag-edge-width <COUNT>".into(),
                         expected: "width equal to fewer than N/2-1 fine channels".into(),
-                        received: format!("{}", n),
+                        received: format!("{n}"),
                     }));
                 }
                 Self::flag_edge_channels(n as usize, &mut flag_ctx.fine_chan_flags);
@@ -1019,8 +1014,8 @@ impl<'a> BirliContext<'a> {
                 } else {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "flag-init".into(),
-                        expected: format!("A multiple of the timestep length ({})", d),
-                        received: format!("{}", init_time),
+                        expected: format!("A multiple of the timestep length ({d})"),
+                        received: format!("{init_time}"),
                     }));
                 }
             }
@@ -1037,8 +1032,8 @@ impl<'a> BirliContext<'a> {
                 } else {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "flag-end".into(),
-                        expected: format!("A multiple of the timestep length ({})", d),
-                        received: format!("{}", end_time),
+                        expected: format!("A multiple of the timestep length ({d})"),
+                        received: format!("{end_time}"),
                     }));
                 }
             }
@@ -1098,7 +1093,7 @@ impl<'a> BirliContext<'a> {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--avg-time-factor <FACTOR>".into(),
                         expected: "a positive, non-zero integer".into(),
-                        received: format!("{}", factor),
+                        received: format!("{factor}"),
                     }));
                 }
                 factor
@@ -1109,8 +1104,8 @@ impl<'a> BirliContext<'a> {
                 if ratio.is_infinite() || ratio.fract() > 1e-6 || ratio < 1.0 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--avg-time-res <RES>".into(),
-                        expected: format!("a multiple of the integration time, {} [s]", int_time_s),
-                        received: format!("{}", res),
+                        expected: format!("a multiple of the integration time, {int_time_s} [s]"),
+                        received: format!("{res}"),
                     }));
                 }
                 ratio.round() as _
@@ -1132,7 +1127,7 @@ impl<'a> BirliContext<'a> {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--avg-freq-factor <FACTOR>".into(),
                         expected: "a positive, non-zero integer".into(),
-                        received: format!("{}", factor),
+                        received: format!("{factor}"),
                     }));
                 }
                 factor
@@ -1145,10 +1140,9 @@ impl<'a> BirliContext<'a> {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--avg-freq-res <RES>".into(),
                         expected: format!(
-                            "a multiple of the fine channel width, {} [KHz]",
-                            fine_chan_width_khz
+                            "a multiple of the fine channel width, {fine_chan_width_khz} [KHz]"
                         ),
-                        received: format!("{}", res),
+                        received: format!("{res}"),
                     }));
                 }
                 ratio.round() as _
@@ -1180,10 +1174,9 @@ impl<'a> BirliContext<'a> {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--time-chunk <STEPS>".into(),
                         expected: format!(
-                            "a multiple of the temporal averaging factor, {}",
-                            avg_time
+                            "a multiple of the temporal averaging factor, {avg_time}"
                         ),
-                        received: format!("{}", steps),
+                        received: format!("{steps}"),
                     }));
                 }
                 Some(steps)
@@ -1194,7 +1187,7 @@ impl<'a> BirliContext<'a> {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--max-memory <GIBIBYTES>".into(),
                         expected: "at least one Byte".into(),
-                        received: format!("{}B", max_mem_bytes),
+                        received: format!("{max_mem_bytes}B"),
                     }));
                 }
                 let bytes_selected = vis_sel.estimate_bytes_best(fine_chans_per_coarse);
@@ -1274,7 +1267,7 @@ impl<'a> BirliContext<'a> {
             None | Some("none") => None,
             Some("jake") => Some(PFB_JAKE_2022_200HZ),
             Some("cotter") => Some(PFB_COTTER_2014_10KHZ),
-            Some(option) => panic!("unknown option for --passband-gains: {}", option),
+            Some(option) => panic!("unknown option for --passband-gains: {option}"),
         };
         prep_ctx.correct_geometry = {
             let geometric_delays_disabled = matches.is_present("no-geometric-delay");
@@ -1325,8 +1318,7 @@ impl<'a> BirliContext<'a> {
         for unimplemented_option in &["no-sel-autos", "no-sel-flagged-ants", "sel-ants"] {
             assert!(
                 !matches.is_present(unimplemented_option),
-                "option not yet implemented: --{}",
-                unimplemented_option
+                "option not yet implemented: --{unimplemented_option}"
             );
         }
 
@@ -1500,7 +1492,7 @@ impl<'a> BirliContext<'a> {
                         "a multiple of metafits_num_coarse_chans={}",
                         corr_ctx.metafits_context.num_metafits_coarse_chans
                     ),
-                    received: format!("{}", calsol_chans),
+                    received: format!("{calsol_chans}"),
                 }));
             }
             let num_calsol_fine_chans_per_coarse = calsol_chans / corr_ctx.num_coarse_chans;
@@ -1521,7 +1513,7 @@ impl<'a> BirliContext<'a> {
 
         let args_strings = env::args().collect_vec();
         let cmd_line = shlex::join(args_strings.iter().map(String::as_str));
-        let application = format!("{} {}", PKG_NAME, PKG_VERSION);
+        let application = format!("{PKG_NAME} {PKG_VERSION}");
         let message = prep_ctx.as_comment();
         let history = History {
             cmd_line: Some(&cmd_line),
@@ -2122,7 +2114,7 @@ mod argparse_tests {
                 inner.kind(),
                 clap::error::ErrorKind::MissingRequiredArgument { .. }
             )),
-            Err(e) => panic!("expected missing required argument error, not {}", e),
+            Err(e) => panic!("expected missing required argument error, not {e}"),
             Ok(_) => panic!("expected error, but got Ok(_)"),
         }
 
@@ -2135,7 +2127,7 @@ mod argparse_tests {
                 inner.kind(),
                 clap::error::ErrorKind::MissingRequiredArgument { .. }
             )),
-            Err(e) => panic!("expected missing required argument error, not {}", e),
+            Err(e) => panic!("expected missing required argument error, not {e}"),
             Ok(_) => panic!("expected error, but got Ok(_)"),
         }
     }

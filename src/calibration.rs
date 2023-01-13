@@ -60,16 +60,16 @@ pub fn apply_di_calsol(
         return Err(CalibrationError::BadArrayShape {
             argument: "weight_array".into(),
             function: "apply_di_calsol".into(),
-            expected: format!("{:?}", vis_dims),
-            received: format!("{:?}", weight_dims),
+            expected: format!("{vis_dims:?}"),
+            received: format!("{weight_dims:?}"),
         });
     }
     if flag_dims != vis_dims {
         return Err(CalibrationError::BadArrayShape {
             argument: "flag_array".into(),
             function: "apply_di_calsol".into(),
-            expected: format!("{:?}", vis_dims),
-            received: format!("{:?}", flag_dims),
+            expected: format!("{vis_dims:?}"),
+            received: format!("{flag_dims:?}"),
         });
     }
 

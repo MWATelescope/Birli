@@ -243,7 +243,7 @@ pub fn compare_uvfits_with_csv(
 
     for record in expected_reader.records().filter_map(|result| match result {
         Ok(record) => Some(record),
-        Err(err) => panic!("{:?}", err),
+        Err(err) => panic!("{err:?}"),
     }) {
         let exp_group_params = ["u", "v", "w", "baseline", "timestep"]
             .iter()
@@ -251,7 +251,7 @@ pub fn compare_uvfits_with_csv(
                 let value = &record[indices[&(*key).to_string()]];
                 value
                     .parse::<f64>()
-                    .unwrap_or_else(|_| panic!("unable to parse {} -> {}", key, value))
+                    .unwrap_or_else(|_| panic!("unable to parse {key} -> {value}"))
             })
             .collect::<Vec<_>>();
 
@@ -311,11 +311,7 @@ pub fn compare_uvfits_with_csv(
                             *exp_group_param,
                             F64Margin::default().epsilon(1e-7)
                         ),
-                        "cells don't match in param {}, row {}. {:?} != {:?}",
-                        param_idx,
-                        row_idx,
-                        obs_group_params,
-                        exp_group_params
+                        "cells don't match in param {param_idx}, row {row_idx}. {obs_group_params:?} != {exp_group_params:?}"
                     );
                 }
 
@@ -428,7 +424,7 @@ pub fn compare_uvfits_with_csv(
                         }
                     }
                     _ => {
-                        panic!("unexpected record type {}", rec_type);
+                        panic!("unexpected record type {rec_type}");
                     }
                 }
 
@@ -497,7 +493,7 @@ pub fn compare_ms_with_csv(
 
     for record in expected_reader.records().filter_map(|result| match result {
         Ok(record) => Some(record),
-        Err(err) => panic!("{:?}", err),
+        Err(err) => panic!("{err:?}"),
     }) {
         let exp_baseline: (usize, usize) = (
             record[indices["ant1"]].parse().unwrap(),
@@ -545,11 +541,7 @@ pub fn compare_ms_with_csv(
                 {
                     assert!(
                         approx_eq!(f64, *obs_uvw, *exp_uvw, F64Margin::default().epsilon(1e-5)),
-                        "cells don't match in UVW[{}], row {}. {:?} != {:?}",
-                        uvw_idx,
-                        row_idx,
-                        obs_uvw,
-                        exp_uvw
+                        "cells don't match in UVW[{uvw_idx}], row {row_idx}. {obs_uvw:?} != {exp_uvw:?}"
                     );
                 }
 
@@ -684,7 +676,7 @@ pub fn compare_ms_with_csv(
                               );
                         }
                     }
-                    _ => panic!("unexpected record type: {}", rec_type),
+                    _ => panic!("unexpected record type: {rec_type}"),
                 }
 
                 break;
@@ -708,7 +700,7 @@ pub fn compare_ms_with_csv(
 fn parse_complex(cell: &str) -> Complex<f32> {
     let captures = COMPLEX_REGEX
         .captures(cell)
-        .unwrap_or_else(|| panic!("invalid complex number: {}", cell));
+        .unwrap_or_else(|| panic!("invalid complex number: {cell}"));
     let (real, imag) = match (
         captures.name("complex_real"),
         captures.name("complex_imag"),
@@ -721,7 +713,7 @@ fn parse_complex(cell: &str) -> Complex<f32> {
         ),
         (None, None, Some(real), None) => (parse::<f32, _>(real.as_str()).unwrap(), 0.0),
         (None, None, None, Some(imag)) => (0.0, parse::<f32, _>(imag.as_str()).unwrap()),
-        _ => panic!("can't parse complex {}", cell),
+        _ => panic!("can't parse complex {cell}"),
     };
     Complex::new(real, imag)
 }
@@ -746,8 +738,7 @@ fn parse_csv_headers(headers: &StringRecord, keys: &[&str]) -> BTreeMap<String, 
 
     assert!(
         remaining_keys.is_empty(),
-        "not all keys found: {:?}",
-        remaining_keys
+        "not all keys found: {remaining_keys:?}"
     );
 
     indices

@@ -200,8 +200,8 @@ impl FlagContext {
             return Err(BirliError::BadArrayShape(BadArrayShape {
                 argument: "flag_array",
                 function: "FlagContext::set_flags",
-                expected: format!("dims less than {:?}", shape),
-                received: format!("{:?}", flag_shape),
+                expected: format!("dims less than {shape:?}"),
+                received: format!("{flag_shape:?}"),
             }));
         };
 

@@ -398,7 +398,7 @@ fn _correct_digital_gains(
                 num_fine_chans_per_coarse,
                 vis_dims.1 / num_fine_chans_per_coarse
             ),
-            received: format!("{:?}", gain_dims),
+            received: format!("{gain_dims:?}"),
         }));
     }
     assert!(vis_dims.1 == gain_dims.1 * num_fine_chans_per_coarse);
@@ -470,7 +470,7 @@ pub fn correct_coarse_passband_gains(
             argument: "num_fine_chans_per_coarse",
             function: "correct_coarse_passband_gains",
             expected: "a number greater than zero".into(),
-            received: format!("{:?}", num_fine_chans_per_coarse),
+            received: format!("{num_fine_chans_per_coarse:?}"),
         }));
     }
 
@@ -479,8 +479,7 @@ pub fn correct_coarse_passband_gains(
             argument: "jones_array",
             function: "correct_coarse_passband_gains",
             expected: format!(
-                "(_, n, _), where n is a multiple of num_fine_chans_per_coarse={}",
-                num_fine_chans_per_coarse
+                "(_, n, _), where n is a multiple of num_fine_chans_per_coarse={num_fine_chans_per_coarse}"
             ),
             received: format!("{:?}", jones_array.dim()),
         }));
@@ -502,8 +501,7 @@ pub fn correct_coarse_passband_gains(
             argument: "passband_gains",
             function: "correct_coarse_passband_gains",
             expected: format!(
-                "n, where n is a multiple of num_fine_chans_per_coarse={}",
-                num_fine_chans_per_coarse
+                "n, where n is a multiple of num_fine_chans_per_coarse={num_fine_chans_per_coarse}"
             ),
             received: format!("{:?}", passband_gains.len()),
         }));
