@@ -6,6 +6,7 @@ use thiserror::Error;
 use crate::corrections::{DigitalGainCorrection, PassbandCorrection};
 
 /// Errors relating to CI
+#[cfg(feature = "cli")]
 #[derive(Error, Debug)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum CLIError {
@@ -39,10 +40,12 @@ pub enum BirliError {
     /// Error derived from [`crate::calibration::CalibrationError`]
     CalibrationError(#[from] crate::calibration::CalibrationError),
 
+    #[cfg(feature = "cli")]
     #[error(transparent)]
     /// Error derived from [`clap::Error`]
     ClapError(#[from] clap::Error),
 
+    #[cfg(feature = "cli")]
     #[error(transparent)]
     /// Error derived from [`crate::error::CLIError`]
     CLIError(#[from] CLIError),

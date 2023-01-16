@@ -35,7 +35,6 @@ use mwalib::{
 use prettytable::{format as prettyformat, row, table};
 use std::{
     convert::Into,
-    env,
     ffi::OsString,
     fmt::{Debug, Display},
     time::Duration,
@@ -1511,7 +1510,7 @@ impl<'a> BirliContext<'a> {
             None
         };
 
-        let args_strings = env::args().collect_vec();
+        let args_strings = std::env::args().collect_vec();
         let cmd_line = shlex::join(args_strings.iter().map(String::as_str));
         let application = format!("{PKG_NAME} {PKG_VERSION}");
         let message = prep_ctx.as_comment();

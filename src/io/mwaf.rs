@@ -10,7 +10,6 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::crate_version;
 use fitsio::{tables::ColumnDataType, tables::ColumnDescription, FitsFile};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::Itertools;
@@ -205,7 +204,7 @@ impl FlagFileSet {
             num_timesteps: timestep_range.len() as u32,
             num_pols: 1,
             // TODO: use something like https://github.com/rustyhorde/vergen
-            software: format!("Birli-{}", crate_version!()),
+            software: format!("Birli-{}", env!("CARGO_PKG_VERSION")),
             #[cfg(test)]
             num_rows: num_rows as u32,
             aoflagger_version,
@@ -1226,7 +1225,7 @@ mod tests {
                     num_ants: context.metafits_context.num_ants as u32,
                     num_timesteps: context.num_timesteps as u32,
                     num_pols: 1,
-                    software: format!("Birli-{}", crate_version!()),
+                    software: format!("Birli-{}", env!("CARGO_PKG_VERSION")),
                     num_rows: (context.num_common_timesteps
                         * context.metafits_context.num_baselines)
                         as u32,

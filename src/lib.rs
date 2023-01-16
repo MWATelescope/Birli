@@ -194,8 +194,12 @@ pub use error::BirliError;
 pub mod preprocessing;
 pub use preprocessing::PreprocessContext;
 
-pub mod cli;
-pub use cli::BirliContext;
+cfg_if! {
+    if #[cfg(feature = "cli")] {
+        pub mod cli;
+        pub use cli::BirliContext;
+    }
+}
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {

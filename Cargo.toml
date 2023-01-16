@@ -21,27 +21,40 @@ exclude = ["tests/*", ".vscode/*", ".github/*", ".talismanrc"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["aoflagger"]
+default = ["aoflagger", "cli"]
+
+# Use aoflagger to detect RFI
 aoflagger = ["aoflagger_sys"]
+
+# Use command-line-only dependencies
+cli = ["clap", "env_logger", "prettytable-rs", "shlex"]
+
+# Compile cfitsio statically and link it
 cfitsio-static = ["marlu/cfitsio-static"]
+
+# Compile all C dependencies statically and link them
 all-static = ["cfitsio-static"]
 
 [dependencies]
-aoflagger_sys = { version = "0.1.1", optional = true }
 byteorder = "1.4.3"
 cfg-if = "1.0.0"
-clap = { version = "3.1.8", features = ["cargo"] }
 derive_builder = "0.11.1"
-env_logger = "0.9"
 indicatif = { version = "0.17.0", features = ["rayon"] }
 itertools = "0.10.0"
 lazy_static = "1.4.0"
 log = "0.4.0"
 marlu = "0.9.0"
-prettytable-rs = "0.10.0"
 regex = "1.4.0"
 thiserror = "1.0.0"
-shlex = "1.1.0"
+
+# aoflagger feature
+aoflagger_sys = { version = "0.1.1", optional = true }
+
+# cli feature
+clap = { version = "3.1.8", features = ["cargo"], optional = true }
+env_logger = { version = "0.9.0", optional = true }
+prettytable-rs = { version = "0.10.0", optional = true }
+shlex = { version = "1.1.0", optional = true }
 
 [dev-dependencies]
 approx = { version = "0.5.0", features = ["num-complex"] }
@@ -61,6 +74,7 @@ built = { version = "0.5.0", features = ["chrono", "git2"] }
 [[bin]]
 name = "birli"
 test = true
+required-features = ["cli"]
 
 [[bench]]
 name = "bench"
