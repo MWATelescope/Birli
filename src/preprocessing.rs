@@ -24,7 +24,7 @@ cfg_if! {
 }
 
 /// Options for preprocessing a chunk of correlator data
-#[derive(Builder, Debug, Default)]
+#[derive(Builder, Debug, Default, Clone)]
 pub struct PreprocessContext<'a> {
     /// The array position used for geometric corrections
     pub array_pos: LatLngHeight,

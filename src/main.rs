@@ -1,6 +1,6 @@
 use birli::{cli::BirliContext, BirliError};
 use log::{info, trace};
-use std::{env, ffi::OsString, fmt::Debug, time::Duration};
+use std::{env, ffi::OsString, fmt::Debug, time::Duration, collections::HashMap};
 
 #[allow(clippy::field_reassign_with_default)]
 fn main_with_args<I, T>(args: I) -> i32
@@ -21,24 +21,29 @@ where
             return 1;
         }
     };
-    match birli_ctx.run() {
-        Ok(durations) => {
-            info!(
-                "total duration: {:?}",
-                durations
-                    .into_iter()
-                    .fold(Duration::ZERO, |duration_sum, (name, duration)| {
-                        info!("{} duration: {:?}", name, duration);
-                        duration_sum + duration
-                    })
-            );
-            0
-        }
-        Err(e) => {
-            eprintln!("preprocessing error: {}", e);
-            1
+    let results: Vec<Result<HashMap<String, Duration>, BirliError>> = birli_ctx.run_ranges();
+    let mut ret_code = 0;
+    for result in results {
+        match result {
+            Ok(durations) => {
+                info!(
+                    "total duration: {:?}",
+                    durations
+                        .into_iter()
+                        .fold(Duration::ZERO, |duration_sum, (name, duration)| {
+                            info!("{} duration: {:?}", name, duration);
+                            duration_sum + duration
+                        })
+                );
+            }
+            Err(e) => {
+                eprintln!("preprocessing error: {}", e);
+                ret_code = 1;
+            }
         }
     }
+    ret_code
+    
 }
 
 fn main() {

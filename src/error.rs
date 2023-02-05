@@ -19,6 +19,12 @@ pub enum CLIError {
         /// The argument that was received instead
         received: String,
     },
+    #[error("Invalid range specifier")]
+    /// When a bad range specifier is provided
+    InvalidRangeSpecifier {
+        /// Why the range is invalid
+        reason: String,
+    },
 }
 
 /// An enum of all the errors possible in Birli
