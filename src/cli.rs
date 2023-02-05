@@ -1,7 +1,8 @@
 //! Command Line Interface helpers for Birli
+#![feature(slice_group_by)]
 
 use crate::{
-    error::{BirliError, BirliError::DryRun, CLIError::InvalidCommandLineArgument},
+    error::{BirliError, BirliError::DryRun, CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier}},
     flags::FlagContext,
     io::{aocal::AOCalSols, IOContext},
     marlu::{
@@ -23,6 +24,7 @@ use cfg_if::cfg_if;
 use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
 use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
+use marlu::rayon::range;
 use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, fitsio_sys::CFITSIO_VERSION, CableDelaysApplied,
     CorrelatorContext, GeometricDelaysApplied,
@@ -66,6 +68,8 @@ pub struct BirliContext<'a> {
     pub num_timesteps_per_chunk: Option<usize>,
     /// Are we ignoring DUT1?
     pub ignore_dut1: bool,
+    /// channel selections for picket-fencing
+    pub channel_range_sel: ChannelRanges,
 }
 
 // Add build-time information from the "built" crate.
@@ -144,6 +148,74 @@ fn time_details(
         precession_info,
     )
 }
+
+/// Structure representing a series of channel ranges
+/// e.g. 1-10, 20-30, 40-50
+#[derive(Debug, Clone)]
+pub struct ChannelRanges {
+    /// Vector of channel ranges
+    pub ranges: Vec<(usize, usize)>,
+}
+
+
+impl ChannelRanges {
+    /// Create a new ChannelRanges object from a string
+    /// e.g. "1-10, 20-30, 40-50"
+    pub fn new(s: &str) -> Result<Self, BirliError> {
+        let mut ranges = Vec::new();
+        for range in s.split(',') {
+            match range.split('-').collect::<Vec<_>>().as_slice() {
+                [start, end] => {
+                    let start_result = start.trim().parse::<usize>();
+                    let end_result = end.trim().parse::<usize>();
+                    match (start_result, end_result) {
+                        (Ok(start), Ok(end)) => {
+                            if start < 0 || end < 0 {
+                                return Err(BirliError::CLIError(InvalidRangeSpecifier {
+                                    reason: format!("channel range cannot be negative: {}", range),
+                                }));
+                            }
+                            ranges.push((start, end));
+                        }
+                        _ => {
+                            return Err(BirliError::CLIError(InvalidRangeSpecifier {
+                                reason: format!("invalid channel range: {}", range),
+                            }));
+                        }
+                    }              
+                }
+                _ => {
+                    return Err(BirliError::CLIError(InvalidRangeSpecifier {
+                        reason: format!("invalid channel range: {}", range)}));
+                }
+            }
+        }
+        Ok(ChannelRanges { ranges })
+    }
+    
+    /// Create a new ChannelRanges object spanning all available channels in the metafits context
+    pub fn all(context: &CorrelatorContext) -> Self {
+        // Infer ranges from consecutive values of rec_chan_number in context.coarse_chans
+        let mut coarse_chans = context.coarse_chans.clone();
+        coarse_chans.sort_by_key(|c| c.rec_chan_number);
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        let mut range_start = coarse_chans[0].rec_chan_number;
+        let mut range_last = range_start;
+        for(chan) in coarse_chans.iter().skip(1) {
+            if chan.rec_chan_number == range_last + 1 {
+                range_last += 1;
+            } else {
+                ranges.push((range_start, range_last));
+                range_start = chan.rec_chan_number;
+                range_last = range_start;
+            }
+        }
+        ranges.push((range_start, range_last));
+        ChannelRanges { ranges }
+    }
+
+}
+
 
 impl Display for BirliContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -570,6 +642,10 @@ impl<'a> BirliContext<'a> {
                 arg!(--"no-sel-autos" "[WIP] Deselect autocorrelations")
                     .help_heading("SELECTION"),
 
+                arg!(--"sel-chan-ranges" <RANGES> "[WIP] Select separate channel ranges")
+                    .help_heading("SELECTION")
+                    .required(false),
+
                 // resource limit options
                 arg!(--"time-chunk" <STEPS> "[WIP] Process observation in chunks of <STEPS> timesteps.")
                     .help_heading("RESOURCE LIMITS")
@@ -750,6 +826,27 @@ impl<'a> BirliContext<'a> {
             },
         }
         Ok(vis_sel)
+    }
+
+    fn parse_sel_chan_ranges(
+        corr_ctx: &CorrelatorContext,
+        matches: &clap::ArgMatches,
+    ) -> Result<ChannelRanges, BirliError> {
+        let mut sel_chan_ranges = ChannelRanges::all(corr_ctx);
+        if matches.is_present("sel-chan-ranges") {
+            match matches.value_of("sel-chan-ranges") {
+                Some(range_str) => { 
+                    ChannelRanges::new(range_str)
+                }
+                None => Err(BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "--sel-chan-ranges <RANGES>".into(),
+                    expected: "comma-separated list of ranges, e.g. 0-10,20-30".into(),
+                    received: "no value".into(),
+                }))
+            }
+        } else {
+            Ok(sel_chan_ranges)
+        }
     }
 
     fn parse_flag_matches(
@@ -1236,6 +1333,7 @@ impl<'a> BirliContext<'a> {
             "flag-antennas",
             "time-chunk",
             "max-memory",
+            "sel-chan-ranges",
         ] {
             if matches.is_present(untested_option) {
                 warn!(
@@ -1255,6 +1353,7 @@ impl<'a> BirliContext<'a> {
         let num_timesteps_per_chunk =
             Self::parse_chunk_matches(&corr_ctx, &matches, avg_time, &vis_sel)?;
         flag_ctx.finalise_flag_settings(&corr_ctx);
+        let channel_range_sel = Self::parse_sel_chan_ranges(&corr_ctx, &matches)?;
         let result = Self {
             corr_ctx,
             prep_ctx,
@@ -1265,6 +1364,7 @@ impl<'a> BirliContext<'a> {
             avg_freq,
             num_timesteps_per_chunk,
             ignore_dut1: matches.is_present("ignore-dut1"),
+            channel_range_sel,
         };
 
         info!("{}", &result);
@@ -1276,6 +1376,31 @@ impl<'a> BirliContext<'a> {
         Ok(result)
     }
 
+
+    /// Call `run()` for every channel range in `self.channel_range_sel`.
+    pub fn run_ranges(self) -> Vec<Result<HashMap<String, Duration>, BirliError>> {
+        let ranges = self.channel_range_sel.ranges.clone();
+        let mut ranged_context: BirliContext = BirliContext {
+            corr_ctx: self.corr_ctx,
+            prep_ctx: self.prep_ctx,
+            vis_sel: self.vis_sel,
+            flag_ctx: self.flag_ctx,
+            io_ctx: self.io_ctx,
+            avg_time: self.avg_time,
+            avg_freq: self.avg_freq,
+            num_timesteps_per_chunk: self.num_timesteps_per_chunk,
+            ignore_dut1: self.ignore_dut1,
+            channel_range_sel: self.channel_range_sel,
+        };
+        ranged_context.vis_sel = ranged_context.vis_sel.clone();
+        let mut results: Vec<Result<HashMap<String, Duration>, BirliError>> = Vec::with_capacity(ranges.len());
+        for (range_start, range_end) in ranges {
+            ranged_context.vis_sel.coarse_chan_range = range_start..range_end;
+            results.push(ranged_context.run());
+        }
+        results
+    }
+
     /// Read, Preprocess and write corrected visibilities chunks.
     ///
     /// # Errors
@@ -1284,10 +1409,9 @@ impl<'a> BirliContext<'a> {
     /// - `BadArrayShape` if the shape of the calibration solutions
     ///     is incompatible with the visibility shape.
     /// - preprocessing errors
-    pub fn run(self) -> Result<HashMap<String, Duration>, BirliError> {
+    pub fn run(&self) -> Result<HashMap<String, Duration>, BirliError> {
         let Self {
             corr_ctx,
-            mut prep_ctx,
             vis_sel,
             flag_ctx,
             io_ctx,
@@ -1295,7 +1419,9 @@ impl<'a> BirliContext<'a> {
             avg_freq,
             num_timesteps_per_chunk,
             ignore_dut1,
+            ..
         } = self;
+        let mut prep_ctx = self.prep_ctx.clone();
 
         // ////////// //
         // Prepare IO //
@@ -1306,8 +1432,8 @@ impl<'a> BirliContext<'a> {
             &vis_sel.timestep_range,
             &vis_sel.coarse_chan_range,
             &vis_sel.baseline_idxs,
-            avg_time,
-            avg_freq,
+            *avg_time,
+            *avg_freq,
         );
 
         // TODO: move phase_centre, array_pos out of prep_ctx
@@ -1356,272 +1482,279 @@ impl<'a> BirliContext<'a> {
             None
         };
 
-        let args_strings = env::args().collect_vec();
-        let cmd_line = shlex::join(args_strings.iter().map(String::as_str));
-        let application = format!("{} {}", PKG_NAME, PKG_VERSION);
-        let message = prep_ctx.as_comment();
-        let history = History {
-            cmd_line: Some(&cmd_line),
-            application: Some(&application),
-            message: Some(&message),
-        };
-        let (s_lat, c_lat) = obs_ctx.array_pos.latitude_rad.sin_cos();
-        let (antenna_names, antenna_positions): (Vec<String>, Vec<marlu::XyzGeodetic>) = corr_ctx
-            .metafits_context
-            .antennas
-            .iter()
-            .map(|a| {
-                let enh = ENH {
-                    e: a.east_m,
-                    n: a.north_m,
-                    h: a.height_m,
-                };
-                let xyz = enh.to_xyz_inner(s_lat, c_lat);
-                (a.tile_name.clone(), xyz)
-            })
-            .unzip();
-        let dut1 = if ignore_dut1 {
-            hifitime::Duration::from_total_nanoseconds(0)
-        } else {
-            hifitime::Duration::from_f64(
-                corr_ctx.metafits_context.dut1.unwrap_or(0.0),
-                Unit::Second,
-            )
-        };
-        let mut uvfits_writer = io_ctx.uvfits_out.map(|uvfits_out| {
-            with_increment_duration!("init", {
-                UvfitsWriter::from_marlu(
-                    uvfits_out,
-                    &vis_ctx,
-                    obs_ctx.array_pos,
-                    obs_ctx.phase_centre,
-                    dut1,
-                    obs_ctx.name.as_deref(),
-                    antenna_names,
-                    antenna_positions.clone(),
-                    Some(&history),
+        //for (range_start, range_end) in self.channel_range_sel.ranges { 
+
+            let args_strings = env::args().collect_vec();
+            let cmd_line = shlex::join(args_strings.iter().map(String::as_str));
+            let application = format!("{} {}", PKG_NAME, PKG_VERSION);
+            let message = prep_ctx.as_comment();
+            let history = History {
+                cmd_line: Some(&cmd_line),
+                application: Some(&application),
+                message: Some(&message),
+            };
+            let (s_lat, c_lat) = obs_ctx.array_pos.latitude_rad.sin_cos();
+            let (antenna_names, antenna_positions): (Vec<String>, Vec<marlu::XyzGeodetic>) = corr_ctx
+                .metafits_context
+                .antennas
+                .iter()
+                .map(|a| {
+                    let enh = ENH {
+                        e: a.east_m,
+                        n: a.north_m,
+                        h: a.height_m,
+                    };
+                    let xyz = enh.to_xyz_inner(s_lat, c_lat);
+                    (a.tile_name.clone(), xyz)
+                })
+                .unzip();
+            let dut1 = if *ignore_dut1 {
+                hifitime::Duration::from_total_nanoseconds(0)
+            } else {
+                hifitime::Duration::from_f64(
+                    corr_ctx.metafits_context.dut1.unwrap_or(0.0),
+                    Unit::Second,
                 )
-                .expect("unable to initialize uvfits writer")
-            })
-        });
-        let mut ms_writer = io_ctx.ms_out.map(|ms_out| {
-            let writer = MeasurementSetWriter::new(
-                ms_out,
-                obs_ctx.phase_centre,
-                obs_ctx.array_pos,
-                antenna_positions,
-                dut1,
-            );
-            with_increment_duration!("init", {
-                writer
-                    .initialize_mwa(
+            };
+            let mut uvfits_writer = io_ctx.uvfits_out.as_ref().map(|uvfits_out| {
+                with_increment_duration!("init", {
+                    UvfitsWriter::from_marlu(
+                        uvfits_out,
                         &vis_ctx,
-                        &obs_ctx,
-                        &mwa_ctx,
+                        obs_ctx.array_pos,
+                        obs_ctx.phase_centre,
+                        dut1,
+                        obs_ctx.name.as_deref(),
+                        antenna_names,
+                        antenna_positions.clone(),
                         Some(&history),
-                        &vis_sel.coarse_chan_range,
                     )
-                    .expect("unable to initialize ms writer");
+                    .expect("unable to initialize uvfits writer")
+                })
             });
-            writer
-        });
-
-        #[cfg(feature = "aoflagger")]
-        let (aoflagger_version, aoflagger_strategy) = {
-            let mut major = 0;
-            let mut minor = 0;
-            let mut subminor = 0;
-            unsafe {
-                aoflagger_sys::cxx_aoflagger_new().GetVersion(
-                    &mut major,
-                    &mut minor,
-                    &mut subminor,
+            let mut ms_writer = io_ctx.ms_out.as_ref().map(|ms_out| {
+                let writer = MeasurementSetWriter::new(
+                    ms_out,
+                    obs_ctx.phase_centre,
+                    obs_ctx.array_pos,
+                    antenna_positions,
+                    dut1,
                 );
-            }
-            (
-                Some(format!("v{major}.{minor}.{subminor}")),
-                prep_ctx.aoflagger_strategy.clone(),
-            )
-        };
-        #[cfg(not(feature = "aoflagger"))]
-        let (aoflagger_version, aoflagger_strategy) = (None, None);
+                with_increment_duration!("init", {
+                    writer
+                        .initialize_mwa(
+                            &vis_ctx,
+                            &obs_ctx,
+                            &mwa_ctx,
+                            Some(&history),
+                            &vis_sel.coarse_chan_range,
+                        )
+                        .expect("unable to initialize ms writer");
+                });
+                writer
+            });
+    
+            #[cfg(feature = "aoflagger")]
+            let (aoflagger_version, aoflagger_strategy) = {
+                let mut major = 0;
+                let mut minor = 0;
+                let mut subminor = 0;
+                unsafe {
+                    aoflagger_sys::cxx_aoflagger_new().GetVersion(
+                        &mut major,
+                        &mut minor,
+                        &mut subminor,
+                    );
+                }
+                (
+                    Some(format!("v{major}.{minor}.{subminor}")),
+                    prep_ctx.aoflagger_strategy.clone(),
+                )
+            };
+            #[cfg(not(feature = "aoflagger"))]
+            let (aoflagger_version, aoflagger_strategy) = (None, None);
 
-        let mut flag_file_set = io_ctx.flag_template.map(|flag_template| {
-            FlagFileSet::new(
-                &flag_template,
-                &corr_ctx,
-                &vis_sel,
-                aoflagger_version,
-                aoflagger_strategy,
-            )
-            .expect("cannot create flag file writer")
-        });
-
-        // //////// //
-        // Chunking //
-        // //////// //
-
-        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
-        let chunk_size = if let Some(steps) = num_timesteps_per_chunk {
-            steps
-        } else {
-            vis_sel.timestep_range.len()
-        };
-
-        // Allocate our big arrays once, reuse them for each chunk unless the chunk shape changes
-        let chunk_vis_sel = VisSelection {
-            timestep_range: (vis_sel.timestep_range.start
-                ..vis_sel.timestep_range.start + chunk_size),
-            ..vis_sel.clone()
-        };
-        let mut jones_array = chunk_vis_sel.allocate_jones(fine_chans_per_coarse)?;
-        let mut flag_array = chunk_vis_sel.allocate_flags(fine_chans_per_coarse)?;
-        let mut weight_array = chunk_vis_sel.allocate_weights(fine_chans_per_coarse)?;
-
-        for mut timestep_chunk in &vis_sel.timestep_range.clone().chunks(chunk_size) {
-            let chunk_first_timestep = timestep_chunk.next().expect("zero-sized chunk");
+            let mut flag_file_set = io_ctx.flag_template.as_ref().map(|flag_template| {
+                FlagFileSet::new(
+                    &flag_template,
+                    &corr_ctx,
+                    &vis_sel,
+                    aoflagger_version,
+                    aoflagger_strategy,
+                )
+                .expect("cannot create flag file writer")
+            });
+    
+            // //////// //
+            // Chunking //
+            // //////// //
+    
+            let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+            let chunk_size = if let Some(steps) = num_timesteps_per_chunk {
+                *steps
+            } else {
+                let num_timesteps: usize = vis_sel.timestep_range.len();
+                num_timesteps
+            };
+    
+            // Allocate our big arrays once, reuse them for each chunk unless the chunk shape changes
             let chunk_vis_sel = VisSelection {
-                timestep_range: (chunk_first_timestep
-                    ..(timestep_chunk.last().unwrap_or(chunk_first_timestep) + 1)),
+                timestep_range: (vis_sel.timestep_range.start
+                    ..vis_sel.timestep_range.start + chunk_size),
                 ..vis_sel.clone()
             };
-            if num_timesteps_per_chunk.is_some() {
-                info!(
-                    "processing timestep chunk {:?} of {:?} % {}",
-                    chunk_vis_sel.timestep_range,
-                    vis_sel.timestep_range.clone(),
-                    chunk_size
-                );
-            }
-
-            // only reallocate arrays if the chunk dimensions have changed.
-            let chunk_dims = chunk_vis_sel.get_shape(fine_chans_per_coarse);
-            let (mut jones_array, mut flag_array, mut weight_array) = if jones_array.dim()
-                == chunk_dims
-            {
-                (
-                    jones_array.view_mut(),
+            let mut jones_array = chunk_vis_sel.allocate_jones(fine_chans_per_coarse)?;
+            let mut flag_array = chunk_vis_sel.allocate_flags(fine_chans_per_coarse)?;
+            let mut weight_array = chunk_vis_sel.allocate_weights(fine_chans_per_coarse)?;
+    
+            for mut timestep_chunk in &vis_sel.timestep_range.clone().chunks(chunk_size) {
+                let chunk_first_timestep = timestep_chunk.next().expect("zero-sized chunk");
+                let chunk_vis_sel = VisSelection {
+                    timestep_range: (chunk_first_timestep
+                        ..(timestep_chunk.last().unwrap_or(chunk_first_timestep) + 1)),
+                    ..vis_sel.clone()
+                };
+                if num_timesteps_per_chunk.is_some() {
+                    info!(
+                        "processing timestep chunk {:?} of {:?} % {}",
+                        chunk_vis_sel.timestep_range,
+                        vis_sel.timestep_range.clone(),
+                        chunk_size
+                    );
+                }
+    
+                // only reallocate arrays if the chunk dimensions have changed.
+                let chunk_dims = chunk_vis_sel.get_shape(fine_chans_per_coarse);
+                let (mut jones_array, mut flag_array, mut weight_array) = if jones_array.dim()
+                    == chunk_dims
+                {
+                    (
+                        jones_array.view_mut(),
+                        flag_array.view_mut(),
+                        weight_array.view_mut(),
+                    )
+                } else {
+                    (
+                        jones_array.slice_mut(s![0..chunk_dims.0, 0..chunk_dims.1, 0..chunk_dims.2]),
+                        flag_array.slice_mut(s![0..chunk_dims.0, 0..chunk_dims.1, 0..chunk_dims.2]),
+                        weight_array.slice_mut(s![0..chunk_dims.0, 0..chunk_dims.1, 0..chunk_dims.2]),
+                    )
+                };
+    
+                // populate flags
+                flag_ctx.set_flags(
                     flag_array.view_mut(),
-                    weight_array.view_mut(),
-                )
-            } else {
-                (
-                    jones_array.slice_mut(s![0..chunk_dims.0, 0..chunk_dims.1, 0..chunk_dims.2]),
-                    flag_array.slice_mut(s![0..chunk_dims.0, 0..chunk_dims.1, 0..chunk_dims.2]),
-                    weight_array.slice_mut(s![0..chunk_dims.0, 0..chunk_dims.1, 0..chunk_dims.2]),
-                )
-            };
-
-            // populate flags
-            flag_ctx.set_flags(
-                flag_array.view_mut(),
-                &chunk_vis_sel.timestep_range,
-                &chunk_vis_sel.coarse_chan_range,
-                &chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
-            )?;
-
-            // populate visibilities
-            with_increment_duration!(
-                "read",
-                chunk_vis_sel.read_mwalib(
+                    &chunk_vis_sel.timestep_range,
+                    &chunk_vis_sel.coarse_chan_range,
+                    &chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+                )?;
+    
+                // populate visibilities
+                with_increment_duration!(
+                    "read",
+                    chunk_vis_sel.read_mwalib(
+                        &corr_ctx,
+                        jones_array.view_mut(),
+                        flag_array.view_mut(),
+                        prep_ctx.draw_progress,
+                    )?
+                );
+    
+                // populate weights
+                weight_array.fill(vis_ctx.weight_factor() as f32);
+    
+                prep_ctx.preprocess(
                     &corr_ctx,
                     jones_array.view_mut(),
+                    weight_array.view_mut(),
                     flag_array.view_mut(),
-                    prep_ctx.draw_progress,
-                )?
-            );
-
-            // populate weights
-            weight_array.fill(vis_ctx.weight_factor() as f32);
-
-            prep_ctx.preprocess(
-                &corr_ctx,
-                jones_array.view_mut(),
-                weight_array.view_mut(),
-                flag_array.view_mut(),
-                &chunk_vis_sel,
-            )?;
-
-            // output flags (before averaging)
-            if let Some(flag_file_set) = flag_file_set.as_mut() {
-                with_increment_duration!(
-                    "write",
-                    flag_file_set
-                        .write_flag_array(flag_array.view(), prep_ctx.draw_progress)
-                        .expect("unable to write flags")
+                    &chunk_vis_sel,
+                )?;
+    
+                // output flags (before averaging)
+                if let Some(flag_file_set) = flag_file_set.as_mut() {
+                    with_increment_duration!(
+                        "write",
+                        flag_file_set
+                            .write_flag_array(flag_array.view(), prep_ctx.draw_progress)
+                            .expect("unable to write flags")
+                    );
+                }
+    
+                // bake flags into weights
+                for (weight, flag) in izip!(weight_array.iter_mut(), flag_array.iter()) {
+                    *weight = if *flag {
+                        -(*weight).abs()
+                    } else {
+                        (*weight).abs()
+                    } as f32;
+                }
+    
+                let chunk_vis_ctx = VisContext::from_mwalib(
+                    &corr_ctx,
+                    &chunk_vis_sel.timestep_range,
+                    &chunk_vis_sel.coarse_chan_range,
+                    &chunk_vis_sel.baseline_idxs,
+                    *avg_time,
+                    *avg_freq,
                 );
+    
+                // output uvfits
+                if let Some(uvfits_writer) = uvfits_writer.as_mut() {
+                    with_increment_duration!(
+                        "write",
+                        uvfits_writer
+                            .write_vis(
+                                jones_array.view(),
+                                weight_array.view(),
+                                &chunk_vis_ctx,
+                                prep_ctx.draw_progress,
+                            )
+                            .expect("unable to write uvfits")
+                    );
+                }
+    
+                // output ms
+                if let Some(ms_writer) = ms_writer.as_mut() {
+                    with_increment_duration!(
+                        "write",
+                        ms_writer
+                            .write_vis(
+                                jones_array.view(),
+                                weight_array.view(),
+                                &chunk_vis_ctx,
+                                prep_ctx.draw_progress,
+                            )
+                            .expect("unable to write ms")
+                    );
+                }
             }
 
-            // bake flags into weights
-            for (weight, flag) in izip!(weight_array.iter_mut(), flag_array.iter()) {
-                *weight = if *flag {
-                    -(*weight).abs()
-                } else {
-                    (*weight).abs()
-                } as f32;
-            }
-
-            let chunk_vis_ctx = VisContext::from_mwalib(
-                &corr_ctx,
-                &chunk_vis_sel.timestep_range,
-                &chunk_vis_sel.coarse_chan_range,
-                &chunk_vis_sel.baseline_idxs,
-                avg_time,
-                avg_freq,
-            );
-
-            // output uvfits
+            // Finalise the uvfits writer.
             if let Some(uvfits_writer) = uvfits_writer.as_mut() {
                 with_increment_duration!(
                     "write",
                     uvfits_writer
-                        .write_vis(
-                            jones_array.view(),
-                            weight_array.view(),
-                            &chunk_vis_ctx,
-                            prep_ctx.draw_progress,
-                        )
-                        .expect("unable to write uvfits")
+                        .finalise()
+                        .expect("couldn't write antenna table to uvfits")
                 );
-            }
-
-            // output ms
+            };
+    
+            // Finalise the MS writer.
             if let Some(ms_writer) = ms_writer.as_mut() {
-                with_increment_duration!(
-                    "write",
-                    ms_writer
-                        .write_vis(
-                            jones_array.view(),
-                            weight_array.view(),
-                            &chunk_vis_ctx,
-                            prep_ctx.draw_progress,
-                        )
-                        .expect("unable to write ms")
-                );
-            }
-        }
-
-        // Finalise the uvfits writer.
-        if let Some(uvfits_writer) = uvfits_writer.as_mut() {
-            with_increment_duration!(
-                "write",
-                uvfits_writer
+                with_increment_duration!("write", ms_writer.finalise().expect("couldn't finalise MS"));
+            };
+    
+            // Finalise the mwaf files.
+            if let Some(flag_file_set) = flag_file_set {
+                flag_file_set
                     .finalise()
-                    .expect("couldn't write antenna table to uvfits")
-            );
-        };
+                    .expect("couldn't finalise mwaf files");
+            }
 
-        // Finalise the MS writer.
-        if let Some(ms_writer) = ms_writer.as_mut() {
-            with_increment_duration!("write", ms_writer.finalise().expect("couldn't finalise MS"));
-        };
+        //}
 
-        // Finalise the mwaf files.
-        if let Some(flag_file_set) = flag_file_set {
-            flag_file_set
-                .finalise()
-                .expect("couldn't finalise mwaf files");
-        }
+
 
         // Copy the global durations out to the caller.
         let durations = crate::DURATIONS.lock().unwrap().clone();
