@@ -1,7 +1,11 @@
 //! Command Line Interface helpers for Birli
 
 use crate::{
-    error::{BirliError, BirliError::DryRun, CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier}},
+    error::{
+        BirliError,
+        BirliError::DryRun,
+        CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
+    },
     flags::FlagContext,
     io::{aocal::AOCalSols, IOContext},
     marlu::{
@@ -155,7 +159,6 @@ pub struct ChannelRanges {
     pub ranges: Vec<(usize, usize)>,
 }
 
-
 impl ChannelRanges {
     /// Create a new ChannelRanges object from a string
     /// e.g. "1-10, 20-30, 40-50"
@@ -168,24 +171,25 @@ impl ChannelRanges {
                     let end_result = end.trim().parse::<usize>();
                     match (start_result, end_result) {
                         (Ok(start), Ok(end)) => {
-                          ranges.push((start, end));
+                            ranges.push((start, end));
                         }
                         _ => {
                             return Err(BirliError::CLIError(InvalidRangeSpecifier {
                                 reason: format!("invalid channel range: {}", range),
                             }));
                         }
-                    }              
+                    }
                 }
                 _ => {
                     return Err(BirliError::CLIError(InvalidRangeSpecifier {
-                        reason: format!("invalid channel range: {}", range)}));
+                        reason: format!("invalid channel range: {}", range),
+                    }));
                 }
             }
         }
         Ok(ChannelRanges { ranges })
     }
-    
+
     /// Create a new ChannelRanges object spanning all available channels in the metafits context
     pub fn all(context: &CorrelatorContext) -> Self {
         // Infer ranges from consecutive values of rec_chan_number in context.coarse_chans
@@ -206,9 +210,7 @@ impl ChannelRanges {
         ranges.push((range_start, range_last));
         ChannelRanges { ranges }
     }
-
 }
-
 
 impl Display for BirliContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -828,14 +830,12 @@ impl<'a> BirliContext<'a> {
         let sel_chan_ranges = ChannelRanges::all(corr_ctx);
         if matches.is_present("sel-chan-ranges") {
             match matches.value_of("sel-chan-ranges") {
-                Some(range_str) => { 
-                    ChannelRanges::new(range_str)
-                }
+                Some(range_str) => ChannelRanges::new(range_str),
                 None => Err(BirliError::CLIError(InvalidCommandLineArgument {
                     option: "--sel-chan-ranges <RANGES>".into(),
                     expected: "comma-separated list of ranges, e.g. 0-10,20-30".into(),
                     received: "no value".into(),
-                }))
+                })),
             }
         } else {
             Ok(sel_chan_ranges)
@@ -1369,7 +1369,6 @@ impl<'a> BirliContext<'a> {
         Ok(result)
     }
 
-
     /// Call `run()` for every channel range in `self.channel_range_sel`.
     pub fn run_ranges(self) -> Vec<Result<HashMap<String, Duration>, BirliError>> {
         let ranges = self.channel_range_sel.ranges.clone();
@@ -1386,7 +1385,8 @@ impl<'a> BirliContext<'a> {
             channel_range_sel: self.channel_range_sel,
         };
         ranged_context.vis_sel = ranged_context.vis_sel.clone();
-        let mut results: Vec<Result<HashMap<String, Duration>, BirliError>> = Vec::with_capacity(ranges.len());
+        let mut results: Vec<Result<HashMap<String, Duration>, BirliError>> =
+            Vec::with_capacity(ranges.len());
         for (range_start, range_end) in ranges {
             ranged_context.vis_sel.coarse_chan_range = range_start..range_end;
             results.push(ranged_context.run());
@@ -1475,7 +1475,6 @@ impl<'a> BirliContext<'a> {
             None
         };
 
-
         let args_strings = env::args().collect_vec();
         let cmd_line = shlex::join(args_strings.iter().map(String::as_str));
         let application = format!("{} {}", PKG_NAME, PKG_VERSION);
@@ -1545,7 +1544,7 @@ impl<'a> BirliContext<'a> {
             });
             writer
         });
-    
+
         #[cfg(feature = "aoflagger")]
         let (aoflagger_version, aoflagger_strategy) = {
             let mut major = 0;
@@ -1576,11 +1575,11 @@ impl<'a> BirliContext<'a> {
             )
             .expect("cannot create flag file writer")
         });
-    
+
         // //////// //
         // Chunking //
         // //////// //
-    
+
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
         let chunk_size = if let Some(steps) = num_timesteps_per_chunk {
             *steps
@@ -1588,7 +1587,7 @@ impl<'a> BirliContext<'a> {
             let num_timesteps: usize = vis_sel.timestep_range.len();
             num_timesteps
         };
-    
+
         // Allocate our big arrays once, reuse them for each chunk unless the chunk shape changes
         let chunk_vis_sel = VisSelection {
             timestep_range: (vis_sel.timestep_range.start
@@ -1598,7 +1597,7 @@ impl<'a> BirliContext<'a> {
         let mut jones_array = chunk_vis_sel.allocate_jones(fine_chans_per_coarse)?;
         let mut flag_array = chunk_vis_sel.allocate_flags(fine_chans_per_coarse)?;
         let mut weight_array = chunk_vis_sel.allocate_weights(fine_chans_per_coarse)?;
-    
+
         for mut timestep_chunk in &vis_sel.timestep_range.clone().chunks(chunk_size) {
             let chunk_first_timestep = timestep_chunk.next().expect("zero-sized chunk");
             let chunk_vis_sel = VisSelection {
@@ -1614,7 +1613,7 @@ impl<'a> BirliContext<'a> {
                     chunk_size
                 );
             }
-    
+
             // only reallocate arrays if the chunk dimensions have changed.
             let chunk_dims = chunk_vis_sel.get_shape(fine_chans_per_coarse);
             let (mut jones_array, mut flag_array, mut weight_array) = if jones_array.dim()
@@ -1632,7 +1631,7 @@ impl<'a> BirliContext<'a> {
                     weight_array.slice_mut(s![0..chunk_dims.0, 0..chunk_dims.1, 0..chunk_dims.2]),
                 )
             };
-    
+
             // populate flags
             flag_ctx.set_flags(
                 flag_array.view_mut(),
@@ -1640,7 +1639,7 @@ impl<'a> BirliContext<'a> {
                 &chunk_vis_sel.coarse_chan_range,
                 &chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
             )?;
-    
+
             // populate visibilities
             with_increment_duration!(
                 "read",
@@ -1651,10 +1650,10 @@ impl<'a> BirliContext<'a> {
                     prep_ctx.draw_progress,
                 )?
             );
-    
+
             // populate weights
             weight_array.fill(vis_ctx.weight_factor() as f32);
-    
+
             prep_ctx.preprocess(
                 &corr_ctx,
                 jones_array.view_mut(),
@@ -1662,7 +1661,7 @@ impl<'a> BirliContext<'a> {
                 flag_array.view_mut(),
                 &chunk_vis_sel,
             )?;
-    
+
             // output flags (before averaging)
             if let Some(flag_file_set) = flag_file_set.as_mut() {
                 with_increment_duration!(
@@ -1672,7 +1671,7 @@ impl<'a> BirliContext<'a> {
                         .expect("unable to write flags")
                 );
             }
-    
+
             // bake flags into weights
             for (weight, flag) in izip!(weight_array.iter_mut(), flag_array.iter()) {
                 *weight = if *flag {
@@ -1681,7 +1680,7 @@ impl<'a> BirliContext<'a> {
                     (*weight).abs()
                 } as f32;
             }
-    
+
             let chunk_vis_ctx = VisContext::from_mwalib(
                 &corr_ctx,
                 &chunk_vis_sel.timestep_range,
@@ -1690,7 +1689,7 @@ impl<'a> BirliContext<'a> {
                 *avg_time,
                 *avg_freq,
             );
-    
+
             // output uvfits
             if let Some(uvfits_writer) = uvfits_writer.as_mut() {
                 with_increment_duration!(
@@ -1705,7 +1704,7 @@ impl<'a> BirliContext<'a> {
                         .expect("unable to write uvfits")
                 );
             }
-    
+
             // output ms
             if let Some(ms_writer) = ms_writer.as_mut() {
                 with_increment_duration!(
@@ -1731,12 +1730,12 @@ impl<'a> BirliContext<'a> {
                     .expect("couldn't write antenna table to uvfits")
             );
         };
-    
+
         // Finalise the MS writer.
         if let Some(ms_writer) = ms_writer.as_mut() {
             with_increment_duration!("write", ms_writer.finalise().expect("couldn't finalise MS"));
         };
-    
+
         // Finalise the mwaf files.
         if let Some(flag_file_set) = flag_file_set {
             flag_file_set
@@ -2619,7 +2618,6 @@ mod argparse_tests {
         );
     }
 
-    
     #[test]
     fn test_parse_sel_range_single() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
@@ -2628,7 +2626,9 @@ mod argparse_tests {
         let mut args = vec!["birli", "-m", metafits_path, "--sel-chan-ranges", "2-10", "--"];
         args.extend_from_slice(&gpufits_paths);
 
-        let BirliContext { channel_range_sel, .. } = BirliContext::from_args(&args).unwrap();
+        let BirliContext {
+            channel_range_sel, ..
+        } = BirliContext::from_args(&args).unwrap();
 
         assert!(channel_range_sel.ranges.len() == 1);
         assert!(channel_range_sel.ranges[0].0 == 2);
@@ -2643,7 +2643,9 @@ mod argparse_tests {
         let mut args = vec!["birli", "-m", metafits_path, "--sel-chan-ranges", "2-4,6-8", "--"];
         args.extend_from_slice(&gpufits_paths);
 
-        let BirliContext { channel_range_sel, .. } = BirliContext::from_args(&args).unwrap();
+        let BirliContext {
+            channel_range_sel, ..
+        } = BirliContext::from_args(&args).unwrap();
 
         assert!(channel_range_sel.ranges.len() == 2);
         assert!(channel_range_sel.ranges[0].0 == 2);
@@ -2651,8 +2653,6 @@ mod argparse_tests {
         assert!(channel_range_sel.ranges[1].0 == 6);
         assert!(channel_range_sel.ranges[1].1 == 8);
     }
-
-
 }
 
 /// These are basically integration tests, but if I put them in a separate
