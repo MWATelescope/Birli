@@ -1,6 +1,6 @@
 use birli::{cli::BirliContext, BirliError};
 use log::{info, trace};
-use std::{env, ffi::OsString, fmt::Debug, time::Duration, collections::HashMap};
+use std::{collections::HashMap, env, ffi::OsString, fmt::Debug, time::Duration};
 
 #[allow(clippy::field_reassign_with_default)]
 fn main_with_args<I, T>(args: I) -> i32
@@ -43,7 +43,6 @@ where
         }
     }
     ret_code
-    
 }
 
 fn main() {
