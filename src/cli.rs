@@ -1409,16 +1409,21 @@ impl<'a> BirliContext<'a> {
                     range_start,
                     range_end
                 ));
+                println!("Writing MS output to file: {:?}", path);
                 path
             });
-            println!(
-                "ranged_context.vis_sel.coarse_chan_range: {:?}",
-                ranged_context.vis_sel.coarse_chan_range
-            );
-            //ranged_context.io_ctx.gpufits_in = original_io_ctx.gpufits_in[range_start..range_end]
-            //    .iter()
-            //    .map(|path| path.clone())
-            //    .collect();
+            ranged_context.io_ctx.uvfits_out = ranged_context.io_ctx.uvfits_out.map(|path| {
+                let mut path = path.clone();
+                path.set_file_name(format!(
+                    "{}_{}-{}.uvfits",
+                    path.file_stem().unwrap().to_str().unwrap(),
+                    range_start,
+                    range_end
+                ));
+                println!("Writing UVFITS output to file: {:?}", path);
+                path
+            });
+
             results.push(ranged_context.run());
         }
         results
