@@ -27,7 +27,7 @@ use crate::{
 use self::error::IOError;
 
 /// Groups together parameters related to I/O
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct IOContext {
     // in
     /// The path to the .metafits input file
