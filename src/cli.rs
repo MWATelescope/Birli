@@ -461,7 +461,9 @@ impl Display for BirliContext<'_> {
             let common = common_coarse_chan_indices.contains(&chan_idx);
             let good = common_good_coarse_chan_indices.contains(&chan_idx);
             let flagged = coarse_chan_flag_idxs.contains(&chan_idx);
-            let range = self.channel_range_sel.ranges
+            let range = self
+                .channel_range_sel
+                .ranges
                 .iter()
                 .enumerate()
                 .find(|(idx, (start, end))| chan_idx >= *start && chan_idx <= *end);
@@ -1396,7 +1398,7 @@ impl<'a> BirliContext<'a> {
         let mut results: Vec<Result<HashMap<String, Duration>, BirliError>> =
             Vec::with_capacity(ranges.len());
         for (range_start, range_end) in ranges {
-            ranged_context.vis_sel.coarse_chan_range = range_start..range_end+1;
+            ranged_context.vis_sel.coarse_chan_range = range_start..range_end + 1;
             //ranged_context.
             ranged_context.io_ctx = original_io_ctx.clone();
             ranged_context.io_ctx.ms_out = ranged_context.io_ctx.ms_out.map(|path| {
@@ -1409,7 +1411,10 @@ impl<'a> BirliContext<'a> {
                 ));
                 path
             });
-            println!("ranged_context.vis_sel.coarse_chan_range: {:?}", ranged_context.vis_sel.coarse_chan_range);
+            println!(
+                "ranged_context.vis_sel.coarse_chan_range: {:?}",
+                ranged_context.vis_sel.coarse_chan_range
+            );
             //ranged_context.io_ctx.gpufits_in = original_io_ctx.gpufits_in[range_start..range_end]
             //    .iter()
             //    .map(|path| path.clone())
@@ -1556,7 +1561,11 @@ impl<'a> BirliContext<'a> {
                 antenna_positions,
                 dut1,
             );
-            println!("Writing to MS: {} with {} chans selected", ms_out.display(), vis_ctx.num_sel_chans);
+            println!(
+                "Writing to MS: {} with {} chans selected",
+                ms_out.display(),
+                vis_ctx.num_sel_chans
+            );
             with_increment_duration!("init", {
                 writer
                     .initialize_mwa(
