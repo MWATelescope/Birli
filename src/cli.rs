@@ -27,6 +27,7 @@ use cfg_if::cfg_if;
 use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
 use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
+use marlu::mwalib::CoarseChannel;
 use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, fitsio_sys::CFITSIO_VERSION, CableDelaysApplied,
     CorrelatorContext, GeometricDelaysApplied,
@@ -192,18 +193,16 @@ impl ChannelRanges {
 
     /// Create a new ChannelRanges object spanning all available channels in the metafits context
     pub fn all(context: &CorrelatorContext) -> Self {
-        // Infer ranges from consecutive values of rec_chan_number in context.coarse_chans
-        let mut coarse_chans = context.coarse_chans.clone();
-        coarse_chans.sort_by_key(|c| c.rec_chan_number);
+        let mut coarse_chan_indices = context.common_coarse_chan_indices.iter();
         let mut ranges: Vec<(usize, usize)> = Vec::new();
-        let mut range_start = coarse_chans[0].rec_chan_number;
+        let mut range_start = *coarse_chan_indices.next().unwrap();
         let mut range_last = range_start;
-        for chan in coarse_chans.iter().skip(1) {
-            if chan.rec_chan_number == range_last + 1 {
+        for chan in coarse_chan_indices {
+            if *chan == range_last + 1 {
                 range_last += 1;
             } else {
                 ranges.push((range_start, range_last));
-                range_start = chan.rec_chan_number;
+                range_start = *chan;
                 range_last = range_start;
             }
         }
@@ -448,7 +447,8 @@ impl Display for BirliContext<'_> {
             "c",
             "g",
             "s",
-            "f"
+            "f",
+            "range",
         ]);
         coarse_chan_table.set_format(*prettyformat::consts::FORMAT_CLEAN);
         // coarse_chan_table
@@ -461,6 +461,10 @@ impl Display for BirliContext<'_> {
             let common = common_coarse_chan_indices.contains(&chan_idx);
             let good = common_good_coarse_chan_indices.contains(&chan_idx);
             let flagged = coarse_chan_flag_idxs.contains(&chan_idx);
+            let range = self.channel_range_sel.ranges
+                .iter()
+                .enumerate()
+                .find(|(idx, (start, end))| chan_idx >= *start && chan_idx <= *end);
             let row = row![r =>
                 format!("cc{}:", chan_idx),
                 chan.gpubox_number,
@@ -471,20 +475,22 @@ impl Display for BirliContext<'_> {
                 if common {"c"} else {""},
                 if good {"g"} else {""},
                 if selected {"s"} else {""},
-                if flagged {"f"} else {""}
+                if flagged {"f"} else {""},
+                if let Some((idx, (start,end))) = range { format!("{} ({}-{})", idx, start, end) } else { "".into() }
             ];
             coarse_chan_table.add_row(row);
         }
 
         writeln!(
             f,
-            "Coarse channel details (metafits={}, provided={}, common={}, good={}, select={}, flag={}):\n{}",
+            "Coarse channel details (metafits={}, provided={}, common={}, good={}, select={}, flag={}, ranges={}):\n{}",
             self.corr_ctx.num_coarse_chans,
             self.corr_ctx.num_provided_coarse_chans,
             self.corr_ctx.num_common_coarse_chans,
             self.corr_ctx.num_common_good_coarse_chans,
             self.vis_sel.coarse_chan_range.len(),
             coarse_chan_flag_idxs.len(),
+            self.channel_range_sel.ranges.len(),
             coarse_chan_table
         )?;
 
@@ -1384,11 +1390,30 @@ impl<'a> BirliContext<'a> {
             ignore_dut1: self.ignore_dut1,
             channel_range_sel: self.channel_range_sel,
         };
+        let original_io_ctx = ranged_context.io_ctx.clone();
         ranged_context.vis_sel = ranged_context.vis_sel.clone();
+        ranged_context.io_ctx = ranged_context.io_ctx.clone();
         let mut results: Vec<Result<HashMap<String, Duration>, BirliError>> =
             Vec::with_capacity(ranges.len());
         for (range_start, range_end) in ranges {
-            ranged_context.vis_sel.coarse_chan_range = range_start..range_end;
+            ranged_context.vis_sel.coarse_chan_range = range_start..range_end+1;
+            //ranged_context.
+            ranged_context.io_ctx = original_io_ctx.clone();
+            ranged_context.io_ctx.ms_out = ranged_context.io_ctx.ms_out.map(|path| {
+                let mut path = path.clone();
+                path.set_file_name(format!(
+                    "{}_{}-{}.ms",
+                    path.file_stem().unwrap().to_str().unwrap(),
+                    range_start,
+                    range_end
+                ));
+                path
+            });
+            println!("ranged_context.vis_sel.coarse_chan_range: {:?}", ranged_context.vis_sel.coarse_chan_range);
+            //ranged_context.io_ctx.gpufits_in = original_io_ctx.gpufits_in[range_start..range_end]
+            //    .iter()
+            //    .map(|path| path.clone())
+            //    .collect();
             results.push(ranged_context.run());
         }
         results
@@ -1531,6 +1556,7 @@ impl<'a> BirliContext<'a> {
                 antenna_positions,
                 dut1,
             );
+            println!("Writing to MS: {} with {} chans selected", ms_out.display(), vis_ctx.num_sel_chans);
             with_increment_duration!("init", {
                 writer
                     .initialize_mwa(
