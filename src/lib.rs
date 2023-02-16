@@ -206,9 +206,13 @@ cfg_if! {
 #[cfg(test)]
 pub mod test_common;
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Duration;
+
 lazy_static::lazy_static! {
-    static ref DURATIONS: std::sync::Mutex<std::collections::HashMap<String, std::time::Duration>> = {
-        std::sync::Mutex::new(std::collections::HashMap::new())
+    static ref DURATIONS: Mutex<HashMap<String, Duration>> = {
+        Mutex::new(HashMap::new())
     };
 }
 
@@ -228,4 +232,10 @@ macro_rules! with_increment_duration {
             _res
         }
     };
+}
+
+/// Get the hashmap of durations used internally by Birli for timing functions with
+/// [`with_increment_duration!`]
+pub fn get_durations() -> HashMap<String, Duration> {
+    crate::DURATIONS.lock().unwrap().clone()
 }
