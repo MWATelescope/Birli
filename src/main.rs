@@ -1,6 +1,7 @@
 use birli::{cli::BirliContext, BirliError};
 use log::{info, trace};
 use std::{collections::HashMap, env, ffi::OsString, fmt::Debug, time::Duration};
+use clap::ErrorKind::{DisplayHelp, DisplayVersion};
 
 #[allow(clippy::field_reassign_with_default)]
 fn main_with_args<I, T>(args: I) -> i32
@@ -15,7 +16,15 @@ where
             info!("Dry run. No files will be written.");
             return 0;
         }
-        Err(BirliError::ClapError(inner)) => inner.exit(),
+        Err(BirliError::ClapError(inner)) => {
+            // Swallow broken pipe errors
+            trace!("clap error: {:?}", inner.kind());
+            let _ = inner.print();
+            match inner.kind() {
+                DisplayHelp | DisplayVersion => return 0,
+                _ => return 1,
+            }
+        },
         Err(e) => {
             eprintln!("error parsing args: {}", e);
             return 1;
