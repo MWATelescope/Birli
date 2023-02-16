@@ -85,6 +85,19 @@ Because the file cuts off 2 scans in, and has all antennae flagged, a fixed vers
 >>> meta_fits.writeto("1254670392.fixed.metafits", overwrite=True)
 ```
 
+## 1119683928 - Picket
+
+this is the smallest calibrator observation with 24 channels which has non-contiguous coarse channels. It was found
+using the following ADQL query:
+
+```sql
+SELECT TOP 100 obs_id, obsname, total_archived_data_bytes, gpubox_files_archived, calibrators, channels_are_contiguous
+FROM mwa.observation
+WHERE total_archived_data_bytes > 0
+  AND gpubox_files_archived > 22
+ORDER BY total_archived_data_bytes ASC
+```
+
 ## Generating test files
 
 warning: the following line needs to be patched out in Cotter for this to work. https://github.com/MWATelescope/cotter/blob/b60b633b6b4b11bc5c84162bd0058a24d98f650c/gpufilereader.cpp#L195

@@ -154,7 +154,7 @@ fn time_details(
 
 /// Structure representing a series of channel ranges
 /// e.g. 1-10, 20-30, 40-50
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ChannelRanges {
     /// Vector of channel ranges
     pub ranges: Vec<(usize, usize)>,
@@ -196,20 +196,27 @@ impl ChannelRanges {
 
     /// Create a new `ChannelRanges` object spanning all available channels in the metafits context
     pub fn all(context: &CorrelatorContext) -> Self {
-        let mut coarse_chan_indices = context.common_coarse_chan_indices.iter();
+        let coarse_chan_indices = &context.common_coarse_chan_indices;
+        // get the first value in the vector
+        let mut range_start_idx = coarse_chan_indices[0];
+        let mut range_end_idx = range_start_idx;
+        let mut range_end_ch = context.coarse_chans[range_start_idx].rec_chan_number;
+
         let mut ranges: Vec<(usize, usize)> = Vec::new();
-        let mut range_start = *coarse_chan_indices.next().unwrap();
-        let mut range_last = range_start;
-        for chan in coarse_chan_indices {
-            if *chan == range_last + 1 {
-                range_last += 1;
+        for &idx in &coarse_chan_indices[1..] {
+            let ch = context.coarse_chans[idx].rec_chan_number;
+            dbg!(idx, ch, range_end_idx, range_end_ch);
+            if idx == range_end_idx + 1 && ch == range_end_ch + 1 {
+                range_end_idx = idx;
+                range_end_ch = ch;
             } else {
-                ranges.push((range_start, range_last));
-                range_start = *chan;
-                range_last = range_start;
+                ranges.push((range_start_idx, range_end_idx));
+                range_start_idx = idx;
+                range_end_idx = range_start_idx;
+                range_end_ch = ch;
             }
         }
-        ranges.push((range_start, range_last));
+        ranges.push((range_start_idx, range_end_idx));
         Self { ranges }
     }
 }
@@ -1624,10 +1631,13 @@ impl<'a> BirliContext<'a> {
         // //////// //
 
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
-        let chunk_size = num_timesteps_per_chunk.map_or_else(|| {
-            let num_timesteps: usize = vis_sel.timestep_range.len();
-            num_timesteps
-        }, |steps| steps);
+        let chunk_size = num_timesteps_per_chunk.map_or_else(
+            || {
+                let num_timesteps: usize = vis_sel.timestep_range.len();
+                num_timesteps
+            },
+            |steps| steps,
+        );
 
         // Allocate our big arrays once, reuse them for each chunk unless the chunk shape changes
         let chunk_vis_sel = VisSelection {
@@ -2693,6 +2703,31 @@ mod argparse_tests {
         assert!(channel_range_sel.ranges[0].1 == 4);
         assert!(channel_range_sel.ranges[1].0 == 6);
         assert!(channel_range_sel.ranges[1].1 == 8);
+    }
+}
+
+#[cfg(test)]
+mod channel_range_tests {
+    use marlu::mwalib::CorrelatorContext;
+
+    use crate::{cli::ChannelRanges, test_common::get_1119683928_picket_paths};
+
+    #[test]
+    fn test_picket_range() {
+        let (metafits_path, gpufits_paths) = get_1119683928_picket_paths();
+
+        let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
+
+        let channel_range_sel = ChannelRanges::all(&corr_ctx);
+
+        assert!(channel_range_sel.ranges.len() == 12);
+        assert!(channel_range_sel.ranges[0].0 == 0);
+        assert!(channel_range_sel.ranges[0].1 == 1);
+        assert!(channel_range_sel.ranges[1].0 == 2);
+        assert!(channel_range_sel.ranges[1].1 == 3);
+        // ...
+        assert!(channel_range_sel.ranges[11].0 == 22);
+        assert!(channel_range_sel.ranges[11].1 == 23);
     }
 }
 
