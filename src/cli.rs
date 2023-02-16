@@ -27,7 +27,7 @@ use cfg_if::cfg_if;
 use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
 use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
-use marlu::mwalib::CoarseChannel;
+
 use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, fitsio_sys::CFITSIO_VERSION, CableDelaysApplied,
     CorrelatorContext, GeometricDelaysApplied,
@@ -161,8 +161,11 @@ pub struct ChannelRanges {
 }
 
 impl ChannelRanges {
-    /// Create a new ChannelRanges object from a string
+    /// Create a new `ChannelRanges` object from a string
     /// e.g. "1-10, 20-30, 40-50"
+    ///
+    /// # Errors
+    /// `BirliError::CLIError` if the string does not conform to the expected format
     pub fn new(s: &str) -> Result<Self, BirliError> {
         let mut ranges = Vec::new();
         for range in s.split(',') {
@@ -188,10 +191,10 @@ impl ChannelRanges {
                 }
             }
         }
-        Ok(ChannelRanges { ranges })
+        Ok(Self { ranges })
     }
 
-    /// Create a new ChannelRanges object spanning all available channels in the metafits context
+    /// Create a new `ChannelRanges` object spanning all available channels in the metafits context
     pub fn all(context: &CorrelatorContext) -> Self {
         let mut coarse_chan_indices = context.common_coarse_chan_indices.iter();
         let mut ranges: Vec<(usize, usize)> = Vec::new();
@@ -207,7 +210,7 @@ impl ChannelRanges {
             }
         }
         ranges.push((range_start, range_last));
-        ChannelRanges { ranges }
+        Self { ranges }
     }
 }
 
@@ -466,7 +469,7 @@ impl Display for BirliContext<'_> {
                 .ranges
                 .iter()
                 .enumerate()
-                .find(|(idx, (start, end))| chan_idx >= *start && chan_idx <= *end);
+                .find(|(_idx, (start, end))| chan_idx >= *start && chan_idx <= *end);
             let row = row![r =>
                 format!("cc{}:", chan_idx),
                 chan.gpubox_number,
@@ -1402,7 +1405,7 @@ impl<'a> BirliContext<'a> {
             //ranged_context.
             ranged_context.io_ctx = original_io_ctx.clone();
             ranged_context.io_ctx.ms_out = ranged_context.io_ctx.ms_out.map(|path| {
-                let mut path = path.clone();
+                let mut path = path;
                 path.set_file_name(format!(
                     "{}_{}-{}.ms",
                     path.file_stem().unwrap().to_str().unwrap(),
@@ -1413,7 +1416,7 @@ impl<'a> BirliContext<'a> {
                 path
             });
             ranged_context.io_ctx.uvfits_out = ranged_context.io_ctx.uvfits_out.map(|path| {
-                let mut path = path.clone();
+                let mut path = path;
                 path.set_file_name(format!(
                     "{}_{}-{}.uvfits",
                     path.file_stem().unwrap().to_str().unwrap(),
@@ -1456,7 +1459,7 @@ impl<'a> BirliContext<'a> {
         // ////////// //
 
         let vis_ctx = VisContext::from_mwalib(
-            &corr_ctx,
+            corr_ctx,
             &vis_sel.timestep_range,
             &vis_sel.coarse_chan_range,
             &vis_sel.baseline_idxs,
@@ -1607,9 +1610,9 @@ impl<'a> BirliContext<'a> {
 
         let mut flag_file_set = io_ctx.flag_template.as_ref().map(|flag_template| {
             FlagFileSet::new(
-                &flag_template,
-                &corr_ctx,
-                &vis_sel,
+                flag_template,
+                corr_ctx,
+                vis_sel,
                 aoflagger_version,
                 aoflagger_strategy,
             )
@@ -1621,12 +1624,10 @@ impl<'a> BirliContext<'a> {
         // //////// //
 
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
-        let chunk_size = if let Some(steps) = num_timesteps_per_chunk {
-            *steps
-        } else {
+        let chunk_size = num_timesteps_per_chunk.map_or_else(|| {
             let num_timesteps: usize = vis_sel.timestep_range.len();
             num_timesteps
-        };
+        }, |steps| steps);
 
         // Allocate our big arrays once, reuse them for each chunk unless the chunk shape changes
         let chunk_vis_sel = VisSelection {
@@ -1684,7 +1685,7 @@ impl<'a> BirliContext<'a> {
             with_increment_duration!(
                 "read",
                 chunk_vis_sel.read_mwalib(
-                    &corr_ctx,
+                    corr_ctx,
                     jones_array.view_mut(),
                     flag_array.view_mut(),
                     prep_ctx.draw_progress,
@@ -1695,7 +1696,7 @@ impl<'a> BirliContext<'a> {
             weight_array.fill(vis_ctx.weight_factor() as f32);
 
             prep_ctx.preprocess(
-                &corr_ctx,
+                corr_ctx,
                 jones_array.view_mut(),
                 weight_array.view_mut(),
                 flag_array.view_mut(),
@@ -1722,7 +1723,7 @@ impl<'a> BirliContext<'a> {
             }
 
             let chunk_vis_ctx = VisContext::from_mwalib(
-                &corr_ctx,
+                corr_ctx,
                 &chunk_vis_sel.timestep_range,
                 &chunk_vis_sel.coarse_chan_range,
                 &chunk_vis_sel.baseline_idxs,
