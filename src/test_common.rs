@@ -60,6 +60,37 @@ pub const fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
     (metafits_path, gpufits_paths)
 }
 
+pub const fn get_1119683928_picket_paths() -> (&'static str, [&'static str; 24]) {
+    let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
+    let gpufits_paths = [
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox02_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox03_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox04_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox05_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox06_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox07_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox08_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox09_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox10_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox11_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox12_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox13_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox14_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox15_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox16_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox17_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox18_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox19_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox20_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox21_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox22_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox23_00.fits",
+        "tests/data/1119683928_picket/1119683928_20150630071834_gpubox24_00.fits",
+    ];
+    (metafits_path, gpufits_paths)
+}
+
 pub const fn get_mwax_data_paths() -> (&'static str, [&'static str; 4]) {
     let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
     let gpufits_paths = [

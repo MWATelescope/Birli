@@ -148,7 +148,6 @@ impl<'a> PreprocessContext<'a> {
     /// * `jones_array` - Array of Jones visibilties
     /// * `weight_array` - Array of weights associated with Jones visibilities
     /// * `flag_array` - Array of flags associated with Jones visibilities
-    /// * `durations` - Hashmap used to record timing info
     ///
     /// # Errors
     /// will wrap errors from `correct_digital_gains`, `correct_coarse_passband_gains`

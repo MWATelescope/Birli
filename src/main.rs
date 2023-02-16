@@ -1,7 +1,11 @@
-use birli::{cli::BirliContext, BirliError};
-use log::{info, trace};
-use std::{collections::HashMap, env, ffi::OsString, fmt::Debug, time::Duration};
+use birli::{
+    cli::BirliContext,
+    get_durations,
+    BirliError::{ClapError, DryRun},
+};
 use clap::ErrorKind::{DisplayHelp, DisplayVersion};
+use log::{info, trace};
+use std::{env, ffi::OsString, fmt::Debug, time::Duration};
 
 #[allow(clippy::field_reassign_with_default)]
 fn main_with_args<I, T>(args: I) -> i32
@@ -12,11 +16,11 @@ where
 {
     let birli_ctx = match BirliContext::from_args(args) {
         Ok(birli_ctx) => birli_ctx,
-        Err(BirliError::DryRun {}) => {
+        Err(DryRun {}) => {
             info!("Dry run. No files will be written.");
             return 0;
         }
-        Err(BirliError::ClapError(inner)) => {
+        Err(ClapError(inner)) => {
             // Swallow broken pipe errors
             trace!("clap error: {:?}", inner.kind());
             let _ = inner.print();
@@ -24,34 +28,37 @@ where
                 DisplayHelp | DisplayVersion => return 0,
                 _ => return 1,
             }
-        },
+        }
         Err(e) => {
             eprintln!("error parsing args: {}", e);
             return 1;
         }
     };
-    let results: Vec<Result<HashMap<String, Duration>, BirliError>> = birli_ctx.run_ranges();
-    let mut ret_code = 0;
-    for result in results {
-        match result {
-            Ok(durations) => {
-                info!(
-                    "total duration: {:?}",
-                    durations
-                        .into_iter()
-                        .fold(Duration::ZERO, |duration_sum, (name, duration)| {
-                            info!("{} duration: {:?}", name, duration);
-                            duration_sum + duration
-                        })
-                );
-            }
-            Err(e) => {
-                eprintln!("preprocessing error: {}", e);
-                ret_code = 1;
-            }
+    let result = match birli_ctx.channel_range_sel.ranges.len() {
+        1 => birli_ctx.run(),
+        n if n > 1 => birli_ctx.run_ranges(),
+        _ => unreachable!(),
+    };
+    match result {
+        Ok(_) => {
+            info!(
+                "total duration: {:?}",
+                get_durations().into_iter().fold(
+                    Duration::ZERO,
+                    |duration_sum, (name, duration)| {
+                        info!("{} duration: {:?}", name, duration);
+                        duration_sum + duration
+                    }
+                )
+            );
+            0
+        }
+        // TODO(Dev): different return codes for different errors
+        Err(e) => {
+            eprintln!("preprocessing error: {}", e);
+            1
         }
     }
-    ret_code
 }
 
 fn main() {
@@ -73,8 +80,13 @@ mod tests {
     use super::main_with_args;
 
     #[test]
-    fn main_with_version_doesnt_crash() {
+    fn main_with_version_succeeds() {
         assert_eq!(main_with_args(&["birli", "--version"]), 0);
+    }
+
+    #[test]
+    fn main_with_help_succeeds() {
+        assert_eq!(main_with_args(&["birli", "--help"]), 0);
     }
 
     #[test]

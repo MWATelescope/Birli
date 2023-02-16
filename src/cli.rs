@@ -34,7 +34,6 @@ use mwalib::{
 };
 use prettytable::{format as prettyformat, row, table};
 use std::{
-    collections::HashMap,
     convert::Into,
     env,
     ffi::OsString,
@@ -1388,7 +1387,10 @@ impl<'a> BirliContext<'a> {
     }
 
     /// Call `run()` for every channel range in `self.channel_range_sel`.
-    pub fn run_ranges(self) -> Vec<Result<HashMap<String, Duration>, BirliError>> {
+    ///
+    /// # Errors
+    /// see: `run()`
+    pub fn run_ranges(self) -> Result<(), BirliError> {
         let ranges = self.channel_range_sel.ranges.clone();
         let mut ranged_context: BirliContext = BirliContext {
             corr_ctx: self.corr_ctx,
@@ -1405,8 +1407,6 @@ impl<'a> BirliContext<'a> {
         let original_io_ctx = ranged_context.io_ctx.clone();
         ranged_context.vis_sel = ranged_context.vis_sel.clone();
         ranged_context.io_ctx = ranged_context.io_ctx.clone();
-        let mut results: Vec<Result<HashMap<String, Duration>, BirliError>> =
-            Vec::with_capacity(ranges.len());
         for (range_start, range_end) in ranges {
             ranged_context.vis_sel.coarse_chan_range = range_start..range_end + 1;
             //ranged_context.
@@ -1433,10 +1433,9 @@ impl<'a> BirliContext<'a> {
                 println!("Writing UVFITS output to file: {:?}", path);
                 path
             });
-
-            results.push(ranged_context.run());
+            ranged_context.run()?;
         }
-        results
+        Ok(())
     }
 
     /// Read, Preprocess and write corrected visibilities chunks.
@@ -1447,7 +1446,7 @@ impl<'a> BirliContext<'a> {
     /// - `BadArrayShape` if the shape of the calibration solutions
     ///     is incompatible with the visibility shape.
     /// - preprocessing errors
-    pub fn run(&self) -> Result<HashMap<String, Duration>, BirliError> {
+    pub fn run(&self) -> Result<(), BirliError> {
         let Self {
             corr_ctx,
             vis_sel,
@@ -1794,9 +1793,7 @@ impl<'a> BirliContext<'a> {
                 .expect("couldn't finalise mwaf files");
         }
 
-        // Copy the global durations out to the caller.
-        let durations = crate::DURATIONS.lock().unwrap().clone();
-        Ok(durations)
+        Ok(())
     }
 }
 
