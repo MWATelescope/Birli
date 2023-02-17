@@ -100,7 +100,7 @@ ORDER BY total_archived_data_bytes ASC
 
 ## Generating test files
 
-warning: the following line needs to be patched out in Cotter for this to work. https://github.com/MWATelescope/cotter/blob/b60b633b6b4b11bc5c84162bd0058a24d98f650c/gpufilereader.cpp#L195
+warning: the following line needs to be patched out in Cotter for this to work. <https://github.com/MWATelescope/cotter/blob/b60b633b6b4b11bc5c84162bd0058a24d98f650c/gpufilereader.cpp#L195>
 
 ```bash
 python3 tests/data/generate_test_data.py | tee generate.log
