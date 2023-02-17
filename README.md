@@ -191,6 +191,7 @@ OPTIONS:
         --dry-run                    Just print the summary and exit
         --emulate-cotter             Use Cotter's array position, not MWAlib's
     -h, --help                       Print help information
+        --ignore-dut1                Do not use the DUT1 value, if available, in the metafits
         --no-draw-progress           do not show progress bars
         --phase-centre <RA> <DEC>    Override Phase centre from metafits (degrees)
         --pointing-centre            Use pointing instead phase centre
@@ -201,10 +202,11 @@ INPUT:
     <PATHS>...           GPUBox files to process
 
 SELECTION:
-        --no-sel-autos            [WIP] Deselect autocorrelations
-        --no-sel-flagged-ants     [WIP] Deselect flagged antennas
-        --sel-ants <ANTS>...      [WIP] Antenna to select
-        --sel-time <MIN> <MAX>    Timestep index range (inclusive) to select
+        --no-sel-autos                [WIP] Deselect autocorrelations
+        --no-sel-flagged-ants         [WIP] Deselect flagged antennas
+        --sel-ants <ANTS>...          [WIP] Antenna to select
+        --sel-chan-ranges <RANGES>    [WIP] Select separate channel ranges
+        --sel-time <MIN> <MAX>        Timestep index range (inclusive) to select
 
 RESOURCE LIMITS:
         --max-memory <GIBIBYTES>    [WIP] Estimate --time-chunk with <GIBIBYTES> GiB each chunk.
@@ -342,6 +344,10 @@ birli \
   -f $flag_template \
   ...
 ```
+
+When processing a set of coarse channels which are not contiguous in receiver channel number, a suffix
+will be added to the measurement set and uvfits filenames which indicates the coarse channel, or
+coarse channel range in that file.
 
 ### Comparison with Cotter
 

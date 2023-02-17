@@ -2,6 +2,8 @@
 
 # Unreleased
 
+- ✨ new features:
+  - support for non-contiguous coarse channel selections (picket fence!) 🎉
 - 🙏 quality of life:
   - report error messages properly, not as Rust-internal representation
 
