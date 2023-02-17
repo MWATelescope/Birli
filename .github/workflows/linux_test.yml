@@ -37,11 +37,11 @@ jobs:
             wget \
             zip
 
-      - name: Install Rust toolchain (FIXME 2023-02-09, stable v1.67.0 is broken)
+      - name: Install stable Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: 1.66.1
+          toolchain: stable
           override: true
           components: rustfmt, clippy
 
