@@ -73,7 +73,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    // use approx::assert_abs_diff_eq;
+    use approx::assert_abs_diff_eq;
     use birli::mwalib::{
         _open_fits, _open_hdu, fits_open, fits_open_hdu, get_required_fits_key, CorrelatorContext,
         _get_required_fits_key,
@@ -185,11 +185,9 @@ mod tests {
 
         // check frequencies are correct.
         let corr_ctx = CorrelatorContext::new(&metafits_path, &gpufits_paths).unwrap();
-        let fine_chan_width_hz = corr_ctx.metafits_context.corr_fine_chan_width_hz;
         let cc1 = &corr_ctx.coarse_chans[1];
         let cc2 = &corr_ctx.coarse_chans[2];
         let cc3 = &corr_ctx.coarse_chans[3];
-        dbg!(&cc1, &cc2, &cc3, &fine_chan_width_hz);
 
         let mut uvfits_fptr_1 = fits_open!(uvfits_path_1.as_path()).unwrap();
         let uvfits_1_hdu_0 = fits_open_hdu!(&mut uvfits_fptr_1, 0).unwrap();
@@ -201,15 +199,14 @@ mod tests {
         let result_center_freq_2: f64 =
             get_required_fits_key!(&mut uvfits_fptr_2, &uvfits_2_hdu_0, "CRVAL4").unwrap();
 
-        dbg!(&result_center_freq_1, &result_center_freq_2);
+        // see: https://wiki.mwatelescope.org/display/MP/MWA+Fine+Channel+Centre+Frequencies
+        let offset_40khz = 15_000.;
+        let expected_center_freq_1 = cc1.chan_centre_hz as f64 + offset_40khz;
+        let expected_center_freq_2 =
+            (cc2.chan_centre_hz + cc3.chan_centre_hz) as f64 / 2. + offset_40khz;
 
-        let expected_center_freq_1 = cc1.chan_centre_hz as f64;
-        let expected_center_freq_2 = (cc2.chan_centre_hz + cc3.chan_centre_hz) as f64;
-
-        dbg!(&expected_center_freq_1, &expected_center_freq_2);
-        // failing so far.
-        // assert_abs_diff_eq!(result_center_freq_1, expected_center_freq_1);
-        // assert_abs_diff_eq!(result_center_freq_2, expected_center_freq_2);
+        assert_abs_diff_eq!(result_center_freq_1, expected_center_freq_1);
+        assert_abs_diff_eq!(result_center_freq_2, expected_center_freq_2);
     }
 
     #[test]
