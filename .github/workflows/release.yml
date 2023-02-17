@@ -13,7 +13,7 @@ jobs:
 
   publish-crate:
     name: Publish to crates.io
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
 
     steps:
     - name: Checkout sources

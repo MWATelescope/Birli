@@ -1,6 +1,6 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Unreleased
+# Version 0.9.0 (2023-02-17)
 
 - ✨ new features:
   - support for non-contiguous coarse channel selections (picket fence!) 🎉
