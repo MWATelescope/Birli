@@ -204,7 +204,6 @@ impl ChannelRanges {
         let mut ranges: Vec<(usize, usize)> = Vec::new();
         for &idx in &coarse_chan_indices[1..] {
             let ch = context.coarse_chans[idx].rec_chan_number;
-            dbg!(idx, ch, range_end_idx, range_end_ch);
             if idx == range_end_idx + 1 && ch == range_end_ch + 1 {
                 range_end_idx = idx;
                 range_end_ch = ch;
@@ -1392,6 +1391,8 @@ impl<'a> BirliContext<'a> {
     /// see: `run()`
     pub fn run_ranges(self) -> Result<(), BirliError> {
         let ranges = self.channel_range_sel.ranges.clone();
+        let coarse_chans = self.corr_ctx.coarse_chans.clone();
+        let original_io_ctx = self.io_ctx.clone();
         let mut ranged_context: BirliContext = BirliContext {
             corr_ctx: self.corr_ctx,
             prep_ctx: self.prep_ctx,
@@ -1404,35 +1405,38 @@ impl<'a> BirliContext<'a> {
             ignore_dut1: self.ignore_dut1,
             channel_range_sel: self.channel_range_sel,
         };
-        let original_io_ctx = ranged_context.io_ctx.clone();
-        ranged_context.vis_sel = ranged_context.vis_sel.clone();
-        ranged_context.io_ctx = ranged_context.io_ctx.clone();
-        for (range_start, range_end) in ranges {
+        for &(range_start, range_end) in &ranges {
             ranged_context.vis_sel.coarse_chan_range = range_start..range_end + 1;
-            //ranged_context.
+
             ranged_context.io_ctx = original_io_ctx.clone();
-            ranged_context.io_ctx.ms_out = ranged_context.io_ctx.ms_out.map(|path| {
-                let mut path = path;
+            let suffix = match (range_start, range_end) {
+                // single channel range
+                (m, n) if m == n => format!("_ch{}", coarse_chans[range_start].rec_chan_number),
+                // multi channel range
+                (m, n) if m < n => format!(
+                    "_ch{}-{}",
+                    coarse_chans[range_start].rec_chan_number,
+                    coarse_chans[range_end].rec_chan_number
+                ),
+                _ => unreachable!(),
+            };
+
+            if let Some(path) = ranged_context.io_ctx.ms_out.as_mut() {
                 path.set_file_name(format!(
-                    "{}_{}-{}.ms",
+                    "{}{}.{}",
                     path.file_stem().unwrap().to_str().unwrap(),
-                    range_start,
-                    range_end
+                    suffix,
+                    path.extension().unwrap().to_str().unwrap()
                 ));
-                println!("Writing MS output to file: {:?}", path);
-                path
-            });
-            ranged_context.io_ctx.uvfits_out = ranged_context.io_ctx.uvfits_out.map(|path| {
-                let mut path = path;
+            }
+            if let Some(path) = ranged_context.io_ctx.uvfits_out.as_mut() {
                 path.set_file_name(format!(
-                    "{}_{}-{}.uvfits",
+                    "{}{}.{}",
                     path.file_stem().unwrap().to_str().unwrap(),
-                    range_start,
-                    range_end
+                    suffix,
+                    path.extension().unwrap().to_str().unwrap()
                 ));
-                println!("Writing UVFITS output to file: {:?}", path);
-                path
-            });
+            }
             ranged_context.run()?;
         }
         Ok(())
