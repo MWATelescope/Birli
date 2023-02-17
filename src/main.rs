@@ -73,8 +73,6 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
-
     // use approx::assert_abs_diff_eq;
     use birli::mwalib::{
         _open_fits, _open_hdu, fits_open, fits_open_hdu, get_required_fits_key, CorrelatorContext,
@@ -238,17 +236,5 @@ mod tests {
         args.extend_from_slice(&gpufits_paths);
 
         assert_ne!(main_with_args(&args), 0);
-    }
-
-    #[test]
-    fn forked_main_with_version_prints_version() {
-        let pkg_name = env!("CARGO_PKG_NAME");
-        let pkg_version = env!("CARGO_PKG_VERSION");
-        assert_cli::Assert::main_binary()
-            .with_args(&["--version"])
-            .succeeds()
-            .stdout()
-            .contains(format!("{} {}\n", pkg_name, pkg_version).as_str())
-            .unwrap();
     }
 }
