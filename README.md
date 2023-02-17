@@ -186,7 +186,6 @@ OPTIONS:
         --dry-run                    Just print the summary and exit
         --emulate-cotter             Use Cotter's array position, not MWAlib's
     -h, --help                       Print help information
-        --ignore-dut1                Do not use the DUT1 value, if available, in the metafits
         --no-draw-progress           do not show progress bars
         --phase-centre <RA> <DEC>    Override Phase centre from metafits (degrees)
         --pointing-centre            Use pointing instead phase centre

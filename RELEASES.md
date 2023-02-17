@@ -5,6 +5,11 @@
 - ✨ new features:
   - support for non-contiguous coarse channel selections (picket fence!) 🎉
 - 🙏 quality of life:
+  - Remove the `--ignore-dut1` flag
+    - The DUT1 of an observation is now written as the `UT1UTC` key in a
+      measurement set. It continues to be written to `UT1UTC` in uvfits files.
+      As this value has no effect on the rest of the visibility file, the
+      `--ignore-dut1` flag is now useless.
   - Clippy lints
   - Update Marlu
     - The ERFA C library is no longer needed, so all mentions of it and

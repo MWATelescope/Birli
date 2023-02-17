@@ -67,8 +67,6 @@ pub struct BirliContext<'a> {
     pub avg_freq: usize,
     /// temporal chunking factor
     pub num_timesteps_per_chunk: Option<usize>,
-    /// Are we ignoring DUT1?
-    pub ignore_dut1: bool,
     /// channel selections for picket-fencing
     pub channel_range_sel: ChannelRanges,
 }
@@ -269,11 +267,8 @@ impl Display for BirliContext<'_> {
             .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
             .collect();
 
-        let dut1 = if self.ignore_dut1 {
-            hifitime::Duration::from_total_nanoseconds(0)
-        } else {
-            hifitime::Duration::from_seconds(self.corr_ctx.metafits_context.dut1.unwrap_or(0.0))
-        };
+        let dut1 =
+            hifitime::Duration::from_seconds(self.corr_ctx.metafits_context.dut1.unwrap_or(0.0));
         let (sched_start_date, sched_start_time, sched_start_mjd_s, sched_start_prec) =
             time_details(
                 self.corr_ctx.metafits_context.sched_start_gps_time_ms,
@@ -629,7 +624,6 @@ impl<'a> BirliContext<'a> {
                     .required(false),
                 arg!(--"pointing-centre" "Use pointing instead phase centre")
                     .conflicts_with("phase-centre"),
-                arg!(--"ignore-dut1" "Do not use the DUT1 value, if available, in the metafits"),
                 arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's"),
                 arg!(--"dry-run" "Just print the summary and exit"),
                 arg!(--"no-draw-progress" "do not show progress bars"),
@@ -1359,7 +1353,6 @@ impl<'a> BirliContext<'a> {
             avg_time,
             avg_freq,
             num_timesteps_per_chunk,
-            ignore_dut1: matches.is_present("ignore-dut1"),
             channel_range_sel,
         };
 
@@ -1389,7 +1382,6 @@ impl<'a> BirliContext<'a> {
             avg_time: self.avg_time,
             avg_freq: self.avg_freq,
             num_timesteps_per_chunk: self.num_timesteps_per_chunk,
-            ignore_dut1: self.ignore_dut1,
             channel_range_sel: self.channel_range_sel,
         };
         for &(range_start, range_end) in &ranges {
@@ -1446,7 +1438,6 @@ impl<'a> BirliContext<'a> {
             avg_time,
             avg_freq,
             num_timesteps_per_chunk,
-            ignore_dut1,
             ..
         } = self;
         let mut prep_ctx = self.prep_ctx.clone();
@@ -1534,11 +1525,7 @@ impl<'a> BirliContext<'a> {
                 (a.tile_name.clone(), xyz)
             })
             .unzip();
-        let dut1 = if *ignore_dut1 {
-            hifitime::Duration::from_total_nanoseconds(0)
-        } else {
-            hifitime::Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or(0.0))
-        };
+        let dut1 = hifitime::Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or(0.0));
         let mut uvfits_writer = io_ctx.uvfits_out.as_ref().map(|uvfits_out| {
             with_increment_duration!("init", {
                 UvfitsWriter::from_marlu(
