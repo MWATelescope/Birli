@@ -5,16 +5,13 @@ pub(crate) use super::error::ReadSolutionsError;
 
 use std::{fs::File, io::BufReader, path::Path};
 
-use crate::{
-    marlu::{
-        hifitime::{Duration, Epoch},
-        num_complex::Complex,
-        Jones,
-    },
-    ndarray::{prelude::*, Array3},
-};
+use crate::ndarray::{prelude::*, Array3};
 use byteorder::{LittleEndian, ReadBytesExt};
-use marlu::hifitime;
+use marlu::{
+    hifitime::{Duration, Epoch},
+    num_complex::Complex,
+    Jones,
+};
 
 /// All of the relevant information contained within an MWAOCAL .bin file.
 #[derive(Clone)]
@@ -126,14 +123,11 @@ impl AOCalSols {
                 (Some(s), Some(e)) if s != e => {
                     let duration = e - s;
                     let average_duration_per_timeblock =
-                        duration.in_seconds() / (num_timeblocks - 1) as f64;
+                        duration.to_seconds() / (num_timeblocks - 1) as f64;
                     let mut start_timestamps = vec![];
                     for i_timeblock in 0..num_timeblocks {
                         let start: Epoch = s + i_timeblock as f64
-                            * Duration::from_f64(
-                                average_duration_per_timeblock,
-                                hifitime::Unit::Second,
-                            );
+                            * Duration::from_seconds(average_duration_per_timeblock);
                         start_timestamps.push(start);
                     }
                     start_timestamps

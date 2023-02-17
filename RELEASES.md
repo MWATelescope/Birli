@@ -5,6 +5,9 @@
 - ✨ new features:
   - support for non-contiguous coarse channel selections (picket fence!) 🎉
 - 🙏 quality of life:
+  - Update Marlu
+    - The ERFA C library is no longer needed, so all mentions of it and
+      installations of it have been removed.
   - Use a newer aoflagger_sys crate
     - This allows for AOFLAGGER_INCLUDE_DIR and AOFLAGGER_LIB to be set and
       point to where aoflagger is installed, rather than searching in a default

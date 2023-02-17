@@ -8,7 +8,7 @@ use itertools::{izip, Itertools};
 use log::trace;
 use marlu::{
     constants::VEL_C,
-    hifitime::{Duration, Epoch, Unit},
+    hifitime::{Duration, Epoch},
     io::error::BadArrayShape,
     mwalib::{CorrelatorContext, MWAVersion},
     precession::precess_time,
@@ -223,7 +223,7 @@ pub fn correct_geometry(
             // This is at least partly due to different constants (the altitude is
             // definitely slightly different), but possibly also because ERFA is
             // more accurate than cotter's "homebrewed" Geodetic2XYZ.
-            LatLngHeight::new_mwa()
+            LatLngHeight::mwa()
         }
     };
 
@@ -251,7 +251,7 @@ pub fn correct_geometry(
         .iter()
         .map(|t| Epoch::from_gpst_seconds(t.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0))
         .collect::<Vec<_>>();
-    let dut1 = Duration::from_f64(corr_ctx.metafits_context.dut1.unwrap_or(0.0), Unit::Second);
+    let dut1 = Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or(0.0));
     let part_uvws = calc_part_uvws(
         &ant_pairs,
         &centroid_timestamps,
@@ -682,7 +682,7 @@ fn calc_part_uvws(
             epoch,
             dut1,
         );
-        let tiles_xyz_prec = prec.precess_xyz_parallel(tile_xyzs);
+        let tiles_xyz_prec = prec.precess_xyz(tile_xyzs);
         for (a, &xyz) in tiles_xyz_prec.iter().enumerate() {
             let uvw = UVW::from_xyz(xyz, prec.hadec_j2000);
             part_uvws[[t, a]] = uvw;
@@ -702,7 +702,7 @@ mod tests {
     use float_cmp::assert_approx_eq;
     use itertools::izip;
     use marlu::{
-        hifitime::{Duration, Epoch, Unit},
+        hifitime::{Duration, Epoch},
         precession::precess_time,
         Complex, Jones, LatLngHeight, RADec, XyzGeodetic, UVW,
     };
@@ -1006,7 +1006,7 @@ mod tests {
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
 
-        let array_pos = LatLngHeight::new_mwa();
+        let array_pos = LatLngHeight::mwa();
 
         let phase_centre_ra = RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context);
         let tiles_xyz_geod = XyzGeodetic::get_tiles_mwa(&corr_ctx.metafits_context);
@@ -1064,7 +1064,7 @@ mod tests {
         let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
         // Don't let a DUT1 value present in the metafits upset the
         // already-existing test values.
-        let dut1 = Duration::from_f64(0.0, Unit::Second);
+        let dut1 = Duration::from_seconds(0.0);
 
         // timestep 0
         let timestep_0 = &corr_ctx.timesteps[vis_sel.timestep_range.clone()][0];
@@ -1079,7 +1079,7 @@ mod tests {
             dut1,
         );
         let phase_centre_ha_j2000_0 = prec_info_0.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
-        let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
+        let tiles_xyz_precessed_0 = prec_info_0.precess_xyz(&tiles_xyz_geod);
         // timestep 3
         let timestep_3 = &corr_ctx.timesteps[vis_sel.timestep_range.clone()][3];
         let epoch_3 = Epoch::from_gpst_seconds(
@@ -1093,7 +1093,7 @@ mod tests {
             dut1,
         );
         let phase_centre_ha_j2000_3 = prec_info_3.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_3.lmst_j2000);
-        let tiles_xyz_precessed_3 = prec_info_3.precess_xyz_parallel(&tiles_xyz_geod);
+        let tiles_xyz_precessed_3 = prec_info_3.precess_xyz(&tiles_xyz_geod);
 
         // baseline 5
         let bl_5 = &corr_ctx.metafits_context.baselines[5];
@@ -1166,7 +1166,7 @@ mod tests {
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
 
-        let array_pos = LatLngHeight::new_mwa();
+        let array_pos = LatLngHeight::mwa();
 
         let phase_centre_ra = RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context);
         // let lst_rad = corr_ctx.metafits_context.lst_rad;
@@ -1212,7 +1212,7 @@ mod tests {
         let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
         // Don't let a DUT1 value present in the metafits upset the
         // already-existing test values.
-        let dut1 = Duration::from_f64(0.0, Unit::Second);
+        let dut1 = Duration::from_seconds(0.0);
 
         // timestep 0
         let timestep_0 = &corr_ctx.timesteps[vis_sel.timestep_range.clone()][0];
@@ -1227,7 +1227,7 @@ mod tests {
             dut1,
         );
         let phase_centre_ha_j2000_0 = prec_info_0.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_0.lmst_j2000);
-        let tiles_xyz_precessed_0 = prec_info_0.precess_xyz_parallel(&tiles_xyz_geod);
+        let tiles_xyz_precessed_0 = prec_info_0.precess_xyz(&tiles_xyz_geod);
         // timestep 3
         let timestep_3 = &corr_ctx.timesteps[vis_sel.timestep_range.clone()][3];
         let epoch_3 = Epoch::from_gpst_seconds(
@@ -1241,7 +1241,7 @@ mod tests {
             dut1,
         );
         let phase_centre_ha_j2000_3 = prec_info_3.hadec_j2000; // phase_centre_ra.to_hadec(prec_info_3.lmst_j2000);
-        let tiles_xyz_precessed_3 = prec_info_3.precess_xyz_parallel(&tiles_xyz_geod);
+        let tiles_xyz_precessed_3 = prec_info_3.precess_xyz(&tiles_xyz_geod);
 
         // baseline 1
         let bl_1 = &corr_ctx.metafits_context.baselines[1];

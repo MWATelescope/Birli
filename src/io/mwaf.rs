@@ -231,7 +231,7 @@ impl FlagFileSet {
                 Ok(mut fptr) => Self::write_primary_hdu(&mut fptr, &header, Some(gpubox.id)),
                 Err(fits_error) => Err(FitsOpen {
                     fits_error,
-                    fits_filename: gpubox.filename.display().to_string(),
+                    fits_filename: gpubox.filename.clone(),
                     source_file: file!(),
                     source_line: line!(),
                 }),
@@ -663,7 +663,7 @@ impl FlagFileSet {
         let baselines = (header.num_ants * (header.num_ants + 1)) / 2;
         if header.num_rows != header.num_timesteps * baselines {
             return Err(ReadMwafError::Generic(format!(
-                "File {}: Expected NSCANS * NANTENNA * (NANTENNA+1) / 2 = NAXIS2, found {} * {} != {}",
+                "File {:?}: Expected NSCANS * NANTENNA * (NANTENNA+1) / 2 = NAXIS2, found {} * {} != {}",
                 fptr.filename,
                 header.num_timesteps, baselines, header.num_rows
             )));
@@ -693,7 +693,7 @@ impl FlagFileSet {
                 Err(fits_error) => {
                     return Err(FitsOpen {
                         fits_error,
-                        fits_filename: gpubox.filename.display().to_string(),
+                        fits_filename: gpubox.filename.clone(),
                         source_file: file!(),
                         source_line: line!(),
                     }
@@ -773,7 +773,7 @@ impl FlagFileSet {
                 Err(fits_error) => {
                     return Err(FitsOpen {
                         fits_error,
-                        fits_filename: gpubox.filename.display().to_string(),
+                        fits_filename: gpubox.filename.clone(),
                         source_file: file!(),
                         source_line: line!(),
                     }
@@ -839,7 +839,7 @@ impl FlagFileSet {
                 }
                 fitsio::errors::check_status(status).map_err(|e| FitsIO {
                     fits_error: e,
-                    fits_filename: String::from(&fptr.filename),
+                    fits_filename: fptr.filename.clone(),
                     hdu_num: 1,
                     source_file: file!(),
                     source_line: line!(),

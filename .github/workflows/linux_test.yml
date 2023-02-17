@@ -91,7 +91,6 @@ jobs:
       - name: Install Dependencies
         run: |
           cargo make linux_install_cfitsio
-          cargo make linux_install_erfa
 
       - name: Cargo Test No Default
         run: |

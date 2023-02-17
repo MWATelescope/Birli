@@ -13,7 +13,7 @@ use crate::{
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
         },
-        hifitime::{self, Epoch, Unit},
+        hifitime::{self, Epoch},
         io::{error::BadArrayShape, ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
         mwalib,
         ndarray::s,
@@ -129,7 +129,7 @@ fn time_details(
     array_pos: LatLngHeight,
 ) -> (String, String, f64, PrecessionInfo) {
     let epoch = Epoch::from_gpst_seconds(gps_time_ms as f64 / 1e3);
-    let (y, mo, d, h, mi, s, ms) = epoch.as_gregorian_utc();
+    let (y, mo, d, h, mi, s, ms) = epoch.to_gregorian_utc();
     let precession_info = precess_time(
         array_pos.longitude_rad,
         array_pos.latitude_rad,
@@ -146,7 +146,7 @@ fn time_details(
             s,
             (ms as f64 / 1e6).round()
         ),
-        epoch.as_mjd_utc_seconds(),
+        epoch.to_mjd_utc_seconds(),
         precession_info,
     )
 }
@@ -273,10 +273,7 @@ impl Display for BirliContext<'_> {
         let dut1 = if self.ignore_dut1 {
             hifitime::Duration::from_total_nanoseconds(0)
         } else {
-            hifitime::Duration::from_f64(
-                self.corr_ctx.metafits_context.dut1.unwrap_or(0.0),
-                Unit::Second,
-            )
+            hifitime::Duration::from_seconds(self.corr_ctx.metafits_context.dut1.unwrap_or(0.0))
         };
         let (sched_start_date, sched_start_time, sched_start_mjd_s, sched_start_prec) =
             time_details(
@@ -388,7 +385,7 @@ impl Display for BirliContext<'_> {
 
         let first_epoch =
             Epoch::from_gpst_seconds(self.corr_ctx.timesteps[0].gps_time_ms as f64 / 1e3);
-        let (y, mo, d, ..) = first_epoch.as_gregorian_utc();
+        let (y, mo, d, ..) = first_epoch.to_gregorian_utc();
 
         let mut timestep_table = table!([
             "",
@@ -1245,7 +1242,7 @@ impl<'a> BirliContext<'a> {
             }
         } else {
             info!("Using default MWA array position.");
-            LatLngHeight::new_mwa()
+            LatLngHeight::mwa()
         };
         prep_ctx.phase_centre = match (
             matches
@@ -1257,7 +1254,7 @@ impl<'a> BirliContext<'a> {
             (Ok(_), true) => {
                 unreachable!("--phase-centre conflicts with --pointing-centre, enforced by clap");
             }
-            (Ok((ra, dec)), _) => RADec::new(ra.to_radians(), dec.to_radians()),
+            (Ok((ra, dec)), _) => RADec::from_degrees(ra, dec),
             (_, true) => RADec::from_mwalib_tile_pointing(&corr_ctx.metafits_context),
             _ => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
         };
@@ -1550,10 +1547,7 @@ impl<'a> BirliContext<'a> {
         let dut1 = if *ignore_dut1 {
             hifitime::Duration::from_total_nanoseconds(0)
         } else {
-            hifitime::Duration::from_f64(
-                corr_ctx.metafits_context.dut1.unwrap_or(0.0),
-                Unit::Second,
-            )
+            hifitime::Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or(0.0))
         };
         let mut uvfits_writer = io_ctx.uvfits_out.as_ref().map(|uvfits_out| {
             with_increment_duration!("init", {
@@ -2666,7 +2660,7 @@ mod argparse_tests {
 
         assert_eq!(
             birli_ctx.prep_ctx.phase_centre,
-            RADec::new_degrees(-1., -2.)
+            RADec::from_degrees(-1., -2.)
         );
     }
 

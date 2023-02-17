@@ -23,9 +23,8 @@ exclude = ["tests/*", ".vscode/*", ".github/*", ".talismanrc"]
 [features]
 default = ["aoflagger"]
 aoflagger = ["aoflagger_sys"]
-erfa-static = ["marlu/erfa-static"]
 cfitsio-static = ["marlu/cfitsio-static"]
-all-static = ["erfa-static", "cfitsio-static"]
+all-static = ["cfitsio-static"]
 
 [dependencies]
 aoflagger_sys = { version = "0.1.1", optional = true }
@@ -35,28 +34,29 @@ clap = { version = "3.1.8", features = ["cargo"] }
 derive_builder = "0.11.1"
 env_logger = "0.9"
 indicatif = { version = "0.17.0", features = ["rayon"] }
-itertools = "0.10"
+itertools = "0.10.0"
 lazy_static = "1.4.0"
-log = "0.4"
-marlu = "0.8.0"
+log = "0.4.0"
+marlu = "0.9.0"
 prettytable-rs = "0.10.0"
-regex = "1.4"
-thiserror = "1.0"
+regex = "1.4.0"
+thiserror = "1.0.0"
 shlex = "1.1.0"
 
 [dev-dependencies]
 approx = { version = "0.5.0", features = ["num-complex"] }
-criterion = "0.3"
+assert_cli = "0.6"
+criterion = "0.4.0"
 csv = "1.1"
 float-cmp = "0.9"
 glob = "0.3"
 lexical = "6.0"
-marlu = { version = "0.8.0", features = ["approx"] }
+marlu = { version = "0.9.0", features = ["approx"] }
 ndarray = { version = "0.15.4", features = ["approx-0_5"] }
 tempfile = "3.3"
 
 [build-dependencies]
-built = { version = "0.5.*", features = ["chrono", "git2"] }
+built = { version = "0.5.0", features = ["chrono", "git2"] }
 
 [[bin]]
 name = "birli"

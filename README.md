@@ -39,8 +39,6 @@ descriptor for the speed which this library intends to deliver.
   (Ubuntu > 21.04: apt install aoflagger-dev)
 - [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49
   (Ubuntu > 20.10: apt install libcfitsio-dev)
-- [LibERFA](https://github.com/liberfa/erfa) >= 1.7.1
-  (Ubuntu > 20.04: apt install liberfa-dev)
 
 for OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) CI Script; the [Makefile.toml](https://github.com/MWATelescope/Birli/blob/main/Makefile.toml); and the [Dockerfile](https://github.com/MWATelescope/Birli/blob/main/Dockerfile) as these are tested regularly. The instructions below may be updated less frequently, but are better documented.
 
@@ -58,10 +56,8 @@ export MAKEFLAGS="-j $MAKEFLAGS"
 # Install prerequisite C/C++ libraries
 cargo make install_deps
 # Ensure that rust can find the C/C++ libraries.
-# AOFlagger and CFitsIO default to /usr/local/lib,
-# however packages installed with apt (LibERFA) end up in /usr/lib/x86_64-linux-gnu/,
-# so we need both.
-export LD_LIBRARY_PATH="/usr/local/lib/:/usr/lib/x86_64-linux-gnu/"
+# AOFlagger and CFitsIO default to /usr/local/lib
+export LD_LIBRARY_PATH="/usr/local/lib/"
 ```
 
 ### Other Operating Systems
@@ -97,7 +93,6 @@ Get library versions on linux with:
 
 ```bash
 pkg-config --modversion cfitsio
-pkg-config --modversion erfa
 aoflagger --version
 ```
 

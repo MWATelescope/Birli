@@ -66,25 +66,9 @@ $SUDO make install
 """
 dependencies = ["linux_install_cfitsio"]
 
-[tasks.linux_install_erfa]
-script = """
-[ $(id -u) != 0 ] && export SUDO="sudo" || export SUDO=""
-cd /tmp
-[ -d "erfa" ] && rm -rf erfa
-git clone --recurse-submodules https://github.com/liberfa/erfa.git --branch v1.7.1
-cd erfa
-libtoolize
-./bootstrap.sh
-./configure
-make
-$SUDO make install
-"""
-dependencies = ["linux_apt_get_essentials"]
-
 [tasks.linux_install_deps]
 dependencies = [
   "linux_install_aoflagger",
-  "linux_install_erfa"
 ]
 
 [tasks.install_deps]
@@ -96,7 +80,6 @@ script = """
 unset mod_versions
 declare -A mod_versions
 mod_versions[cfitsio]=3.49
-mod_versions[erfa]=1.7.1
 for mod_name in "${!mod_versions[@]}"
 do
   min_version=${mod_versions[$mod_name]}

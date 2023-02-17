@@ -1,8 +1,9 @@
 //! Errors that can occur in the io module
 
-use thiserror::Error;
+use std::path::PathBuf;
 
 use marlu::{fitsio, io::error::BadArrayShape, mwalib, mwalib::FitsError};
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 #[allow(clippy::upper_case_acronyms)]
@@ -24,7 +25,7 @@ pub enum IOError {
         /// The [`fitsio::errors::Error`]
         fits_error: fitsio::errors::Error,
         /// The filename of the fits file
-        fits_filename: String,
+        fits_filename: PathBuf,
         /// The file where the error originated (usually `file!()`)
         source_file: &'static str,
         /// The line number where the error originated (usually `line!()`)
@@ -37,7 +38,7 @@ pub enum IOError {
         /// The [`fitsio::errors::Error`]
         fits_error: fitsio::errors::Error,
         /// The filename of the fits file where the error occurred
-        fits_filename: String,
+        fits_filename: PathBuf,
         /// The hdu number in the fits file where the error occurred
         hdu_num: usize,
         /// The file where the error originated (usually `file!()`)

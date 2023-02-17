@@ -16,7 +16,7 @@ use log::trace;
 use crate::{
     marlu::{
         constants::MWA_LAT_RAD,
-        hifitime::{Duration, Unit},
+        hifitime::Duration,
         io::{ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
         mwalib::{CorrelatorContext, MwalibError},
         Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
@@ -217,7 +217,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
         &vis_ctx,
         obs_ctx.array_pos,
         obs_ctx.phase_centre,
-        Duration::from_f64(corr_ctx.metafits_context.dut1.unwrap_or(0.0), Unit::Second),
+        Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or(0.0)),
         obs_ctx.name.as_deref(),
         antenna_names,
         antenna_positions,
@@ -348,7 +348,7 @@ pub fn write_ms<T: AsRef<Path>>(
         obs_ctx.phase_centre,
         obs_ctx.array_pos,
         obs_ctx.ant_positions_geodetic().collect(),
-        Duration::from_f64(corr_ctx.metafits_context.dut1.unwrap_or(0.0), Unit::Second),
+        Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or(0.0)),
     );
 
     ms_writer
