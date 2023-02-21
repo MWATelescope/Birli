@@ -1,10 +1,13 @@
+# this tests that the latest docker image works, and does linter checks
+# linter checks happen here because docker images are faster than waiting for
+# dependencies to install on GitHub Actions VMs
 on: [push, pull_request]
 
 name: Docker Tests
 
 jobs:
   check:
-    name: Docker Checks
+    name: Docker Test and Release
     runs-on: ubuntu-latest
     container: mwatelescope/birli:latest
     steps:
@@ -15,25 +18,5 @@ jobs:
       - run: /opt/cargo/bin/cargo check
       - run: /opt/cargo/bin/cargo fmt --all -- --check
       - run: /opt/cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
-
-  test:
-    name: Docker Tests
-    runs-on: ubuntu-latest
-    container: mwatelescope/birli:latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
       - run: /opt/cargo/bin/cargo test --release
-
-  test_no_default:
-    name: Docker Tests - No Default
-    runs-on: ubuntu-latest
-    container: mwatelescope/birli:latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
-      - run: /opt/cargo/bin/cargo test --no-default-features --release
+      - run: /opt/cargo/bin/cargo test --no-default-features --release --features=cli
