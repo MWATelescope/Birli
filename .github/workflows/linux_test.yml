@@ -15,9 +15,12 @@ jobs:
     strategy:
       matrix:
         os:
-          # - "ubuntu-18.04", <- broken 2022-03-02
+          - "ubuntu-18.04"
           - "ubuntu-20.04"
-          # - "ubuntu-22.04"
+          - "ubuntu-22.04"
+        use_aoflagger:
+          - 0
+          - 1
     runs-on: "${{ matrix.os }}"
     steps:
       - name: Checkout sources
@@ -25,75 +28,120 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: install apt dependencies
-        run: |
-          sudo apt-get update \
-          && sudo apt-get install -y \
-            build-essential \
-            cmake \
-            curl \
-            git \
-            unzip \
-            wget \
-            zip
-
-      - name: Install stable Rust toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Install cargo-make
+        uses: actions-rs/cargo@v1
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt, clippy
+          command: install
+          args: --debug cargo-make
 
-      - name: Install Cargo Make
-        uses: davidB/rust-cargo-make@v1
+      - name: Install deps
+        uses: actions-rs/cargo@v1
+        with:
+          command: make
+          # if aoflagger not enabled, you only need cfitsio
+          args: ${{ fromJSON('["install_deps_no_aoflagger", "install_deps"]')[matrix.use_aoflagger] }}
 
-      - name: Install Dependencies
-        run: cargo make install_deps
-
-      - name: Cargo Test
-        run: cargo test
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: make
+          args: ${{ fromJSON('["test_no_aoflagger", "test"]')[matrix.use_aoflagger] }}
         env:
           LD_LIBRARY_PATH: /usr/local/lib/:/usr/lib/x86_64-linux-gnu/
 
-  test_no_default:
-    name: "Linux tests without aoflagger"
-    runs-on: "ubuntu-20.04"
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
+      # - name: install apt dependencies
+      #   run: |
+      #     sudo apt-get update \
+      #     && sudo apt-get install -y \
+      #       build-essential \
+      #       cmake \
+      #       curl \
+      #       git \
+      #       unzip \
+      #       wget \
+      #       zip
 
-      - name: install apt dependencies
-        run: |
-          sudo apt-get update \
-          && sudo apt-get install -y \
-            build-essential \
-            cmake \
-            curl \
-            git \
-            unzip \
-            wget \
-            zip
+      # - name: Install stable Rust toolchain
+      #   uses: actions-rs/toolchain@v1
+      #   with:
+      #     profile: minimal
+      #     toolchain: stable
+      #     override: true
+      #     components: rustfmt, clippy
 
-      - name: Install stable Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt, clippy
+      # - name: Install Cargo Make
+      #   uses: davidB/rust-cargo-make@v1
 
-      - name: Install Cargo Make
-        uses: davidB/rust-cargo-make@v1
+      # - name: Install Dependencies
+      #   run: cargo make install_deps
 
-      - name: Install Dependencies
-        run: |
-          cargo make linux_install_cfitsio
+      # - name: Cargo Test
+      #   run: cargo test
+      #   env:
+      #     LD_LIBRARY_PATH: /usr/local/lib/:/usr/lib/x86_64-linux-gnu/
 
-      - name: Cargo Test No Default
-        run: |
-          cargo test --no-default-features
-        env:
-          LD_LIBRARY_PATH: /usr/local/lib/:/usr/lib/x86_64-linux-gnu/
+  # test_no_default:
+  #   name: "Linux tests without aoflagger"
+  #   strategy:
+  #     matrix:
+  #       os:
+  #         - "ubuntu-18.04"
+  #         - "ubuntu-20.04"
+  #         - "ubuntu-22.04"
+  #   runs-on: "${{ matrix.os }}"
+  #   steps:
+  #     - name: Checkout sources
+  #       uses: actions/checkout@v2
+  #       with:
+  #         fetch-depth: 0
+
+  #     - name: Install cargo-make
+  #       uses: actions-rs/cargo@v1
+  #       with:
+  #         command: install
+  #         args: --debug cargo-make
+
+  #     - name: Install deps
+  #       uses: actions-rs/cargo@v1
+  #       with:
+  #         command: make
+  #         args: linux_install_cfitsio
+
+  #     - name: Run tests
+  #       uses: actions-rs/cargo@v1
+  #       with:
+  #         command: make
+  #         args: test_no_default
+
+  #     # - name: install apt dependencies
+  #     #   run: |
+  #     #     sudo apt-get update \
+  #     #     && sudo apt-get install -y \
+  #     #       build-essential \
+  #     #       cmake \
+  #     #       curl \
+  #     #       git \
+  #     #       unzip \
+  #     #       wget \
+  #     #       zip
+
+  #     # - name: Install stable Rust toolchain
+  #     #   uses: actions-rs/toolchain@v1
+  #     #   with:
+  #     #     profile: minimal
+  #     #     toolchain: stable
+  #     #     override: true
+  #     #     components: rustfmt, clippy
+
+  #     # - name: Install Cargo Make
+  #     #   uses: davidB/rust-cargo-make@v1
+
+  #     # - name: Install Dependencies
+  #     #   run: |
+  #     #     cargo make linux_install_cfitsio
+
+  #     # - name: Cargo Test No Default
+  #     #   run: |
+  #     #     cargo test --no-default-features
+  #     #   env:
+  #     #     LD_LIBRARY_PATH: /usr/local/lib/:/usr/lib/x86_64-linux-gnu/
