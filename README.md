@@ -276,7 +276,7 @@ Adjust each coarse channel within a fine channel to correct for the shape of the
 
 When applying pfb gains to an observation that is not at the same resolution as the gains, the gains need to be averaged to fit the data, and the exact details of this averaging depends on the correlator type. For more dtails, see the mwa wiki on [averaging fine channels](https://wiki.mwatelescope.org/display/MP/MWA+Fine+Channel+Centre+Frequencies)
 
-### RFI Flagging.
+### RFI Flagging
 
 By default, Birli will flag the data using the default MWA strategy in AOFlagger. You can use the
 `--no-rfi` option to disable this, or the `--aoflagger-strategy` option to proived your own strategy

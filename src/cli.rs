@@ -2698,6 +2698,48 @@ mod argparse_tests {
         assert!(channel_range_sel.ranges[1].0 == 6);
         assert!(channel_range_sel.ranges[1].1 == 8);
     }
+
+    #[test]
+    fn test_handle_bad_chan_range_single() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--sel-chan-ranges", "4,6-8,a", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args).err(),
+            Some(BirliError::CLIError(_))
+        ));
+    }
+
+    #[test]
+    fn test_handle_bad_ch_range_double() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--sel-chan-ranges", "4,6-a", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args).err(),
+            Some(BirliError::CLIError(_))
+        ));
+    }
+
+    #[test]
+    fn test_handle_bad_ch_range_triple() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--sel-chan-ranges", "4,6-7-8", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args).err(),
+            Some(BirliError::CLIError(_))
+        ));
+    }
 }
 
 #[cfg(test)]
