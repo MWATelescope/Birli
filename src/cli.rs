@@ -205,7 +205,7 @@ impl ChannelRanges {
 
     /// Create a new `ChannelRanges` object spanning all available channels in the metafits context
     pub fn all(context: &CorrelatorContext) -> Self {
-        let coarse_chan_indices = &context.common_coarse_chan_indices;
+        let coarse_chan_indices = &(0..context.num_coarse_chans).into_iter().collect_vec();
         // get the first value in the vector
         let mut range_start_idx = coarse_chan_indices[0];
         let mut range_end_idx = range_start_idx;
@@ -642,7 +642,6 @@ impl<'a> BirliContext<'a> {
                 arg!(--"no-draw-progress" "do not show progress bars"),
 
                 // selection options
-                // TODO: make this work the same way as rust ranges. start <= x < end
                 arg!(--"sel-time" "Timestep index range (inclusive) to select")
                     .help_heading("SELECTION")
                     .value_names(&["MIN", "MAX"])
@@ -656,16 +655,16 @@ impl<'a> BirliContext<'a> {
                 arg!(--"no-sel-autos" "[WIP] Deselect autocorrelations")
                     .help_heading("SELECTION"),
 
-                arg!(--"sel-chan-ranges" <RANGES> "[WIP] Select separate channel ranges")
+                arg!(--"sel-chan-ranges" <RANGES> "Select separate channel ranges")
                     .help_heading("SELECTION")
                     .required(false),
 
                 // resource limit options
-                arg!(--"time-chunk" <STEPS> "[WIP] Process observation in chunks of <STEPS> timesteps.")
+                arg!(--"time-chunk" <STEPS> "Process observation in chunks of <STEPS> timesteps.")
                     .help_heading("RESOURCE LIMITS")
                     .required(false)
                     .conflicts_with("max-memory"),
-                arg!(--"max-memory" <GIBIBYTES> "[WIP] Estimate --time-chunk with <GIBIBYTES> GiB each chunk.")
+                arg!(--"max-memory" <GIBIBYTES> "Estimate --time-chunk with <GIBIBYTES> GiB each chunk.")
                     .help_heading("RESOURCE LIMITS")
                     .required(false),
 
@@ -691,7 +690,7 @@ impl<'a> BirliContext<'a> {
                     .multiple_values(true)
                     .required(false),
                 // -> channels
-                arg!(--"flag-coarse-chans" <CHANS> ... "[WIP] Flag additional coarse chan indices")
+                arg!(--"flag-coarse-chans" <CHANS> ... "Flag additional coarse chan indices")
                     .help_heading("FLAGGING")
                     .multiple_values(true)
                     .required(false),
@@ -713,14 +712,14 @@ impl<'a> BirliContext<'a> {
                     .help_heading("FLAGGING")
                     .conflicts_with("flag-dc"),
                 // -> antennas
-                arg!(--"no-flag-metafits" "[WIP] Ignore antenna flags in metafits")
+                arg!(--"no-flag-metafits" "Ignore antenna flags in metafits")
                     .help_heading("FLAGGING"),
-                arg!(--"flag-antennas" <ANTS>... "[WIP] Flag antenna indices")
+                arg!(--"flag-antennas" <ANTS>... "Flag antenna indices")
                     .help_heading("FLAGGING")
                     .multiple_values(true)
                     .required(false),
                 // -> baselines
-                arg!(--"flag-autos" "[WIP] Flag auto correlations")
+                arg!(--"flag-autos" "Flag auto correlations")
                     .help_heading("FLAGGING"),
 
                 // corrections
@@ -1329,13 +1328,7 @@ impl<'a> BirliContext<'a> {
         }
 
         for untested_option in &[
-            "flag-coarse-chans",
-            "flag-fine-chans",
-            "flag-autos",
-            "no-flag-metafits",
-            "flag-antennas",
-            "time-chunk",
-            "max-memory",
+            "put-untested-options-here"
         ] {
             if matches.is_present(untested_option) {
                 warn!(
