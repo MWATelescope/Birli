@@ -1327,9 +1327,7 @@ impl<'a> BirliContext<'a> {
             );
         }
 
-        for untested_option in &[
-            "put-untested-options-here"
-        ] {
+        for untested_option in &["put-untested-options-here"] {
             if matches.is_present(untested_option) {
                 warn!(
                     "option does not have full test coverage, use with caution: --{}",
