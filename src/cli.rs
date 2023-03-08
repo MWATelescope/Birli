@@ -26,7 +26,7 @@ use crate::{
 use cfg_if::cfg_if;
 use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
 use itertools::{izip, Itertools};
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace};
 
 use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, fitsio_sys::CFITSIO_VERSION, CableDelaysApplied,
@@ -1327,14 +1327,14 @@ impl<'a> BirliContext<'a> {
             );
         }
 
-        for untested_option in &["put-untested-options-here"] {
-            if matches.is_present(untested_option) {
-                warn!(
-                    "option does not have full test coverage, use with caution: --{}",
-                    untested_option
-                );
-            }
-        }
+        // for untested_option in &["put-untested-options-here"] {
+        //     if matches.is_present(untested_option) {
+        //         warn!(
+        //             "option does not have full test coverage, use with caution: --{}",
+        //             untested_option
+        //         );
+        //     }
+        // }
 
         let io_ctx = Self::parse_io_matches(&matches);
         let corr_ctx = io_ctx.get_corr_ctx()?;
