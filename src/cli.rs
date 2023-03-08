@@ -180,6 +180,19 @@ impl ChannelRanges {
                         }
                     }
                 }
+                [start] => {
+                    let start_result = start.trim().parse::<usize>();
+                    match start_result {
+                        Ok(start) => {
+                            ranges.push((start, start));
+                        }
+                        _ => {
+                            return Err(BirliError::CLIError(InvalidRangeSpecifier {
+                                reason: format!("invalid channel range: {}", range),
+                            }));
+                        }
+                    }
+                }
                 _ => {
                     return Err(BirliError::CLIError(InvalidRangeSpecifier {
                         reason: format!("invalid channel range: {}", range),
@@ -838,7 +851,7 @@ impl<'a> BirliContext<'a> {
                 Some(range_str) => ChannelRanges::new(range_str),
                 None => Err(BirliError::CLIError(InvalidCommandLineArgument {
                     option: "--sel-chan-ranges <RANGES>".into(),
-                    expected: "comma-separated list of ranges, e.g. 0-10,20-30".into(),
+                    expected: "comma-separated ranges indexing the metafits coarse channels, e.g. 0-10,20-30".into(),
                     received: "no value".into(),
                 })),
             }
@@ -1323,7 +1336,6 @@ impl<'a> BirliContext<'a> {
             "flag-antennas",
             "time-chunk",
             "max-memory",
-            "sel-chan-ranges",
         ] {
             if matches.is_present(untested_option) {
                 warn!(
@@ -2672,6 +2684,25 @@ mod argparse_tests {
 
         assert!(channel_range_sel.ranges.len() == 2);
         assert!(channel_range_sel.ranges[0].0 == 2);
+        assert!(channel_range_sel.ranges[0].1 == 4);
+        assert!(channel_range_sel.ranges[1].0 == 6);
+        assert!(channel_range_sel.ranges[1].1 == 8);
+    }
+
+    #[test]
+    fn test_parse_sel_two_ranges_with_single() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--sel-chan-ranges", "4,6-8", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext {
+            channel_range_sel, ..
+        } = BirliContext::from_args(&args).unwrap();
+
+        assert!(channel_range_sel.ranges.len() == 2);
+        assert!(channel_range_sel.ranges[0].0 == 4);
         assert!(channel_range_sel.ranges[0].1 == 4);
         assert!(channel_range_sel.ranges[1].0 == 6);
         assert!(channel_range_sel.ranges[1].1 == 8);

@@ -172,6 +172,7 @@ mod tests {
             "--pfb-gains", "none",
             "--no-cable-delay",
             "--no-geometric-delay",
+            "--sel-chan-ranges", "1,2-3"
         ];
         args.extend_from_slice(&gpufits_paths);
 
