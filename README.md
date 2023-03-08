@@ -199,17 +199,17 @@ SELECTION:
         --no-sel-autos                [WIP] Deselect autocorrelations
         --no-sel-flagged-ants         [WIP] Deselect flagged antennas
         --sel-ants <ANTS>...          [WIP] Antenna to select
-        --sel-chan-ranges <RANGES>    [WIP] Select separate channel ranges
+        --sel-chan-ranges <RANGES>    Select separate channel ranges
         --sel-time <MIN> <MAX>        Timestep index range (inclusive) to select
 
 RESOURCE LIMITS:
-        --max-memory <GIBIBYTES>    [WIP] Estimate --time-chunk with <GIBIBYTES> GiB each chunk.
-        --time-chunk <STEPS>        [WIP] Process observation in chunks of <STEPS> timesteps.
+        --max-memory <GIBIBYTES>    Estimate --time-chunk with <GIBIBYTES> GiB each chunk.
+        --time-chunk <STEPS>        Process observation in chunks of <STEPS> timesteps.
 
 FLAGGING:
-        --flag-antennas <ANTS>...         [WIP] Flag antenna indices
-        --flag-autos                      [WIP] Flag auto correlations
-        --flag-coarse-chans <CHANS>...    [WIP] Flag additional coarse chan indices
+        --flag-antennas <ANTS>...         Flag antenna indices
+        --flag-autos                      Flag auto correlations
+        --flag-coarse-chans <CHANS>...    Flag additional coarse chan indices
         --flag-dc                         Force flagging of DC centre chans
         --flag-edge-chans <COUNT>         Flag <COUNT> fine chans on the ends of each coarse
         --flag-edge-width <KHZ>           Flag bandwidth [kHz] at the ends of each coarse chan
@@ -220,7 +220,7 @@ FLAGGING:
         --flag-init-steps <COUNT>         Flag <COUNT> steps after first common time
         --flag-times <STEPS>...           Flag additional time steps
         --no-flag-dc                      Do not flag DC centre chans
-        --no-flag-metafits                [WIP] Ignore antenna flags in metafits
+        --no-flag-metafits                Ignore antenna flags in metafits
 
 CORRECTION:
         --no-cable-delay           Do not perform cable length corrections
@@ -245,6 +245,7 @@ OUTPUT:
 AOFLAGGER:
         --aoflagger-strategy <PATH>    Strategy to use for RFI Flagging
         --no-rfi                       Do not perform RFI Flagging with aoflagger
+
 ```
 
 Note: the aoflagged options are only available when the aoflagger feature is enabled.
