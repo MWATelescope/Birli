@@ -96,7 +96,6 @@
 //! [`aoflagger::AOFlagger`]: http://www.andreoffringa.org/aoflagger/doxygen/classaoflagger_1_1AOFlagger.html
 
 #![warn(missing_docs)]
-#![warn(rustdoc::missing_doc_code_examples)]
 #![deny(clippy::all)]
 // //////// //
 // pedantic //
