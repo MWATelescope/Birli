@@ -10,7 +10,7 @@ use crate::corrections::{DigitalGainCorrection, PassbandCorrection};
 #[derive(Error, Debug)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum CLIError {
-    #[error("Invalid Command Line Argument")]
+    #[error("Invalid Command Line Argument: option {option} expected {expected} but received {received}")]
     /// When a bad CLI argument is provided
     InvalidCommandLineArgument {
         /// The option for which the argument was provided
@@ -20,7 +20,7 @@ pub enum CLIError {
         /// The argument that was received instead
         received: String,
     },
-    #[error("Invalid range specifier")]
+    #[error("Invalid range specifier: {reason}")]
     /// When a bad range specifier is provided
     InvalidRangeSpecifier {
         /// Why the range is invalid
@@ -81,7 +81,7 @@ pub enum BirliError {
         need_gib: usize,
     },
 
-    #[error("Invalid MWA Version")]
+    #[error("Invalid MWA Version ({version}): {message}")]
     /// When a bad MWA Version is provided
     BadMWAVersion {
         /// The message to display
