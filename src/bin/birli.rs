@@ -30,7 +30,7 @@ where
             }
         }
         Err(e) => {
-            eprintln!("error parsing args: {e:?}");
+            eprintln!("error parsing args: {e}");
             return 1;
         }
     };
@@ -55,7 +55,7 @@ where
         }
         // TODO(Dev): different return codes for different errors
         Err(e) => {
-            eprintln!("preprocessing error: {e:?}");
+            eprintln!("preprocessing error: {e}");
             1
         }
     }
