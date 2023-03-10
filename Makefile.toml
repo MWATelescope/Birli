@@ -52,7 +52,6 @@ $(command -v pkg-config &> /dev/null) && pkg-config --atleast-version=3.49 cfits
 
 # if ubuntu > 20.10, install through apt
 $(source /etc/os-release && dpkg --compare-versions "$VERSION_ID" gt "21.04" &> /dev/null) \
-  && dpkg --compare-versions "$VERSION_ID" gt "21.04" \
   && $SUDO apt-get install -y libcfitsio-dev \
   && exit 0
 
