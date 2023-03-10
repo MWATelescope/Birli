@@ -469,16 +469,18 @@ impl Display for BirliContext<'_> {
         let common_good_coarse_chan_indices = &self.corr_ctx.common_good_coarse_chan_indices;
         for (chan_idx, chan) in self.corr_ctx.coarse_chans.iter().enumerate() {
             let provided = provided_coarse_chan_indices.contains(&chan_idx);
-            let selected = self.vis_sel.coarse_chan_range.contains(&chan_idx);
+            let mut selected = self.vis_sel.coarse_chan_range.contains(&chan_idx);
             let common = common_coarse_chan_indices.contains(&chan_idx);
             let good = common_good_coarse_chan_indices.contains(&chan_idx);
-            let flagged = coarse_chan_flag_idxs.contains(&chan_idx);
+            let mut flagged = coarse_chan_flag_idxs.contains(&chan_idx);
             let range = self
                 .channel_range_sel
                 .ranges
                 .iter()
                 .enumerate()
                 .find(|(_idx, (start, end))| chan_idx >= *start && chan_idx <= *end);
+            selected &= range.is_some();
+            flagged &= range.is_some();
             let row = row![r =>
                 format!("cc{chan_idx}:"),
                 chan.gpubox_number,
