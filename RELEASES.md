@@ -1,5 +1,14 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.9.1 (2023-03-10)
+
+- 🙏 quality of life:
+  - Fix #140 - observations which were scheduled with a contiguous band of coarse channels are
+    written to a single file (with any missing channels flagged).
+  - `--sel-chan-ranges` can select individual coarse channels in addition to ranges
+  - Fix #133 - print more details in impl Display for errors.
+  - Fix display of selected and flagged coarse channel table
+
 # Version 0.9.0 (2023-02-17)
 
 - ✨ new features:
