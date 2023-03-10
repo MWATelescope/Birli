@@ -315,7 +315,7 @@ pub enum DigitalGainCorrection {
 /// # Arguments
 ///
 /// - `corr_ctx` - The correlator [`marlu::mwalib::CorrelatorContext`].
-/// - `jones_array` - The array of Jones matrices to be corrected, [timestep][channel][baseleine].
+/// - `jones_array` - The array of Jones matrices to be corrected, `[timestep][channel][baseleine]`.
 /// - `coarse_chan_range` - The range of mwalib coarse channels which are used in in the channel
 ///     dimension of the jones array.
 /// - `ant_pairs` - a slice of tuples of antenna indices for each baseline in the visibilities.
@@ -444,7 +444,7 @@ pub enum PassbandCorrection {
 ///
 /// # Arguments
 ///
-/// - `jones_array` - The array of Jones matrices to be corrected, [timestep][channel][baseleine].
+/// - `jones_array` - The array of Jones matrices to be corrected, `[timestep][channel][baseleine]`.
 /// - `weight_array` - The array of weights to be corrected, same dimensions are `jones_array`.
 /// - `passband_gains` - a slice of gains to be applied to each coarse channel.
 /// - `num_fine_chans_per_coarse` - The number of fine channels in each coarse.

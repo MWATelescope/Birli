@@ -219,7 +219,7 @@ impl FlagContext {
 ///
 /// # Assumptions
 ///
-/// - `baseline_jones_view` is [timestep][channel] for one baseline
+/// - `baseline_jones_view` is `[timestep][channel]` for one baseline
 /// - imageset is timesteps wide, and channels high
 /// - jones matrics are always XX, YY, XY, YX
 ///
@@ -267,7 +267,7 @@ pub fn jones_baseline_view_to_imageset(
 ///
 /// # Assumptions
 ///
-/// - flag array view is [timestep][channel] for one baseline
+/// - flag array view is `[timestep][channel]` for one baseline
 /// - flagmask is timesteps wide, and channels high
 ///
 #[cfg(feature = "aoflagger")]
@@ -292,14 +292,14 @@ pub fn flag_baseline_view_to_flagmask(
 }
 
 /// Flag an ndarray of [`Jones`] visibilities, given a [`CxxAOFlagger`]
-/// instance, a [`CxxStrategy`] filename, returning an
+/// instance, a [`aoflagger_sys::CxxAOFlagger`] filename, returning an
 /// [`ndarray::Array3`](crate::ndarray::Array3) of boolean flags.
 ///
 /// Providing some existing flags is optional, however these flags must be the
 /// same dimension as the provided Jones array. If these are not provided, an
 /// empty flag array is created instead
 ///
-/// if [`re_apply_existing`] is true, then the new flags are binary or'd with
+/// if `re_apply_existing` is true, then the new flags are binary or'd with
 /// the existing flags, otherwise they overwrite them.
 ///
 /// # Performance
@@ -453,7 +453,7 @@ pub fn flag_jones_array(
 ///
 /// The filename template should contain two or 3 percentage (`%`) characters which will be replaced
 /// by the gpubox id or channel number (depending on correlator type) provided in `gpubox_ids`. See
-/// [`flag_io::FlagFileSet::new`] for more details.
+/// [`crate::io::mwaf::FlagFileSet`] for more details.
 ///
 /// # Examples
 ///
