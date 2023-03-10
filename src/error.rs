@@ -47,7 +47,7 @@ pub enum BirliError {
 
     #[cfg(feature = "cli")]
     #[error(transparent)]
-    /// Error derived from [`crate::error::CLIError`]
+    /// Error derived from `CLIError`
     CLIError(#[from] CLIError),
 
     #[error(transparent)]
