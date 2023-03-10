@@ -163,6 +163,10 @@ install_crate = "clippy"
 command = "cargo"
 args = ["clean"]
 
+[tasks.rustdoc]
+command = "cargo"
+args = ["rustdoc", "--lib", "--all-features", "--", "--document-private-items"]
+
 [tasks.update]
 script = """
 set +e
@@ -208,5 +212,6 @@ dependencies = [
   "check",
   "clippy",
   "test_no_default",
-  "test"
+  "test",
+  "rustdoc",
 ]
