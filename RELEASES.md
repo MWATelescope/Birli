@@ -1,5 +1,9 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.9.2 (2023-07-18)
+- 🙏 quality of life:
+  - update modtime when writing ms
+
 # Version 0.9.1 (2023-03-10)
 
 - 🙏 quality of life:
