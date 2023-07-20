@@ -1,5 +1,12 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.10.0 (unreleased)
+- 🙏 quality of life:
+  - uvfits are now written out with a second DATE and INTTIM
+- ➕ dependencies:
+  - use Marlu 0.10.0
+  - use rust version 1.64
+
 # Version 0.9.2 (2023-07-18)
 - 🙏 quality of life:
   - update modtime when writing ms

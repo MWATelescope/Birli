@@ -1,6 +1,6 @@
 use birli::{
     flags::{flag_to_weight_array, get_weight_factor},
-    io::write_uvfits,
+    io::{read_mwalib, write_uvfits},
     write_ms, VisSelection,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -54,14 +54,14 @@ fn bench_uvfits_output_1196175296_none(crt: &mut Criterion) {
     let mut jones_array = vis_sel
         .allocate_jones(corr_ctx.metafits_context.num_corr_fine_chans_per_coarse)
         .unwrap();
-    vis_sel
-        .read_mwalib(
-            &corr_ctx,
-            jones_array.view_mut(),
-            flag_array.view_mut(),
-            false,
-        )
-        .unwrap();
+    read_mwalib(
+        &vis_sel,
+        &corr_ctx,
+        jones_array.view_mut(),
+        flag_array.view_mut(),
+        false,
+    )
+    .unwrap();
 
     let weight_factor = get_weight_factor(&corr_ctx);
     let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);
@@ -103,14 +103,14 @@ fn bench_ms_output_1196175296_none(crt: &mut Criterion) {
     let mut jones_array = vis_sel
         .allocate_jones(corr_ctx.metafits_context.num_corr_fine_chans_per_coarse)
         .unwrap();
-    vis_sel
-        .read_mwalib(
-            &corr_ctx,
-            jones_array.view_mut(),
-            flag_array.view_mut(),
-            false,
-        )
-        .unwrap();
+    read_mwalib(
+        &vis_sel,
+        &corr_ctx,
+        jones_array.view_mut(),
+        flag_array.view_mut(),
+        false,
+    )
+    .unwrap();
 
     let weight_factor = get_weight_factor(&corr_ctx);
     let weight_array = flag_to_weight_array(flag_array.view(), weight_factor);

@@ -1,7 +1,7 @@
 [package]
 name = "birli"
 description = "A preprocessing pipeline for the Murchison Widefield Array"
-version = "0.9.2"
+version = "0.10.0"
 readme = "README.md"
 homepage = "https://github.com/MWATelescope/Birli"
 repository = "https://github.com/MWATelescope/Birli"
@@ -12,7 +12,7 @@ authors = [
     "Luke A. Williams <luke.a.williams@curtin.edu.au>",
 ]
 edition = "2021"
-rust-version = "1.63"
+rust-version = "1.64"
 license = "MPL-2.0"
 keywords = ["radioastronomy", "mwa", "astronomy", "aoflagger", "cotter"]
 categories = ["science", "parsing"]
@@ -43,7 +43,7 @@ indicatif = { version = "0.17.0", features = ["rayon"] }
 itertools = "0.10.0"
 lazy_static = "1.4.0"
 log = "0.4.0"
-marlu = "0.9.2"
+marlu = "0.10.0"
 regex = "1.4.0"
 thiserror = "1.0.0"
 
@@ -64,7 +64,7 @@ csv = "1.1"
 float-cmp = "0.9"
 glob = "0.3"
 lexical = "6.0"
-marlu = { version = "0.9.2", features = ["approx"] }
+marlu = { version = "0.10.0", features = ["approx"] }
 ndarray = { version = "0.15.4", features = ["approx-0_5"] }
 tempfile = "3.3"
 

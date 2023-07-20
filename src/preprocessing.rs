@@ -277,9 +277,10 @@ mod tests {
     use crate::{
         flag_to_weight_array,
         flags::get_weight_factor,
+        io::{read_mwalib, write_uvfits},
         passband_gains::PFB_JAKE_2022_200HZ,
         test_common::{compare_uvfits_with_csv, get_1254670392_avg_paths},
-        write_uvfits, FlagContext, VisSelection,
+        FlagContext, VisSelection,
     };
 
     use super::*;
@@ -324,14 +325,14 @@ mod tests {
             )
             .unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
-        vis_sel
-            .read_mwalib(
-                &corr_ctx,
-                jones_array.view_mut(),
-                flag_array.view_mut(),
-                false,
-            )
-            .unwrap();
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
 
         // generate weights
         let weight_factor = get_weight_factor(&corr_ctx);
@@ -400,14 +401,14 @@ mod tests {
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
-        vis_sel
-            .read_mwalib(
-                &corr_ctx,
-                jones_array.view_mut(),
-                flag_array.view_mut(),
-                false,
-            )
-            .unwrap();
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
         let mut weight_array = vis_sel.allocate_weights(fine_chans_per_coarse).unwrap();
         weight_array.fill(get_weight_factor(&corr_ctx) as _);
 

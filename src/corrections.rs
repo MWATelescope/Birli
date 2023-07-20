@@ -29,7 +29,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use birli::{correct_cable_lengths, mwalib::CorrelatorContext, VisSelection};
+/// use birli::{correct_cable_lengths, mwalib::CorrelatorContext, VisSelection, io::read_mwalib};
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -52,8 +52,7 @@ use thiserror::Error;
 /// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 ///
 /// // read visibilities out of the gpubox files
-/// vis_sel
-///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
+/// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
 /// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, false);
@@ -158,7 +157,7 @@ pub fn correct_cable_lengths(
 /// ```rust
 /// use birli::{
 ///     FlagContext, correct_geometry, mwalib::CorrelatorContext, VisSelection,
-///     correct_cable_lengths
+///     correct_cable_lengths, io::read_mwalib
 /// };
 ///
 /// // define our input files
@@ -186,8 +185,7 @@ pub fn correct_cable_lengths(
 /// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 ///
 /// // read visibilities out of the gpubox files
-/// vis_sel
-///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
+/// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
 /// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, false);
@@ -706,6 +704,7 @@ mod tests {
         approx::assert_abs_diff_eq,
         compare_jones,
         corrections::{DigitalGainCorrection, PassbandCorrection, ScrunchType},
+        io::read_mwalib,
         test_common::{get_mwa_ord_context, get_mwax_context},
         VisSelection,
     };
@@ -720,14 +719,14 @@ mod tests {
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
-        vis_sel
-            .read_mwalib(
-                &corr_ctx,
-                jones_array.view_mut(),
-                flag_array.view_mut(),
-                false,
-            )
-            .unwrap();
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
@@ -860,14 +859,14 @@ mod tests {
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
-        vis_sel
-            .read_mwalib(
-                &corr_ctx,
-                jones_array.view_mut(),
-                flag_array.view_mut(),
-                false,
-            )
-            .unwrap();
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
@@ -1009,14 +1008,14 @@ mod tests {
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
-        vis_sel
-            .read_mwalib(
-                &corr_ctx,
-                jones_array.view_mut(),
-                flag_array.view_mut(),
-                false,
-            )
-            .unwrap();
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 0
         let viz_0_0_0 = jones_array[(0, 0, 0)];
@@ -1147,14 +1146,14 @@ mod tests {
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
-        vis_sel
-            .read_mwalib(
-                &corr_ctx,
-                jones_array.view_mut(),
-                flag_array.view_mut(),
-                false,
-            )
-            .unwrap();
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
@@ -1296,14 +1295,14 @@ mod tests {
         let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
         // read visibilities out of the gpubox files
-        vis_sel
-            .read_mwalib(
-                &corr_ctx,
-                jones_array.view_mut(),
-                flag_array.view_mut(),
-                false,
-            )
-            .unwrap();
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
 
         let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 

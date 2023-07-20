@@ -10,7 +10,7 @@
 //!     write_flags,
 //!     mwalib::CorrelatorContext, write_uvfits,
 //!     get_weight_factor, flag_to_weight_array,
-//!     FlagContext, VisSelection
+//!     FlagContext, VisSelection, io::read_mwalib
 //! };
 //! use tempfile::tempdir;
 //!
@@ -51,8 +51,7 @@
 //! let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 //!
 //! // read visibilities out of the gpubox files
-//! vis_sel
-//!     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
+//! read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 //!     .unwrap();
 //!
 //! // write the flags to disk as .mwaf

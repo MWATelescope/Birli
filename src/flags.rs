@@ -312,7 +312,7 @@ pub fn flag_baseline_view_to_flagmask(
 ///
 /// ```
 /// use birli::{FlagContext, flag_jones_array_existing, write_flags,
-///     mwalib::CorrelatorContext, cxx_aoflagger_new, VisSelection};
+///     mwalib::CorrelatorContext, cxx_aoflagger_new, VisSelection, io::read_mwalib};
 /// use tempfile::tempdir;
 ///
 /// // define our input files
@@ -339,8 +339,7 @@ pub fn flag_baseline_view_to_flagmask(
 /// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 ///
 /// // read visibilities out of the gpubox files
-/// vis_sel
-///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
+/// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
 /// // use the default strategy file location for MWA
@@ -460,7 +459,7 @@ pub fn flag_jones_array(
 /// Here's an example of how to flag some visibility files
 ///
 /// ```rust
-/// use birli::{FlagContext, write_flags, mwalib::CorrelatorContext, VisSelection};
+/// use birli::{FlagContext, write_flags, mwalib::CorrelatorContext, VisSelection, io::read_mwalib};
 /// use tempfile::tempdir;
 ///
 /// // define our input files
@@ -502,8 +501,7 @@ pub fn flag_jones_array(
 /// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
 ///
 /// // read visibilities out of the gpubox files
-/// vis_sel
-///     .read_mwalib(&corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
+/// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
 /// // write the flags to disk as .mwaf
@@ -734,6 +732,7 @@ mod tests_aoflagger {
 
     use crate::{
         flags::{flag_jones_array, flag_jones_array_existing, FlagContext},
+        io::read_mwalib,
         BirliError, VisSelection,
     };
     use aoflagger_sys::cxx_aoflagger_new;
@@ -872,14 +871,14 @@ mod tests_aoflagger {
             )
             .unwrap();
         let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
-        vis_sel
-            .read_mwalib(
-                &corr_ctx,
-                jones_array.view_mut(),
-                flag_array.view_mut(),
-                false,
-            )
-            .unwrap();
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
 
         let strategy_filename = &aoflagger.FindStrategyFileMWA();
 

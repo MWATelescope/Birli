@@ -110,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "birli"
-version = "0.9.2"
+version = "0.10.0"
 dependencies = [
  "aoflagger_sys",
  "approx",
@@ -891,7 +891,7 @@ checksum = "cef509aa9bc73864d6756f0d34d35504af3cf0844373afe9b8669a5b8005a729"
 dependencies = [
  "console",
  "number_prefix",
- "portable-atomic",
+ "portable-atomic 0.3.20",
  "rayon",
  "unicode-width",
 ]
@@ -1101,9 +1101,9 @@ dependencies = [
 
 [[package]]
 name = "marlu"
-version = "0.9.2"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f80c9394e86d76322203f66758e51dd54c1696c6eeb8bae3bd59e7a15f6f3d6"
+checksum = "04412543ad9d5db8c4f8c322950fbdbf218c4e1635cb67840433df13416f5366"
 dependencies = [
  "approx",
  "built",
@@ -1113,7 +1113,6 @@ dependencies = [
  "fitsio-sys",
  "flate2",
  "hifitime",
- "indicatif",
  "itertools",
  "lazy_static",
  "log",
@@ -1321,9 +1320,18 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "0.3.19"
+version = "0.3.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26f6a7b87c2e435a3241addceeeff740ff8b7e76b74c13bf9acb17fa454ea00b"
+checksum = "e30165d31df606f5726b090ec7592c308a0eaf61721ff64c9a3018e344a8753e"
+dependencies = [
+ "portable-atomic 1.4.1",
+]
+
+[[package]]
+name = "portable-atomic"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edc55135a600d700580e406b4de0d59cb9ad25e344a3a091a97ded2622ec4ec6"
 
 [[package]]
 name = "prettytable-rs"

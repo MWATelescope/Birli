@@ -1,5 +1,22 @@
 //! Command Line Interface helpers for Birli
 
+use std::{
+    convert::Into,
+    ffi::OsString,
+    fmt::{Debug, Display},
+    time::Duration,
+};
+
+use cfg_if::cfg_if;
+use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
+use itertools::{izip, Itertools};
+use log::{debug, info, trace};
+use mwalib::{
+    built_info::PKG_VERSION as MWALIB_PKG_VERSION, fitsio_sys::CFITSIO_VERSION, CableDelaysApplied,
+    CorrelatorContext, GeometricDelaysApplied,
+};
+use prettytable::{format as prettyformat, row, table};
+
 use crate::{
     error::{
         BirliError,
@@ -7,7 +24,7 @@ use crate::{
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
     },
     flags::FlagContext,
-    io::{aocal::AOCalSols, IOContext},
+    io::{aocal::AOCalSols, read_mwalib, IOContext},
     marlu::{
         built_info::PKG_VERSION as MARLU_PKG_VERSION,
         constants::{
@@ -22,22 +39,6 @@ use crate::{
     },
     passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
     with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection,
-};
-use cfg_if::cfg_if;
-use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
-use itertools::{izip, Itertools};
-use log::{debug, info, trace};
-
-use mwalib::{
-    built_info::PKG_VERSION as MWALIB_PKG_VERSION, fitsio_sys::CFITSIO_VERSION, CableDelaysApplied,
-    CorrelatorContext, GeometricDelaysApplied,
-};
-use prettytable::{format as prettyformat, row, table};
-use std::{
-    convert::Into,
-    ffi::OsString,
-    fmt::{Debug, Display},
-    time::Duration,
 };
 
 cfg_if! {
@@ -1542,6 +1543,7 @@ impl<'a> BirliContext<'a> {
                     obs_ctx.name.as_deref(),
                     antenna_names,
                     antenna_positions.clone(),
+                    true,
                     Some(&history),
                 )
                 .expect("unable to initialize uvfits writer")
@@ -1554,6 +1556,7 @@ impl<'a> BirliContext<'a> {
                 obs_ctx.array_pos,
                 antenna_positions,
                 dut1,
+                true,
             );
             println!(
                 "Writing to MS: {} with {} chans selected",
@@ -1673,11 +1676,12 @@ impl<'a> BirliContext<'a> {
             // populate visibilities
             with_increment_duration!(
                 "read",
-                chunk_vis_sel.read_mwalib(
+                read_mwalib(
+                    &chunk_vis_sel,
                     corr_ctx,
                     jones_array.view_mut(),
                     flag_array.view_mut(),
-                    prep_ctx.draw_progress,
+                    prep_ctx.draw_progress
                 )?
             );
 
@@ -1725,12 +1729,7 @@ impl<'a> BirliContext<'a> {
                 with_increment_duration!(
                     "write",
                     uvfits_writer
-                        .write_vis(
-                            jones_array.view(),
-                            weight_array.view(),
-                            &chunk_vis_ctx,
-                            prep_ctx.draw_progress,
-                        )
+                        .write_vis(jones_array.view(), weight_array.view(), &chunk_vis_ctx)
                         .expect("unable to write uvfits")
                 );
             }
@@ -1740,12 +1739,7 @@ impl<'a> BirliContext<'a> {
                 with_increment_duration!(
                     "write",
                     ms_writer
-                        .write_vis(
-                            jones_array.view(),
-                            weight_array.view(),
-                            &chunk_vis_ctx,
-                            prep_ctx.draw_progress,
-                        )
+                        .write_vis(jones_array.view(), weight_array.view(), &chunk_vis_ctx)
                         .expect("unable to write ms")
                 );
             }
