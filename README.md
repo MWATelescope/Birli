@@ -34,7 +34,7 @@ descriptor for the speed which this library intends to deliver.
 
 ### Prerequisites
 
-- A Rust compiler with a version >= 1.63.0 - <https://www.rust-lang.org/tools/install>
+- A Rust compiler with a version >= 1.64.0 - <https://www.rust-lang.org/tools/install>
 - [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0
   (Ubuntu > 21.04: apt install aoflagger-dev)
 - [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49
@@ -69,10 +69,10 @@ Previously macOS was supported, however this has ben dropped due to issues with 
 ### Installing the binary
 
 ```bash
-cargo --features=aoflagger install --path .
+cargo install --path .
 ```
 
-This creates a `birli` binary with the `aoflagger` feature enabled in `$HOME/.cargo/bin`
+This creates a `birli` binary in `$HOME/.cargo/bin`
 
 ## Troubleshooting
 
