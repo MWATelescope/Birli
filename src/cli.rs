@@ -9,6 +9,7 @@ use std::{
 
 use cfg_if::cfg_if;
 use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
+use indicatif::{ProgressDrawTarget, ProgressStyle};
 use itertools::{izip, Itertools};
 use log::{debug, info, trace};
 use mwalib::{
@@ -1461,6 +1462,24 @@ impl<'a> BirliContext<'a> {
             *avg_freq,
         );
 
+        let num_avg_timesteps = vis_ctx.num_avg_timesteps();
+        let draw_target = if prep_ctx.draw_progress {
+            ProgressDrawTarget::stderr()
+        } else {
+            ProgressDrawTarget::hidden()
+        };
+        let write_progress =
+            indicatif::ProgressBar::with_draw_target(Some(num_avg_timesteps as u64), draw_target);
+        write_progress.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+                )
+                .unwrap()
+                .progress_chars("=> "),
+        );
+        write_progress.set_message("write vis");
+
         // TODO: move phase_centre, array_pos out of prep_ctx
         let obs_ctx = ObsContext {
             phase_centre: prep_ctx.phase_centre,
@@ -1715,36 +1734,52 @@ impl<'a> BirliContext<'a> {
                 };
             }
 
-            let chunk_vis_ctx = VisContext::from_mwalib(
-                corr_ctx,
-                &chunk_vis_sel.timestep_range,
-                &chunk_vis_sel.coarse_chan_range,
-                &chunk_vis_sel.baseline_idxs,
-                *avg_time,
-                *avg_freq,
-            );
+            izip!(
+                &chunk_vis_sel.timestep_range.clone().chunks(*avg_time),
+                jones_array.axis_chunks_iter(Axis(0), *avg_time),
+                weight_array.axis_chunks_iter(Axis(0), *avg_time),
+            )
+            .for_each(|(mut out_times, jones_array, weight_array)| {
+                let first_avg_timestep = out_times.next().expect("zero-sized chunk");
+                let last_avg_timestep = out_times.last().unwrap_or(first_avg_timestep) + 1;
+                let avg_timestep_range = first_avg_timestep..last_avg_timestep;
+                let avg_vis_sel = VisSelection {
+                    timestep_range: avg_timestep_range,
+                    ..chunk_vis_sel.clone()
+                };
 
-            // output uvfits
-            if let Some(uvfits_writer) = uvfits_writer.as_mut() {
-                with_increment_duration!(
-                    "write",
-                    uvfits_writer
-                        .write_vis(jones_array.view(), weight_array.view(), &chunk_vis_ctx)
-                        .expect("unable to write uvfits")
+                let avg_vis_ctx = VisContext::from_mwalib(
+                    corr_ctx,
+                    &avg_vis_sel.timestep_range,
+                    &avg_vis_sel.coarse_chan_range,
+                    &avg_vis_sel.baseline_idxs,
+                    *avg_time,
+                    *avg_freq,
                 );
-            }
 
-            // output ms
-            if let Some(ms_writer) = ms_writer.as_mut() {
-                with_increment_duration!(
-                    "write",
-                    ms_writer
-                        .write_vis(jones_array.view(), weight_array.view(), &chunk_vis_ctx)
-                        .expect("unable to write ms")
-                );
-            }
+                // output uvfits
+                if let Some(uvfits_writer) = uvfits_writer.as_mut() {
+                    with_increment_duration!(
+                        "write",
+                        uvfits_writer
+                            .write_vis(jones_array.view(), weight_array.view(), &avg_vis_ctx)
+                            .expect("unable to write uvfits")
+                    );
+                }
+
+                // output ms
+                if let Some(ms_writer) = ms_writer.as_mut() {
+                    with_increment_duration!(
+                        "write",
+                        ms_writer
+                            .write_vis(jones_array.view(), weight_array.view(), &avg_vis_ctx)
+                            .expect("unable to write ms")
+                    );
+                }
+
+                write_progress.inc(1);
+            });
         }
-
         // Finalise the uvfits writer.
         if let Some(uvfits_writer) = uvfits_writer.as_mut() {
             with_increment_duration!(
@@ -1759,6 +1794,8 @@ impl<'a> BirliContext<'a> {
         if let Some(ms_writer) = ms_writer.as_mut() {
             with_increment_duration!("write", ms_writer.finalise().expect("couldn't finalise MS"));
         };
+
+        write_progress.finish();
 
         // Finalise the mwaf files.
         if let Some(flag_file_set) = flag_file_set {
