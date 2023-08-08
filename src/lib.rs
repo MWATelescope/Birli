@@ -154,7 +154,6 @@
 #![allow(clippy::redundant_pub_crate)]
 // won't fix:
 #![allow(clippy::debug_assert_with_mut_call)]
-#![allow(clippy::uninlined_format_args)]
 
 // ///// //
 // cargo //

@@ -241,10 +241,7 @@ pub fn compare_uvfits_with_csv(
     let time_resolution = 1. / 1_000_000.;
     let mut times_seen = HashSet::<u64>::new();
 
-    for record in expected_reader.records().filter_map(|result| match result {
-        Ok(record) => Some(record),
-        Err(err) => panic!("{err:?}"),
-    }) {
+    for record in expected_reader.records().map(std::result::Result::unwrap) {
         let exp_group_params = ["u", "v", "w", "baseline", "timestep"]
             .iter()
             .map(|key| {
@@ -491,10 +488,7 @@ pub fn compare_ms_with_csv(
     let pol_order = vec!["xx", "xy", "yx", "yy"];
     assert_eq!(num_pols, pol_order.len());
 
-    for record in expected_reader.records().filter_map(|result| match result {
-        Ok(record) => Some(record),
-        Err(err) => panic!("{err:?}"),
-    }) {
+    for record in expected_reader.records().map(std::result::Result::unwrap) {
         let exp_baseline: (usize, usize) = (
             record[indices["ant1"]].parse().unwrap(),
             record[indices["ant2"]].parse().unwrap(),

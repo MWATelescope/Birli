@@ -207,7 +207,7 @@ impl ChannelRanges {
 
     /// Create a new `ChannelRanges` object spanning all available channels in the metafits context
     pub fn all(context: &CorrelatorContext) -> Self {
-        let coarse_chan_indices = &(0..context.num_coarse_chans).into_iter().collect_vec();
+        let coarse_chan_indices = &(0..context.num_coarse_chans).collect_vec();
         // get the first value in the vector
         let mut range_start_idx = coarse_chan_indices[0];
         let mut range_end_idx = range_start_idx;
