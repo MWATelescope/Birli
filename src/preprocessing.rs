@@ -363,7 +363,6 @@ mod tests {
             Some(prep_ctx.phase_centre),
             avg_time,
             avg_freq,
-            prep_ctx.draw_progress,
         )
         .unwrap();
 

@@ -319,11 +319,10 @@ pub fn read_mwalib(
 /// use tempfile::tempdir;
 /// use birli::{
 ///     FlagContext,
-///     write_uvfits,
 ///     marlu::mwalib::CorrelatorContext,
 ///     get_weight_factor,
 ///     flag_to_weight_array,
-///     VisSelection, io::read_mwalib
+///     VisSelection, io::{read_mwalib, write_uvfits}
 /// };
 ///
 /// // define our input files
@@ -370,7 +369,6 @@ pub fn read_mwalib(
 ///     None,
 ///     1,
 ///     1,
-///     false,
 /// )
 /// .unwrap();
 /// ```
@@ -392,7 +390,6 @@ pub fn write_uvfits<T: AsRef<Path>>(
     phase_centre: Option<RADec>,
     avg_time: usize,
     avg_freq: usize,
-    draw_progress: bool,
 ) -> Result<(), IOError> {
     trace!("start write_uvfits to {:?}", path.as_ref());
 
@@ -470,11 +467,10 @@ pub fn write_uvfits<T: AsRef<Path>>(
 /// use tempfile::tempdir;
 /// use birli::{
 ///     VisSelection,
-///     write_ms,
 ///     marlu::mwalib::CorrelatorContext,
 ///     get_weight_factor,
 ///     flag_to_weight_array,
-///     FlagContext, io::read_mwalib
+///     FlagContext, io::{read_mwalib, write_ms}
 /// };
 ///
 /// // define our input files
@@ -523,7 +519,6 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///     None,
 ///     avg_time,
 ///     avg_freq,
-///     false,
 /// )
 /// .unwrap();
 /// ```
@@ -545,7 +540,6 @@ pub fn write_ms<T: AsRef<Path>>(
     phase_centre: Option<RADec>,
     avg_time: usize,
     avg_freq: usize,
-    draw_progress: bool,
 ) -> Result<(), IOError> {
     trace!("start write_ms to {:?}", path.as_ref());
 
@@ -690,7 +684,6 @@ mod tests_aoflagger {
             None,
             1,
             1,
-            false,
         )
         .unwrap();
 

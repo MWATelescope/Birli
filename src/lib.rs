@@ -8,9 +8,9 @@
 //! ```rust
 //! use birli::{
 //!     write_flags,
-//!     mwalib::CorrelatorContext, write_uvfits,
+//!     mwalib::CorrelatorContext,
 //!     get_weight_factor, flag_to_weight_array,
-//!     FlagContext, VisSelection, io::read_mwalib
+//!     FlagContext, VisSelection, io::{read_mwalib, write_uvfits}
 //! };
 //! use tempfile::tempdir;
 //!
@@ -80,7 +80,6 @@
 //!     None,
 //!     1,
 //!     1,
-//!     false,
 //! ).unwrap();
 //! ```
 //!
@@ -167,7 +166,7 @@ use cfg_if::cfg_if;
 use log::warn;
 
 pub mod io;
-pub use io::{mwaf::FlagFileSet, write_ms, write_uvfits};
+pub use io::mwaf::FlagFileSet;
 pub mod corrections;
 pub use corrections::{correct_cable_lengths, correct_geometry, ScrunchType};
 pub mod calibration;
@@ -175,6 +174,8 @@ pub mod flags;
 #[cfg(test)]
 pub use approx;
 pub use flags::{flag_to_weight_array, get_weight_factor, write_flags, FlagContext};
+#[cfg(test)]
+pub use io::{write_ms, write_uvfits};
 pub mod passband_gains;
 pub use marlu;
 pub use marlu::{

@@ -1,7 +1,7 @@
 use birli::{
     flags::{flag_to_weight_array, get_weight_factor},
-    io::{read_mwalib, write_uvfits},
-    write_ms, VisSelection,
+    io::{read_mwalib, write_ms, write_uvfits},
+    VisSelection,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use glob::glob;
@@ -82,7 +82,6 @@ fn bench_uvfits_output_1196175296_none(crt: &mut Criterion) {
                     None,
                     1,
                     1,
-                    false,
                 )
                 .unwrap();
             });
@@ -131,7 +130,6 @@ fn bench_ms_output_1196175296_none(crt: &mut Criterion) {
                     None,
                     1,
                     1,
-                    false,
                 )
                 .unwrap();
             });

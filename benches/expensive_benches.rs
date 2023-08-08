@@ -249,7 +249,6 @@ fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
                 None,
                 1,
                 1,
-                false,
             )
             .unwrap();
         });
@@ -292,7 +291,6 @@ fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
                 None,
                 1,
                 1,
-                false,
             )
             .unwrap();
         });
