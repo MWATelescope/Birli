@@ -4,7 +4,7 @@
 - 🙏 quality of life:
   - uvfits are now written out with a second DATE and INTTIM
 - ➕ dependencies:
-  - use Marlu 0.10.0
+  - use Marlu 0.10.1
   - use rust version 1.64
 
 # Version 0.9.2 (2023-07-18)
