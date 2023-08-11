@@ -24,9 +24,9 @@ jobs:
       - name: Generate test lcov coverage into coverage/ dir
         run: |
           mkdir -p coverage
-          /opt/cargo/bin/cargo llvm-cov --all --lcov --output-path coverage/coverage.lcov
+          /opt/cargo/bin/cargo llvm-cov --all --locked --lcov --output-path coverage/coverage.lcov
           # this uses the result of the previous run to generate a text summary
-          /opt/cargo/bin/cargo llvm-cov --no-run
+          /opt/cargo/bin/cargo llvm-cov --no-run --locked
 
       - name: Upload reports to codecov.io
         uses: codecov/codecov-action@v2

@@ -1,6 +1,6 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.10.0 (unreleased)
+# Version 0.10.0 (2023-08-11)
 - 🙏 quality of life:
   - uvfits are now written out with a second DATE and INTTIM
 - ➕ dependencies:
