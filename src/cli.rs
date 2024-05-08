@@ -858,12 +858,12 @@ impl<'a> BirliContext<'a> {
                 }
                 // filter vis_sel.baseline_idxs that correspond with antennas not in antenna_idxs
                 vis_sel.baseline_idxs.retain(|idx| {
-                        let (ant1, ant2) = (
-                            corr_ctx.metafits_context.baselines[*idx].ant1_index,
-                            corr_ctx.metafits_context.baselines[*idx].ant2_index,
-                        );
-                        antenna_idxs.contains(&ant1) && antenna_idxs.contains(&ant2)
-                    });
+                    let (ant1, ant2) = (
+                        corr_ctx.metafits_context.baselines[*idx].ant1_index,
+                        corr_ctx.metafits_context.baselines[*idx].ant2_index,
+                    );
+                    antenna_idxs.contains(&ant1) && antenna_idxs.contains(&ant2)
+                });
             }
             Err(err) => match err.kind() {
                 ArgumentNotFound { .. } => {}
@@ -1874,7 +1874,7 @@ mod tests {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -2884,7 +2884,7 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -2989,7 +2989,7 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -3070,7 +3070,7 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
         assert_eq!(birli_ctx.prep_ctx.phase_centre, RADec { ra: 0., dec: 0. });
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
@@ -3155,7 +3155,7 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
         assert_eq!(birli_ctx.prep_ctx.phase_centre, pointing_centre);
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
@@ -3239,7 +3239,7 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, None));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_none());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -3294,7 +3294,7 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, None));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_none());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -3376,7 +3376,7 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, None));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_none());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -3465,10 +3465,10 @@ mod tests_aoflagger {
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
         assert!(!birli_ctx.prep_ctx.correct_cable_lengths);
-        assert!(matches!(birli_ctx.prep_ctx.passband_gains, Some(_)));
+        assert!(birli_ctx.prep_ctx.passband_gains.is_some());
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, None));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_none());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -3549,7 +3549,7 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -3650,7 +3650,7 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -3710,7 +3710,7 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -3772,7 +3772,7 @@ mod tests_aoflagger {
         assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
         assert!(!birli_ctx.prep_ctx.correct_digital_gains);
         assert!(!birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -3887,10 +3887,10 @@ mod tests_aoflagger_flagset {
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
         assert!(birli_ctx.prep_ctx.correct_cable_lengths);
-        assert!(matches!(birli_ctx.prep_ctx.passband_gains, None));
+        assert!(birli_ctx.prep_ctx.passband_gains.is_none());
         assert!(birli_ctx.prep_ctx.correct_digital_gains);
         assert!(birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path
@@ -3986,10 +3986,10 @@ mod tests_aoflagger_flagset {
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
         assert!(birli_ctx.prep_ctx.correct_cable_lengths);
-        assert!(matches!(birli_ctx.prep_ctx.passband_gains, None));
+        assert!(birli_ctx.prep_ctx.passband_gains.is_none());
         assert!(birli_ctx.prep_ctx.correct_digital_gains);
         assert!(birli_ctx.prep_ctx.correct_geometry);
-        assert!(matches!(birli_ctx.prep_ctx.aoflagger_strategy, Some(_)));
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
         assert_eq!(
             birli_ctx.io_ctx.metafits_in.display().to_string(),
             metafits_path

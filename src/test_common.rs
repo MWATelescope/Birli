@@ -235,7 +235,7 @@ pub fn compare_uvfits_with_csv(
     let mut obs_vis: Vec<f32> = vec![0.0; vis_len];
     let mut obs_group_params: Vec<f64> = vec![0.0; pcount];
 
-    let pol_order = vec!["xx", "yy", "xy", "yx"];
+    let pol_order = ["xx", "yy", "xy", "yx"];
     assert_eq!(num_pols, pol_order.len());
 
     let time_resolution = 1. / 1_000_000.;
@@ -485,7 +485,7 @@ pub fn compare_ms_with_csv(
     let mut row_idx = 0;
     let mut mjds_seen = HashSet::<u64>::new();
 
-    let pol_order = vec!["xx", "xy", "yx", "yy"];
+    let pol_order = ["xx", "xy", "yx", "yy"];
     assert_eq!(num_pols, pol_order.len());
 
     for record in expected_reader.records().map(std::result::Result::unwrap) {

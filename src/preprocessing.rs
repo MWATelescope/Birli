@@ -413,16 +413,15 @@ mod tests {
 
         corr_ctx.metafits_context.mwa_version = Some(MWAVersion::CorrOldLegacy);
 
-        assert!(matches!(
-            prep_ctx.preprocess(
+        assert!(prep_ctx
+            .preprocess(
                 &corr_ctx,
                 jones_array.view_mut(),
                 weight_array.view_mut(),
                 flag_array.view_mut(),
                 &vis_sel,
-            ),
-            Ok(_)
-        ));
+            )
+            .is_ok());
 
         corr_ctx.metafits_context.mwa_version = Some(MWAVersion::VCSLegacyRecombined);
 

@@ -123,7 +123,7 @@ pub fn correct_cable_lengths(
             for (mut jones_array, &freq_hz) in
                 jones_array.axis_iter_mut(Axis(1)).zip_eq(&all_freqs_hz)
             {
-                for jones in jones_array.iter_mut() {
+                for jones in &mut jones_array {
                     // promote, correct, demote
                     let mut corrected = Jones::<f64>::from(*jones);
                     for (complex, length) in corrected.iter_mut().zip_eq(&pol_lengths) {
@@ -414,7 +414,7 @@ fn _correct_digital_gains(
                 gains.index_axis(Axis(0), ant2_idx),
             ) {
                 // for all visibilities in the selected coarse channel, for all timesteps
-                for jones in jones_array.iter_mut() {
+                for jones in &mut jones_array {
                     // promote, correct, demote
                     let mut corrected = Jones::<f64>::from(*jones);
                     corrected[0] /= gain1x * gain2x;
