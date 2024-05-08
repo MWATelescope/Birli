@@ -11,7 +11,7 @@ use cfg_if::cfg_if;
 use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
 use indicatif::{ProgressDrawTarget, ProgressStyle};
 use itertools::{izip, Itertools};
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, fitsio_sys::CFITSIO_VERSION, CableDelaysApplied,
     CorrelatorContext, GeometricDelaysApplied,
@@ -840,6 +840,36 @@ impl<'a> BirliContext<'a> {
                 _ => return Err(err.into()),
             },
         }
+        match matches.values_of_t::<usize>("sel-ants") {
+            Ok(antenna_idxs) => {
+                for (value_idx, &antenna_idx) in antenna_idxs.iter().enumerate() {
+                    if antenna_idx >= corr_ctx.metafits_context.num_ants {
+                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                            option: "--sel-ants <ANTS>...".into(),
+                            expected: format!(
+                                "antenna_idx < num_ants={}",
+                                corr_ctx.metafits_context.num_ants
+                            ),
+                            received: format!(
+                                "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
+                            ),
+                        }));
+                    }
+                }
+                // filter vis_sel.baseline_idxs that correspond with antennas not in antenna_idxs
+                vis_sel.baseline_idxs.retain(|idx| {
+                        let (ant1, ant2) = (
+                            corr_ctx.metafits_context.baselines[*idx].ant1_index,
+                            corr_ctx.metafits_context.baselines[*idx].ant2_index,
+                        );
+                        antenna_idxs.contains(&ant1) && antenna_idxs.contains(&ant2)
+                    });
+            }
+            Err(err) => match err.kind() {
+                ArgumentNotFound { .. } => {}
+                _ => return Err(err.into()),
+            },
+        }
         Ok(vis_sel)
     }
 
@@ -1324,21 +1354,21 @@ impl<'a> BirliContext<'a> {
         let matches = Self::get_matches(args)?;
         trace!("arg matches:\n{:?}", &matches);
 
-        for unimplemented_option in &["no-sel-autos", "no-sel-flagged-ants", "sel-ants"] {
+        for unimplemented_option in &["no-sel-autos", "no-sel-flagged-ants"] {
             assert!(
                 !matches.is_present(unimplemented_option),
                 "option not yet implemented: --{unimplemented_option}"
             );
         }
 
-        // for untested_option in &["put-untested-options-here"] {
-        //     if matches.is_present(untested_option) {
-        //         warn!(
-        //             "option does not have full test coverage, use with caution: --{}",
-        //             untested_option
-        //         );
-        //     }
-        // }
+        for untested_option in &["sel-ants"] {
+            if matches.is_present(untested_option) {
+                warn!(
+                    "option does not have full test coverage, use with caution: --{}",
+                    untested_option
+                );
+            }
+        }
 
         let io_ctx = Self::parse_io_matches(&matches);
         let corr_ctx = io_ctx.get_corr_ctx()?;
