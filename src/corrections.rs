@@ -55,7 +55,7 @@ use thiserror::Error;
 /// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, false);
+/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &vis_sel.baseline_idxs, false);
 /// ```
 ///
 /// # Accuracy
@@ -65,9 +65,9 @@ use thiserror::Error;
 pub fn correct_cable_lengths(
     corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
+    // TODO: take a VisSelection
     coarse_chan_range: &Range<usize>,
-    // TODO: allow subset of baselines
-    // baseline_idxs: &[usize],
+    baseline_idxs: &[usize],
     draw_progress: bool,
 ) {
     trace!("start correct_cable_lengths");
@@ -77,9 +77,14 @@ pub fn correct_cable_lengths(
     let all_freqs_hz =
         corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>());
 
-    let ant_pairs = (meta_ctx.baselines)
+    let ant_pairs = baseline_idxs
         .iter()
-        .map(|b| (b.ant1_index, b.ant2_index))
+        .map(|b| {
+            (
+                meta_ctx.baselines[*b].ant1_index,
+                meta_ctx.baselines[*b].ant2_index,
+            )
+        })
         .collect::<Vec<_>>();
 
     let draw_target = if draw_progress {
@@ -188,13 +193,14 @@ pub fn correct_cable_lengths(
 /// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, false);
+/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &vis_sel.baseline_idxs, false);
 ///
 /// correct_geometry(
 ///     &corr_ctx,
 ///     jones_array.view_mut(),
 ///     &vis_sel.timestep_range,
 ///     &vis_sel.coarse_chan_range,
+///     &vis_sel.baseline_idxs,
 ///     None,
 ///     None,
 ///     false,
@@ -204,10 +210,11 @@ pub fn correct_cable_lengths(
 pub fn correct_geometry(
     corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
+    // TODO: next 3 args could just be
+    // vis_sel: &VisSelection,
     timestep_range: &Range<usize>,
     coarse_chan_range: &Range<usize>,
-    // TODO: allow subset of baselines
-    // baseline_idxs: &[usize],
+    baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
     draw_progress: bool,
@@ -224,8 +231,6 @@ pub fn correct_geometry(
 
     let timesteps = &corr_ctx.timesteps[timestep_range.clone()];
 
-    let baselines = &corr_ctx.metafits_context.baselines;
-
     let all_freqs_hz =
         corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>());
     let jones_dims = jones_array.dim();
@@ -236,9 +241,15 @@ pub fn correct_geometry(
         .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context));
     let tiles_xyz_geod = XyzGeodetic::get_tiles(&corr_ctx.metafits_context, array_pos.latitude_rad);
 
-    let ant_pairs = baselines
+    // use baseline_idxs to select antpairs out of corr_ctx.metafits_context.baselines
+    let ant_pairs = baseline_idxs
         .iter()
-        .map(|b| (b.ant1_index, b.ant2_index))
+        .map(|b| {
+            (
+                corr_ctx.metafits_context.baselines[*b].ant1_index,
+                corr_ctx.metafits_context.baselines[*b].ant2_index,
+            )
+        })
         .collect::<Vec<_>>();
     let centroid_timestamps = timesteps
         .iter()
@@ -329,9 +340,9 @@ pub enum DigitalGainCorrection {
 pub fn correct_digital_gains(
     corr_ctx: &CorrelatorContext,
     jones_array: ArrayViewMut3<Jones<f32>>,
+    // TODO: take a VisSelection
     coarse_chan_range: &Range<usize>,
     ant_pairs: &[(usize, usize)],
-    // TODO: take a VisSelection
 ) -> Result<(), DigitalGainCorrection> {
     let num_fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 
@@ -712,7 +723,8 @@ mod tests {
     #[test]
     fn test_cable_length_corrections_mwax() {
         let corr_ctx = get_mwax_context();
-        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.baseline_idxs = vec![0, 1];
 
         // Create a blank array to store flags and visibilities
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
@@ -814,6 +826,7 @@ mod tests {
             &corr_ctx,
             jones_array.view_mut(),
             &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             false,
         );
 
@@ -954,6 +967,7 @@ mod tests {
             &corr_ctx,
             jones_array.view_mut(),
             &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             false,
         );
 
@@ -1110,6 +1124,7 @@ mod tests {
             jones_array.view_mut(),
             &vis_sel.timestep_range,
             &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             None,
             None,
             false,
@@ -1139,7 +1154,9 @@ mod tests {
     #[test]
     fn test_geometric_corrections_mwax() {
         let corr_ctx = get_mwax_context();
-        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        // only select baselines we're looking at
+        vis_sel.baseline_idxs = vec![0, 1];
 
         // Create a blank array to store flags and visibilities
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
@@ -1177,7 +1194,7 @@ mod tests {
             ])
         );
 
-        // ts 0, chan 0 (cc 0, fc 0), baseline 5
+        // ts 0, chan 0 (cc 0, fc 0), baseline 1
         let viz_0_0_1 = jones_array[(0, 0, 1)];
         compare_jones!(
             viz_0_0_1,
@@ -1189,7 +1206,7 @@ mod tests {
             ])
         );
 
-        // ts 3, chan 3 (cc 1, fc 1), baseline 5
+        // ts 3, chan 3 (cc 1, fc 1), baseline 1
         let viz_3_3_1 = jones_array[(3, 3, 1)];
         compare_jones!(
             viz_3_3_1,
@@ -1258,6 +1275,7 @@ mod tests {
             jones_array.view_mut(),
             &vis_sel.timestep_range,
             &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             None,
             None,
             false,

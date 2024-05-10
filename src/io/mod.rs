@@ -157,7 +157,9 @@ pub fn read_mwalib(
     let shape = vis_sel.get_shape(fine_chans_per_coarse);
     let (num_timesteps, _, _) = shape;
     let num_coarse_chans = vis_sel.coarse_chan_range.len();
+    let max_bl_idx = corr_ctx.metafits_context.baselines.len();
 
+    // check output array dimensions
     if jones_array.dim() != shape {
         return Err(SelectionError::BadArrayShape {
             argument: "jones_array".to_string(),
@@ -175,6 +177,15 @@ pub fn read_mwalib(
             received: format!("{:?}", flag_array.dim()),
         });
     };
+
+    // check all selected baseline idxs are < max_bl_idx
+    if vis_sel.baseline_idxs.iter().any(|&idx| idx >= max_bl_idx) {
+        return Err(SelectionError::BadBaselineIdx {
+            function: "VisSelection::read_mwalib".to_string(),
+            expected: format!(" < {max_bl_idx}"),
+            received: format!("{:?}", vis_sel.baseline_idxs.clone()),
+        });
+    }
 
     // since we are using read_by_baseline_into_buffer, the visibilities are read in order:
     // baseline,frequency,pol,r,i
@@ -581,6 +592,86 @@ pub fn write_ms<T: AsRef<Path>>(
     trace!("end write_ms");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use approx::assert_abs_diff_eq;
+    use marlu::{Complex, Jones};
+
+    use crate::{compare_jones, test_common::get_mwax_context, VisSelection};
+
+    use super::read_mwalib;
+
+    // test read_mwalib with bad vis_sel.baseline_idxs
+    #[test]
+    fn test_read_bad_baseline_sel() {
+        let corr_ctx = get_mwax_context();
+
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.baseline_idxs = vec![5];
+
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        assert!(read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .is_err());
+    }
+
+    // test read_mwalib with custom vis_sel.baseline_idxs
+    #[test]
+    fn test_read_baseline_sel() {
+        let corr_ctx = get_mwax_context();
+
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.baseline_idxs = vec![1];
+
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        assert_eq!(flag_array.shape(), &[4, 4, 1]);
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        assert_eq!(jones_array.shape(), &[4, 4, 1]);
+        let weight_array = vis_sel.allocate_weights(fine_chans_per_coarse).unwrap();
+        assert_eq!(weight_array.shape(), &[4, 4, 1]);
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
+
+        // ts 0, chan 0 (cc 0, fc 0), baseline 1
+        let viz_0_0_1 = jones_array[(0, 0, 0)];
+        compare_jones!(
+            viz_0_0_1,
+            Jones::from([
+                Complex::new(0x410010 as f32, 0x410011 as f32),
+                Complex::new(0x410012 as f32, 0x410013 as f32),
+                Complex::new(0x410014 as f32, 0x410015 as f32),
+                Complex::new(0x410016 as f32, 0x410017 as f32),
+            ])
+        );
+
+        // ts 3, chan 3 (cc 1, fc 1), baseline 1
+        let viz_3_3_1 = jones_array[(3, 3, 0)];
+        compare_jones!(
+            viz_3_3_1,
+            Jones::from([
+                Complex::new(0x410718 as f32, 0x410719 as f32),
+                Complex::new(0x41071a as f32, 0x41071b as f32),
+                Complex::new(0x41071c as f32, 0x41071d as f32),
+                Complex::new(0x41071e as f32, 0x41071f as f32),
+            ])
+        );
+    }
 }
 
 #[cfg(test)]

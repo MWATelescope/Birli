@@ -1841,8 +1841,8 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::{
-        test_common::get_1254670392_avg_paths, test_common::get_mwax_data_paths, BirliContext,
-        VisSelection,
+        test_common::{get_1254670392_avg_paths, get_mwax_data_paths},
+        BirliContext, BirliError, VisSelection,
     };
 
     #[test]
@@ -2142,6 +2142,56 @@ mod tests {
         ];
 
         let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+    }
+
+    /// Test that corrections work correctly with `--sel-ants`
+    #[test]
+    fn test_sel_ants_baselines() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--sel-ants", "1", "2", "3", "4",
+            "--no-draw-progress",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext {
+            vis_sel,
+            // corr_ctx,
+            ..
+        } = BirliContext::from_args(&args).unwrap();
+
+        // check baseline_idxs is the correct size
+        assert_eq!(vis_sel.baseline_idxs.len(), 10);
+        assert_eq!(
+            vis_sel.baseline_idxs,
+            [128, 129, 130, 131, 255, 256, 257, 381, 382, 506]
+        );
+    }
+
+    /// Test `--sel-ants` handles invalid antenna idxs
+    #[test]
+    fn test_sel_ants_invalid() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--sel-ants", "0", "11", "3", "999",
+            "--no-draw-progress",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
     }
 }
 

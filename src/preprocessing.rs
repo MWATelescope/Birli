@@ -170,6 +170,7 @@ impl<'a> PreprocessContext<'a> {
                     corr_ctx,
                     jones_array.view_mut(),
                     &vis_sel.coarse_chan_range,
+                    &vis_sel.baseline_idxs,
                     self.draw_progress
                 )
             );
@@ -236,6 +237,7 @@ impl<'a> PreprocessContext<'a> {
                     jones_array.view_mut(),
                     &vis_sel.timestep_range,
                     &vis_sel.coarse_chan_range,
+                    &vis_sel.baseline_idxs,
                     Some(self.array_pos),
                     Some(self.phase_centre),
                     self.draw_progress,
