@@ -235,9 +235,7 @@ impl<'a> PreprocessContext<'a> {
                 correct_geometry(
                     corr_ctx,
                     jones_array.view_mut(),
-                    &vis_sel.timestep_range,
-                    &vis_sel.coarse_chan_range,
-                    &vis_sel.baseline_idxs,
+                    vis_sel,
                     Some(self.array_pos),
                     Some(self.phase_centre),
                     self.draw_progress,

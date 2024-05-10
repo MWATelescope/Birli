@@ -12,7 +12,7 @@ use marlu::{
     io::error::BadArrayShape,
     mwalib::{CorrelatorContext, MWAVersion},
     precession::precess_time,
-    Complex, LatLngHeight, RADec, XyzGeodetic, UVW,
+    Complex, LatLngHeight, RADec, VisSelection, XyzGeodetic, UVW,
 };
 use std::{f64::consts::TAU, ops::Range};
 use thiserror::Error;
@@ -198,23 +198,16 @@ pub fn correct_cable_lengths(
 /// correct_geometry(
 ///     &corr_ctx,
 ///     jones_array.view_mut(),
-///     &vis_sel.timestep_range,
-///     &vis_sel.coarse_chan_range,
-///     &vis_sel.baseline_idxs,
+///     &vis_sel,
 ///     None,
 ///     None,
 ///     false,
 /// );
 /// ```
-#[allow(clippy::too_many_arguments)]
 pub fn correct_geometry(
     corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
-    // TODO: next 3 args could just be
-    // vis_sel: &VisSelection,
-    timestep_range: &Range<usize>,
-    coarse_chan_range: &Range<usize>,
-    baseline_idxs: &[usize],
+    vis_sel: &VisSelection,
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
     draw_progress: bool,
@@ -229,10 +222,10 @@ pub fn correct_geometry(
         LatLngHeight::mwa()
     });
 
-    let timesteps = &corr_ctx.timesteps[timestep_range.clone()];
+    let timesteps = &corr_ctx.timesteps[vis_sel.timestep_range.clone()];
 
-    let all_freqs_hz =
-        corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>());
+    let all_freqs_hz = corr_ctx
+        .get_fine_chan_freqs_hz_array(&vis_sel.coarse_chan_range.clone().collect::<Vec<_>>());
     let jones_dims = jones_array.dim();
 
     let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
@@ -242,15 +235,7 @@ pub fn correct_geometry(
     let tiles_xyz_geod = XyzGeodetic::get_tiles(&corr_ctx.metafits_context, array_pos.latitude_rad);
 
     // use baseline_idxs to select antpairs out of corr_ctx.metafits_context.baselines
-    let ant_pairs = baseline_idxs
-        .iter()
-        .map(|b| {
-            (
-                corr_ctx.metafits_context.baselines[*b].ant1_index,
-                corr_ctx.metafits_context.baselines[*b].ant2_index,
-            )
-        })
-        .collect::<Vec<_>>();
+    let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
     let centroid_timestamps = timesteps
         .iter()
         .map(|t| Epoch::from_gpst_seconds(t.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0))
@@ -1122,9 +1107,7 @@ mod tests {
         correct_geometry(
             &corr_ctx,
             jones_array.view_mut(),
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            &vis_sel.baseline_idxs,
+            &vis_sel,
             None,
             None,
             false,
@@ -1273,9 +1256,7 @@ mod tests {
         correct_geometry(
             &corr_ctx,
             jones_array.view_mut(),
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
-            &vis_sel.baseline_idxs,
+            &vis_sel,
             None,
             None,
             false,
