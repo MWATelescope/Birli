@@ -88,6 +88,6 @@ opt-level = 3
 
 [patch.crates-io]
 # marlu = { path = "../Marlu" }
-# marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "DUT1" }
+marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "macos-arm64" }
 # mwalib = { path = "../mwalib" }
 # mwalib = { git = "https://github.com/MWATelescope/mwalib", branch = "digital_gains_plus" }
