@@ -48,9 +48,6 @@ cfg_if! {
     }
 }
 
-const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
-const PKG_NAME: &str = env!("CARGO_PKG_NAME");
-
 /// Args for preprocessing a correlator context.
 pub struct BirliContext<'a> {
     /// mwalib::CorrelatorContext
