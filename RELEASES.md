@@ -1,5 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.11.0 (2024-06-19)
+- ➕ dependencies:
+  - Marlu 0.11.0
+  - built ~0.7.3
+
 # Version 0.10.0 (2023-08-11)
 - 🙏 quality of life:
   - uvfits are now written out with a second DATE and INTTIM
