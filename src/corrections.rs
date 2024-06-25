@@ -242,7 +242,6 @@ pub fn correct_geometry(
         .collect::<Vec<_>>();
     let dut1 = Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or(0.0));
     let part_uvws = calc_part_uvws(
-        &ant_pairs,
         &centroid_timestamps,
         dut1,
         phase_centre,
@@ -652,15 +651,14 @@ pub fn scrunch_gains(
 // UVWs are in units of meters. To get the UVWs in units of wavelengths, divide by the wavelength.
 // uvw at ts, (ant1, ant2) = part_uvw[ant1] - part_uvw[ant2]
 fn calc_part_uvws(
-    ant_pairs: &[(usize, usize)],
     centroid_timestamps: &[Epoch],
     dut1: Duration,
     phase_centre: RADec,
     array_pos: LatLngHeight,
     tile_xyzs: &[XyzGeodetic],
 ) -> Array2<UVW> {
-    let max_ant = ant_pairs.iter().map(|&(a, b)| a.max(b)).max().unwrap();
-    let mut part_uvws = Array2::from_elem((centroid_timestamps.len(), max_ant + 1), UVW::default());
+    let nants = tile_xyzs.len();
+    let mut part_uvws = Array2::from_elem((centroid_timestamps.len(), nants), UVW::default());
     for (t, &epoch) in centroid_timestamps.iter().enumerate() {
         let prec = precess_time(
             array_pos.longitude_rad,

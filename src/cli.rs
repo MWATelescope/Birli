@@ -2159,18 +2159,16 @@ mod tests {
             gpufits_paths[1],
         ];
 
-        let BirliContext {
-            vis_sel,
-            // corr_ctx,
-            ..
-        } = BirliContext::from_args(&args).unwrap();
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
 
         // check baseline_idxs is the correct size
-        assert_eq!(vis_sel.baseline_idxs.len(), 10);
+        assert_eq!(&birli_ctx.vis_sel.baseline_idxs.len(), &10);
         assert_eq!(
-            vis_sel.baseline_idxs,
-            [128, 129, 130, 131, 255, 256, 257, 381, 382, 506]
+            &birli_ctx.vis_sel.baseline_idxs,
+            &[128, 129, 130, 131, 255, 256, 257, 381, 382, 506]
         );
+
+        birli_ctx.run().unwrap();
     }
 
     /// Test `--sel-ants` handles invalid antenna idxs
