@@ -69,7 +69,7 @@ ndarray = { version = "0.15.4", features = ["approx-0_5"] }
 tempfile = "3.3"
 
 [build-dependencies]
-built = { version = "~0.7.3", default-features = false, features = [
+built = { version = "~0.7", default-features = false, features = [
     "chrono",
     "git2",
 ] }
@@ -91,6 +91,6 @@ opt-level = 3
 
 [patch.crates-io]
 # marlu = { path = "../Marlu" }
-marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "birli-150" }
+# marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "birli-150" }
 # mwalib = { path = "../mwalib" }
 # mwalib = { git = "https://github.com/MWATelescope/mwalib", branch = "digital_gains_plus" }
