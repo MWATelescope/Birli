@@ -101,7 +101,7 @@ $SUDO apt-get install -y \
     python3
 cd /tmp
 [ -d "aoflagger" ] && rm -rf aoflagger
-git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git --branch v3.1.0
+git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git --branch v3.4.0
 cd aoflagger
 chmod a+rwx .
 mkdir build
@@ -119,9 +119,7 @@ linux_alias = "linux_install_cfitsio"
 dependencies = ["install_cfitsio"]
 
 [tasks.linux_install_deps]
-dependencies = [
-  "linux_install_aoflagger",
-]
+dependencies = ["linux_install_aoflagger"]
 
 [tasks.install_deps]
 linux_alias = "linux_install_deps"
