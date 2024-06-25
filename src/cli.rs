@@ -1850,9 +1850,11 @@ impl<'a> BirliContext<'a> {
 #[cfg(test)]
 #[cfg(feature = "aoflagger")]
 mod tests {
+    use approx::{assert_abs_diff_eq, assert_abs_diff_ne};
     use tempfile::tempdir;
 
     use crate::{
+        passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
         test_common::{get_1254670392_avg_paths, get_mwax_data_paths},
         BirliContext, BirliError, VisSelection,
     };
@@ -1973,6 +1975,56 @@ mod tests {
         let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
 
         assert!(flag_ctx.flag_dc);
+    }
+
+    /// pfb gains is cotter by default for legacy correlator.
+    #[test]
+    fn test_auto_pfb_legacy() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(prep_ctx.passband_gains.is_some());
+        assert_abs_diff_eq!(
+            prep_ctx.passband_gains.unwrap()[0],
+            PFB_COTTER_2014_10KHZ[0]
+        );
+        // santiy check
+        assert_abs_diff_ne!(prep_ctx.passband_gains.unwrap()[0], PFB_JAKE_2022_200HZ[0]);
+    }
+
+    /// pfb gains is jake by default for mwax correlator.
+    #[test]
+    fn test_auto_pfb_mwax() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(prep_ctx.passband_gains.is_some());
+        assert_abs_diff_eq!(prep_ctx.passband_gains.unwrap()[0], PFB_JAKE_2022_200HZ[0]);
+        // santiy check
+        assert_abs_diff_ne!(
+            prep_ctx.passband_gains.unwrap()[0],
+            PFB_COTTER_2014_10KHZ[0]
+        );
     }
 
     /// DC flagging is off by default for MWAX inputs.
