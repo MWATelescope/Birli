@@ -14,7 +14,7 @@ use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
 use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, fitsio_sys::CFITSIO_VERSION, CableDelaysApplied,
-    CorrelatorContext, GeometricDelaysApplied,
+    CorrelatorContext, GeometricDelaysApplied, MWAVersion,
 };
 use prettytable::{format as prettyformat, row, table};
 
@@ -743,8 +743,10 @@ impl<'a> BirliContext<'a> {
                             ),
                         PossibleValue::new("jake")
                             .help("see: PFB_JAKE_2022_200HZ in src/passband_gains.rs"),
+                        PossibleValue::new("auto")
+                            .help("MWAX => jake, legacy => cotter"),
                     ])
-                    .default_value("jake")
+                    .default_value("auto")
                     .alias("pfb-gains")
                     .help_heading("CORRECTION"),
 
@@ -1303,6 +1305,16 @@ impl<'a> BirliContext<'a> {
             None | Some("none") => None,
             Some("jake") => Some(PFB_JAKE_2022_200HZ),
             Some("cotter") => Some(PFB_COTTER_2014_10KHZ),
+            Some("auto") => match corr_ctx.mwa_version {
+                MWAVersion::CorrMWAXv2 => Some(PFB_JAKE_2022_200HZ),
+                MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy => Some(PFB_COTTER_2014_10KHZ),
+                ver => return Err(BirliError::BadMWAVersion {
+                    message:
+                        "could not determine automatic pfb gains from provided mwalib::MWAVersion."
+                            .into(),
+                    version: ver.to_string(),
+                }),
+            },
             Some(option) => panic!("unknown option for --passband-gains: {option}"),
         };
         prep_ctx.correct_geometry = {
