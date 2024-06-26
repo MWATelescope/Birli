@@ -14,14 +14,14 @@ use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
 use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, fitsio_sys::CFITSIO_VERSION, CableDelaysApplied,
-    CorrelatorContext, GeometricDelaysApplied,
+    CorrelatorContext, GeometricDelaysApplied, MWAVersion,
 };
 use prettytable::{format as prettyformat, row, table};
 
 use crate::{
     error::{
         BirliError,
-        BirliError::DryRun,
+        BirliError::{BadMWAVersion, DryRun},
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
     },
     flags::FlagContext,
@@ -743,8 +743,10 @@ impl<'a> BirliContext<'a> {
                             ),
                         PossibleValue::new("jake")
                             .help("see: PFB_JAKE_2022_200HZ in src/passband_gains.rs"),
+                        PossibleValue::new("auto")
+                            .help("MWAX => jake, legacy => cotter"),
                     ])
-                    .default_value("jake")
+                    .default_value("auto")
                     .alias("pfb-gains")
                     .help_heading("CORRECTION"),
 
@@ -1303,6 +1305,12 @@ impl<'a> BirliContext<'a> {
             None | Some("none") => None,
             Some("jake") => Some(PFB_JAKE_2022_200HZ),
             Some("cotter") => Some(PFB_COTTER_2014_10KHZ),
+            Some("auto") => match corr_ctx.mwa_version {
+                MWAVersion::CorrMWAXv2 => Some(PFB_JAKE_2022_200HZ),
+                MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy => Some(PFB_COTTER_2014_10KHZ),
+                #[rustfmt::skip]
+                ver => { return Err(BadMWAVersion { message: "unknown mwa version".into(), version: ver.to_string() }) },
+            },
             Some(option) => panic!("unknown option for --passband-gains: {option}"),
         };
         prep_ctx.correct_geometry = {
@@ -1838,9 +1846,11 @@ impl<'a> BirliContext<'a> {
 #[cfg(test)]
 #[cfg(feature = "aoflagger")]
 mod tests {
+    use approx::{assert_abs_diff_eq, assert_abs_diff_ne};
     use tempfile::tempdir;
 
     use crate::{
+        passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
         test_common::{get_1254670392_avg_paths, get_mwax_data_paths},
         BirliContext, BirliError, VisSelection,
     };
@@ -1961,6 +1971,76 @@ mod tests {
         let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
 
         assert!(flag_ctx.flag_dc);
+    }
+
+    /// pfb gains is cotter by default for legacy correlator.
+    #[test]
+    fn test_auto_pfb_legacy() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(prep_ctx.passband_gains.is_some());
+        assert_abs_diff_eq!(
+            prep_ctx.passband_gains.unwrap()[0],
+            PFB_COTTER_2014_10KHZ[0]
+        );
+        // santiy check
+        assert_abs_diff_ne!(prep_ctx.passband_gains.unwrap()[0], PFB_JAKE_2022_200HZ[0]);
+    }
+
+    /// pfb gains is cotter by default for legacy correlator.
+    #[test]
+    fn test_invalid_pfb() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--pfb-gains", "invalid",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let birli_ctx = BirliContext::from_args(&args);
+
+        assert!(birli_ctx.is_err());
+    }
+
+    /// pfb gains is jake by default for mwax correlator.
+    #[test]
+    fn test_auto_pfb_mwax() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(prep_ctx.passband_gains.is_some());
+        assert_abs_diff_eq!(prep_ctx.passband_gains.unwrap()[0], PFB_JAKE_2022_200HZ[0]);
+        // santiy check
+        assert_abs_diff_ne!(
+            prep_ctx.passband_gains.unwrap()[0],
+            PFB_COTTER_2014_10KHZ[0]
+        );
     }
 
     /// DC flagging is off by default for MWAX inputs.
