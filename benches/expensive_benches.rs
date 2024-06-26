@@ -120,6 +120,7 @@ fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
                 black_box(&corr_ctx),
                 black_box(jones_array.view_mut()),
                 black_box(&vis_sel.coarse_chan_range),
+                black_box(&vis_sel.baseline_idxs),
                 false,
             )
         })
@@ -147,6 +148,7 @@ fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
                 black_box(&corr_ctx),
                 black_box(jones_array.view_mut()),
                 black_box(&vis_sel.coarse_chan_range),
+                black_box(&vis_sel.baseline_idxs),
                 false,
             )
         })
@@ -173,8 +175,7 @@ fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
             correct_geometry(
                 black_box(&corr_ctx),
                 black_box(jones_array.view_mut()),
-                black_box(&vis_sel.timestep_range),
-                black_box(&vis_sel.coarse_chan_range),
+                black_box(&vis_sel),
                 None,
                 None,
                 false,
@@ -203,8 +204,7 @@ fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
             correct_geometry(
                 black_box(&corr_ctx),
                 black_box(jones_array.view_mut()),
-                black_box(&vis_sel.timestep_range),
-                black_box(&vis_sel.coarse_chan_range),
+                black_box(&vis_sel),
                 None,
                 None,
                 false,

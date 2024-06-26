@@ -1346,7 +1346,6 @@ mod tests {
             num_ants,
         );
         let int_time = 1e-3 * meta_ctx.corr_int_time_ms as f32;
-        dbg!(int_time);
         flag_ctx.flag_init = int_time;
         flag_ctx.flag_end = int_time;
         flag_ctx.timestep_flags[1] = true;

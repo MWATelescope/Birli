@@ -12,7 +12,7 @@ use marlu::{
     io::error::BadArrayShape,
     mwalib::{CorrelatorContext, MWAVersion},
     precession::precess_time,
-    Complex, LatLngHeight, RADec, XyzGeodetic, UVW,
+    Complex, LatLngHeight, RADec, VisSelection, XyzGeodetic, UVW,
 };
 use std::{f64::consts::TAU, ops::Range};
 use thiserror::Error;
@@ -55,7 +55,7 @@ use thiserror::Error;
 /// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, false);
+/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &vis_sel.baseline_idxs, false);
 /// ```
 ///
 /// # Accuracy
@@ -65,9 +65,9 @@ use thiserror::Error;
 pub fn correct_cable_lengths(
     corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
+    // TODO: take a VisSelection
     coarse_chan_range: &Range<usize>,
-    // TODO: allow subset of baselines
-    // baseline_idxs: &[usize],
+    baseline_idxs: &[usize],
     draw_progress: bool,
 ) {
     trace!("start correct_cable_lengths");
@@ -77,9 +77,14 @@ pub fn correct_cable_lengths(
     let all_freqs_hz =
         corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>());
 
-    let ant_pairs = (meta_ctx.baselines)
+    let ant_pairs = baseline_idxs
         .iter()
-        .map(|b| (b.ant1_index, b.ant2_index))
+        .map(|b| {
+            (
+                meta_ctx.baselines[*b].ant1_index,
+                meta_ctx.baselines[*b].ant2_index,
+            )
+        })
         .collect::<Vec<_>>();
 
     let draw_target = if draw_progress {
@@ -188,26 +193,21 @@ pub fn correct_cable_lengths(
 /// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, false);
+/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &vis_sel.baseline_idxs, false);
 ///
 /// correct_geometry(
 ///     &corr_ctx,
 ///     jones_array.view_mut(),
-///     &vis_sel.timestep_range,
-///     &vis_sel.coarse_chan_range,
+///     &vis_sel,
 ///     None,
 ///     None,
 ///     false,
 /// );
 /// ```
-#[allow(clippy::too_many_arguments)]
 pub fn correct_geometry(
     corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
-    timestep_range: &Range<usize>,
-    coarse_chan_range: &Range<usize>,
-    // TODO: allow subset of baselines
-    // baseline_idxs: &[usize],
+    vis_sel: &VisSelection,
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
     draw_progress: bool,
@@ -222,12 +222,10 @@ pub fn correct_geometry(
         LatLngHeight::mwa()
     });
 
-    let timesteps = &corr_ctx.timesteps[timestep_range.clone()];
+    let timesteps = &corr_ctx.timesteps[vis_sel.timestep_range.clone()];
 
-    let baselines = &corr_ctx.metafits_context.baselines;
-
-    let all_freqs_hz =
-        corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>());
+    let all_freqs_hz = corr_ctx
+        .get_fine_chan_freqs_hz_array(&vis_sel.coarse_chan_range.clone().collect::<Vec<_>>());
     let jones_dims = jones_array.dim();
 
     let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
@@ -236,17 +234,14 @@ pub fn correct_geometry(
         .unwrap_or_else(|| RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context));
     let tiles_xyz_geod = XyzGeodetic::get_tiles(&corr_ctx.metafits_context, array_pos.latitude_rad);
 
-    let ant_pairs = baselines
-        .iter()
-        .map(|b| (b.ant1_index, b.ant2_index))
-        .collect::<Vec<_>>();
+    // use baseline_idxs to select antpairs out of corr_ctx.metafits_context.baselines
+    let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
     let centroid_timestamps = timesteps
         .iter()
         .map(|t| Epoch::from_gpst_seconds(t.gps_time_ms as f64 / 1000.0 + integration_time_s / 2.0))
         .collect::<Vec<_>>();
     let dut1 = Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or(0.0));
     let part_uvws = calc_part_uvws(
-        &ant_pairs,
         &centroid_timestamps,
         dut1,
         phase_centre,
@@ -329,9 +324,9 @@ pub enum DigitalGainCorrection {
 pub fn correct_digital_gains(
     corr_ctx: &CorrelatorContext,
     jones_array: ArrayViewMut3<Jones<f32>>,
+    // TODO: take a VisSelection
     coarse_chan_range: &Range<usize>,
     ant_pairs: &[(usize, usize)],
-    // TODO: take a VisSelection
 ) -> Result<(), DigitalGainCorrection> {
     let num_fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 
@@ -656,15 +651,14 @@ pub fn scrunch_gains(
 // UVWs are in units of meters. To get the UVWs in units of wavelengths, divide by the wavelength.
 // uvw at ts, (ant1, ant2) = part_uvw[ant1] - part_uvw[ant2]
 fn calc_part_uvws(
-    ant_pairs: &[(usize, usize)],
     centroid_timestamps: &[Epoch],
     dut1: Duration,
     phase_centre: RADec,
     array_pos: LatLngHeight,
     tile_xyzs: &[XyzGeodetic],
 ) -> Array2<UVW> {
-    let max_ant = ant_pairs.iter().map(|&(a, b)| a.max(b)).max().unwrap();
-    let mut part_uvws = Array2::from_elem((centroid_timestamps.len(), max_ant + 1), UVW::default());
+    let nants = tile_xyzs.len();
+    let mut part_uvws = Array2::from_elem((centroid_timestamps.len(), nants), UVW::default());
     for (t, &epoch) in centroid_timestamps.iter().enumerate() {
         let prec = precess_time(
             array_pos.longitude_rad,
@@ -712,7 +706,8 @@ mod tests {
     #[test]
     fn test_cable_length_corrections_mwax() {
         let corr_ctx = get_mwax_context();
-        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.baseline_idxs = vec![0, 1];
 
         // Create a blank array to store flags and visibilities
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
@@ -814,6 +809,7 @@ mod tests {
             &corr_ctx,
             jones_array.view_mut(),
             &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             false,
         );
 
@@ -954,6 +950,7 @@ mod tests {
             &corr_ctx,
             jones_array.view_mut(),
             &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
             false,
         );
 
@@ -1108,8 +1105,7 @@ mod tests {
         correct_geometry(
             &corr_ctx,
             jones_array.view_mut(),
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
+            &vis_sel,
             None,
             None,
             false,
@@ -1139,7 +1135,9 @@ mod tests {
     #[test]
     fn test_geometric_corrections_mwax() {
         let corr_ctx = get_mwax_context();
-        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        // only select baselines we're looking at
+        vis_sel.baseline_idxs = vec![0, 1];
 
         // Create a blank array to store flags and visibilities
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
@@ -1177,7 +1175,7 @@ mod tests {
             ])
         );
 
-        // ts 0, chan 0 (cc 0, fc 0), baseline 5
+        // ts 0, chan 0 (cc 0, fc 0), baseline 1
         let viz_0_0_1 = jones_array[(0, 0, 1)];
         compare_jones!(
             viz_0_0_1,
@@ -1189,7 +1187,7 @@ mod tests {
             ])
         );
 
-        // ts 3, chan 3 (cc 1, fc 1), baseline 5
+        // ts 3, chan 3 (cc 1, fc 1), baseline 1
         let viz_3_3_1 = jones_array[(3, 3, 1)];
         compare_jones!(
             viz_3_3_1,
@@ -1256,8 +1254,7 @@ mod tests {
         correct_geometry(
             &corr_ctx,
             jones_array.view_mut(),
-            &vis_sel.timestep_range,
-            &vis_sel.coarse_chan_range,
+            &vis_sel,
             None,
             None,
             false,
