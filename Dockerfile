@@ -1,4 +1,9 @@
-FROM ubuntu:22.04
+FROM ubuntu:24.04
+
+# locale stuff is needed for tzdata
+RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
+    locale-gen
+ENV LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG DEBUG
@@ -30,7 +35,7 @@ RUN apt-get clean \
 RUN mkdir -m755 /opt/rust /opt/cargo
 ENV RUSTUP_HOME=/opt/rust CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 # set minimal rust version here to use a newer stable version
-ENV RUST_VERSION=1.67
+ENV RUST_VERSION=stable
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain=$RUST_VERSION
 
 # install latest stable rust toolchian, with llvm-tools-preview (for coverage)
