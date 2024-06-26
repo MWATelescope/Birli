@@ -1,11 +1,7 @@
 FROM ubuntu:24.04
 
-# locale stuff is needed for tzdata
-RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
-    locale-gen
-ENV LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8
-
 ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8
 ARG DEBUG
 RUN apt-get update \
     && apt-get install -y \
@@ -34,11 +30,9 @@ RUN apt-get clean \
 # Get Rust
 RUN mkdir -m755 /opt/rust /opt/cargo
 ENV RUSTUP_HOME=/opt/rust CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
-# set minimal rust version here to use a newer stable version
+# install latest stable rust toolchian, with llvm-tools-preview (for coverage)
 ENV RUST_VERSION=stable
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain=$RUST_VERSION
-
-# install latest stable rust toolchian, with llvm-tools-preview (for coverage)
 RUN rustup toolchain install $RUST_VERSION --component llvm-tools-preview
 # Get cargo make, llvm-cov
 RUN /opt/cargo/bin/cargo install --force cargo-make cargo-llvm-cov
