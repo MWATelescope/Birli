@@ -21,7 +21,7 @@ use prettytable::{format as prettyformat, row, table};
 use crate::{
     error::{
         BirliError,
-        BirliError::DryRun,
+        BirliError::{BadMWAVersion, DryRun},
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
     },
     flags::FlagContext,
@@ -1308,12 +1308,8 @@ impl<'a> BirliContext<'a> {
             Some("auto") => match corr_ctx.mwa_version {
                 MWAVersion::CorrMWAXv2 => Some(PFB_JAKE_2022_200HZ),
                 MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy => Some(PFB_COTTER_2014_10KHZ),
-                ver => return Err(BirliError::BadMWAVersion {
-                    message:
-                        "could not determine automatic pfb gains from provided mwalib::MWAVersion."
-                            .into(),
-                    version: ver.to_string(),
-                }),
+                #[rustfmt::skip]
+                ver => { return Err(BadMWAVersion { message: "unknown mwa version".into(), version: ver.to_string() }) },
             },
             Some(option) => panic!("unknown option for --passband-gains: {option}"),
         };
@@ -2000,6 +1996,26 @@ mod tests {
         );
         // santiy check
         assert_abs_diff_ne!(prep_ctx.passband_gains.unwrap()[0], PFB_JAKE_2022_200HZ[0]);
+    }
+
+    /// pfb gains is cotter by default for legacy correlator.
+    #[test]
+    fn test_invalid_pfb() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--pfb-gains", "invalid",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let birli_ctx = BirliContext::from_args(&args);
+
+        assert!(birli_ctx.is_err());
     }
 
     /// pfb gains is jake by default for mwax correlator.
