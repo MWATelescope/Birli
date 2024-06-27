@@ -1,5 +1,13 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.11.1 (2024-06-27)
+- 🐛 bug fixes:
+  - #152 default pfb gains should be cotter2014 for legacy correlator, not jake
+- 🙏 quality of life:
+  - #150 implement antenna (tile) selection (`--sel-ants`)
+- ➕ dependencies:
+  - update default aoflagger version in makefile and dockerfile
+
 # Version 0.11.0 (2024-06-19)
 - ➕ dependencies:
   - Marlu 0.11.0

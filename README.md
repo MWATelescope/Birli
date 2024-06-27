@@ -227,7 +227,7 @@ CORRECTION:
         --no-digital-gains         Do not perform digital gains corrections
         --no-geometric-delay       Do not perform geometric corrections
         --passband-gains <TYPE>    Type of PFB passband filter gains correction to apply [default:
-                                   jake] [possible values: none, cotter, jake]
+                                   auto] [possible values: none, cotter, jake, auto]
 
 AVERAGING:
         --avg-freq-factor <FACTOR>    Average <FACTOR> channels per averaged channel
@@ -245,7 +245,6 @@ OUTPUT:
 AOFLAGGER:
         --aoflagger-strategy <PATH>    Strategy to use for RFI Flagging
         --no-rfi                       Do not perform RFI Flagging with aoflagger
-
 ```
 
 Note: the aoflagged options are only available when the aoflagger feature is enabled.
@@ -256,7 +255,7 @@ Operations are performed in the order described by the following sections.
 
 Cable delay correction involves adjusting visibility phases to correct for the differences in electrical length of the cable between each tile and it's receiver.
 
-Legacy MWA correlator observations do not typically have cable delays applied, however MWAX observations can. The [`CABLEDEL`](https://wiki.mwatelescope.org/display/MP/MWAX+Metafits+Changes) key in the metafits describes what geometric delays have been applied.
+Legacy MWA correlator observations do not typically have cable delays applied, however MWAX observations can. The [`CABLEDEL`](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24969941/MWAX+Metafits+Changes) key in the metafits describes what geometric delays have been applied.
 
 By default, Birli will apply cable length corrections. You can use `--no-cable-delay` to disable this.
 
@@ -272,9 +271,17 @@ Each input in the raw data is scaled by a factor for each coarse channel. This i
 
 ### Coarse PFB Passband Corrections
 
-Adjust each coarse channel within a fine channel to correct for the shape of the pfb passband curve. Birli will apply the gains defined in the mwa wiki [on pfb gains](https://wiki.mwatelescope.org/display/MP/RRI+Receiver+PFB+Filter)   by default. They can be disabled with `--passband-gains none`. Another option is to emulate Cotter's `_sb128ChannelSubbandValue2014FromMemo` from `subbandpassband.cpp`, sometimes referred to as Levine Gains. Since these gains were computed at the base legacy correlator resolution of 10KHz, they will not work on all MWAX resolutions. Cotter's implementation of this functionality is slightly different, in that it does not include the channel from the gains when scaling. It's not clear if this is a bug or a feature.
+There are four options for correcting for the coarse channel polyphase filter bank (PFB) passband filter gains. `cotter` is best for legacy correlator observations, and `jake` is best for MWAX correlator observations. `auto` picks the most appropriate option based on information from the metafits, and `none` disables this correction.
 
-When applying pfb gains to an observation that is not at the same resolution as the gains, the gains need to be averaged to fit the data, and the exact details of this averaging depends on the correlator type. For more dtails, see the mwa wiki on [averaging fine channels](https://wiki.mwatelescope.org/display/MP/MWA+Fine+Channel+Centre+Frequencies)
+Although the PFB passband filter shape is a function of the filter coefficients used in the receiver, it is also influenced by the fine channelization technique used, which is slightly different between the two correlators.
+
+The MWAX channeliser is just an FFT with a rectangular window for its windowing function, of which, the ultra fine channels are then aggregated to your frequency resolution; while the legacy correlator had a 2nd stage fine-PFB with minimum bin width of 10kHz. The two different methods have a different amount of leakage between fine channels, which can effect the band shape across a coarse channel. More leakage leads to the band shape being smoothed out in frequency.
+
+The `cotter` gains were source from Cotter's `_sb128ChannelSubbandValue2014FromMemo` in `subbandpassband.cpp`. These sometimes referred to as Levine Gains. Since these gains were computed at the base legacy correlator resolution of 10KHz, they will not work on resolutions that are not a multiple of 10kHz.
+
+The `jake` gains (credit to Jake Jones) are described in [this wiki article](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24972979/RRI+Receiver+PFB+Filter)
+
+When applying pfb gains to an observation that is not at the same resolution as the gains, the gains need to be averaged to fit the data, and the exact details of this averaging depends on the correlator type. For more dtails, see the mwa wiki on [averaging fine channels](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24972939/MWA+Fine+Channel+Centre+Frequencies)
 
 ### RFI Flagging
 
