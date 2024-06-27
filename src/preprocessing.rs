@@ -45,7 +45,7 @@ pub struct PreprocessContext<'a> {
     #[builder(default = "true")]
     pub correct_geometry: bool,
 
-    /// AOFlagger strategy path for flagging
+    /// `AOFlagger` strategy path for flagging
     #[builder(default)]
     #[cfg(feature = "aoflagger")]
     pub aoflagger_strategy: Option<String>,

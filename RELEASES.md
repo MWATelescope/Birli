@@ -1,6 +1,6 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.11.1 (2024-06-27)
+# Version 0.12.0 (2024-06-27)
 - 🐛 bug fixes:
   - #152 default pfb gains should be cotter2014 for legacy correlator, not jake
 - 🙏 quality of life:

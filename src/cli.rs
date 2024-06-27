@@ -50,7 +50,7 @@ cfg_if! {
 
 /// Args for preprocessing a correlator context.
 pub struct BirliContext<'a> {
-    /// mwalib::CorrelatorContext
+    /// `mwalib::CorrelatorContext`
     pub corr_ctx: CorrelatorContext,
     /// Preprocessing parameters
     pub prep_ctx: PreprocessContext<'a>,
@@ -1121,8 +1121,9 @@ impl<'a> BirliContext<'a> {
             matches.value_of_t::<f64>("avg-time-res"),
         ) {
             // filter any errors other than ArgumentNotFound
-            (Err(err), _) if err.kind() != ArgumentNotFound => return Err(err.into()),
-            (_, Err(err)) if err.kind() != ArgumentNotFound => return Err(err.into()),
+            (Err(err), _) | (_, Err(err)) if err.kind() != ArgumentNotFound => {
+                return Err(err.into())
+            }
             (Ok(_), Ok(_)) => {
                 unreachable!("--avg-time-res conflicts with --avg-time-factor, enforced by clap")
             }
@@ -1155,8 +1156,9 @@ impl<'a> BirliContext<'a> {
             matches.value_of_t::<f64>("avg-freq-res"),
         ) {
             // filter any errors other than ArgumentNotFound
-            (Err(err), _) if err.kind() != ArgumentNotFound => return Err(err.into()),
-            (_, Err(err)) if err.kind() != ArgumentNotFound => return Err(err.into()),
+            (Err(err), _) | (_, Err(err)) if err.kind() != ArgumentNotFound => {
+                return Err(err.into())
+            }
             (Ok(_), Ok(_)) => {
                 unreachable!("--avg-freq-res conflicts with --avg-freq-factor, enforced by clap")
             }
@@ -1202,8 +1204,9 @@ impl<'a> BirliContext<'a> {
             matches.value_of_t::<f64>("max-memory"),
         ) {
             // filter any errors other than ArgumentNotFound
-            (Err(err), _) if err.kind() != ArgumentNotFound => return Err(err.into()),
-            (_, Err(err)) if err.kind() != ArgumentNotFound => return Err(err.into()),
+            (Err(err), _) | (_, Err(err)) if err.kind() != ArgumentNotFound => {
+                return Err(err.into())
+            }
             (Ok(_), Ok(_)) => {
                 unreachable!("--time-chunk conflicts with --max-memory, enforced by clap")
             }
