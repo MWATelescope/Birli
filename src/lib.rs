@@ -192,6 +192,8 @@ pub use error::BirliError;
 pub mod preprocessing;
 pub use preprocessing::PreprocessContext;
 
+pub mod van_vleck;
+
 cfg_if! {
     if #[cfg(feature = "cli")] {
         pub mod cli;
