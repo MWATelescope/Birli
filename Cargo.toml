@@ -46,6 +46,7 @@ log = "0.4.0"
 marlu = "0.14.0"
 regex = "1.4.0"
 thiserror = "1.0.0"
+errorfunctions = "0.2.0"
 
 # aoflagger feature
 aoflagger_sys = { version = "0.1.2", optional = true }
