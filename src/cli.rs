@@ -1310,10 +1310,7 @@ impl<'a> BirliContext<'a> {
             (_, true) => RADec::from_mwalib_tile_pointing(&corr_ctx.metafits_context),
             _ => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
         };
-        prep_ctx.correct_van_vleck = match (
-            matches.is_present("van-vleck"),
-            corr_ctx.mwa_version
-        ) {
+        prep_ctx.correct_van_vleck = match (matches.is_present("van-vleck"), corr_ctx.mwa_version) {
             (true, MWAVersion::CorrLegacy) => true,
             (true, _) => {
                 return Err(BirliError::CLIError(InvalidCommandLineArgument {

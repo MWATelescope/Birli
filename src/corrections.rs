@@ -352,7 +352,6 @@ pub fn correct_digital_gains(
             received: format!("{:?}", ant_pairs.len()),
         }));
     }
-    assert!(vis_dims.2 == ant_pairs.len());
 
     let gains = Array2::from_shape_fn(
         (corr_ctx.metafits_context.num_ants, coarse_chan_range.len()),
