@@ -1,12 +1,45 @@
+//! Van Vleck corrections for MWA data.
+//!
+//! Derived from pyuvdata [mwa_corr_fits.py](https://github.com/RadioAstronomySoftwareGroup/pyuvdata/blob/main/src/pyuvdata/uvdata/mwa_corr_fits.py).
+//! Original license: BSD 2-Clause Simplified
+//!
+//! ```txt
+//! Copyright (c) 2018, Radio Astronomy Software Group
+//! All rights reserved.
+//!
+//! Redistribution and use in source and binary forms, with or without
+//! modification, are permitted provided that the following conditions are met:
+//!
+//! * Redistributions of source code must retain the above copyright notice, this
+//!   list of conditions and the following disclaimer.
+//!
+//! * Redistributions in binary form must reproduce the above copyright notice,
+//!   this list of conditions and the following disclaimer in the documentation
+//!   and/or other materials provided with the distribution.
+//!
+//! THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+//! AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+//! IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+//! DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+//! FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+//! DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+//! SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+//! CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+//! OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+//! OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//! ```
+//!
+#![allow(mixed_script_confusables)]
+
 use crate::{
     ndarray::{parallel::prelude::*, prelude::*},
     Jones,
 };
 use errorfunctions::RealErrorFunctions;
 use itertools::{zip_eq, Itertools};
-use marlu::{io::error::BadArrayShape, mwalib::CorrelatorContext, rayon};
+use marlu::{io::error::BadArrayShape, jones, mwalib::CorrelatorContext, rayon};
 use rayon::prelude::*;
-use std::f64::consts::PI;
+use std::{collections::HashMap, f64::consts::PI};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -15,6 +48,10 @@ pub enum VanVleckCorrection {
     #[error(transparent)]
     /// Error for bad array shape in provided argument
     BadArrayShape(#[from] BadArrayShape),
+
+    // bad number of samples
+    #[error("invalid number of correlator samples {nsamples}, check metadata")]
+    BadNSamples { nsamples: u32 },
 }
 
 /// Perform Van Vleck corrections given an observation's
@@ -63,6 +100,7 @@ pub fn correct_van_vleck(
     mut jones_array: ArrayViewMut3<Jones<f32>>,
     // baseline_idxs: &[usize],
     ant_pairs: &[(usize, usize)],
+    // TODO: flagged_ant_idxs: &[usize],
 ) -> Result<(), VanVleckCorrection> {
     let vis_dims = jones_array.dim();
     if vis_dims.2 != ant_pairs.len() {
@@ -79,49 +117,76 @@ pub fn correct_van_vleck(
     //  * integration time (s)
     // circular symmetry gives a factor of two
     // e.g. 40kHz * 2s = 160_000
-    let nsamples = (corr_ctx.metafits_context.corr_fine_chan_width_hz)
-        * (corr_ctx.metafits_context.corr_int_time_ms as u32 / 1_000);
-    dbg!(&nsamples);
+    let nsamples = corr_ctx.metafits_context.corr_fine_chan_width_hz
+        * corr_ctx.metafits_context.corr_int_time_ms as u32
+        / 2_000;
 
-    // TODO: double precision, but ensure this is applied everywhere it needs to be applied
-    // jones_array.mapv_inplace(|j| j / (2.0 * nsamples as f32));
-    let mut jones_double = jones_array.mapv(|j| Jones::<f64>::from(j) / (2.0 * nsamples as f64));
+    dbg!(&nsamples);
+    if nsamples < 1 {
+        return Err(VanVleckCorrection::BadNSamples { nsamples });
+    }
+
+    // let mut jones_double = jones_array.mapv(|j| Jones::<f64>::from(j) / (2.0 * nsamples as f64));
 
     // TODO: figure out antenna flags
     // TODO: ensure not mwax
 
-    // map between antenna number and autocorrelction baseline index
-    // let auto_map = corr_ctx.metafits_context.antenna_numbers.iter().enumerate().fold(
-    //     vec![0; corr_ctx.metafits_context.antenna_numbers.len()],
-    //     |mut acc, (i, &ant)| {
-    //         if let Some(idx) = ant_pairs.iter().position(|&(a, _)| a == ant) {
-    //             acc[i] = idx;
+    // map between antenna index (from ant_pairs) and unflagged antenna index
+    // let auto_map: HashMap<usize, usize> = ant_pairs
+    //     .iter()
+    //     .filter_map(|&(ant1, ant2)| {
+    //         // TODO: filter flagged antennas
+    //         if ant1 == ant2 {
+    //             Some(ant1)
+    //         } else {
+    //             None
     //         }
-    //         acc
-    //     },
-    // );
+    //     })
+    //     .enumerate()
+    //     .map(|(i, a)| (a, i))
+    //     .collect();
+    // let good_autos = ant_pairs
+    //     .iter()
+    //     .enumerate()
+    //     .filter_map(|(i, (ant1, ant2))| {
+    //         // TODO: filter flagged antennas
+    //         if ant1 == ant2 {
+    //             Some(ant1)
+    //         } else {
+    //             None
+    //         }
+    //     });
 
-    // mask for ant_pairs which are autocorrelations
-    let auto_mask = ant_pairs
+    // let mut auto_mask = auto_map.values().copied().collect::<Vec<usize>>();
+    // auto_mask.sort_unstable();
+
+    // ant_pair indices which are unflagged autocorrelations
+    let (unflagged_auto_mask, unflagged_autos): (Vec<_>, Vec<_>) = ant_pairs
         .iter()
         .enumerate()
-        .filter_map(|(i, (ant1, ant2))| if ant1 == ant2 { Some(i) } else { None })
-        .collect::<Vec<usize>>();
-    let n_autos = auto_mask.len();
-    dbg!(&n_autos);
-    let cross_mask = ant_pairs
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &(ant1, ant2))| {
+        .filter_map(|(i, (ant1, ant2))| {
+            // TODO: filter flagged antennas
             if ant1 == ant2 {
-                None
+                Some((i, ant1))
             } else {
-                Some((i, ant1, ant2))
+                None
             }
         })
-        .collect::<Vec<(usize, usize, usize)>>();
-    let n_autos = cross_mask.len();
+        .unzip();
+    let n_autos = unflagged_autos.len();
     dbg!(&n_autos);
+
+    // // mask for ant_pairs which are cross-correlations
+    // let cross_mask = ant_pairs
+    //     .iter()
+    //     .enumerate()
+    //     .filter_map(|(i, &(ant1, ant2))| {
+    //         if ant1 == ant2 { None } else { Some(i) }
+    //     })
+    //     .collect::<Vec<usize>>();
+    // let n_crosses = cross_mask.len();
+    // dbg!(&n_crosses);
+    // // lookup table between index in cross mask and ant pair
 
     // new mutable copy of jones_array, only autos
     // TODO: pyuvdata does `[timestep][baseleine][channel]` -> `[baseleine][timestep * channel]`
@@ -130,44 +195,143 @@ pub fn correct_van_vleck(
     // let autos_dim = jones_autos.dim();
     // dbg!(&jones_autos.dim());
 
-    // square root auto xx and yys
-    // TODO: what about cross-pols?
-    // TODO: assuming everything is real?
-    // TODO: this is going to be annoying to unpack.
-    let sighat = jones_double
-        .select(Axis(2), &auto_mask)
+    // partitioning of auto jones matrix:
+    // - `sighat_xxr_yyr` <- xx real and yy real, for correction with with van_vleck_autos
+    // - `sighat_xyr_xyi` <- xy real and xy imaginary are corrected with van_vleck_crosses using the corrected autos
+    // - xx imag and yy imag are assumed to be zero
+    let (sighat_xxr_yyr, _sighat_xyr_xyi): (Vec<_>, Vec<_>) = jones_array
+        .select(Axis(2), &unflagged_auto_mask)
         .iter()
-        .flat_map(|j| [j[0].re.sqrt(), j[3].re.sqrt()])
-        .collect_vec();
+        .flat_map(|j| {
+            let j_f64 = Jones::<f64>::from(j) / (nsamples as f64);
+            [
+                (j_f64[0].re.sqrt(), j_f64[1].re.sqrt()), // left: xx, right: xy
+                (j_f64[3].re.sqrt(), j_f64[2].re.sqrt()), // left: yy, right: yx
+            ]
+        })
+        .unzip();
 
-    // TODO: get max value of jones_array
-    let max_sighat = sighat.iter().fold(0.0_f64, |acc, &j| acc.max(j));
-    dbg!(&max_sighat);
+    let sighat_xxr_yyr = jones_array
+        .select(Axis(2), &unflagged_auto_mask)
+        .iter()
+        .flat_map(|j| {
+            let j_f64 = Jones::<f64>::from(j) / (nsamples as f64);
+            [
+                j_f64[0].re.sqrt(), // xx
+                j_f64[3].re.sqrt(), // yy
+            ]
+        })
+        .collect_vec();
+    dbg!(&sighat_xxr_yyr);
+
+    // partitioning of auto jones matrix into vectors of [time * freq * n_autos]:
+    // - `sighat_xxr`, `sighat_yyr` <- sqrt of xx real and yy real, for correction with with van_vleck_autos
+    // - `auto_xyr`, `auto_xyi` <- xy real and xy imaginary are corrected with van_vleck_crosses using the corrected autos
+    // - xx imag and yy imag are assumed to be zero
+    // - i think yxr + i * yxi is assumed to be the the complex conjugate of xyr + i*yxi
+    // let (sighat_xxr, sighat_yyr, auto_xyr, auto_xyi): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
+    //     jones_array
+    //         .select(Axis(2), &unflagged_auto_mask)
+    //         .iter()
+    //         .map(|j| {
+    //             let j_f64 = Jones::<f64>::from(j);
+    //             (
+    //                 j_f64[0].re.sqrt(), // sqrt xx real
+    //                 j_f64[3].re.sqrt(), // sqrt yy real
+    //                 j_f64[1].re,        // xy real
+    //                 j_f64[1].im,        // xy imag
+    //             )
+    //         })
+    //         .unzip();
+
+    // let max_sighat = sighat.iter().fold(0.0_f64, |acc, &j| acc.max(j));
+    // dbg!(&max_sighat);
 
     // correct autos
-    let sigma = Array::from(van_vleck_autos(&sighat))
-        .into_shape((vis_dims.0, vis_dims.1, vis_dims.2, 2))
+    let sigma_xxr_yyr = Array::from(van_vleck_autos(&sighat_xxr_yyr))
+        .into_shape((vis_dims.0, vis_dims.1, n_autos, 2))
         .unwrap();
 
     // reassign the corrected values back to jones_double
-    jones_double
-        .axis_iter_mut(Axis(0))
-        .zip_eq(sigma.axis_iter(Axis(0)))
-        .for_each(|(mut j_fb, s_fb)| {
-            j_fb.axis_iter_mut(Axis(0))
-                .zip_eq(s_fb.axis_iter(Axis(0)))
-                .for_each(|(mut j_b, s_b)| {
-                    auto_mask
-                        .iter()
-                        .zip_eq(s_b.axis_iter(Axis(0)))
-                        .for_each(|(&i, s)| {
-                            j_b[i][0].re = s[0];
-                            j_b[i][0].im = 0.0;
-                            j_b[i][3].re = s[1];
-                            j_b[i][3].im = 0.0;
+    // jones_double
+    //     .axis_iter_mut(Axis(0))
+    //     .zip_eq(sigma.axis_iter(Axis(0)))
+    //     .for_each(|(mut j_fb, s_fb)| {
+    //         j_fb.axis_iter_mut(Axis(0))
+    //             .zip_eq(s_fb.axis_iter(Axis(0)))
+    //             .for_each(|(mut j_b, s_b)| {
+    //                 unflagged_auto_mask
+    //                     .iter()
+    //                     .zip_eq(s_b.axis_iter(Axis(0)))
+    //                     .for_each(|(&i, s)| {
+    //                         j_b[i][0].re = s[0];
+    //                         j_b[i][0].im = 0.0;
+    //                         j_b[i][3].re = s[1];
+    //                         j_b[i][3].im = 0.0;
+    //                     });
+    //             });
+    //     });
+
+    jones_array
+        .axis_iter_mut(Axis(2))
+        .zip_eq(ant_pairs.iter())
+        .for_each(|(mut j_tf, &(ant1, ant2))| {
+            match (
+                unflagged_autos.binary_search(&ant1),
+                unflagged_autos.binary_search(&ant2),
+            ) {
+                // unflagged autocorrelation.
+                // - update jones xx real, yy real from sigma_xxr_yyr
+                // - set xx imag, yy imag to zero
+                // - correct yx with yy real, xx real
+                (Ok(s_idx1), _) if ant1 == ant2 => {
+                    let sigma_tf = sigma_xxr_yyr.index_axis(Axis(2), s_idx1);
+                    sigma_tf
+                        .indexed_iter()
+                        .for_each(|((t_idx, f_idx, p_idx), &s)| {
+                            // map sigma_xxr_yyr pol index 0,1 to jones index 0,3 (xx, yy) by multiplying by 3
+                            let jp_idx = p_idx * 3;
+                            let re = (nsamples as f64) * s.powi(2);
+                            println!(
+                                "j@({:?},{:?}).tf[({:?},{:?})][{:?}]={:?}<-{:?}",
+                                ant1,
+                                ant2,
+                                t_idx,
+                                f_idx,
+                                jp_idx,
+                                j_tf[(t_idx, f_idx)][jp_idx].re,
+                                re
+                            );
+                            j_tf[(t_idx, f_idx)][jp_idx].re = re as f32;
+                            // j_tf[(t_idx, f_idx)][p_idx * 3].im = 0.0; ?
                         });
-                });
+                }
+                // unflagged cross correlation
+                // (Ok(s_idx1), Ok(s_idx2)) => {
+                //     let sigma_xxr_yyr_tf1 = sigma_xxr_yyr.index_axis(Axis(2), s_idx1).into_owned();
+                //     let sigma_xxr_yyr_tf2 = sigma_xxr_yyr.index_axis(Axis(2), s_idx2).into_owned();
+
+                //     let (khat_xxr_yyr_tf, j_xyr_xyi_tf) = j_tf
+                //         .iter()
+                //         .flat_map(|j| {
+                //             let j_f64 = Jones::<f64>::from(j);
+                //             [
+                //                 (j_f64[0].re.sqrt(), j_f64[0].re.sqrt()), // left: xx, right: xy
+                //                 (j_f64[3].re.sqrt(), j_f64[1].re.sqrt()), // left: yy, right: yx
+                //             ]
+                //         })
+                //         .unzip();
+
+                //     // TODO: correct cross xy, yx
+                //     // let s_xxr_yyr_tf1 = sighat_xyr_xyi.index_axis(Axis(2), s_idx1).into_owned();
+                //     // let s_xxr_yyr_tf2 = sighat_xyr_xyi.index_axis(Axis(2), s_idx2).into_owned();
+                // }
+                // either antenna is flagged
+                _ => {}
+            };
         });
+
+    // jones_double.select(Axis(2), &cross_mask).axis_iter(Axis(2)).enumerate()
 
     Ok(())
 }
@@ -194,7 +358,12 @@ fn van_vleck_auto(s: f64) -> Option<f64> {
 /// Apply `van_vleck_auto` over `sighats` in parallel.
 pub fn van_vleck_autos(hat: &[f64]) -> Vec<f64> {
     hat.par_iter()
-        .map(|&s| van_vleck_auto(s).unwrap_or(s))
+        .map(|&sighat| {
+            van_vleck_auto(sighat).map_or(sighat, |sigma| {
+                println!("sigma={sigma} <- sighat={sighat}");
+                sigma
+            })
+        })
         .collect()
 }
 
@@ -235,7 +404,7 @@ mod vv_auto_tests {
     use super::*;
 
     const SIGHATS: [f64; 20] = [
-        1.3732557118031588,
+        1.3732557118031588, // sqrr=1.17185994 , sq=1.88583125
         1.4567407971221236,
         1.58477324876463,
         1.7205649508228396,
@@ -257,7 +426,7 @@ mod vv_auto_tests {
         1.9340307650086646,
     ];
     const SIGMAS: [f64; 20] = [
-        1.3425715134733938,
+        1.3425715134733938, // 1.15869388
         1.427852482209185,
         1.5582670082555274,
         1.6962213882104307,
@@ -323,6 +492,72 @@ mod vv_auto_tests {
         for (&r, &s) in result.iter().zip(SIGMAS.iter()) {
             assert_approx_eq!(f64, r, s, epsilon = 1e-6);
         }
+    }
+
+    #[test]
+    fn test_correct_van_vleck_autos_bad_nsamples() {
+        let vis_dims = (1, 1, 3);
+        let mut corr_ctx = CorrelatorContext::new(
+            "tests/data/1297526432_mwax/1297526432.metafits",
+            &["tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits"],
+        )
+        .unwrap();
+        corr_ctx.metafits_context.corr_fine_chan_width_hz = 1;
+        corr_ctx.metafits_context.corr_int_time_ms = 1;
+
+        let mut jones_array = Array3::<Jones<f32>>::zeros(vis_dims);
+
+        let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
+
+        // assert error is BadNSamples
+        assert!(correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs).is_err());
+    }
+    #[test]
+    fn test_correct_van_vleck_autos_good() {
+        let vis_dims = (1, 1, 3);
+        let mut corr_ctx = CorrelatorContext::new(
+            "tests/data/1297526432_mwax/1297526432.metafits",
+            &["tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits"],
+        )
+        .unwrap();
+        corr_ctx.metafits_context.corr_fine_chan_width_hz = 1;
+        corr_ctx.metafits_context.corr_int_time_ms = 2_000;
+
+        let mut jones_array = Array3::<Jones<f32>>::zeros(vis_dims);
+
+        jones_array[(0, 0, 0)][0].re = SIGHATS[0].powi(2) as f32;
+        jones_array[(0, 0, 0)][1].re = SIGHATS[1].powi(2) as f32;
+        jones_array[(0, 0, 0)][2].re = SIGHATS[2].powi(2) as f32;
+        jones_array[(0, 0, 0)][3].re = SIGHATS[3].powi(2) as f32;
+
+        jones_array[(0, 0, 1)][0].re = SIGHATS[4].powi(2) as f32;
+        jones_array[(0, 0, 1)][1].re = SIGHATS[5].powi(2) as f32;
+        jones_array[(0, 0, 1)][2].re = SIGHATS[6].powi(2) as f32;
+        jones_array[(0, 0, 1)][3].re = SIGHATS[7].powi(2) as f32;
+
+        jones_array[(0, 0, 2)][0].re = SIGHATS[8].powi(2) as f32;
+        jones_array[(0, 0, 2)][1].re = SIGHATS[9].powi(2) as f32;
+        jones_array[(0, 0, 2)][2].re = SIGHATS[10].powi(2) as f32;
+        jones_array[(0, 0, 2)][3].re = SIGHATS[11].powi(2) as f32;
+
+        let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
+
+        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs).unwrap();
+
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, SIGMAS[0].powi(2) as f32);
+        // assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].re, SIGMAS[1].powi(2) as f32);
+        // assert_approx_eq!(f32, jones_array[(0, 0, 0)][2].re, SIGMAS[2].powi(2) as f32);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][3].re, SIGMAS[3].powi(2) as f32);
+
+        // assert_approx_eq!(f32, jones_array[(0, 0, 1)][0].re, SIGMAS[4].powi(2) as f32);
+        // assert_approx_eq!(f32, jones_array[(0, 0, 1)][1].re, SIGMAS[5].powi(2) as f32);
+        // assert_approx_eq!(f32, jones_array[(0, 0, 1)][2].re, SIGMAS[6].powi(2) as f32);
+        // assert_approx_eq!(f32, jones_array[(0, 0, 1)][3].re, SIGMAS[7].powi(2) as f32);
+
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][0].re, SIGMAS[8].powi(2) as f32);
+        // assert_approx_eq!(f32, jones_array[(0, 0, 2)][1].re, SIGMAS[9].powi(2) as f32);
+        // assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].re, SIGMAS[10].powi(2) as f32);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][3].re, SIGMAS[11].powi(2) as f32);
     }
 }
 
@@ -425,6 +660,9 @@ fn pdf(x_: &[f64], y_: &[f64], ρ_: &[f64], r_: &mut [f64]) {
         // }
         for (x, y) in x_.iter().cartesian_product(y_.iter()) {
             let numer = 2.0 * (*ρ * x * y / d).cosh();
+            // if f64::is_infinite(numer) {
+            //     println!("numer is infinite: x={}, y={}, ρ={}, d={}", x, y, ρ, d);
+            // }
             let denom = (((x).powi(2) + (y).powi(2)) / (2.0 * d)).exp();
             // if denom.abs() < 1e-20 {
             //     println!("denom is zero: x={}, y={}, ρ={}, d={}", x, y, ρ, d);
@@ -449,7 +687,7 @@ where
     let mut r_ = vec![0.0; n + 1]; // result
     let ρ_ = (0..=n).map(|i| a + i as f64 * h).collect_vec(); // integration points
 
-    // compute the pdf at ρ and store back into r
+    // compute the pdf at ρ and store result in r
     f(x_, y_, &ρ_, &mut r_);
 
     let mut sum = r_[0] + r_[n];
@@ -481,8 +719,8 @@ fn corrcorrect_prime(rho: f64, x_: &[f64], y_: &[f64]) -> f64 {
 
 // solve a single van vleck cross correlation using the Van Vleck relation for legacy MWA
 fn van_vleck_cross_int(khat: f64, sigma_x: f64, sigma_y: f64) -> Option<f64> {
-    debug_assert!(sigma_x > 0.0, "σ_x must be > 0");
-    debug_assert!(sigma_y > 0.0, "σ_y must be > 0");
+    debug_assert!(sigma_x > 0.0, "σ_x must be > 0: {sigma_x:?}");
+    debug_assert!(sigma_y > 0.0, "σ_y must be > 0: {sigma_y:?}");
     let sign = khat.signum();
     let khat = khat.abs();
 
@@ -493,8 +731,8 @@ fn van_vleck_cross_int(khat: f64, sigma_x: f64, sigma_y: f64) -> Option<f64> {
     let tol = 1e-10; // it's 1e-10 for the autos
     let niter = 10;
     let mut guess = khat / (sigma_x * sigma_y);
-    debug_assert!(guess > 0.0, "|ρ| must be > 0");
-    debug_assert!(guess < 1.0, "|ρ| must be < 1");
+    debug_assert!(guess >= 0.0, "|ρ| must be >= 0: {guess:?}");
+    debug_assert!(guess < 1.0, "|ρ| must be < 1: {guess:?}");
     let mut delta = corrcorrect_simp(guess, &x_, &y_) - khat;
     let mut count = 0;
     while delta.abs() > tol {
@@ -1054,11 +1292,8 @@ mod vv_cross_tests {
     #[test]
     // compare values from pyuvdata
     fn test_van_vleck_crosses_int() {
-        let k_hats = K_HATS[0..8].to_vec();
-        let sigmas1 = SIGMAS1[0..8].to_vec();
-        let sigmas2 = SIGMAS2[0..8].to_vec();
-        // ^ Deleteme
-        let result = van_vleck_crosses_int(&k_hats, &sigmas1, &sigmas2);
+        let result = van_vleck_crosses_int(&K_HATS, &SIGMAS1, &SIGMAS2);
+        println!("{:?}", result);
         for (&r, &s) in result.iter().zip(KAPPAS.iter()) {
             assert_approx_eq!(f64, r, s, epsilon = 1e-10);
         }
