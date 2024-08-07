@@ -65,7 +65,7 @@ pub enum VanVleckCorrection {
 /// # Examples
 ///
 /// ```rust
-/// use birli::{correct_cable_lengths, mwalib::CorrelatorContext, VisSelection, io::read_mwalib};
+/// use birli::{correct_van_vleck, mwalib::CorrelatorContext, VisSelection, io::read_mwalib};
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -90,7 +90,7 @@ pub enum VanVleckCorrection {
 ///
 /// let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 ///
-/// van_vleck_correction(&corr_ctx, jones_array.view_mut(), &ant_pairs);
+/// correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs);
 /// ```
 ///
 /// # Errors
@@ -222,7 +222,7 @@ pub fn correct_van_vleck(
             ]
         })
         .collect_vec();
-    dbg!(&sighat_xxr_yyr);
+    // dbg!(&sighat_xxr_yyr);
 
     // partitioning of auto jones matrix into vectors of [time * freq * n_autos]:
     // - `sighat_xxr`, `sighat_yyr` <- sqrt of xx real and yy real, for correction with with van_vleck_autos
@@ -292,16 +292,16 @@ pub fn correct_van_vleck(
                             // map sigma_xxr_yyr pol index 0,1 to jones index 0,3 (xx, yy) by multiplying by 3
                             let jp_idx = p_idx * 3;
                             let re = (nsamples as f64) * s.powi(2);
-                            println!(
-                                "j@({:?},{:?}).tf[({:?},{:?})][{:?}]={:?}<-{:?}",
-                                ant1,
-                                ant2,
-                                t_idx,
-                                f_idx,
-                                jp_idx,
-                                j_tf[(t_idx, f_idx)][jp_idx].re,
-                                re
-                            );
+                            // println!(
+                            //     "j@({:?},{:?}).tf[({:?},{:?})][{:?}]={:?}<-{:?}",
+                            //     ant1,
+                            //     ant2,
+                            //     t_idx,
+                            //     f_idx,
+                            //     jp_idx,
+                            //     j_tf[(t_idx, f_idx)][jp_idx].re,
+                            //     re
+                            // );
                             j_tf[(t_idx, f_idx)][jp_idx].re = re as f32;
                             // j_tf[(t_idx, f_idx)][p_idx * 3].im = 0.0; ?
                         });
@@ -360,7 +360,7 @@ pub fn van_vleck_autos(hat: &[f64]) -> Vec<f64> {
     hat.par_iter()
         .map(|&sighat| {
             van_vleck_auto(sighat).map_or(sighat, |sigma| {
-                println!("sigma={sigma} <- sighat={sighat}");
+                // println!("sigma={sigma} <- sighat={sighat}");
                 sigma
             })
         })

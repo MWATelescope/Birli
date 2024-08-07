@@ -193,6 +193,7 @@ pub mod preprocessing;
 pub use preprocessing::PreprocessContext;
 
 pub mod van_vleck;
+pub use van_vleck::correct_van_vleck;
 
 cfg_if! {
     if #[cfg(feature = "cli")] {

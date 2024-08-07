@@ -737,6 +737,8 @@ impl<'a> BirliContext<'a> {
                     .help_heading("FLAGGING"),
 
                 // corrections
+                arg!(--"van-vleck" "Apply Van Vleck corrections")
+                    .help_heading("CORRECTION"),
                 arg!(--"no-cable-delay" "Do not perform cable length corrections")
                     .help_heading("CORRECTION"),
                 arg!(--"no-geometric-delay" "Do not perform geometric corrections")
@@ -1307,6 +1309,20 @@ impl<'a> BirliContext<'a> {
             (Ok((ra, dec)), _) => RADec::from_degrees(ra, dec),
             (_, true) => RADec::from_mwalib_tile_pointing(&corr_ctx.metafits_context),
             _ => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
+        };
+        prep_ctx.correct_van_vleck = match (
+            matches.is_present("van-vleck"),
+            corr_ctx.mwa_version
+        ) {
+            (true, MWAVersion::CorrLegacy) => true,
+            (true, _) => {
+                return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "--van-vleck".into(),
+                    expected: "only available for legacy".into(),
+                    received: "van-vleck".into(),
+                }))
+            }
+            _ => false,
         };
         prep_ctx.correct_cable_lengths = {
             let cable_delays_disabled = matches.is_present("no-cable-delay");

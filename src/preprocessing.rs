@@ -4,11 +4,12 @@ use crate::{
     correct_cable_lengths, correct_geometry,
     corrections::{correct_coarse_passband_gains, correct_digital_gains, ScrunchType},
     marlu::{mwalib::CorrelatorContext, ndarray::prelude::*, Jones, LatLngHeight, RADec},
+    van_vleck::correct_van_vleck,
     with_increment_duration, BirliError, VisSelection,
 };
 use cfg_if::cfg_if;
 use derive_builder::Builder;
-use log::trace;
+use log::{trace, warn};
 use std::{
     fmt::{Debug, Display},
     time::Duration,
@@ -31,6 +32,9 @@ pub struct PreprocessContext<'a> {
     /// The phase centre used for geometric corrections
     pub phase_centre: RADec,
 
+    /// Whether Van Vleck corrections are enabled
+    #[builder(default = "false")]
+    pub correct_van_vleck: bool,
     /// Whether cable length corrections are enabled
     #[builder(default = "true")]
     pub correct_cable_lengths: bool,
@@ -57,6 +61,15 @@ pub struct PreprocessContext<'a> {
 
 impl Display for PreprocessContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "{} correct Van Vleck.",
+            if self.correct_van_vleck {
+                "Will"
+            } else {
+                "Will not"
+            }
+        )?;
         writeln!(
             f,
             "{} correct cable lengths.",
@@ -110,6 +123,11 @@ impl<'a> PreprocessContext<'a> {
     /// A one line description of the tasks preprocessing will do.
     pub fn as_comment(&self) -> String {
         [
+            if self.correct_van_vleck {
+                Some("Van Vleck corrections".to_string())
+            } else {
+                None
+            },
             if self.correct_cable_lengths {
                 Some("cable length corrections".to_string())
             } else {
@@ -162,6 +180,17 @@ impl<'a> PreprocessContext<'a> {
         mut flag_array: ArrayViewMut3<bool>,
         vis_sel: &VisSelection,
     ) -> Result<(), BirliError> {
+        let sel_ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+
+        if self.correct_van_vleck {
+            warn!("Van Vleck correction is a work in progress!");
+            trace!("correcting van vleck");
+            with_increment_duration!(
+                "correct_van_vleck",
+                correct_van_vleck(corr_ctx, jones_array.view_mut(), &sel_ant_pairs)?
+            );
+        }
+
         if self.correct_cable_lengths {
             trace!("correcting cable lengths");
             with_increment_duration!(
@@ -175,8 +204,6 @@ impl<'a> PreprocessContext<'a> {
                 )
             );
         }
-
-        let sel_ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 
         if self.correct_digital_gains {
             trace!("correcting digital gains");

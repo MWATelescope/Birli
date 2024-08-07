@@ -3,7 +3,10 @@
 use marlu::{io::error::BadArrayShape, mwalib};
 use thiserror::Error;
 
-use crate::corrections::{DigitalGainCorrection, PassbandCorrection};
+use crate::{
+    corrections::{DigitalGainCorrection, PassbandCorrection},
+    van_vleck::VanVleckCorrection,
+};
 
 #[cfg(feature = "cli")]
 use shlex::QuoteError;
@@ -73,6 +76,10 @@ pub enum BirliError {
     #[error(transparent)]
     /// Error derived from [`crate::corrections::DigitalGainCorrection`]
     DigitalGainCorrection(#[from] DigitalGainCorrection),
+
+    #[error(transparent)]
+    /// Error derived from [`crate::van_vleck::VanVleckCorrection`]
+    VanVleckCorrection(#[from] VanVleckCorrection),
 
     #[error("You selected dry run")]
     /// enum variant for when a dry run is selected
