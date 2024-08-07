@@ -338,8 +338,8 @@ pub fn correct_van_vleck(
 
 /// Use Newton's method to solve the inverse of `sighat_vector`.
 fn van_vleck_auto(s: f64) -> Option<f64> {
-    let tol = 1e-10;
-    let niter = 10;
+    let tol = 1e-12;
+    let niter = 100;
     let mut guess = s;
     let mut delta = sighat(guess) - s;
     let mut count = 0;
@@ -728,8 +728,8 @@ fn van_vleck_cross_int(khat: f64, sigma_x: f64, sigma_y: f64) -> Option<f64> {
     let x_ = (0..7).map(|i| (i as f64 + 0.5) / sigma_x).collect_vec();
     let y_ = (0..7).map(|i| (i as f64 + 0.5) / sigma_y).collect_vec();
 
-    let tol = 1e-10; // it's 1e-10 for the autos
-    let niter = 10;
+    let tol = 1e-12; // it's 1e-10 for the autos
+    let niter = 100;
     let mut guess = khat / (sigma_x * sigma_y);
     debug_assert!(guess >= 0.0, "|ρ| must be >= 0: {guess:?}");
     debug_assert!(guess < 1.0, "|ρ| must be < 1: {guess:?}");
