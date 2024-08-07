@@ -149,6 +149,8 @@
 #![warn(clippy::missing_const_for_fn)]
 #![warn(clippy::option_if_let_else)]
 #![warn(clippy::equatable_if_let)]
+// whiltelist:
+#![allow(mixed_script_confusables)]
 // TODO: Look at these later:
 #![allow(clippy::suboptimal_flops)]
 #![allow(clippy::redundant_pub_crate)]

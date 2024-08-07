@@ -29,7 +29,6 @@
 //! OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //! ```
 //!
-#![allow(mixed_script_confusables)]
 
 use crate::{
     ndarray::{parallel::prelude::*, prelude::*},
@@ -37,22 +36,10 @@ use crate::{
 };
 use errorfunctions::RealErrorFunctions;
 use itertools::{zip_eq, Itertools};
-use marlu::{io::error::BadArrayShape, jones, mwalib::CorrelatorContext, rayon};
-use rayon::prelude::*;
-use std::{collections::HashMap, f64::consts::PI};
+use marlu::{io::error::BadArrayShape, mwalib::CorrelatorContext};
+// use rayon::prelude::*;
+use std::f64::consts::PI;
 use thiserror::Error;
-
-#[derive(Error, Debug)]
-/// Error for Passband Corrections
-pub enum VanVleckCorrection {
-    #[error(transparent)]
-    /// Error for bad array shape in provided argument
-    BadArrayShape(#[from] BadArrayShape),
-
-    // bad number of samples
-    #[error("invalid number of correlator samples {nsamples}, check metadata")]
-    BadNSamples { nsamples: u32 },
-}
 
 /// Perform Van Vleck corrections given an observation's
 /// [`mwalib::CorrelatorContext`](crate::mwalib::CorrelatorContext) and an
@@ -747,7 +734,7 @@ fn van_vleck_cross_int(khat: f64, sigma_x: f64, sigma_y: f64) -> Option<f64> {
     Some(sign * guess * sigma_x * sigma_y)
 }
 
-/// Apply `van_vleck_cross_int` over $\hat κ, σ_1, σ_2$ in parallel.
+/// Apply `van_vleck_cross_int` over $\hat κ, `σ_1`, `σ_2`$ in parallel.
 pub fn van_vleck_crosses_int(k_: &[f64], σ1_: &[f64], σ2_: &[f64]) -> Vec<f64> {
     k_.par_iter()
         .zip_eq(σ1_.par_iter())
@@ -1298,4 +1285,19 @@ mod vv_cross_tests {
             assert_approx_eq!(f64, r, s, epsilon = 1e-10);
         }
     }
+}
+
+#[derive(Error, Debug)]
+/// Error for Passband Corrections
+pub enum VanVleckCorrection {
+    #[error(transparent)]
+    /// Error for bad array shape in provided argument
+    BadArrayShape(#[from] BadArrayShape),
+
+    /// bad number of samples
+    #[error("invalid number of correlator samples {nsamples}, check metadata")]
+    BadNSamples {
+        /// number of samples
+        nsamples: u32,
+    },
 }
