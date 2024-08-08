@@ -100,6 +100,7 @@ use crate::{
 };
 use errorfunctions::RealErrorFunctions;
 use itertools::{zip_eq, Itertools};
+use log::debug;
 use marlu::{io::error::BadArrayShape, mwalib::CorrelatorContext, ndarray::ShapeError};
 // use rayon::prelude::*;
 use itertools::multiunzip;
@@ -172,13 +173,13 @@ pub fn correct_van_vleck(
     let n2samples = corr_ctx.metafits_context.corr_fine_chan_width_hz
         * corr_ctx.metafits_context.corr_int_time_ms as u32
         / 2_000;
-
     dbg!(&n2samples);
     if n2samples < 1 {
         return Err(VanVleckCorrection::BadNSamples {
             nsamples: n2samples,
         });
     }
+    let n2samples = n2samples as f64;
 
     // let mut jones_double = jones_array.mapv(|j| Jones::<f64>::from(j) / (2.0 * nsamples as f64));
 
@@ -210,7 +211,7 @@ pub fn correct_van_vleck(
         .select(Axis(2), &unflagged_auto_mask)
         .iter()
         .map(|j| {
-            let j_f64 = Jones::<f64>::from(j) / (n2samples as f64);
+            let j_f64 = Jones::<f64>::from(j) / (n2samples);
             (j_f64[0].re.sqrt(), j_f64[3].re.sqrt()) // left: xxr, right: yyr
         })
         .unzip();
@@ -225,6 +226,7 @@ pub fn correct_van_vleck(
         .axis_iter_mut(Axis(2))
         .zip_eq(ant_pairs.iter())
         .for_each(|(mut j_tf, &(ant1, ant2))| {
+            debug!("van vleck correcting ant1={ant1} ant2={ant2}");
             match (
                 unflagged_autos.binary_search(&ant1),
                 unflagged_autos.binary_search(&ant2),
@@ -237,8 +239,8 @@ pub fn correct_van_vleck(
                     j_tf.indexed_iter_mut().for_each(|((t_idx, f_idx), j)| {
                         let sigma_xx = sigma_xxr[(t_idx, f_idx, s_idx)];
                         let sigma_yy = sigma_yyr[(t_idx, f_idx, s_idx)];
-                        let j_xxr = (n2samples as f64) * sigma_xx.powi(2);
-                        let j_yyr = (n2samples as f64) * sigma_yy.powi(2);
+                        let j_xxr = (n2samples) * sigma_xx.powi(2);
+                        let j_yyr = (n2samples) * sigma_yy.powi(2);
                         // println!(
                         //     "j@({:3},{:3}).tf[({:3},{:3})].xxr{:12.9} <-{:12.9} .yyr{:12.9} <-{:12.9} | sxx {:9.7} syy {:9.7}",
                         //     ant1,
@@ -261,14 +263,14 @@ pub fn correct_van_vleck(
                         // TODO: set auto xy = yx* ?
                         let (khat, sigma1s, sigma2s): (Vec<_>, Vec<_>, Vec<_>) = multiunzip([
                             // xy
-                            (j[1].re as f64, sigma_xx, sigma_yy),
-                            (j[1].im as f64, sigma_xx, sigma_yy),
+                            (j[1].re as f64 / n2samples, sigma_xx, sigma_yy),
+                            (j[1].im as f64 / n2samples, sigma_xx, sigma_yy),
                         ]);
                         let kappa = van_vleck_crosses_int(&khat, &sigma1s, &sigma2s);
-                        j[1].re = kappa[0] as f32;
-                        j[1].im = kappa[1] as f32;
-                        j[2].re = kappa[0] as f32;
-                        j[2].im = -kappa[1] as f32;
+                        j[1].re = (n2samples * kappa[0]) as f32;
+                        j[1].im = (n2samples * kappa[1]) as f32;
+                        j[2].re = (n2samples * kappa[0]) as f32;
+                        j[2].im = (n2samples * -kappa[1]) as f32;
                     });
                 }
                 // unflagged cross correlation
@@ -281,27 +283,27 @@ pub fn correct_van_vleck(
                         let sigma_yy_2 = sigma_yyr[(t_idx, f_idx, s_idx2)];
                         let (khat, sigma1s, sigma2s): (Vec<_>, Vec<_>, Vec<_>) = multiunzip([
                             // xx
-                            (j[0].re as f64, sigma_xx_1, sigma_xx_2),
-                            (j[0].im as f64, sigma_xx_1, sigma_xx_2),
+                            (j[0].re as f64 / n2samples, sigma_xx_1, sigma_xx_2),
+                            (j[0].im as f64 / n2samples, sigma_xx_1, sigma_xx_2),
                             // xy
-                            (j[1].re as f64, sigma_xx_1, sigma_yy_2),
-                            (j[1].im as f64, sigma_xx_1, sigma_yy_2),
+                            (j[1].re as f64 / n2samples, sigma_xx_1, sigma_yy_2),
+                            (j[1].im as f64 / n2samples, sigma_xx_1, sigma_yy_2),
                             // yx
-                            (j[2].re as f64, sigma_yy_1, sigma_xx_2),
-                            (j[2].im as f64, sigma_yy_1, sigma_xx_2),
+                            (j[2].re as f64 / n2samples, sigma_yy_1, sigma_xx_2),
+                            (j[2].im as f64 / n2samples, sigma_yy_1, sigma_xx_2),
                             // yy
-                            (j[3].re as f64, sigma_yy_1, sigma_yy_2),
-                            (j[3].im as f64, sigma_yy_1, sigma_yy_2),
+                            (j[3].re as f64 / n2samples, sigma_yy_1, sigma_yy_2),
+                            (j[3].im as f64 / n2samples, sigma_yy_1, sigma_yy_2),
                         ]);
                         let kappa = van_vleck_crosses_int(&khat, &sigma1s, &sigma2s);
-                        j[0].re = kappa[0] as f32;
-                        j[0].im = kappa[1] as f32;
-                        j[1].re = kappa[2] as f32;
-                        j[1].im = kappa[3] as f32;
-                        j[2].re = kappa[4] as f32;
-                        j[2].im = kappa[5] as f32;
-                        j[3].re = kappa[6] as f32;
-                        j[3].im = kappa[7] as f32;
+                        j[0].re = (n2samples * kappa[0]) as f32;
+                        j[0].im = (n2samples * kappa[1]) as f32;
+                        j[1].re = (n2samples * kappa[2]) as f32;
+                        j[1].im = (n2samples * kappa[3]) as f32;
+                        j[2].re = (n2samples * kappa[4]) as f32;
+                        j[2].im = (n2samples * kappa[5]) as f32;
+                        j[3].re = (n2samples * kappa[6]) as f32;
+                        j[3].im = (n2samples * kappa[7]) as f32;
                         // println!(
                         //     "j@({:3},{:3}).tf[({:3},{:3})].xxr{:16.12} <-{:16.12}",
                         //     ant1,
@@ -736,7 +738,14 @@ pub fn van_vleck_crosses_int(k_: &[f64], σ1_: &[f64], σ2_: &[f64]) -> Vec<f64>
     k_.par_iter()
         .zip_eq(σ1_.par_iter())
         .zip_eq(σ2_.par_iter())
-        .map(|((k, σ1), σ2)| van_vleck_cross_int(*k, *σ1, *σ2).unwrap_or(*k))
+        .enumerate()
+        .map(|(i, ((&k, σ1), σ2))| {
+            if k / σ1 / σ2 > 1. {
+                log::warn!("|ρ| > 1: {k:?} / {σ1:?} / {σ2:?} at index {i:?}");
+                return k;
+            };
+            van_vleck_cross_int(k, *σ1, *σ2).unwrap_or(k)
+        })
         .collect()
 }
 // pub fn van_vleck_crosses_int(*, k_arr, sig1_arr, sig2_arr, cheby_approx):
@@ -1354,13 +1363,10 @@ mod vv_cross_tests {
         // (Pdb) disp(sigmas2:=van_vleck_autos(sighats2))
         // [  1.467679841384,   1.412550740902]
         // (Pdb) disp(kappas1:=van_vleck_crosses_int(k_arr=khats1, sig1_arr=np.array([sighats1[0],sighats1[0]]), sig2_arr=np.array([sighats2[1],sighats2[1]]), cheby_approx=False))
-        // [ -0.010900000117,  -0.006500000070]
         // (Pdb) disp(kappas2:=van_vleck_crosses_int(k_arr=khats2, sig1_arr=np.array([sighats1[0],sighats1[0]]), sig2_arr=np.array([sighats2[1],sighats2[1]]), cheby_approx=False))
-        // [  0.002300000049,  -0.000400000009]
         // (Pdb) disp(kappasxx:=van_vleck_crosses_int(k_arr=khatsxx, sig1_arr=np.array([sighats1[0],sighats1[0]]), sig2_arr=np.array([sighats2[0],sighats2[0]]), cheby_approx=False))
         // [ -0.000037500065,   0.001550002695]
         // (Pdb) disp(kappasyy:=van_vleck_crosses_int(k_arr=khatsyy, sig1_arr=np.array([sighats1[1],sighats1[1]]), sig2_arr=np.array([sighats2[1],sighats2[1]]), cheby_approx=False))
-        // [ -0.010400000122,  -0.002600000031]
         // (Pdb) disp(kappasxy:=van_vleck_crosses_int(k_arr=khatsxy, sig1_arr=np.array([sighats1[0],sighats1[0]]), sig2_arr=np.array([sighats2[1],sighats2[1]]), cheby_approx=False))
         // [ -0.001587501562,   0.009337509186]
 
