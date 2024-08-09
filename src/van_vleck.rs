@@ -100,7 +100,10 @@ use crate::{
 use errorfunctions::RealErrorFunctions;
 use itertools::{zip_eq, Itertools};
 use log::trace;
-use marlu::{io::error::BadArrayShape, mwalib::CorrelatorContext, ndarray::ShapeError};
+use marlu::{
+    io::error::BadArrayShape, mwalib::CorrelatorContext, ndarray::ShapeError,
+    rayon::iter::ParallelBridge,
+};
 // use rayon::prelude::*;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::multiunzip;
@@ -250,6 +253,7 @@ pub fn correct_van_vleck(
     jones_array
         .axis_iter_mut(Axis(2))
         .zip_eq(ant_pairs.iter())
+        .par_bridge()
         .for_each(|(mut j_tf, &(ant1, ant2))| {
             correction_progress.inc(1);
             // debug!("van vleck correcting ant1={ant1} ant2={ant2}");
