@@ -92,7 +92,6 @@
 //! OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 //! OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //! ```
-//!
 
 use crate::{
     ndarray::{parallel::prelude::*, prelude::*},
@@ -100,9 +99,10 @@ use crate::{
 };
 use errorfunctions::RealErrorFunctions;
 use itertools::{zip_eq, Itertools};
-use log::debug;
+use log::trace;
 use marlu::{io::error::BadArrayShape, mwalib::CorrelatorContext, ndarray::ShapeError};
 // use rayon::prelude::*;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::multiunzip;
 use std::f64::consts::PI;
 use thiserror::Error;
@@ -143,18 +143,23 @@ use thiserror::Error;
 ///
 /// let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 ///
-/// correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs);
+/// correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, false).unwrap();
 /// ```
 ///
 /// # Errors
-/// - [`VanVleckCorrection::BadArrayShape`] - If the shape of the provided `ant_pairs` argument is incorrect.
+/// - [`VanVleckCorrection::BadArrayShape`] - The shape of the provided `ant_pairs` argument is incorrect.
+/// - [`VanVleckCorrection::NoUnflaggedAutos`] - There are no unflagged autocorrelations in the provided `ant_pairs`.
+/// - [`VanVleckCorrection::BadNSamples`] - The number of correlation samples (calculated from the correlator context) is less than 1.
 pub fn correct_van_vleck(
     corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
     // baseline_idxs: &[usize],
     ant_pairs: &[(usize, usize)],
     // TODO: flagged_ant_idxs: &[usize],
+    draw_progress: bool,
 ) -> Result<(), VanVleckCorrection> {
+    trace!("start correct_van_vleck");
+
     let vis_dims = jones_array.dim();
     if vis_dims.2 != ant_pairs.len() {
         return Err(VanVleckCorrection::BadArrayShape(BadArrayShape {
@@ -181,11 +186,6 @@ pub fn correct_van_vleck(
     }
     let n2samples = n2samples as f64;
 
-    // let mut jones_double = jones_array.mapv(|j| Jones::<f64>::from(j) / (2.0 * nsamples as f64));
-
-    // TODO: figure out antenna flags
-    // TODO: ensure not mwax
-
     // ant_pair indices which are unflagged autocorrelations, list of corresponding antenna indices
     let (unflagged_auto_mask, unflagged_autos): (Vec<_>, Vec<_>) = ant_pairs
         .iter()
@@ -199,12 +199,29 @@ pub fn correct_van_vleck(
             }
         })
         .unzip();
-    let n_autos = unflagged_autos.len();
-    dbg!(&n_autos);
+    let n_unflagged_autos = unflagged_autos.len();
+    if n_unflagged_autos < 1 {
+        return Err(VanVleckCorrection::NoUnflaggedAutos);
+    }
 
-    // new mutable copy of jones_array, only autos
-    // TODO: pyuvdata does `[timestep][baseleine][channel]` -> `[baseleine][timestep * channel]`
-    // but we do `[timestep][channel][baseleine]`.
+    let draw_target = if draw_progress {
+        ProgressDrawTarget::stderr()
+    } else {
+        ProgressDrawTarget::hidden()
+    };
+
+    // Create a progress bar to show the status of the correction
+    let correction_progress =
+        ProgressBar::with_draw_target(Some(ant_pairs.len() as u64), draw_target);
+    correction_progress.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+            )
+            .unwrap()
+            .progress_chars("=> "),
+    );
+    correction_progress.set_message("vv autos");
 
     // partition of auto jones matrix into xx real and yy real, for van_vleck_autos
     let (sighat_xxr, sighat_yyr): (Vec<_>, Vec<_>) = jones_array
@@ -217,16 +234,25 @@ pub fn correct_van_vleck(
         .unzip();
 
     // correct autos
-    let sigma_xxr =
-        Array::from(van_vleck_autos(&sighat_xxr)).into_shape((vis_dims.0, vis_dims.1, n_autos))?;
-    let sigma_yyr =
-        Array::from(van_vleck_autos(&sighat_yyr)).into_shape((vis_dims.0, vis_dims.1, n_autos))?;
+    let sigma_xxr = Array::from(van_vleck_autos(&sighat_xxr)).into_shape((
+        vis_dims.0,
+        vis_dims.1,
+        n_unflagged_autos,
+    ))?;
+    let sigma_yyr = Array::from(van_vleck_autos(&sighat_yyr)).into_shape((
+        vis_dims.0,
+        vis_dims.1,
+        n_unflagged_autos,
+    ))?;
+
+    correction_progress.set_message("vv crosses");
 
     jones_array
         .axis_iter_mut(Axis(2))
         .zip_eq(ant_pairs.iter())
         .for_each(|(mut j_tf, &(ant1, ant2))| {
-            debug!("van vleck correcting ant1={ant1} ant2={ant2}");
+            correction_progress.inc(1);
+            // debug!("van vleck correcting ant1={ant1} ant2={ant2}");
             match (
                 unflagged_autos.binary_search(&ant1),
                 unflagged_autos.binary_search(&ant2),
@@ -237,30 +263,16 @@ pub fn correct_van_vleck(
                 // - correct yx with yy real, xx real
                 (Ok(s_idx), _) if ant1 == ant2 => {
                     j_tf.indexed_iter_mut().for_each(|((t_idx, f_idx), j)| {
+                        // correct xx, yy autos
                         let sigma_xx = sigma_xxr[(t_idx, f_idx, s_idx)];
                         let sigma_yy = sigma_yyr[(t_idx, f_idx, s_idx)];
                         let j_xxr = (n2samples) * sigma_xx.powi(2);
                         let j_yyr = (n2samples) * sigma_yy.powi(2);
-                        // println!(
-                        //     "j@({:3},{:3}).tf[({:3},{:3})].xxr{:12.9} <-{:12.9} .yyr{:12.9} <-{:12.9} | sxx {:9.7} syy {:9.7}",
-                        //     ant1,
-                        //     ant2,
-                        //     t_idx,
-                        //     f_idx,
-                        //     j[0].re,
-                        //     j_xxr,
-                        //     j[3].re,
-                        //     j_yyr,
-                        //     sigma_xxr[(t_idx, f_idx, s_idx)],
-                        //     sigma_yyr[(t_idx, f_idx, s_idx)],
-                        // );
                         j[0].re = j_xxr as f32;
-                        j[3].re = j_yyr as f32;
-                        // TODO: validate this?
                         j[0].im = 0.0;
+                        j[3].re = j_yyr as f32;
                         j[3].im = 0.0;
-                        // TODO: correct yx autos
-                        // TODO: set auto xy = yx* ?
+                        // correct yx autos
                         let (khat, sigma1s, sigma2s): (Vec<_>, Vec<_>, Vec<_>) = multiunzip([
                             // xy
                             (j[1].re as f64 / n2samples, sigma_xx, sigma_yy),
@@ -269,6 +281,7 @@ pub fn correct_van_vleck(
                         let kappa = van_vleck_crosses_int(&khat, &sigma1s, &sigma2s);
                         j[1].re = (n2samples * kappa[0]) as f32;
                         j[1].im = (n2samples * kappa[1]) as f32;
+                        // set auto xy = yx
                         j[2].re = (n2samples * kappa[0]) as f32;
                         j[2].im = (n2samples * -kappa[1]) as f32;
                     });
@@ -304,15 +317,6 @@ pub fn correct_van_vleck(
                         j[2].im = (n2samples * kappa[5]) as f32;
                         j[3].re = (n2samples * kappa[6]) as f32;
                         j[3].im = (n2samples * kappa[7]) as f32;
-                        // println!(
-                        //     "j@({:3},{:3}).tf[({:3},{:3})].xxr{:16.12} <-{:16.12}",
-                        //     ant1,
-                        //     ant2,
-                        //     t_idx,
-                        //     f_idx,
-                        //     j[0].re,
-                        //     j_xxr,
-                        // );
                     });
                 }
                 // either antenna is flagged
@@ -320,7 +324,7 @@ pub fn correct_van_vleck(
             };
         });
 
-    // jones_double.select(Axis(2), &cross_mask).axis_iter(Axis(2)).enumerate()
+    trace!("end correct_van_vleck");
 
     Ok(())
 }
@@ -499,7 +503,7 @@ mod vv_auto_tests {
         let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
 
         // assert error is BadNSamples
-        assert!(correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs).is_err());
+        assert!(correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, false).is_err());
     }
     #[test]
     fn test_correct_van_vleck_autos_good() {
@@ -531,7 +535,7 @@ mod vv_auto_tests {
 
         let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
 
-        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs).unwrap();
+        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, false).unwrap();
 
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, SIGMAS[0].powi(2) as f32);
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][3].re, SIGMAS[3].powi(2) as f32);
@@ -1430,7 +1434,7 @@ mod vv_cross_tests {
 
         let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
 
-        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs).unwrap();
+        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, false).unwrap();
 
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, sigmas1[0].powi(2) as f32);
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].re, kappas1[0] as f32, epsilon=1e-9);
@@ -1474,4 +1478,8 @@ pub enum VanVleckCorrection {
     /// bad array shape
     #[error("this is a bug")]
     ShapeError(#[from] ShapeError),
+
+    /// No unflagged autos
+    #[error("no unflagged antennas provided in van vleck correction ant pairs")]
+    NoUnflaggedAutos,
 }
