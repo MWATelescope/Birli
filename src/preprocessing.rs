@@ -187,7 +187,12 @@ impl<'a> PreprocessContext<'a> {
             trace!("correcting van vleck");
             with_increment_duration!(
                 "correct_van_vleck",
-                correct_van_vleck(corr_ctx, jones_array.view_mut(), &sel_ant_pairs)?
+                correct_van_vleck(
+                    corr_ctx,
+                    jones_array.view_mut(),
+                    &sel_ant_pairs,
+                    self.draw_progress
+                )?
             );
         }
 
