@@ -106,7 +106,6 @@ use marlu::{
 };
 // use rayon::prelude::*;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use itertools::multiunzip;
 use std::f64::consts::PI;
 use thiserror::Error;
 
@@ -277,17 +276,22 @@ pub fn correct_van_vleck(
                         j[3].re = j_yyr as f32;
                         j[3].im = 0.0;
                         // correct yx autos
-                        let (khat, sigma1s, sigma2s): (Vec<_>, Vec<_>, Vec<_>) = multiunzip([
-                            // xy
-                            (j[1].re as f64 / n2samples, sigma_xx, sigma_yy),
-                            (j[1].im as f64 / n2samples, sigma_xx, sigma_yy),
-                        ]);
-                        let kappa = van_vleck_crosses_int(&khat, &sigma1s, &sigma2s);
-                        j[1].re = (n2samples * kappa[0]) as f32;
-                        j[1].im = (n2samples * kappa[1]) as f32;
-                        // set auto xy = yx
-                        j[2].re = (n2samples * kappa[0]) as f32;
-                        j[2].im = (n2samples * -kappa[1]) as f32;
+
+                        let sigma_product = sigma_xx * sigma_yy;
+                        let khat_re = j[1].re as f64 / n2samples;
+                        let khat_im = j[1].im as f64 / n2samples;
+                        if khat_re > sigma_product {
+                            log::warn!("|ρ| > 1: {khat_re:?} / {sigma_xx:?} / {sigma_yy:?} at auto={ant1:?} t={t_idx:?} f={f_idx:?} xy re");
+                        } else if khat_im > sigma_product {
+                            log::warn!("|ρ| > 1: {khat_re:?} / {sigma_xx:?} / {sigma_yy:?} at auto={ant1:?} t={t_idx:?} f={f_idx:?} xy im");
+                        } else {
+                            let kappa_re = van_vleck_cross_int(khat_re, sigma_xx, sigma_yy).unwrap_or(khat_re);
+                            let kappa_im = van_vleck_cross_int(khat_im, sigma_xx, sigma_yy).unwrap_or(khat_im);
+                            j[1].re = (n2samples * kappa_re) as f32;
+                            j[1].im = (n2samples * kappa_im) as f32;
+                            j[2].re = (n2samples * kappa_re) as f32;
+                            j[2].im = (n2samples * -kappa_im) as f32;
+                        }
                     });
                 }
                 // unflagged cross correlation
@@ -298,29 +302,28 @@ pub fn correct_van_vleck(
                         let sigma_yy_1 = sigma_yyr[(t_idx, f_idx, s_idx1)];
                         let sigma_xx_2 = sigma_xxr[(t_idx, f_idx, s_idx2)];
                         let sigma_yy_2 = sigma_yyr[(t_idx, f_idx, s_idx2)];
-                        let (khat, sigma1s, sigma2s): (Vec<_>, Vec<_>, Vec<_>) = multiunzip([
-                            // xx
-                            (j[0].re as f64 / n2samples, sigma_xx_1, sigma_xx_2),
-                            (j[0].im as f64 / n2samples, sigma_xx_1, sigma_xx_2),
-                            // xy
-                            (j[1].re as f64 / n2samples, sigma_xx_1, sigma_yy_2),
-                            (j[1].im as f64 / n2samples, sigma_xx_1, sigma_yy_2),
-                            // yx
-                            (j[2].re as f64 / n2samples, sigma_yy_1, sigma_xx_2),
-                            (j[2].im as f64 / n2samples, sigma_yy_1, sigma_xx_2),
-                            // yy
-                            (j[3].re as f64 / n2samples, sigma_yy_1, sigma_yy_2),
-                            (j[3].im as f64 / n2samples, sigma_yy_1, sigma_yy_2),
-                        ]);
-                        let kappa = van_vleck_crosses_int(&khat, &sigma1s, &sigma2s);
-                        j[0].re = (n2samples * kappa[0]) as f32;
-                        j[0].im = (n2samples * kappa[1]) as f32;
-                        j[1].re = (n2samples * kappa[2]) as f32;
-                        j[1].im = (n2samples * kappa[3]) as f32;
-                        j[2].re = (n2samples * kappa[4]) as f32;
-                        j[2].im = (n2samples * kappa[5]) as f32;
-                        j[3].re = (n2samples * kappa[6]) as f32;
-                        j[3].im = (n2samples * kappa[7]) as f32;
+                        j.iter_mut().zip_eq([
+                                sigma_xx_1, sigma_xx_1, sigma_yy_1, sigma_yy_1,
+                            ])
+                            .zip_eq([
+                                sigma_xx_2, sigma_yy_2, sigma_xx_2, sigma_yy_2,
+                            ])
+                            .enumerate()
+                            .for_each(|(p_idx, ((jp, sigma1), sigma2))| {
+                                let sigma_product = sigma1 * sigma2;
+                                let khat_re = jp.re as f64 / n2samples;
+                                let khat_im = jp.im as f64 / n2samples;
+                                if khat_re > sigma_product {
+                                    log::warn!("|ρ| > 1: {khat_re:?} / {sigma1:?} / {sigma2:?} at a1={ant1:?} a2={ant2:?} t={t_idx:?} f={f_idx:?} p={p_idx:?} re");
+                                } else if khat_im > sigma_product {
+                                    log::warn!("|ρ| > 1: {khat_re:?} / {sigma1:?} / {sigma2:?} at a1={ant1:?} a2={ant2:?} t={t_idx:?} f={f_idx:?} p={p_idx:?} im");
+                                } else {
+                                    let kappa_re = van_vleck_cross_int(khat_re, sigma1, sigma2).unwrap_or(khat_re);
+                                    let kappa_im = van_vleck_cross_int(khat_im, sigma1, sigma2).unwrap_or(khat_im);
+                                    jp.re = (n2samples * kappa_re) as f32;
+                                    jp.im = (n2samples * kappa_im) as f32;
+                                }
+                            });
                     });
                 }
                 // either antenna is flagged
