@@ -99,6 +99,7 @@ use crate::{
 };
 use errorfunctions::RealErrorFunctions;
 use itertools::{zip_eq, Itertools};
+use lazy_static::lazy_static;
 use log::trace;
 use marlu::{
     io::error::BadArrayShape, mwalib::CorrelatorContext, ndarray::ShapeError,
@@ -144,8 +145,14 @@ use thiserror::Error;
 ///     .unwrap();
 ///
 /// let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
-///
-/// correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, false).unwrap();
+/// let flagged_ants = corr_ctx.metafits_context.antennas.iter().enumerate().filter_map(|(idx, ant)| {
+///     if ant.rfinput_x.flag > 0 || ant.rfinput_y.flag > 0 {
+///         Some(idx)
+///     } else {
+///         None
+///     }
+/// }).collect::<Vec<_>>();
+/// correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, &flagged_ants, false).unwrap();
 /// ```
 ///
 /// # Errors
@@ -157,7 +164,7 @@ pub fn correct_van_vleck(
     mut jones_array: ArrayViewMut3<Jones<f32>>,
     // baseline_idxs: &[usize],
     ant_pairs: &[(usize, usize)],
-    // TODO: flagged_ant_idxs: &[usize],
+    flagged_ant_idxs: &[usize],
     draw_progress: bool,
 ) -> Result<(), VanVleckCorrection> {
     trace!("start correct_van_vleck");
@@ -194,7 +201,7 @@ pub fn correct_van_vleck(
         .enumerate()
         .filter_map(|(i, (ant1, ant2))| {
             // TODO: filter flagged antennas
-            if ant1 == ant2 {
+            if ant1 == ant2 && !flagged_ant_idxs.contains(ant1) {
                 Some((i, ant1))
             } else {
                 None
@@ -404,7 +411,7 @@ mod vv_auto_tests {
     use super::*;
 
     const SIGHATS: [f64; 20] = [
-        1.3732557118031588, // sqrr=1.17185994 , sq=1.88583125
+        1.3732557118031588,
         1.4567407971221236,
         1.58477324876463,
         1.7205649508228396,
@@ -510,7 +517,9 @@ mod vv_auto_tests {
         let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
 
         // assert error is BadNSamples
-        assert!(correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, false).is_err());
+        assert!(
+            correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, &[], false).is_err()
+        );
     }
     #[test]
     fn test_correct_van_vleck_autos_good() {
@@ -542,7 +551,7 @@ mod vv_auto_tests {
 
         let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
 
-        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, false).unwrap();
+        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, &[], false).unwrap();
 
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, SIGMAS[0].powi(2) as f32);
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][3].re, SIGMAS[3].powi(2) as f32);
@@ -759,7 +768,6 @@ pub fn van_vleck_crosses_int(k_: &[f64], σ1_: &[f64], σ2_: &[f64]) -> Vec<f64>
         })
         .collect()
 }
-// pub fn van_vleck_crosses_int(*, k_arr, sig1_arr, sig2_arr, cheby_approx):
 
 #[cfg(test)]
 mod vv_cross_tests {
@@ -1396,8 +1404,8 @@ mod vv_cross_tests {
         let sigmas1: [f64; 2] =  [  1.424780710577,   1.342571513473];
         let sigmas2: [f64; 2] =  [  1.467679841384,   1.412550740902];
         // $κ$
-        let kappas1: [f64; 2] =  [ -0.046568781137,  -0.012337508611];
-        let kappas2: [f64; 2] =  [ -0.042031317949,   0.011650019325];
+        let kappas1: [f64; 2] =  [ -0.046568781137,   0.012337508611];
+        let kappas2: [f64; 2] =  [ -0.042031317949,  -0.011650019325];
 
         let kappasxx: [f64; 2] = [ -0.000037500067,   0.001550002722];
         let kappasyy: [f64; 2] = [ -0.008881254122,  -0.004287502263];
@@ -1441,13 +1449,13 @@ mod vv_cross_tests {
 
         let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
 
-        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, false).unwrap();
+        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, &[], false).unwrap();
 
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, sigmas1[0].powi(2) as f32);
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].re, kappas1[0] as f32, epsilon=1e-9);
-        assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].im, -kappas1[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].im, kappas1[1] as f32, epsilon=1e-9);
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][2].re, kappas1[0] as f32, epsilon=1e-9);
-        assert_approx_eq!(f32, jones_array[(0, 0, 0)][2].im, kappas1[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][2].im, -kappas1[1] as f32, epsilon=1e-9);
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][3].re, sigmas1[1].powi(2) as f32);
 
         assert_approx_eq!(f32, jones_array[(0, 0, 1)][0].re, kappasxx[0] as f32, epsilon=1e-9);
@@ -1461,12 +1469,156 @@ mod vv_cross_tests {
 
         assert_approx_eq!(f32, jones_array[(0, 0, 2)][0].re, sigmas2[0].powi(2) as f32);
         assert_approx_eq!(f32, jones_array[(0, 0, 2)][1].re, kappas2[0] as f32, epsilon=1e-9);
-        assert_approx_eq!(f32, jones_array[(0, 0, 2)][1].im, -kappas2[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][1].im, kappas2[1] as f32, epsilon=1e-9);
         assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].re, kappas2[0] as f32, epsilon=1e-9);
-        assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].im, kappas2[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].im, -kappas2[1] as f32, epsilon=1e-9);
         assert_approx_eq!(f32, jones_array[(0, 0, 2)][3].re, sigmas2[1].powi(2) as f32);
     }
+
+    #[rustfmt::skip]
+    #[test]
+    fn test_correct_van_vleck_crosses_bad_ants() {
+        let vis_dims = (1, 1, 3);
+        let mut corr_ctx = CorrelatorContext::new(
+            "tests/data/1297526432_mwax/1297526432.metafits",
+            &["tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits"],
+        )
+        .unwrap();
+        corr_ctx.metafits_context.corr_fine_chan_width_hz = 1;
+        corr_ctx.metafits_context.corr_int_time_ms = 2_000;
+
+        let mut jones_array = Array3::<Jones<f32>>::zeros(vis_dims);
+
+        // $\hat σ$
+        let sighats1: [f64; 2] = [  1.453730115943,   1.373255711803];
+        let sighats2: [f64; 2] = [  1.495798281855,   1.441745903410];
+        // $\hat κ$
+        let khats1: [f64; 2] =   [ -0.046568750000,   0.012337500000];
+        let khats2: [f64; 2] =   [ -0.042031250000,  -0.011650000000];
+
+        let khatsxx: [f64; 2] =  [ -0.000037500000,   0.001550000000];
+        let khatsyy: [f64; 2] =  [ -0.008881250000,  -0.004287500000];
+        let khatsxy: [f64; 2] =  [ -0.001587500000,   0.009337500000];
+        let khatsyx: [f64; 2] =  [ -0.002425000000,  -0.004268750000];
+
+        // $σ$
+        let sigmas1: [f64; 2] =  [  1.424780710577,   1.342571513473];
+        // $κ$
+        let kappas1: [f64; 2] =  [ -0.046568781137,   0.012337508611];
+
+        jones_array[(0, 0, 0)][0].re = sighats1[0].powi(2) as f32;
+        jones_array[(0, 0, 0)][1].re = khats1[0] as f32;
+        jones_array[(0, 0, 0)][1].im = khats1[1] as f32;
+        jones_array[(0, 0, 0)][2].re = khats1[0] as f32;
+        jones_array[(0, 0, 0)][2].im = -khats1[1] as f32;
+        jones_array[(0, 0, 0)][3].re = sighats1[1].powi(2) as f32;
+
+        jones_array[(0, 0, 1)][0].re = khatsxx[0] as f32;
+        jones_array[(0, 0, 1)][0].im = khatsxx[1] as f32;
+        jones_array[(0, 0, 1)][1].re = khatsxy[0] as f32;
+        jones_array[(0, 0, 1)][1].im = khatsxy[1] as f32;
+        jones_array[(0, 0, 1)][2].re = khatsyx[0] as f32;
+        jones_array[(0, 0, 1)][2].im = khatsyx[1] as f32;
+        jones_array[(0, 0, 1)][3].re = khatsyy[0] as f32;
+        jones_array[(0, 0, 1)][3].im = khatsyy[1] as f32;
+
+        jones_array[(0, 0, 2)][0].re = sighats2[0].powi(2) as f32;
+        jones_array[(0, 0, 2)][1].re = khats2[0] as f32;
+        jones_array[(0, 0, 2)][1].im = khats2[1] as f32;
+        jones_array[(0, 0, 2)][2].re = khats2[0] as f32;
+        jones_array[(0, 0, 2)][2].im = -khats2[1] as f32;
+        jones_array[(0, 0, 2)][3].re = sighats2[1].powi(2) as f32;
+
+        let ant_pairs = vec![(1, 1), (1, 2), (2, 2)];
+        let flagged_ants = [2];
+
+        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, &flagged_ants, false).unwrap();
+
+        // ant1 is corrected, but ant2 isn't.
+
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, sigmas1[0].powi(2) as f32);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].re, kappas1[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].im, kappas1[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][2].re, kappas1[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][2].im, -kappas1[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][3].re, sigmas1[1].powi(2) as f32);
+
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][0].re, khatsxx[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][0].im, khatsxx[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][1].re, khatsxy[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][1].im, khatsxy[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][2].re, khatsyx[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][2].im, khatsyx[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][3].re, khatsyy[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][3].im, khatsyy[1] as f32, epsilon=1e-9);
+
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][0].re, sighats2[0].powi(2) as f32);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][1].re, khats2[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][1].im, khats2[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].re, khats2[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].im, -khats2[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][3].re, sighats2[1].powi(2) as f32);
+    }
 }
+
+// lazy_static! {
+//     // import h5py
+//     // sigma1 = h5py.File('/home/dev/src/pyuvdata/src/pyuvdata/data/mwa_config_data/sigma1.h5')
+//     // print(f"{sigma1['sig_data'][:]=}")
+//     // array([0.9 , 0.91, 0.92, ..., 4.48, 4.49, 4.5 ])
+//     static ref COEFF_SIGMA_START: f64 = 0.9;
+//     static ref COEFF_SIGMA_STOP: f64 = 4.5;
+//     static ref COEFF_SIGMA_STEP: f64 = 0.01;
+//     // cheby_coeff = h5py.File('/home/dev/src/pyuvdata/src/pyuvdata/data/mwa_config_data/Chebychev_coeff.h5')
+//     // rho_data = cheby_coeff['rho_data'][:]
+//     // import pickle
+//     // pickle.dump(rho_data.flatten().tolist(), open('data/van_vleck_rho_coeffs.pkl', 'wb'))
+//     // static ref RHO_DATA: Vec<f64> = serde_pickle::from_slice(
+//     //     include_bytes!("../data/van_vleck_rho_coeffs.pkl"),
+//     //     serde_pickle::de::DeOptions::default()
+//     // ).unwrap();
+//     static ref RHO_COEFFS: Array3<f64> = Array3::from_shape_vec(
+//         (361, 361, 3),
+//         serde_pickle::from_slice(
+//             include_bytes!("../data/van_vleck_rho_coeffs.pkl"),
+//             serde_pickle::de::DeOptions::default()
+//         ).unwrap()
+//     ).unwrap();
+// }
+
+// // solve a single van vleck cross correlation using chebychev polynomial approximation
+// fn van_vleck_cross_cheby(khat: f64, sigma_x: f64, sigma_y: f64) -> Option<f64> {
+//     if (sigma_x < *COEFF_SIGMA_START)
+//         || (sigma_x > *COEFF_SIGMA_STOP || sigma_y < *COEFF_SIGMA_START)
+//         || (sigma_y > *COEFF_SIGMA_STOP)
+//     {
+//         return None;
+//     }
+//     let sx_idx = ((sigma_x - *COEFF_SIGMA_START) / *COEFF_SIGMA_STEP).floor() as usize;
+//     let sy_idx = ((sigma_y - *COEFF_SIGMA_START) / *COEFF_SIGMA_STEP).floor() as usize;
+//     let rho_coeffs = RHO_COEFFS.slice(s![sx_idx, sy_idx, ..]);
+//     // dbg!(sx_idx, sy_idx, rho_coeffs);
+//     let kappa = khat * (rho_coeffs[0] - 3. * rho_coeffs[1] + 5. * rho_coeffs[2])
+//         + khat.powi(3) * (4. * rho_coeffs[1] - 20. * rho_coeffs[2])
+//         + khat.powi(5) * (16. * rho_coeffs[2]);
+//     Some(kappa * sigma_x * sigma_y)
+// }
+
+// #[cfg(test)]
+// mod vv_cheby_tests {
+//     use super::*;
+//     use float_cmp::assert_approx_eq;
+
+//     #[test]
+//     fn test_van_vleck_cross_cheby_easy() {
+//         let sigma_x = 2.1;
+//         let sigma_y = 3.2;
+//         let khat = 1.7;
+//         let expected = van_vleck_cross_int(khat, sigma_x, sigma_y).unwrap();
+//         let result = van_vleck_cross_cheby(khat, sigma_x, sigma_y).unwrap();
+//         assert_approx_eq!(f64, result, expected, epsilon = 1e-7);
+//     }
+// }
 
 #[derive(Error, Debug)]
 /// Error for Passband Corrections

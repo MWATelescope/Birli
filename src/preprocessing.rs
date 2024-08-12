@@ -185,12 +185,27 @@ impl<'a> PreprocessContext<'a> {
         if self.correct_van_vleck {
             warn!("Van Vleck correction is a work in progress!");
             trace!("correcting van vleck");
+            // get flagged antennas
+            let flagged_ants = corr_ctx
+                .metafits_context
+                .antennas
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, ant)| {
+                    if ant.rfinput_x.flagged || ant.rfinput_y.flagged {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
             with_increment_duration!(
                 "correct_van_vleck",
                 correct_van_vleck(
                     corr_ctx,
                     jones_array.view_mut(),
                     &sel_ant_pairs,
+                    &flagged_ants,
                     self.draw_progress
                 )?
             );

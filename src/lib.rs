@@ -151,6 +151,7 @@
 #![warn(clippy::equatable_if_let)]
 // whiltelist:
 #![allow(mixed_script_confusables)]
+#![allow(clippy::doc_lazy_continuation)]
 // TODO: Look at these later:
 #![allow(clippy::suboptimal_flops)]
 #![allow(clippy::redundant_pub_crate)]
