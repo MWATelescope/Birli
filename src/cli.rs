@@ -3961,8 +3961,8 @@ mod tests_aoflagger_flagset {
             assert_eq!(left_header.num_rows, right_header.num_rows);
             assert_eq!(left_header.num_rows as usize, num_rows);
 
-            let left_flags = $left_flagset.read_flags().unwrap().into_raw_vec();
-            let right_flags = $right_flagset.read_flags().unwrap().into_raw_vec();
+            let (left_flags, _) = $left_flagset.read_flags().unwrap().into_raw_vec_and_offset();
+            let (right_flags, _) = $right_flagset.read_flags().unwrap().into_raw_vec_and_offset();
             assert_eq!(left_flags.len(), right_flags.len());
             assert_eq!(
                 left_flags.len(),
