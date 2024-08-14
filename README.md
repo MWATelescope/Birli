@@ -60,11 +60,23 @@ cargo make install_deps
 export LD_LIBRARY_PATH="/usr/local/lib/"
 ```
 
+### macOS
+
+Previously macOS was supported, however this has ben dropped due stability issues with casacore and aoflagger.
+
+The following may or may not work.
+
+```bash
+brew tap mwatelescope/tap
+brew install mwatelescope/tap/aoflagger
+AOFLAGGER_INCLUDE_DIR=/opt/homebrew/include/ cargo install --path .
+export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib/
+birli
+```
+
 ### Other Operating Systems
 
 Unfortunately most of the prerequisites aren't available on Windows. However, WSL is great, and there is a docker image! You could use VSCode remote for WSL or Docker. Your best best is Ubuntu LTS
-
-Previously macOS was supported, however this has ben dropped due to issues with the [aoflagger Homebrew tap](https://github.com/MWATelescope/homebrew-tap/blob/main/Formula/aoflagger.rb). Any help here would be welcome.
 
 ### Installing the binary
 
