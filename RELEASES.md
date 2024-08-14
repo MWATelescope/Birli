@@ -1,6 +1,12 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.13.0 (2024-08-14)
+
+- 🐛 fix issues compiling on arm64:
+  - update Marlu 0.13.0
+
 # Version 0.12.0 (2024-06-27)
+
 - 🐛 bug fixes:
   - #152 default pfb gains should be cotter2014 for legacy correlator, not jake
 - 🙏 quality of life:
@@ -9,11 +15,13 @@
   - update default aoflagger version in makefile and dockerfile
 
 # Version 0.11.0 (2024-06-19)
+
 - ➕ dependencies:
   - Marlu 0.11.0
   - built ~0.7.3
 
 # Version 0.10.0 (2023-08-11)
+
 - 🙏 quality of life:
   - uvfits are now written out with a second DATE and INTTIM
 - ➕ dependencies:
@@ -21,6 +29,7 @@
   - use rust version 1.64
 
 # Version 0.9.2 (2023-07-18)
+
 - 🙏 quality of life:
   - update modtime when writing ms
 

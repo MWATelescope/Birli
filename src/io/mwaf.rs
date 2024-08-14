@@ -8,7 +8,10 @@
 //! one column. Each cell in the table contains a binary vector of flags for each fine channel in
 //! the coarse channel.
 
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::c_char,
+    path::{Path, PathBuf},
+};
 
 use fitsio::{tables::ColumnDataType, tables::ColumnDescription, FitsFile};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -441,7 +444,7 @@ impl FlagFileSet {
 
         let mut status = 0;
 
-        let mut flag_cell = vec![0; flag_coarse_chan_view.len_of(Axis(1))];
+        let mut flag_cell: Vec<c_char> = vec![0; flag_coarse_chan_view.len_of(Axis(1))];
         for flag_timestep_view in flag_coarse_chan_view.outer_iter() {
             for (flag_baseline_view, baseline_flag_count) in flag_timestep_view
                 .axis_iter(Axis(1))
@@ -452,7 +455,7 @@ impl FlagFileSet {
                     .zip_eq(flag_baseline_view)
                     .zip_eq(channel_flag_counts.iter_mut())
                     .for_each(|((a, &b), count)| {
-                        *a = i8::from(b);
+                        *a = c_char::from(b);
                         if b {
                             *count += 1;
                         }
@@ -789,7 +792,7 @@ impl FlagFileSet {
     }
 
     #[cfg(test)]
-    pub(crate) fn read_flags(&self) -> Result<Array3<i8>, IOError> {
+    pub(crate) fn read_flags(&self) -> Result<Array3<c_char>, IOError> {
         let gpubox = &self.gpuboxes[0];
         let mut fptr = FitsFile::open(&gpubox.filename)?;
         let hdu = fits_open_hdu!(&mut fptr, 0)?;

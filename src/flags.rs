@@ -556,6 +556,7 @@ pub fn write_flags(
 mod tests {
     use super::write_flags;
     use glob::glob;
+    use std::ffi::c_char;
     use tempfile::tempdir;
 
     use crate::{
@@ -677,18 +678,18 @@ mod tests {
         );
 
         let tests = [
-            (0, 0, 0, i8::from(false)),
-            (0, 0, 1, i8::from(false)),
-            (0, 1, 0, i8::from(false)),
-            (0, 1, 1, i8::from(false)),
-            (0, 2, 0, i8::from(false)),
-            (0, 2, 1, i8::from(false)),
-            (1, 0, 0, i8::from(false)),
-            (1, 0, 1, i8::from(false)),
-            (1, 1, 0, i8::from(false)),
-            (1, 1, 1, i8::from(true)),
-            (1, 2, 0, i8::from(false)),
-            (1, 2, 1, i8::from(false)),
+            (0, 0, 0, c_char::from(false)),
+            (0, 0, 1, c_char::from(false)),
+            (0, 1, 0, c_char::from(false)),
+            (0, 1, 1, c_char::from(false)),
+            (0, 2, 0, c_char::from(false)),
+            (0, 2, 1, c_char::from(false)),
+            (1, 0, 0, c_char::from(false)),
+            (1, 0, 1, c_char::from(false)),
+            (1, 1, 0, c_char::from(false)),
+            (1, 1, 1, c_char::from(true)),
+            (1, 2, 0, c_char::from(false)),
+            (1, 2, 1, c_char::from(false)),
         ];
         for (timestep_idx, baseline_idx, fine_chan_idx, expected_flag) in tests {
             let row_idx = timestep_idx * num_baselines + baseline_idx;
