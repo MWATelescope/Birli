@@ -47,6 +47,7 @@ marlu = "0.14.0"
 regex = "1.4.0"
 thiserror = "1.0.0"
 errorfunctions = "0.2.0"
+serde-pickle = "1.1.1"
 
 # aoflagger feature
 aoflagger_sys = { version = "0.1.2", optional = true }
@@ -95,3 +96,4 @@ opt-level = 3
 # marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "birli-150" }
 # mwalib = { path = "../mwalib" }
 # mwalib = { git = "https://github.com/MWATelescope/mwalib", branch = "digital_gains_plus" }
+# aoflagger_sys = { git = "https://github.com/MWATelescope/rust-aoflagger", branch = "sonoma-fix" }
