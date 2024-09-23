@@ -1,6 +1,7 @@
 //! Errors that can occur in Birli
 
 use marlu::{io::error::BadArrayShape, mwalib};
+use shlex::QuoteError;
 use thiserror::Error;
 
 use crate::corrections::{DigitalGainCorrection, PassbandCorrection};
@@ -39,6 +40,10 @@ pub enum BirliError {
     #[error(transparent)]
     /// Error derived from [`crate::calibration::CalibrationError`]
     CalibrationError(#[from] crate::calibration::CalibrationError),
+
+    #[error(transparent)]
+    /// Error derived from [`QuoteError`]
+    QuoteError(#[from] QuoteError),
 
     #[cfg(feature = "cli")]
     #[error(transparent)]

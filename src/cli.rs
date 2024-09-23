@@ -1565,7 +1565,7 @@ impl<'a> BirliContext<'a> {
         };
 
         let args_strings = std::env::args().collect_vec();
-        let cmd_line = shlex::join(args_strings.iter().map(String::as_str));
+        let cmd_line = shlex::try_join(args_strings.iter().map(String::as_str))?;
         let application = format!("{PKG_NAME} {PKG_VERSION}");
         let message = prep_ctx.as_comment();
         let history = History {
