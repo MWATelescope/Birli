@@ -1,5 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.14.0 (2024-09-23)
+
+- 🐛 fix linking issues on macOS with aoflagger_sys 0.1.2
+- ➕ update mwalib 1.5.0 via Marlu 0.14.0
+- ➕ update shlex
+
 # Version 0.13.0 (2024-08-14)
 
 - 🐛 fix issues compiling on arm64:

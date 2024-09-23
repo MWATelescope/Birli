@@ -74,6 +74,21 @@ export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib/
 birli
 ```
 
+It is not possible to set the library search path globally <https://github.com/Homebrew/brew/issues/13481>.
+So if you don't set `DYLD_FALLBACK_LIBRARY_PATH` you will see an error like
+
+```txt
+libc++abi: terminating due to uncaught exception of type std::runtime_error: cannot open : No such file or directory
+```
+
+in some cases, macOS will deliberately unset this.
+
+```bash
+export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib/
+echo ${DYLD_FALLBACK_LIBRARY_PATH:-unset} # it's set here
+bash -c 'echo ${DYLD_FALLBACK_LIBRARY_PATH:-unset}' # but not here
+```
+
 ### Other Operating Systems
 
 Unfortunately most of the prerequisites aren't available on Windows. However, WSL is great, and there is a docker image! You could use VSCode remote for WSL or Docker. Your best best is Ubuntu LTS
