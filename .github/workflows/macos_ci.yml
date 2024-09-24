@@ -13,8 +13,8 @@ jobs:
     strategy:
       matrix:
         os:
-          - macos-latest
-          - macos-10.15
+          - macos-13
+          - macos-14
     continue-on-error: true
     runs-on: '${{ matrix.os }}'
     steps:
@@ -32,6 +32,15 @@ jobs:
       - name: Install Cargo Make
         uses: davidB/rust-cargo-make@v1
       - name: Install Dependencies
-        run: cargo make install_deps
-      - run: cargo make test --no-default-features
-      - run: cargo make test
+        run: |
+          # cargo make install_deps # doesn't work
+          brew install casacore/tap/casacore mwatelescope/tap/aoflagger
+      - name: Run tests
+        run: |
+          cargo make test_no_default
+          cargo make test_no_flag
+          cargo make test
+        env:
+          DYLD_FALLBACK_LIBRARY_PATH: /opt/homebrew/lib/
+          AOFLAGGER_LIB: /opt/homebrew/lib/
+          AOFLAGGER_INCLUDE_DIR: /opt/homebrew/include/
