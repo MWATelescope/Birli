@@ -122,8 +122,14 @@ dependencies = ["install_cfitsio"]
 [tasks.linux_install_deps]
 dependencies = ["linux_install_aoflagger"]
 
+[tasks.mac_install_deps]
+script = """
+brew install casacore/tap/casacore mwatelescope/tap/aoflagger
+"""
+
 [tasks.install_deps]
 linux_alias = "linux_install_deps"
+mac_alias = "mac_install_deps"
 
 [tasks.linux_check_deps]
 script = """
