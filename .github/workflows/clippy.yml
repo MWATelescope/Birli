@@ -1,0 +1,31 @@
+on:
+  push:
+    tags-ignore:
+      - "**"
+    branches:
+      - "**"
+  pull_request:
+
+name: clippy
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    container: mwatelescope/birli:latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          components: rustfmt, clippy
+      - name: Run cargo check, fmt, clippy
+        run: |
+          cargo check --all
+          cargo fmt --all -- --check
+          cargo clippy --all -- -D warnings
