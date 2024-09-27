@@ -99,7 +99,6 @@ use crate::{
 };
 use errorfunctions::RealErrorFunctions;
 use itertools::{zip_eq, Itertools};
-use lazy_static::lazy_static;
 use log::trace;
 use marlu::{
     io::error::BadArrayShape, mwalib::CorrelatorContext, ndarray::ShapeError,
@@ -146,7 +145,7 @@ use thiserror::Error;
 ///
 /// let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 /// let flagged_ants = corr_ctx.metafits_context.antennas.iter().enumerate().filter_map(|(idx, ant)| {
-///     if ant.rfinput_x.flag > 0 || ant.rfinput_y.flag > 0 {
+///     if ant.rfinput_x.flagged || ant.rfinput_y.flagged {
 ///         Some(idx)
 ///     } else {
 ///         None
@@ -243,12 +242,12 @@ pub fn correct_van_vleck(
         .unzip();
 
     // correct autos
-    let sigma_xxr = Array::from(van_vleck_autos(&sighat_xxr)).into_shape((
+    let sigma_xxr = Array::from(van_vleck_autos(&sighat_xxr)).into_shape_with_order((
         vis_dims.0,
         vis_dims.1,
         n_unflagged_autos,
     ))?;
-    let sigma_yyr = Array::from(van_vleck_autos(&sighat_yyr)).into_shape((
+    let sigma_yyr = Array::from(van_vleck_autos(&sighat_yyr)).into_shape_with_order((
         vis_dims.0,
         vis_dims.1,
         n_unflagged_autos,

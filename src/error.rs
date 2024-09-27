@@ -1,15 +1,14 @@
 //! Errors that can occur in Birli
 
 use marlu::{io::error::BadArrayShape, mwalib};
+#[cfg(feature = "cli")]
+use shlex::QuoteError;
 use thiserror::Error;
 
 use crate::{
     corrections::{DigitalGainCorrection, PassbandCorrection},
     van_vleck::VanVleckCorrection,
 };
-
-#[cfg(feature = "cli")]
-use shlex::QuoteError;
 
 /// Errors relating to CI
 #[cfg(feature = "cli")]

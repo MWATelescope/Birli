@@ -2,6 +2,7 @@
 
 ## Checklist
 
+- [ ] formatting fixed `cargo fmt -- --emit=files`
 - [ ] pipeline is green
 - [ ] everything has been merged into main
 - [ ] update `RELEASES.md`

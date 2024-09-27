@@ -1595,7 +1595,7 @@ impl<'a> BirliContext<'a> {
         };
 
         let args_strings = std::env::args().collect_vec();
-        let cmd_line = shlex::try_join(args_strings.iter().map(String::as_str))?;
+        let cmd_line = shlex::try_join(args_strings.iter().map(String::as_str)).unwrap();
         let application = format!("{PKG_NAME} {PKG_VERSION}");
         let message = prep_ctx.as_comment();
         let history = History {
@@ -3991,8 +3991,10 @@ mod tests_aoflagger_flagset {
             assert_eq!(left_header.num_rows, right_header.num_rows);
             assert_eq!(left_header.num_rows as usize, num_rows);
 
-            let (left_flags, _) = $left_flagset.read_flags().unwrap().into_raw_vec_and_offset();
-            let (right_flags, _) = $right_flagset.read_flags().unwrap().into_raw_vec_and_offset();
+            let (left_flags, left_flags_offset) = $left_flagset.read_flags().unwrap().into_raw_vec_and_offset();
+            assert_eq!(left_flags_offset.unwrap_or(0), 0);
+            let (right_flags, right_flags_offset) = $right_flagset.read_flags().unwrap().into_raw_vec_and_offset();
+            assert_eq!(right_flags_offset.unwrap_or(0), 0);
             assert_eq!(left_flags.len(), right_flags.len());
             assert_eq!(
                 left_flags.len(),
