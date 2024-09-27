@@ -501,6 +501,12 @@ mod vv_auto_tests {
     }
 
     #[test]
+    fn test_van_vleck_autos_zero() {
+        let result = van_vleck_autos(&[0.]);
+        assert_approx_eq!(f64, result[0], 0.0, epsilon = 1e-10);
+    }
+
+    #[test]
     fn test_correct_van_vleck_autos_bad_nsamples() {
         let vis_dims = (1, 1, 3);
         let mut corr_ctx = CorrelatorContext::new(
@@ -770,8 +776,11 @@ pub fn van_vleck_crosses_int(k_: &[f64], σ1_: &[f64], σ2_: &[f64]) -> Vec<f64>
 
 #[cfg(test)]
 mod vv_cross_tests {
+    // use crate::{io::read_mwalib, FlagContext};
+
     use super::*;
     use float_cmp::assert_approx_eq;
+    // use marlu::VisSelection;
 
     #[test]
     fn test_simpsons_identity() {
@@ -1301,6 +1310,40 @@ mod vv_cross_tests {
     ];
 
     #[test]
+    fn test_van_vleck_crosses_int_zero() {
+        let result = van_vleck_crosses_int(&[1e-20], &[0.], &[0.]);
+        assert_approx_eq!(f64, result[0], 0.0, epsilon = 1e-20);
+    }
+
+    #[test]
+    fn test_van_vleck_crosses_int_one() {
+        let result = van_vleck_crosses_int(&[1. - 1e-20], &[0.], &[0.]);
+        assert_approx_eq!(f64, result[0], 1.0, epsilon = 1e-20);
+    }
+
+    // #[test]
+    // #[should_panic]
+    // fn test_van_vleck_crosses_int_nan() {
+    //     // van_vleck_crosses_int(&[f64::NAN], &[0.], &[0.]);
+    //     van_vleck_crosses_int(&[0.], &[f64::NAN], &[0.]);
+    // }
+
+    // TODO: 1061317032 had a lot of warnings like this:
+    // [2024-08-14T22:19:30Z WARN  birli::van_vleck] |ρ| > 1: 6.125001171875 / 2.4677409724093606 / 2.4677409724093606 at index 0
+    // [2024-08-14T22:19:30Z WARN  birli::van_vleck] |ρ| > 1: 6.125001171875 / 2.4677409724093606 / 2.4677409724093606 at index 0
+    // [2024-08-14T22:19:30Z WARN  birli::van_vleck] |ρ| > 1: 6.125001171875 / 2.4677409724093606 / 2.4677409724093606 at index 0
+    // [2024-08-14T22:19:30Z WARN  birli::van_vleck] |ρ| > 1: 6.123776171875 / 2.4680004253890715 / 2.4680004253890715 at index 0
+
+    // TODO: 1061661688 had a lot of these:
+    // [2024-08-15T01:20:48Z WARN  birli::van_vleck] Van Vleck correction did not converge for sigma=0.11521718621802912
+    // [2024-08-15T01:20:48Z WARN  birli::van_vleck] Van Vleck correction did not converge for sigma=0.11478240283248996
+    // [2024-08-15T01:20:48Z WARN  birli::van_vleck] Van Vleck correction did not converge for sigma=0.11704699910719625
+    // [2024-08-15T01:20:48Z WARN  birli::van_vleck] Van Vleck correction did not converge for sigma=0.11401754250991379
+    // [2024-08-15T01:20:48Z WARN  birli::van_vleck] Van Vleck correction did not converge for sigma=0.11467344941179715
+    // [2024-08-15T01:20:48Z WARN  birli::van_vleck] Van Vleck correction did not converge for sigma=0.11715374513859982
+    // [2024-08-15T01:20:48Z WARN  birli::van_vleck] Van Vleck correction did not converge for sigma=0.11597413504743202
+
+    #[test]
     // compare values from pyuvdata
     fn test_van_vleck_crosses_int() {
         let result = van_vleck_crosses_int(&K_HATS, &SIGMAS1, &SIGMAS2);
@@ -1558,6 +1601,49 @@ mod vv_cross_tests {
         assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].im, -khats2[1] as f32, epsilon=1e-9);
         assert_approx_eq!(f32, jones_array[(0, 0, 2)][3].re, sighats2[1].powi(2) as f32);
     }
+
+    // #[rustfmt::skip]
+    // #[test]
+    // fn test_correct_van_vleck_crosses_bad_visibilities() {
+    //     let vis_dims = (1, 1, 3);
+    //     let mut corr_ctx = CorrelatorContext::new(
+    //         "tests/data/1196175296_mwa_ord/1196175296.metafits",
+    //         &["tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits"],
+    //     )
+    //     .unwrap();
+
+    //     let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+
+    //     let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+    //     let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    //     let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+    //     flag_ctx
+    //         .set_flags(
+    //             flag_array.view_mut(),
+    //             &vis_sel.timestep_range,
+    //             &vis_sel.coarse_chan_range,
+    //             &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+    //         )
+    //         .unwrap();
+    //     let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+    //     read_mwalib(
+    //         &vis_sel,
+    //         &corr_ctx,
+    //         jones_array.view_mut(),
+    //         flag_array.view_mut(),
+    //         false,
+    //     )
+    //     .unwrap();
+
+    //     let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+    //     let flagged_ants = [];
+
+    //     dbg!(&jones_array);
+
+    //     correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, &flagged_ants, false).unwrap();
+
+    //     // ant1 is corrected, but ant2 isn't.
+    // }
 }
 
 // lazy_static! {
