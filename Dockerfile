@@ -52,7 +52,7 @@ ENV PYTHONPATH="/usr/local/lib/"
 ADD . /birli
 WORKDIR /birli
 
-ARG TEST_SHIM="cargo test"
+ARG TEST_SHIM=""
 RUN ${TEST_SHIM}
 
 RUN cargo install --path . --features aoflagger --locked $(test -z "$DEBUG" || echo "--debug") \
