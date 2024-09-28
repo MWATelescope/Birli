@@ -23,6 +23,7 @@ jobs:
 
       - name: Generate test lcov coverage into coverage/ dir
         run: |
+          cargo install --force cargo-llvm-cov
           mkdir -p coverage
           /opt/cargo/bin/cargo llvm-cov --all --locked --lcov --output-path coverage/coverage.lcov
           # this uses the result of the previous run to generate a text summary
