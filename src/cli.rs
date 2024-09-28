@@ -202,9 +202,8 @@ impl ChannelRanges {
         Ok(Self { ranges })
     }
 
-    /// Create a new `ChannelRanges` object spanning all available channels in the metafits context
-    pub fn all(context: &CorrelatorContext) -> Self {
-        let coarse_chan_indices = &(0..context.num_coarse_chans).collect_vec();
+    /// create coarse channel ranges from a slice of indices
+    pub fn from_idxs(context: &CorrelatorContext, coarse_chan_indices: &[usize]) -> Self {
         // get the first value in the vector
         let mut range_start_idx = coarse_chan_indices[0];
         let mut range_end_idx = range_start_idx;
@@ -225,6 +224,17 @@ impl ChannelRanges {
         }
         ranges.push((range_start_idx, range_end_idx));
         Self { ranges }
+    }
+
+    /// Create a new `ChannelRanges` object spanning all available channels in the metafits context
+    pub fn all(context: &CorrelatorContext) -> Self {
+        let coarse_chan_indices = &(0..context.num_coarse_chans).collect_vec();
+        Self::from_idxs(context, coarse_chan_indices)
+    }
+
+    /// Create a new `ChannelRanges` object spanning all available channels in the metafits context
+    pub fn provided(context: &CorrelatorContext) -> Self {
+        Self::from_idxs(context, &context.provided_coarse_chan_indices)
     }
 }
 
@@ -659,6 +669,9 @@ impl<'a> BirliContext<'a> {
                 arg!(--"sel-chan-ranges" <RANGES> "Select separate channel ranges")
                     .help_heading("SELECTION")
                     .required(false),
+                arg!(--"provided-chan-ranges" "Only consider provided channels")
+                    .help_heading("SELECTION")
+                    .required(false),
 
                 // resource limit options
                 arg!(--"time-chunk" <STEPS> "Process observation in chunks of <STEPS> timesteps.")
@@ -876,19 +889,23 @@ impl<'a> BirliContext<'a> {
         corr_ctx: &CorrelatorContext,
         matches: &clap::ArgMatches,
     ) -> Result<ChannelRanges, BirliError> {
-        let sel_chan_ranges = ChannelRanges::all(corr_ctx);
-        if matches.is_present("sel-chan-ranges") {
-            #[allow(clippy::option_if_let_else)]
-            match matches.value_of("sel-chan-ranges") {
-                Some(range_str) => ChannelRanges::new(range_str),
-                None => Err(BirliError::CLIError(InvalidCommandLineArgument {
-                    option: "--sel-chan-ranges <RANGES>".into(),
-                    expected: "comma-separated ranges indexing the metafits coarse channels, e.g. 0-10,20-30".into(),
-                    received: "no value".into(),
-                })),
-            }
-        } else {
-            Ok(sel_chan_ranges)
+        let all_chan_ranges = ChannelRanges::all(corr_ctx);
+        let provided_chan_ranges = ChannelRanges::provided(corr_ctx);
+        match (matches.is_present("sel-chan-ranges"), matches.is_present("provided-chan-ranges")) {
+            (true, true) => panic!("can't use both --provided-chan-ranges and --sel-chan-ranges"),
+            (true, _) => {
+                #[allow(clippy::option_if_let_else)]
+                match matches.value_of("sel-chan-ranges") {
+                    Some(range_str) => ChannelRanges::new(range_str),
+                    None => Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--sel-chan-ranges <RANGES>".into(),
+                        expected: "comma-separated ranges indexing the metafits coarse channels, e.g. 0-10,20-30".into(),
+                        received: "no value".into(),
+                    })),
+                }
+            },
+            (_, true) => Ok(provided_chan_ranges),
+            (_, _) => Ok(all_chan_ranges),
         }
     }
 

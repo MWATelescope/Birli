@@ -225,6 +225,7 @@ INPUT:
 SELECTION:
         --no-sel-autos                [WIP] Deselect autocorrelations
         --no-sel-flagged-ants         [WIP] Deselect flagged antennas
+        --provided-chan-ranges        Only consider provided channels
         --sel-ants <ANTS>...          [WIP] Antenna to select
         --sel-chan-ranges <RANGES>    Select separate channel ranges
         --sel-time <MIN> <MAX>        Timestep index range (inclusive) to select
