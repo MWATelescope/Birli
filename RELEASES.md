@@ -1,5 +1,9 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.15.0 (2024-09-28)
+
+- add `--provided-chan-ranges` to fix #149
+
 # Version 0.14.0 (2024-09-23)
 
 - 🐛 fix linking issues on macOS with aoflagger_sys 0.1.2
