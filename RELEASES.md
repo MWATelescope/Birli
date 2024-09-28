@@ -1,5 +1,9 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.15.1 (2024-09-29)
+
+- add read and write rate
+
 # Version 0.15.0 (2024-09-28)
 
 - add `--provided-chan-ranges` to fix #149
