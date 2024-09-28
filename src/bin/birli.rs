@@ -5,6 +5,7 @@ use birli::{
 };
 use clap::ErrorKind::{DisplayHelp, DisplayVersion};
 use log::{info, trace};
+use marlu::{Complex, Jones};
 use std::{env, ffi::OsString, fmt::Debug, time::Duration};
 
 #[allow(clippy::field_reassign_with_default)]
@@ -34,6 +35,33 @@ where
             return 1;
         }
     };
+
+    // Calculations for timing info
+    let fine_chans_per_coarse = birli_ctx
+        .corr_ctx
+        .metafits_context
+        .num_corr_fine_chans_per_coarse;
+    let mem_selected_bytes = birli_ctx.vis_sel.estimate_bytes_best(fine_chans_per_coarse);
+    let num_sel_timesteps = birli_ctx.vis_sel.timestep_range.len();
+    let num_sel_chans = birli_ctx.vis_sel.coarse_chan_range.len() * fine_chans_per_coarse;
+    let num_sel_baselines = birli_ctx.vis_sel.baseline_idxs.len();
+    let num_sel_pols = birli_ctx.corr_ctx.metafits_context.num_visibility_pols;
+    let mem_per_timestep_gib =
+        mem_selected_bytes as f64 / num_sel_timesteps as f64 / 1024.0_f64.powi(3);
+    let num_avg_timesteps =
+        (birli_ctx.vis_sel.timestep_range.len() as f64 / birli_ctx.avg_time as f64).ceil() as usize;
+    let num_avg_chans = (birli_ctx.vis_sel.coarse_chan_range.len() as f64
+        * fine_chans_per_coarse as f64
+        / birli_ctx.avg_freq as f64)
+        .ceil() as usize;
+    let avg_mem_per_timestep_bytes = num_avg_chans
+        * num_sel_baselines
+        * num_sel_pols
+        * (std::mem::size_of::<Complex<f32>>()
+            + std::mem::size_of::<f32>()
+            + std::mem::size_of::<bool>());
+    let avg_mem_per_timestep_gib = (avg_mem_per_timestep_bytes) as f64 / 1024.0_f64.powi(3);
+
     let result = match birli_ctx.channel_range_sel.ranges.len() {
         1 => birli_ctx.run(),
         n if n > 1 => birli_ctx.run_ranges(),
@@ -50,6 +78,37 @@ where
                         duration_sum + duration
                     }
                 )
+            );
+            let read_time = get_durations().get("read").unwrap().as_secs_f32();
+            let read_rate_mibs = (mem_selected_bytes / 1024_usize.pow(2)) as f32 / read_time;
+            let write_time = get_durations().get("write").unwrap().as_secs_f32();
+            let write_rate_mibs = (avg_mem_per_timestep_bytes * num_avg_timesteps
+                / 1024_usize.pow(2)) as f32
+                / write_time;
+
+            info!(
+                "Estimated data read     = {:5}ts * {:6}ch * {:6}bl * ({}<Jones<f32>> + {}<f32> + {}<bool>) = {:7.02} GiB @ {:8.03} MiB/s",
+                num_sel_timesteps,
+                num_sel_chans,
+                num_sel_baselines,
+                std::mem::size_of::<Jones<f32>>(),
+                std::mem::size_of::<f32>(),
+                std::mem::size_of::<bool>(),
+                mem_per_timestep_gib * num_sel_timesteps as f64,
+                read_rate_mibs,
+            );
+
+            info!(
+                "Estimated data written  = {:5}ts * {:6}ch * {:6}bl * {:1}pol * ({}<c32> + {}<f32> + {}<bool>)  = {:7.02} GiB @ {:8.03} MiB/s",
+                num_avg_timesteps,
+                num_avg_chans,
+                num_sel_baselines,
+                num_sel_pols,
+                std::mem::size_of::<Complex<f32>>(),
+                std::mem::size_of::<f32>(),
+                std::mem::size_of::<bool>(),
+                avg_mem_per_timestep_gib * num_avg_timesteps as f64,
+                write_rate_mibs
             );
             0
         }
