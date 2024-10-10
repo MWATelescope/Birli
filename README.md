@@ -404,12 +404,12 @@ The following table shows how Birli options map onto Cotter options:
 | `--flag-end <sec>`                  | `-endflag <sec>`        | Specify number of seconds to flag extra at end of observation (default: 0s).
 | `--flag-dc`                         | `-flagdcchannels`       | Flag the centre channel of each sub-band (currently the default).
 | `--no-flag-dc`                      | `-noflagdcchannels`     | Do not flag the centre channel of each sub-band.
-| `--flag-antennae <ANTS>...` (WIP)   | `-flagantenna <lst>`    | Mark the comma-separated list of zero-indexed antennae as flagged antennae.
+| `--flag-antennas <ANTS>...` (WIP)   | `-flagantenna <lst>`    | Mark the comma-separated list of zero-indexed antennas as flagged antennas.
 | `--flag-coarse-chans <CHANS>` (WIP) | `-flagsubband <lst>`    | Flag the comma-separated list of zero-indexed sub-bands.
 | `--no-sel-autos` (WIP)              | `-noautos`              | Do not output auto-correlations.
 | (not `--flag-autos`)                | `-noflagautos`          | Do not flag auto-correlations (default for uvfits file output).
 | (default)                           | `-nostats`              | Disable collecting statistics (default for uvfits file output).
-| (not `--no-sel-flagged-ants`, WIP)  | `-noantennapruning`     | Do not remove the flagged antennae.
+| (not `--no-sel-flagged-ants`, WIP)  | `-noantennapruning`     | Do not remove the flagged antennas.
 | (default)                           | `-allowmissing`         | Do not abort when not all GPU box files are available (default is to abort).
 
 Birli performs all the same default preprocessing steps as Cotter when no flags are provided. The exceptions are that we have not yet implemented flagging of auto-correlations, pruning of flagged antennas. This means that `birli <in/out args>` is equivalent to:
