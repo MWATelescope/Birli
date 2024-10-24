@@ -858,12 +858,12 @@ mod tests_aoflagger {
             unsafe {
                 // ffggpe = fits_read_grppar_flt
                 fitsio_sys::ffggpe(
-                    fptr.as_raw(),                 /* I - FITS file pointer                       */
-                    1 + *row_idx as i64,           /* I - group to read (1 = 1st group)           */
-                    1,                             /* I - first vector element to read (1 = 1st)  */
-                    pcount as i64,                 /* I - number of values to read                */
+                    fptr.fits_file.as_raw(), /* I - FITS file pointer                       */
+                    1 + *row_idx as i64,     /* I - group to read (1 = 1st group)           */
+                    1,                       /* I - first vector element to read (1 = 1st)  */
+                    pcount as i64,           /* I - number of values to read                */
                     obs_group_params.as_mut_ptr(), /* O - array of values that are returned       */
-                    &mut status,                   /* IO - error status                           */
+                    &mut status,             /* IO - error status                           */
                 );
             }
             fits_check_status(status).unwrap();
@@ -885,14 +885,14 @@ mod tests_aoflagger {
             unsafe {
                 // ffgpve = fits_read_img_flt
                 fitsio_sys::ffgpve(
-                    fptr.as_raw(),        /* I - FITS file pointer                       */
-                    1 + *row_idx as i64,  /* I - group to read (1 = 1st group)           */
-                    1,                    /* I - first vector element to read (1 = 1st)  */
-                    obs_vis.len() as i64, /* I - number of values to read                */
-                    0.0,                  /* I - value for undefined pixels              */
-                    obs_vis.as_mut_ptr(), /* O - array of values that are returned       */
-                    &mut 0,               /* O - set to 1 if any values are null; else 0 */
-                    &mut status,          /* IO - error status                           */
+                    fptr.fits_file.as_raw(), /* I - FITS file pointer                       */
+                    1 + *row_idx as i64,     /* I - group to read (1 = 1st group)           */
+                    1,                       /* I - first vector element to read (1 = 1st)  */
+                    obs_vis.len() as i64,    /* I - number of values to read                */
+                    0.0,                     /* I - value for undefined pixels              */
+                    obs_vis.as_mut_ptr(),    /* O - array of values that are returned       */
+                    &mut 0,                  /* O - set to 1 if any values are null; else 0 */
+                    &mut status,             /* IO - error status                           */
                 );
             };
             fits_check_status(status).unwrap();

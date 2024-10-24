@@ -114,7 +114,7 @@ cargo test
 ### Dependencies
 
 Experiencing segfaults? I can guarantee it's because of one of the C library dependencies.
-Make sure you have the right versions of all the libraries. These are specified in [Prerequisites](#Prerequisites).
+Make sure you have the right versions of all the libraries. These are specified in [Prerequisites](#prerequisites).
 
 Get library versions on linux with:
 

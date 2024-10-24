@@ -1,5 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.16.0 (2024-10-24)
+
+- update mwalib 1.7.1, which uses newer lazy_static, fitsio, fitsio-sys, msrv
+- update marlu 0.15.0
+- msrv 1.65
+
 # Version 0.15.1 (2024-09-29)
 
 - add read and write rate

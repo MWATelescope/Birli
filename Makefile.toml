@@ -161,6 +161,7 @@ install_crate = "rustfmt"
 
 [tasks.clippy]
 command = "cargo"
+# cargo clippy --all-targets --all-features -- -D warnings
 args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
 install_crate = "clippy"
 

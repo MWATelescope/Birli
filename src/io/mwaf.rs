@@ -30,6 +30,8 @@ use super::error::{
     IOError::{FitsIO, FitsOpen, InvalidFlagFilenameTemplate},
 };
 
+use marlu::mwalib::MWAFitsFile;
+
 /// flag metadata which for a particular flag file in the set.
 pub(crate) struct FlagFileHeader {
     /// The `VERSION` key from the primary hdu
@@ -226,8 +228,11 @@ impl FlagFileSet {
                 std::fs::remove_file(&gpubox.filename)?;
             }
 
-            match FitsFile::create(&gpubox.filename).open() {
-                Ok(mut fptr) => Self::write_primary_hdu(&mut fptr, &header, Some(gpubox.id)),
+            match FitsFile::create(&gpubox.filename.clone()).open() {
+                Ok(fptr_) => {
+                    let mut fptr = MWAFitsFile::new(gpubox.filename.clone(), fptr_);
+                    Self::write_primary_hdu(&mut fptr, &header, Some(gpubox.id))
+                }
                 Err(fits_error) => Err(FitsOpen {
                     fits_error,
                     fits_filename: gpubox.filename.clone(),
@@ -258,7 +263,7 @@ impl FlagFileSet {
     }
 
     fn write_primary_hdu(
-        fptr: &mut FitsFile,
+        fptr: &mut MWAFitsFile,
         header: &FlagFileHeader,
         gpubox_id: Option<usize>,
     ) -> Result<(), IOError> {
@@ -283,27 +288,27 @@ impl FlagFileSet {
         unsafe {
             // ffplsw = fits_write_key_longwarn
             fitsio_sys::ffplsw(
-                fptr.as_raw(), /* I - FITS file pointer  */
-                &mut status,   /* IO - error status       */
+                fptr.fits_file.as_raw(), /* I - FITS file pointer  */
+                &mut status,             /* IO - error status       */
             );
             fitsio::errors::check_status(status)?;
         }
 
-        hdu.write_key(fptr, "VERSION", version.as_str())?;
-        hdu.write_key(fptr, "OBSID", *obs_id)?;
+        hdu.write_key(&mut fptr.fits_file, "VERSION", version.as_str())?;
+        hdu.write_key(&mut fptr.fits_file, "OBSID", *obs_id)?;
         // For some silly reason, writing `gps_start` as a float truncates;
         // writing a string works fine.
-        hdu.write_key(fptr, "GPSSTART", gps_start.to_string())?;
-        hdu.write_key(fptr, "NCHANS", *num_channels)?;
-        hdu.write_key(fptr, "NANTENNA", *num_ants)?;
-        hdu.write_key(fptr, "NSCANS", *num_timesteps)?;
-        hdu.write_key(fptr, "NPOLS", *num_pols as u32)?;
+        hdu.write_key(&mut fptr.fits_file, "GPSSTART", gps_start.to_string())?;
+        hdu.write_key(&mut fptr.fits_file, "NCHANS", *num_channels)?;
+        hdu.write_key(&mut fptr.fits_file, "NANTENNA", *num_ants)?;
+        hdu.write_key(&mut fptr.fits_file, "NSCANS", *num_timesteps)?;
+        hdu.write_key(&mut fptr.fits_file, "NPOLS", *num_pols as u32)?;
         if let Some(gpubox_id) = gpubox_id {
-            hdu.write_key(fptr, "GPUBOXNO", gpubox_id as u32)?;
+            hdu.write_key(&mut fptr.fits_file, "GPUBOXNO", gpubox_id as u32)?;
         }
-        hdu.write_key(fptr, "SOFTWARE", software.as_str())?;
+        hdu.write_key(&mut fptr.fits_file, "SOFTWARE", software.as_str())?;
         if let Some(aoflagger_version) = aoflagger_version {
-            hdu.write_key(fptr, "AO_VER", aoflagger_version.as_str())?;
+            hdu.write_key(&mut fptr.fits_file, "AO_VER", aoflagger_version.as_str())?;
         }
         if let Some(aoflagger_strategy) = aoflagger_strategy.as_deref() {
             // Write AO_STRAT as a long string.
@@ -313,11 +318,11 @@ impl FlagFileSet {
             unsafe {
                 // ffpkls = fits_write_key_longstr
                 fitsio_sys::ffpkls(
-                    fptr.as_raw(),     /* I - FITS file pointer        */
-                    key_name.as_ptr(), /* I - name of keyword to write */
-                    value.as_ptr(),    /* I - keyword value            */
-                    comment.as_ptr(),  /* I - keyword comment          */
-                    &mut status,       /* IO - error status            */
+                    fptr.fits_file.as_raw(), /* I - FITS file pointer        */
+                    key_name.as_ptr(),       /* I - name of keyword to write */
+                    value.as_ptr(),          /* I - keyword value            */
+                    comment.as_ptr(),        /* I - keyword comment          */
+                    &mut status,             /* IO - error status            */
                 );
                 fitsio::errors::check_status(status)?;
             }
@@ -332,11 +337,11 @@ impl FlagFileSet {
             unsafe {
                 // ffpkls = fits_write_key_longstr
                 fitsio_sys::ffpkls(
-                    fptr.as_raw(),     /* I - FITS file pointer        */
-                    key_name.as_ptr(), /* I - name of keyword to write */
-                    value.as_ptr(),    /* I - keyword value            */
-                    comment.as_ptr(),  /* I - keyword comment          */
-                    &mut status,       /* IO - error status            */
+                    fptr.fits_file.as_raw(), /* I - FITS file pointer        */
+                    key_name.as_ptr(),       /* I - name of keyword to write */
+                    value.as_ptr(),          /* I - keyword value            */
+                    comment.as_ptr(),        /* I - keyword comment          */
+                    &mut status,             /* IO - error status            */
                 );
                 fitsio::errors::check_status(status)?;
             }
@@ -426,14 +431,14 @@ impl FlagFileSet {
         channel_flag_counts: &mut [u64],
         baseline_flag_counts: &mut [u64],
     ) -> Result<(), IOError> {
-        let mut fptr = FitsFile::edit(filename)?;
+        let mut fptr = MWAFitsFile::new(filename.into(), FitsFile::edit(filename)?);
         // If the FLAGS HDU doesn't exist, create it.
-        let mut row_idx = if fptr.hdu("FLAGS").is_err() {
+        let mut row_idx = if fptr.fits_file.hdu("FLAGS").is_err() {
             let col = ColumnDescription::new("FLAGS")
                 .with_type(ColumnDataType::Bit)
                 .that_repeats(num_fine_chans_per_coarse)
                 .create()?;
-            fptr.create_table("FLAGS", &[col])?;
+            fptr.fits_file.create_table("FLAGS", &[col])?;
             // Start the row index from 0.
             0
         } else {
@@ -464,7 +469,7 @@ impl FlagFileSet {
 
                 unsafe {
                     fitsio_sys::ffpclx(
-                        fptr.as_raw(),
+                        fptr.fits_file.as_raw(),
                         1,
                         1 + row_idx as i64,
                         1,
@@ -623,7 +628,7 @@ impl FlagFileSet {
     }
 
     #[cfg(test)]
-    fn read_header(fptr: &mut FitsFile) -> Result<(FlagFileHeader, Option<u32>), ReadMwafError> {
+    fn read_header(fptr: &mut MWAFitsFile) -> Result<(FlagFileHeader, Option<u32>), ReadMwafError> {
         use mwalib::{_get_optional_fits_key, get_optional_fits_key};
 
         let hdu0 = fits_open_hdu!(fptr, 0)?;
@@ -679,8 +684,9 @@ impl FlagFileSet {
             .map_err(|e| e.to_string())?;
         let mut header = None;
         for gpubox in &gpuboxes {
-            match FitsFile::open(&gpubox.filename) {
-                Ok(mut fptr) => {
+            match FitsFile::open(gpubox.filename.clone()) {
+                Ok(fptr_) => {
+                    let mut fptr = MWAFitsFile::new(gpubox.filename.clone(), fptr_);
                     if header.is_none() {
                         header = Some(Self::read_header(&mut fptr).map_err(|e| e.to_string())?.0);
                     }
@@ -725,8 +731,9 @@ impl FlagFileSet {
         let mut date = None;
 
         for gpubox in &gpuboxes {
-            match FitsFile::open(&gpubox.filename) {
-                Ok(mut fptr) => {
+            match FitsFile::open(gpubox.filename.clone()) {
+                Ok(fptr_) => {
+                    let mut fptr = MWAFitsFile::new(gpubox.filename.clone(), fptr_);
                     let hdu0 = fits_open_hdu!(&mut fptr, 0).unwrap();
                     let version = get_required_fits_key!(&mut fptr, &hdu0, "VERSION").unwrap();
                     let obs_id = get_required_fits_key!(&mut fptr, &hdu0, "GPSTIME").unwrap();
@@ -794,7 +801,7 @@ impl FlagFileSet {
     #[cfg(test)]
     pub(crate) fn read_flags(&self) -> Result<Array3<c_char>, IOError> {
         let gpubox = &self.gpuboxes[0];
-        let mut fptr = FitsFile::open(&gpubox.filename)?;
+        let mut fptr = MWAFitsFile::new(gpubox.filename.clone(), FitsFile::open(&gpubox.filename)?);
         let hdu = fits_open_hdu!(&mut fptr, 0)?;
         let num_timesteps = get_required_fits_key!(&mut fptr, &hdu, "NSCANS")?;
         let num_channels_per_mwaf: usize = get_required_fits_key!(&mut fptr, &hdu, "NCHANS")?;
@@ -815,7 +822,8 @@ impl FlagFileSet {
 
         let mut row_flags = Array1::zeros(num_channels_per_mwaf);
         for (i_gpubox, gpubox) in self.gpuboxes.iter().enumerate() {
-            let mut fptr = FitsFile::open(&gpubox.filename)?;
+            let mut fptr =
+                MWAFitsFile::new(gpubox.filename.clone(), FitsFile::open(&gpubox.filename)?);
             fits_open_hdu!(&mut fptr, 1)?;
             let mut status = 0;
             // cfitsio won't allow you to read everything in at once. So we read
@@ -823,7 +831,7 @@ impl FlagFileSet {
             for i_row in 0..num_rows {
                 unsafe {
                     fitsio_sys::ffgcx(
-                        fptr.as_raw(),
+                        fptr.fits_file.as_raw(),
                         1,
                         1 + i_row as i64,
                         1,
@@ -857,7 +865,7 @@ impl FlagFileSet {
         use itertools::izip;
 
         let gpubox = &self.gpuboxes[0];
-        let mut fptr = FitsFile::open(&gpubox.filename)?;
+        let mut fptr = MWAFitsFile::new(gpubox.filename.clone(), FitsFile::open(&gpubox.filename)?);
         let hdu = fits_open_hdu!(&mut fptr, 2)?;
         let num_rows: usize = get_required_fits_key!(&mut fptr, &hdu, "NAXIS2")?;
         let total_num_channels = num_rows * self.gpuboxes.len();
@@ -872,12 +880,13 @@ impl FlagFileSet {
             out_count.chunks_mut(num_rows),
             out_occ.chunks_mut(num_rows),
         ) {
-            let mut fptr = FitsFile::open(&gpubox.filename)?;
+            let mut fptr =
+                MWAFitsFile::new(gpubox.filename.clone(), FitsFile::open(&gpubox.filename)?);
             let hdu = fits_open_hdu!(&mut fptr, 2)?;
-            let tmp_count: Vec<u32> = hdu.read_col(&mut fptr, "Count").unwrap();
+            let tmp_count: Vec<u32> = hdu.read_col(&mut fptr.fits_file, "Count").unwrap();
             assert_eq!(tmp_count.len(), out_count.len());
             out_count.copy_from_slice(&tmp_count);
-            let tmp_occ: Vec<f32> = hdu.read_col(&mut fptr, "Occupancy").unwrap();
+            let tmp_occ: Vec<f32> = hdu.read_col(&mut fptr.fits_file, "Occupancy").unwrap();
             assert_eq!(tmp_occ.len(), out_occ.len());
             out_occ.copy_from_slice(&tmp_occ);
         }
@@ -891,21 +900,22 @@ impl FlagFileSet {
         &self,
     ) -> Result<(Vec<(u32, u32)>, Array2<u32>, Array2<f32>), IOError> {
         use itertools::izip;
+        use marlu::mwalib::MWAFitsFile;
 
         let gpubox = &self.gpuboxes[0];
-        let mut fptr = FitsFile::open(&gpubox.filename)?;
+        let mut fptr = MWAFitsFile::new(gpubox.filename.clone(), FitsFile::open(&gpubox.filename)?);
         let hdu = fits_open_hdu!(&mut fptr, 3)?;
         let num_rows: usize = get_required_fits_key!(&mut fptr, &hdu, "NAXIS2")?;
 
-        let ant1s: Vec<u32> = hdu.read_col(&mut fptr, "Antenna1").unwrap();
-        let ant2s: Vec<u32> = hdu.read_col(&mut fptr, "Antenna2").unwrap();
+        let ant1s: Vec<u32> = hdu.read_col(&mut fptr.fits_file, "Antenna1").unwrap();
+        let ant2s: Vec<u32> = hdu.read_col(&mut fptr.fits_file, "Antenna2").unwrap();
         let ant_pairs = izip!(ant1s.into_iter(), ant2s.into_iter()).collect::<Vec<_>>();
         let num_coarse_chans = self.gpuboxes.len();
         let total_num_baselines = num_rows * num_coarse_chans;
 
         let mut out_count = vec![0_u32; total_num_baselines];
         let mut out_occ = vec![0.; total_num_baselines];
-        drop(fptr);
+        drop(fptr.fits_file);
         drop(hdu);
 
         for (gpubox, out_count, out_occ) in izip!(
@@ -913,12 +923,13 @@ impl FlagFileSet {
             out_count.chunks_mut(num_rows),
             out_occ.chunks_mut(num_rows),
         ) {
-            let mut fptr = FitsFile::open(&gpubox.filename)?;
+            let mut fptr =
+                MWAFitsFile::new(gpubox.filename.clone(), FitsFile::open(&gpubox.filename)?);
             let hdu = fits_open_hdu!(&mut fptr, 3)?;
-            let tmp_count: Vec<u32> = hdu.read_col(&mut fptr, "Count").unwrap();
+            let tmp_count: Vec<u32> = hdu.read_col(&mut fptr.fits_file, "Count").unwrap();
             assert_eq!(tmp_count.len(), out_count.len());
             out_count.copy_from_slice(&tmp_count);
-            let tmp_occ: Vec<f32> = hdu.read_col(&mut fptr, "Occupancy").unwrap();
+            let tmp_occ: Vec<f32> = hdu.read_col(&mut fptr.fits_file, "Occupancy").unwrap();
             assert_eq!(tmp_occ.len(), out_occ.len());
             out_occ.copy_from_slice(&tmp_occ);
         }
@@ -959,6 +970,7 @@ mod tests {
             get_required_fits_key,
         },
     };
+    use mwalib::MWAFitsFile;
     use std::fs::File;
     use std::path::Path;
     use tempfile::tempdir;
@@ -1115,8 +1127,11 @@ mod tests {
         .unwrap();
 
         for gpubox in gpuboxes {
-            let mut fptr = FitsFile::open(gpubox.filename).unwrap();
-            let hdu0 = fptr.primary_hdu().unwrap();
+            let mut fptr = MWAFitsFile::new(
+                gpubox.filename.clone(),
+                FitsFile::open(gpubox.filename).unwrap(),
+            );
+            let hdu0 = fptr.fits_file.primary_hdu().unwrap();
 
             let version: String = get_required_fits_key!(&mut fptr, &hdu0, "VERSION").unwrap();
             let obs_id: Option<i32> = get_optional_fits_key!(&mut fptr, &hdu0, "OBSID").unwrap();
@@ -1150,24 +1165,13 @@ mod tests {
             assert_eq!(bytes_per_row, 16);
             assert_eq!(num_rows, 16512);
             // Test the other keys cotter writes but we no longer write.
-            let gpstime: f64 = fptr
-                .primary_hdu()
-                .unwrap()
-                .read_key(&mut fptr, "GPSTIME")
-                .unwrap();
+            let hdu0 = &mut fptr.fits_file.primary_hdu().unwrap();
+            let gpstime: f64 = hdu0.read_key(&mut fptr.fits_file, "GPSTIME").unwrap();
             assert!((gpstime - 1247842824.0).abs() < f64::EPSILON);
 
-            let cotver: String = fptr
-                .primary_hdu()
-                .unwrap()
-                .read_key(&mut fptr, "COTVER")
-                .unwrap();
+            let cotver: String = hdu0.read_key(&mut fptr.fits_file, "COTVER").unwrap();
             assert_eq!(cotver, "4.5");
-            let cotdate: String = fptr
-                .primary_hdu()
-                .unwrap()
-                .read_key(&mut fptr, "COTVDATE")
-                .unwrap();
+            let cotdate: String = hdu0.read_key(&mut fptr.fits_file, "COTVDATE").unwrap();
             assert_eq!(cotdate, "2020-08-10");
         }
     }
@@ -1219,7 +1223,8 @@ mod tests {
 
         {
             for (&gpubox_id, path) in &gpubox_paths {
-                let mut fptr = FitsFile::create(path).open().unwrap();
+                let mut fptr =
+                    MWAFitsFile::new(path.clone(), FitsFile::create(path).open().unwrap());
                 let header = FlagFileHeader {
                     version: "2.0".to_string(),
                     obs_id: context.metafits_context.obs_id,
@@ -1240,8 +1245,9 @@ mod tests {
         }
 
         for (&gpubox_id, path) in &gpubox_paths {
-            let mut flag_fptr = FitsFile::open(path).unwrap();
-            let hdu = flag_fptr.primary_hdu().unwrap();
+            let mut flag_fptr =
+                MWAFitsFile::new(path.clone(), FitsFile::open(path.clone()).unwrap());
+            let hdu = flag_fptr.fits_file.primary_hdu().unwrap();
 
             let obsid: i32 = get_required_fits_key!(&mut flag_fptr, &hdu, "OBSID").unwrap();
             assert_eq!(obsid, context.metafits_context.obs_id as i32);
