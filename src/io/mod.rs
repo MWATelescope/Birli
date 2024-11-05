@@ -14,16 +14,21 @@ use std::{
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use log::{trace, warn};
-use marlu::{mwalib, SelectionError, VisSelection};
 
 use crate::{
     marlu::{
         constants::MWA_LAT_RAD,
+        fitsio,
         hifitime::Duration,
         io::{ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
-        mwalib::{CorrelatorContext, MwalibError},
+        mwalib,
+        mwalib::{
+            CorrelatorContext, MwalibError, _get_optional_fits_key, _open_hdu, fits_open_hdu,
+            get_optional_fits_key,
+        },
         rayon::prelude::*,
-        Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
+        Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, SelectionError, VisContext,
+        VisSelection, ENH,
     },
     ndarray::prelude::*,
 };
@@ -51,13 +56,49 @@ pub struct IOContext {
 }
 
 impl IOContext {
+    // get the scale factor for the raw files
+    // will be deprecated after <https://github.com/MWATelescope/mwalib/issues/85> is resolved
+    fn get_raw_scale_factor(&self) -> f32 {
+        let mut fptr = fitsio::FitsFile::open(&self.metafits_in).unwrap();
+        let hdu0 = fits_open_hdu!(&mut fptr, 1).unwrap();
+        let mut scale_factor: Option<f32> =
+            get_optional_fits_key!(&mut fptr, &hdu0, "RAWSCALE").unwrap();
+        drop(fptr);
+        for raw_path in &self.gpufits_in {
+            let mut fptr = fitsio::FitsFile::open(raw_path).unwrap();
+            let hdu1 = fits_open_hdu!(&mut fptr, 1).unwrap();
+            for key in ["SCALEFAC", "BSCALE"] {
+                let this_scale_factor: Option<f32> =
+                    get_optional_fits_key!(&mut fptr, &hdu1, key).unwrap();
+                match (scale_factor, this_scale_factor) {
+                    (Some(sf), Some(this_sf)) => {
+                        assert!(
+                            ((sf - this_sf).abs() < f32::EPSILON),
+                            "Different scale factors found in raw files: {} and {}",
+                            sf,
+                            this_sf
+                        );
+                    }
+                    (None, Some(this_sf)) => {
+                        scale_factor = Some(this_sf);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        scale_factor.unwrap_or(1.0)
+    }
+
     /// Get the `mwalib::CorrelatorContext` from metafits and gpufits
     ///
     /// # Errors
     ///
     /// see `mwalib::CorrelatorContext::new`
     pub fn get_corr_ctx(&self) -> Result<CorrelatorContext, MwalibError> {
-        CorrelatorContext::new(&self.metafits_in, &self.gpufits_in)
+        CorrelatorContext::new(&self.metafits_in, &self.gpufits_in).map(|mut corr_ctx| {
+            corr_ctx.metafits_context.corr_raw_scale_factor = self.get_raw_scale_factor();
+            corr_ctx
+        })
     }
 
     // TODO: pub fn validate_params(&self), checks permissions

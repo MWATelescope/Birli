@@ -185,14 +185,13 @@ pub fn correct_van_vleck(
     // e.g. 40kHz * 2s = 160_000
     let n2samples = corr_ctx.metafits_context.corr_fine_chan_width_hz
         * corr_ctx.metafits_context.corr_int_time_ms as u32
-        / 2_000;
-    dbg!(&n2samples);
+        / 500;
     if n2samples < 1 {
         return Err(VanVleckCorrection::BadNSamples {
             nsamples: n2samples,
         });
     }
-    let n2samples = n2samples as f64;
+    let sample_scale = n2samples as f64 * corr_ctx.metafits_context.corr_raw_scale_factor as f64;
 
     // ant_pair indices which are unflagged autocorrelations, list of corresponding antenna indices
     let (unflagged_auto_mask, unflagged_autos): (Vec<_>, Vec<_>) = ant_pairs
@@ -236,7 +235,7 @@ pub fn correct_van_vleck(
         .select(Axis(2), &unflagged_auto_mask)
         .iter()
         .map(|j| {
-            let j_f64 = Jones::<f64>::from(j) / (n2samples);
+            let j_f64 = Jones::<f64>::from(j) / (sample_scale);
             (j_f64[0].re.sqrt(), j_f64[3].re.sqrt()) // left: xxr, right: yyr
         })
         .unzip();
@@ -275,8 +274,8 @@ pub fn correct_van_vleck(
                         // correct xx, yy autos
                         let sigma_xx = sigma_xxr[(t_idx, f_idx, s_idx)];
                         let sigma_yy = sigma_yyr[(t_idx, f_idx, s_idx)];
-                        let j_xxr = (n2samples) * sigma_xx.powi(2);
-                        let j_yyr = (n2samples) * sigma_yy.powi(2);
+                        let j_xxr = (sample_scale) * sigma_xx.powi(2);
+                        let j_yyr = (sample_scale) * sigma_yy.powi(2);
                         j[0].re = j_xxr as f32;
                         j[0].im = 0.0;
                         j[3].re = j_yyr as f32;
@@ -284,8 +283,8 @@ pub fn correct_van_vleck(
                         // correct yx autos
 
                         let sigma_product = sigma_xx * sigma_yy;
-                        let khat_re = j[1].re as f64 / n2samples;
-                        let khat_im = j[1].im as f64 / n2samples;
+                        let khat_re = j[1].re as f64 / sample_scale;
+                        let khat_im = j[1].im as f64 / sample_scale;
                         if khat_re > sigma_product {
                             log::warn!("|ρ| > 1: {khat_re:?} / {sigma_xx:?} / {sigma_yy:?} at auto={ant1:?} t={t_idx:?} f={f_idx:?} xy re");
                         } else if khat_im > sigma_product {
@@ -293,10 +292,10 @@ pub fn correct_van_vleck(
                         } else {
                             let kappa_re = van_vleck_cross_int(khat_re, sigma_xx, sigma_yy).unwrap_or(khat_re);
                             let kappa_im = van_vleck_cross_int(khat_im, sigma_xx, sigma_yy).unwrap_or(khat_im);
-                            j[1].re = (n2samples * kappa_re) as f32;
-                            j[1].im = (n2samples * kappa_im) as f32;
-                            j[2].re = (n2samples * kappa_re) as f32;
-                            j[2].im = (n2samples * -kappa_im) as f32;
+                            j[1].re = (sample_scale * kappa_re) as f32;
+                            j[1].im = (sample_scale * kappa_im) as f32;
+                            j[2].re = (sample_scale * kappa_re) as f32;
+                            j[2].im = (sample_scale * -kappa_im) as f32;
                         }
                     });
                 }
@@ -317,8 +316,8 @@ pub fn correct_van_vleck(
                             .enumerate()
                             .for_each(|(p_idx, ((jp, sigma1), sigma2))| {
                                 let sigma_product = sigma1 * sigma2;
-                                let khat_re = jp.re as f64 / n2samples;
-                                let khat_im = jp.im as f64 / n2samples;
+                                let khat_re = jp.re as f64 / sample_scale;
+                                let khat_im = jp.im as f64 / sample_scale;
                                 if khat_re > sigma_product {
                                     log::warn!("|ρ| > 1: {khat_re:?} / {sigma1:?} / {sigma2:?} at a1={ant1:?} a2={ant2:?} t={t_idx:?} f={f_idx:?} p={p_idx:?} re");
                                 } else if khat_im > sigma_product {
@@ -326,8 +325,8 @@ pub fn correct_van_vleck(
                                 } else {
                                     let kappa_re = van_vleck_cross_int(khat_re, sigma1, sigma2).unwrap_or(khat_re);
                                     let kappa_im = van_vleck_cross_int(khat_im, sigma1, sigma2).unwrap_or(khat_im);
-                                    jp.re = (n2samples * kappa_re) as f32;
-                                    jp.im = (n2samples * kappa_im) as f32;
+                                    jp.re = (sample_scale * kappa_re) as f32;
+                                    jp.im = (sample_scale * kappa_im) as f32;
                                 }
                             });
                     });
@@ -535,7 +534,8 @@ mod vv_auto_tests {
         )
         .unwrap();
         corr_ctx.metafits_context.corr_fine_chan_width_hz = 1;
-        corr_ctx.metafits_context.corr_int_time_ms = 2_000;
+        corr_ctx.metafits_context.corr_int_time_ms = 500;
+        corr_ctx.metafits_context.corr_raw_scale_factor = 1.0;
 
         let mut jones_array = Array3::<Jones<f32>>::zeros(vis_dims);
 
@@ -1367,12 +1367,12 @@ mod vv_cross_tests {
     // uvd_vvnocheby = UVData()
     // uvd_vvnocheby.read_mwa_corr_fits(
     //     ["/tmp/deleteme/1090701368.metafits", "/tmp/deleteme/1090701368_20140729203555_gpubox01_00.fits"],
-    //     correct_van_vleck=True,
-    //     cheby_approx=False,
     //     use_aoflagger_flags=False,
     //     remove_dig_gains=False,
     //     remove_coarse_band=False,
     //     correct_cable_len=False,
+    //     correct_van_vleck=True,
+    //     cheby_approx=False,
     //     flag_small_auto_ants=False,
     //     phase_to_pointing_center=False,
     //     propagate_coarse_flags=False,
@@ -1397,7 +1397,8 @@ mod vv_cross_tests {
         )
         .unwrap();
         corr_ctx.metafits_context.corr_fine_chan_width_hz = 1;
-        corr_ctx.metafits_context.corr_int_time_ms = 2_000;
+        corr_ctx.metafits_context.corr_int_time_ms = 500;
+        corr_ctx.metafits_context.corr_raw_scale_factor = 1.0;
 
         let mut jones_array = Array3::<Jones<f32>>::zeros(vis_dims);
 
@@ -1527,7 +1528,8 @@ mod vv_cross_tests {
         )
         .unwrap();
         corr_ctx.metafits_context.corr_fine_chan_width_hz = 1;
-        corr_ctx.metafits_context.corr_int_time_ms = 2_000;
+        corr_ctx.metafits_context.corr_int_time_ms = 500;
+        corr_ctx.metafits_context.corr_raw_scale_factor = 1.0;
 
         let mut jones_array = Array3::<Jones<f32>>::zeros(vis_dims);
 
