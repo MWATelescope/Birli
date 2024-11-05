@@ -743,7 +743,9 @@ impl<'a> BirliContext<'a> {
                     .help_heading("CORRECTION"),
                 arg!(--"no-geometric-delay" "Do not perform geometric corrections")
                     .help_heading("CORRECTION")
-                    .alias("no-geom"),
+                    .alias("no-geom")
+                    .conflicts_with("pointing-centre")
+                    .conflicts_with("phase-centre"),
                 arg!(--"no-digital-gains" "Do not perform digital gains corrections")
                     .help_heading("CORRECTION"),
                 arg!(--"passband-gains" <TYPE> "Type of PFB passband filter gains correction to apply")
