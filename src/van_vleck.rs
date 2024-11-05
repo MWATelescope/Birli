@@ -317,16 +317,20 @@ pub fn correct_van_vleck(
                             .for_each(|(p_idx, ((jp, sigma1), sigma2))| {
                                 let sigma_product = sigma1 * sigma2;
                                 let khat_re = jp.re as f64 / sample_scale;
-                                let khat_im = jp.im as f64 / sample_scale;
-                                if khat_re > sigma_product {
+                                if khat_re.abs() > sigma_product {
                                     log::warn!("|ρ| > 1: {khat_re:?} / {sigma1:?} / {sigma2:?} at a1={ant1:?} a2={ant2:?} t={t_idx:?} f={f_idx:?} p={p_idx:?} re");
-                                } else if khat_im > sigma_product {
-                                    log::warn!("|ρ| > 1: {khat_re:?} / {sigma1:?} / {sigma2:?} at a1={ant1:?} a2={ant2:?} t={t_idx:?} f={f_idx:?} p={p_idx:?} im");
-                                } else {
-                                    let kappa_re = van_vleck_cross_int(khat_re, sigma1, sigma2).unwrap_or(khat_re);
-                                    let kappa_im = van_vleck_cross_int(khat_im, sigma1, sigma2).unwrap_or(khat_im);
+                                } else if let Some(kappa_re) = van_vleck_cross_int(khat_re, sigma1, sigma2) {
                                     jp.re = (sample_scale * kappa_re) as f32;
+                                } else {
+                                    log::warn!("van_vleck_cross_int failed for khat_re={khat_re} sigma1={sigma1} sigma2={sigma2} at a1={ant1:?} a2={ant2:?} t={t_idx:?} f={f_idx:?} p={p_idx:?} re");
+                                }
+                                let khat_im = jp.im as f64 / sample_scale;
+                                if khat_im.abs() > sigma_product {
+                                    log::warn!("|ρ| > 1: {khat_re:?} / {sigma1:?} / {sigma2:?} at a1={ant1:?} a2={ant2:?} t={t_idx:?} f={f_idx:?} p={p_idx:?} im");
+                                } else if let Some(kappa_im) = van_vleck_cross_int(khat_im, sigma1, sigma2) {
                                     jp.im = (sample_scale * kappa_im) as f32;
+                                } else {
+                                    log::warn!("van_vleck_cross_int failed for khat_im={khat_im} sigma1={sigma1} sigma2={sigma2} at a1={ant1:?} a2={ant2:?} t={t_idx:?} f={f_idx:?} p={p_idx:?} im");
                                 }
                             });
                     });
@@ -725,8 +729,9 @@ fn corrcorrect_prime(rho: f64, x_: &[f64], y_: &[f64]) -> f64 {
 
 // solve a single van vleck cross correlation using the Van Vleck relation for legacy MWA
 fn van_vleck_cross_int(khat: f64, sigma_x: f64, sigma_y: f64) -> Option<f64> {
-    debug_assert!(sigma_x > 0.0, "σ_x must be > 0: {sigma_x:?}");
-    debug_assert!(sigma_y > 0.0, "σ_y must be > 0: {sigma_y:?}");
+    if sigma_x <= 0.0 || sigma_y <= 0.0 {
+        return None;
+    }
     let sign = khat.signum();
     let khat = khat.abs();
 
@@ -737,14 +742,9 @@ fn van_vleck_cross_int(khat: f64, sigma_x: f64, sigma_y: f64) -> Option<f64> {
     let tol = 1e-12; // it's 1e-10 for the autos
     let niter = 100;
     let mut guess = khat / (sigma_x * sigma_y);
-    debug_assert!(
-        guess >= 0.0,
-        "|ρ| must be >= 0: {guess:?} <- {khat:?} / {sigma_x:?} / {sigma_y:?}"
-    );
-    debug_assert!(
-        guess < 1.0,
-        "|ρ| must be < 1: {guess:?} <- {khat:?} / {sigma_x:?} / {sigma_y:?}"
-    );
+    if !(0.0..1.0).contains(&guess) {
+        return None;
+    }
     let mut delta = corrcorrect_simp(guess, &x_, &y_) - khat;
     let mut count = 0;
     while delta.abs() > tol {
@@ -1348,7 +1348,6 @@ mod vv_cross_tests {
     // compare values from pyuvdata
     fn test_van_vleck_crosses_int() {
         let result = van_vleck_crosses_int(&K_HATS, &SIGMAS1, &SIGMAS2);
-        println!("{:?}", result);
         for (&r, &s) in result.iter().zip(KAPPAS.iter()) {
             assert_approx_eq!(f64, r, s, epsilon = 1e-10);
         }
