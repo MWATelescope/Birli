@@ -342,13 +342,14 @@ pub fn correct_van_vleck(
 }
 
 /// Use Newton's method to solve the inverse of `sighat_vector`.
+/// stops iterating for guess < 0.5 to avoid divergence.
 fn van_vleck_auto(s: f64) -> Option<f64> {
     let tol = 1e-12;
     let niter = 100;
     let mut guess = s;
     let mut delta = sighat(guess) - s;
     let mut count = 0;
-    while delta.abs() > tol {
+    while delta.abs() > tol && guess > 0.5 {
         guess -= delta / sighat_prime(guess);
         delta = sighat(guess) - s;
         count += 1;
