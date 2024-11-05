@@ -419,6 +419,8 @@ mod tests {
             F32Margin::default(),
             true,
             false,
+            true,
+            false,
         );
     }
 

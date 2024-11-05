@@ -1,3 +1,6 @@
+#![allow(clippy::cognitive_complexity)]
+#![allow(clippy::too_many_arguments)]
+
 use crate::{
     marlu::{
         fitsio, fitsio_sys,
@@ -179,12 +182,29 @@ lazy_static! {
     ).unwrap();
 }
 
+/// Decode a uvfits baseline into the antennas that formed it. Antenna indices
+/// start at 1.
+#[allow(dead_code)]
+pub const fn decode_uvfits_baseline(bl: usize) -> (usize, usize) {
+    if bl < 65_535 {
+        let ant2 = bl % 256;
+        let ant1 = (bl - ant2) / 256;
+        (ant1, ant2)
+    } else {
+        let ant2 = (bl - 65_536) % 2048;
+        let ant1 = (bl - ant2 - 65_536) / 2048;
+        (ant1, ant2)
+    }
+}
+
 pub fn compare_uvfits_with_csv(
     uvfits_path: &Path,
     expected_csv_path: PathBuf,
     vis_margin: F32Margin,
     ignore_weights: bool,
     ignore_missing_chans: bool,
+    ignore_autos: bool,
+    ignore_uvw: bool,
 ) {
     // Check both files are present
     assert!(uvfits_path.exists());
@@ -222,6 +242,7 @@ pub fn compare_uvfits_with_csv(
                 .unwrap()
         })
         .collect();
+    let nrows: usize = get_required_fits_key!(&mut fptr, &vis_hdu, "GCOUNT").unwrap();
     let floats_per_pol: usize = get_required_fits_key!(&mut fptr, &vis_hdu, "NAXIS2").unwrap();
     let num_pols: usize = get_required_fits_key!(&mut fptr, &vis_hdu, "NAXIS3").unwrap();
     let num_fine_freq_chans: usize = get_required_fits_key!(&mut fptr, &vis_hdu, "NAXIS4").unwrap();
@@ -252,8 +273,9 @@ pub fn compare_uvfits_with_csv(
             })
             .collect::<Vec<_>>();
 
-        // Skip baseline(0,0)
-        if exp_group_params[3] as i32 == 257 {
+        // Skip autos
+        let (ant1, ant2) = decode_uvfits_baseline(exp_group_params[3] as usize);
+        if ignore_autos && (ant1 == ant2) {
             continue;
         }
 
@@ -264,7 +286,7 @@ pub fn compare_uvfits_with_csv(
         let mut match_found = false;
 
         // iterate over rows in the uvfits file until we find an approximate match on timestep / baseline
-        while row_idx < vis_len {
+        while row_idx < nrows {
             unsafe {
                 // ffggpe = fits_read_grppar_flt
                 fitsio_sys::ffggpd(
@@ -301,6 +323,9 @@ pub fn compare_uvfits_with_csv(
                 for (param_idx, (obs_group_param, exp_group_param)) in
                     izip!(obs_group_params.iter(), exp_group_params.iter()).enumerate()
                 {
+                    if ignore_uvw && param_idx < 3 {
+                        continue;
+                    }
                     assert!(
                         approx_eq!(
                             f64,
@@ -432,7 +457,7 @@ pub fn compare_uvfits_with_csv(
         }
         assert!(
             match_found,
-            "unable to find matching row for time={}, baseline={:?}, times_seen={:?}",
+            "unable to find matching row for time={}, baseline={:?}, times_seen={:?}, row_idx={row_idx}, nrows={nrows}",
             exp_group_params[4],
             exp_group_params[3],
             times_seen

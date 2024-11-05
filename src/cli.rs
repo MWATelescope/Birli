@@ -3060,6 +3060,8 @@ mod tests_aoflagger {
             F32Margin::default(),
             false,
             false,
+            true,
+            false,
         );
     }
 
@@ -3114,6 +3116,8 @@ mod tests_aoflagger {
             F32Margin::default(),
             true,
             false,
+            true,
+            false,
         );
     }
 
@@ -3164,6 +3168,8 @@ mod tests_aoflagger {
             expected_csv_path,
             F32Margin::default().epsilon(1e-4),
             false,
+            false,
+            true,
             false,
         );
     }
@@ -3246,6 +3252,8 @@ mod tests_aoflagger {
             expected_csv_path,
             F32Margin::default().epsilon(1e-4),
             false,
+            false,
+            true,
             false,
         );
     }
@@ -3957,6 +3965,204 @@ mod tests_aoflagger {
             false,
         );
     }
+
+    // Test generated with:
+    #[rustfmt::skip]
+    /*
+# python -m pip install pyuvdata
+# or . ../pyuvdata/.venv/bin/activate
+#? uvd.phase(lon=0, lat=-27, epoch="J2000", cat_name='eor0')
+
+python - <<EOF
+from pyuvdata import UVData
+paths = [
+    'tests/data/1196175296_mwa_ord/1196175296.metafits',
+    'tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits',
+    'tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits',
+    'tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits',
+    'tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits',
+]
+dump_csv = "tests/data/1196175296_mwa_ord/pyuvdata_1196175296.none.csv"
+exec(open('tests/data/pyuvdata_dump_csv.py').read())
+read_args = default_read_args.copy()
+uvd = UVData()
+uvd.read_mwa_corr_fits( paths, **read_args )
+# dump to CSV
+dump_uvd(uvd, dump_csv)
+EOF
+    */
+
+    /// compare birli uvfits agains pyuvdata, no corrections
+    #[test]
+    fn compare_pyuvdata_1196175296_mwa_ord_none() {
+        let tmp_dir = tempdir().unwrap();
+        let uvf_path = tmp_dir.path().join("birli_1196175296.uvfits");
+        let metafits_path = PathBuf::from("tests/data/1196175296_mwa_ord/1196175296.metafits");
+
+
+        let expected_csv_path =
+            PathBuf::from("tests/data/1196175296_mwa_ord/pyuvdata_1196175296.none.csv");
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path.to_str().unwrap(),
+            "-u", uvf_path.to_str().unwrap(),
+            "--no-flag-metafits",
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains", "none",
+            "--no-rfi",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--no-flag-dc",
+            "--flag-edge-width", "0",
+            "--flag-init", "0",
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
+        ];
+        println!("{:?}", &args);
+
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+
+        assert!(!birli_ctx.prep_ctx.correct_cable_lengths);
+        assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
+        assert!(!birli_ctx.prep_ctx.correct_digital_gains);
+        assert!(!birli_ctx.prep_ctx.correct_geometry);
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_none());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path.display().to_string()
+        );
+
+        let display = format!("{}", &birli_ctx);
+        assert!(display.contains("Will not correct Van Vleck"));
+        assert!(display.contains("Will not correct cable lengths"));
+        assert!(display.contains("Will not correct digital gains"));
+        assert!(display.contains("Will not correct coarse pfb passband gains"));
+        assert!(display.contains("Will not flag with aoflagger"));
+        assert!(display.contains("Will not correct geometry"));
+
+        let comment = birli_ctx.prep_ctx.as_comment();
+
+        assert!(!comment.contains("Van Vleck corrections"));
+        assert!(!comment.contains("cable length corrections"));
+        assert!(!comment.contains("digital gains"));
+        assert!(!comment.contains("pfb gains"));
+        assert!(!comment.contains("aoflagging with"));
+        assert!(!comment.contains("geometric corrections"));
+
+        birli_ctx.run().unwrap();
+
+        compare_uvfits_with_csv(
+            &uvf_path,
+            expected_csv_path,
+            F32Margin::default().epsilon(1e-3),
+            false,
+            false,
+            true,
+            true, // todo: match uvws
+        );
+    }
+
+    // Test generated with:
+    #[rustfmt::skip]
+    /*
+# python -m pip install pyuvdata
+# or . ../pyuvdata/.venv/bin/activate
+#? uvd.phase(lon=0, lat=-27, epoch="J2000", cat_name='eor0')
+
+python - <<EOF
+from pyuvdata import UVData
+paths = [
+    'tests/data/1254670392_avg/1254670392.fixed.metafits',
+    'tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits'
+]
+dump_csv = "tests/data/1254670392_avg/pyuvdata_1254670392.none.csv"
+exec(open('tests/data/pyuvdata_dump_csv.py').read())
+read_args = default_read_args.copy()
+uvd = UVData()
+uvd.read_mwa_corr_fits( paths, **read_args )
+# dump to CSV
+dump_uvd(uvd, dump_csv)
+EOF
+    */
+
+    /// compare birli uvfits agains pyuvdata, no corrections
+    #[test]
+    fn compare_pyuvdata_1254670392_avg_none() {
+        let tmp_dir = tempdir().unwrap();
+        let uvf_path = tmp_dir.path().join("birli_1254670392.uvfits");
+        // let uvf_path = PathBuf::from("birli_1254670392.none.uvfits");
+        let metafits_path = PathBuf::from("tests/data/1254670392_avg/1254670392.metafits");
+
+
+        let expected_csv_path =
+            PathBuf::from("tests/data/1254670392_avg/pyuvdata_1254670392.none.csv");
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path.to_str().unwrap(),
+            "-u", uvf_path.to_str().unwrap(),
+            "--no-flag-metafits",
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains", "none",
+            "--no-rfi",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--no-flag-dc",
+            "--flag-edge-width", "0",
+            "--flag-init", "0",
+            "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
+        ];
+        println!("{:?}", &args);
+
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+
+        assert!(!birli_ctx.prep_ctx.correct_cable_lengths);
+        assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
+        assert!(!birli_ctx.prep_ctx.correct_digital_gains);
+        assert!(!birli_ctx.prep_ctx.correct_geometry);
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_none());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path.display().to_string()
+        );
+
+        let display = format!("{}", &birli_ctx);
+        assert!(display.contains("Will not correct Van Vleck"));
+        assert!(display.contains("Will not correct cable lengths"));
+        assert!(display.contains("Will not correct digital gains"));
+        assert!(display.contains("Will not correct coarse pfb passband gains"));
+        assert!(display.contains("Will not flag with aoflagger"));
+        assert!(display.contains("Will not correct geometry"));
+
+        let comment = birli_ctx.prep_ctx.as_comment();
+
+        assert!(!comment.contains("Van Vleck corrections"));
+        assert!(!comment.contains("cable length corrections"));
+        assert!(!comment.contains("digital gains"));
+        assert!(!comment.contains("pfb gains"));
+        assert!(!comment.contains("aoflagging with"));
+        assert!(!comment.contains("geometric corrections"));
+
+        birli_ctx.run().unwrap();
+
+        compare_uvfits_with_csv(
+            &uvf_path,
+            expected_csv_path,
+            F32Margin::default().epsilon(1e-3),
+            false,
+            false,
+            true,
+            true, // todo: match uvws
+        );
+    }
+
 }
 
 #[cfg(test)]
