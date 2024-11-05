@@ -1317,8 +1317,8 @@ impl<'a> BirliContext<'a> {
             (true, _) => {
                 return Err(BirliError::CLIError(InvalidCommandLineArgument {
                     option: "--van-vleck".into(),
-                    expected: "only available for legacy".into(),
-                    received: "van-vleck".into(),
+                    expected: "legacy correlator files".into(),
+                    received: corr_ctx.mwa_version.to_string(),
                 }))
             }
             _ => false,
