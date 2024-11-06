@@ -256,6 +256,7 @@ CORRECTION:
         --no-geometric-delay       Do not perform geometric corrections
         --passband-gains <TYPE>    Type of PFB passband filter gains correction to apply [default:
                                    auto] [possible values: none, cotter, jake, auto]
+        --van-vleck                Apply Van Vleck corrections
 
 AVERAGING:
         --avg-freq-factor <FACTOR>    Average <FACTOR> channels per averaged channel
@@ -275,9 +276,65 @@ AOFLAGGER:
         --no-rfi                       Do not perform RFI Flagging with aoflagger
 ```
 
-Note: the aoflagged options are only available when the aoflagger feature is enabled.
+Note: the aoflagger options are only available when the aoflagger feature is enabled.
+
+## Correction Details
 
 Operations are performed in the order described by the following sections.
+
+```mermaid
+flowchart TD;
+classDef in fill:#2aa198;
+classDef out fill:#d33682;
+classDef file fill:#268bd2;
+classDef proc fill:#b58900;
+classDef decision fill:#cb4b16;
+
+metafits[/ metafits /]; class metafits file;
+raw[/ raw data /]; class raw file;
+prepUVFits[/ uvfits /]; class prepUVFits file;
+prepMS[/ CASA Measurement Set /]; class prepMS file;
+calSols[/"Calibration Solutions (.bin)"/]; class calSols file;
+mwaf[/"flags"/]; class mwaf file;
+
+vv[["Van Vleck
+(iff <code>--van-vleck</code>)"]]; class vv proc;
+cableDel[["Cable Delays (unless
+<code>--no-cable-delay</code>)"]]; class cableDel proc;
+digGains[["Digital Gains (unless
+<code>--no-digital-gains</code>)"]]; class digGains proc;
+PFB[["PFB Passband
+(<code>--passband-gains</code>)"]]; class PFB proc;
+AOFlag[["AOFlagger (see
+<code>--aoflagger-strategy</code>
+and <code>--no-rfi</code>)"]]; class AOFlag proc;
+applyCal[[ Apply Solutions ]]; class applyCal proc;
+geometric[["Geometric Delays (unless
+<code>--no-geometric-delay</code>)"]]; class geometric proc;
+avg[["Averaging (see <code>--avg-*</code>)"]]; class avg proc;
+
+metafits -->|"--metafits (-m)"| vv
+raw --> vv
+vv --> cableDel --> digGains --> PFB --> AOFlag ---> geometric
+AOFlag -->|"--flag-template (-f)"| mwaf
+calSols -->|"--apply-di-cal"| applyCal
+geometric --> applyCal --> avg
+avg -->|"--uvfits-out (-u)"| prepUVFits
+avg -->|"--ms-out (-M)"| prepMS
+```
+
+### Van Vleck Corrections
+
+Van Vleck corrections are applied to the visibilities to correct for the effects of quantization in
+the legacy Correlator, resulting in a smoother bandpass, and a reduced false positive flag rate in AOFlagger.
+
+These corrections are computationally expensive, and not needed for most science cases. They are most applicable to Epoch of Reionization science, where a flat bandpass is desired.
+
+Birli's implementation borrows heavily from Pyxie Star's pyuvdata implementation described in [Van Vleck Memo A](https://github.com/EoRImaging/Memos/blob/main/PDFs/007_Van_Vleck_A.pdf), which is based on the formulation in [Benkevitch 2016](https://arxiv.org/pdf/1608.04367).
+
+The current implementation only accounts for the 4+4 bit quantization of the legacy correlator, and does not account for the 5+5 bit quantization of the RRI receiver.
+
+Birli solves the full integral with maximum precision, and does not use the Chebychev approximation described in the memo.
 
 ### Cable Delay Corrections
 
@@ -379,7 +436,7 @@ When processing a set of coarse channels which are not contiguous in receiver ch
 will be added to the measurement set and uvfits filenames which indicates the coarse channel, or
 coarse channel range in that file.
 
-### Comparison with Cotter
+## Comparison with Cotter
 
 The following table shows how Birli options map onto Cotter options:
 
