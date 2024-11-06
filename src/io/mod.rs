@@ -59,11 +59,12 @@ impl IOContext {
     // get the scale factor for the raw files
     // will be deprecated after <https://github.com/MWATelescope/mwalib/issues/85> is resolved
     fn get_raw_scale_factor(&self) -> f32 {
-        let mut fptr = fitsio::FitsFile::open(&self.metafits_in).unwrap();
-        let hdu0 = fits_open_hdu!(&mut fptr, 1).unwrap();
+        let mut meta_fptr = fitsio::FitsFile::open(&self.metafits_in).unwrap();
+        let hdu0 = fits_open_hdu!(&mut meta_fptr, 1).unwrap();
         let mut scale_factor: Option<f32> =
-            get_optional_fits_key!(&mut fptr, &hdu0, "RAWSCALE").unwrap();
-        drop(fptr);
+            get_optional_fits_key!(&mut meta_fptr, &hdu0, "RAWSCALE").unwrap();
+        let gpstime: Option<i32> =
+            get_optional_fits_key!(&mut meta_fptr, &hdu0, "GPSTIME").unwrap();
         for raw_path in &self.gpufits_in {
             let mut fptr = fitsio::FitsFile::open(raw_path).unwrap();
             let hdu1 = fits_open_hdu!(&mut fptr, 1).unwrap();
@@ -86,7 +87,16 @@ impl IOContext {
                 }
             }
         }
-        scale_factor.unwrap_or(1.0)
+        match (scale_factor, gpstime) {
+            (Some(sf), _) => sf,
+            // according to pyuvdata "correlator did a divide by 4 before october 2014"
+            // https://github.com/RadioAstronomySoftwareGroup/pyuvdata/blob/05ee100af2e4e11c9d291c9eafc937578ef01763/src/pyuvdata/uvdata/mwa_corr_fits.py#L1464
+            (None, Some(t)) if t < 1096160568 => 0.25,
+            _ => {
+                warn!("No scale factor found in metafits or gpufits files, defaulting to 1.0");
+                1.0
+            }
+        }
     }
 
     /// Get the `mwalib::CorrelatorContext` from metafits and gpufits
