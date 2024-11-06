@@ -4010,7 +4010,6 @@ EOF
             "birli",
             "-m", metafits_path.to_str().unwrap(),
             "-u", uvf_path.to_str().unwrap(),
-            "--no-flag-metafits",
             "--no-digital-gains",
             "--no-draw-progress",
             "--pfb-gains", "none",
@@ -4109,7 +4108,7 @@ EOF
             "birli",
             "-m", metafits_path.to_str().unwrap(),
             "-u", uvf_path.to_str().unwrap(),
-            "--no-flag-metafits",
+            "--sel-time", "0", "0",
             "--no-digital-gains",
             "--no-draw-progress",
             "--pfb-gains", "none",
@@ -4197,7 +4196,7 @@ EOF
         let tmp_dir = tempdir().unwrap();
         let uvf_path = tmp_dir.path().join("1254670392.uvfits");
 
-        let (metafits_path, _) = get_1254670392_avg_paths();
+        let metafits_path = "tests/data/1254670392_avg/1254670392.fixed.metafits";
 
         let expected_csv_path =
             PathBuf::from("tests/data/1254670392_avg/pyuvdata_1254670392.vvnoc.csv");
@@ -4207,15 +4206,14 @@ EOF
             "birli",
             "-m", metafits_path,
             "-u", uvf_path.to_str().unwrap(),
+            "--sel-time", "0", "0",
             "--van-vleck",
-            "--no-flag-metafits",
             "--no-digital-gains",
             "--no-draw-progress",
             "--pfb-gains", "none",
             "--no-rfi",
             "--no-cable-delay",
             "--no-geometric-delay",
-            // "--sel-time", "0", "0",
             "--no-flag-dc",
             "--flag-edge-width", "0",
             "--flag-init", "0",
