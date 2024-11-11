@@ -13,10 +13,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use fitsio::{tables::ColumnDataType, tables::ColumnDescription, FitsFile};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::Itertools;
-use marlu::{fitsio, fitsio_sys, mwalib, ndarray, rayon, VisSelection};
+use marlu::{
+    fitsio,
+    fitsio::{tables::ColumnDataType, tables::ColumnDescription, FitsFile},
+    fitsio_sys, mwalib, ndarray, rayon, VisSelection,
+};
 use mwalib::{
     CorrelatorContext, MWAVersion, _get_required_fits_key, _open_hdu, fits_open_hdu,
     get_required_fits_key,
@@ -476,7 +479,7 @@ impl FlagFileSet {
 
                 fitsio::errors::check_status(status).map_err(|e| FitsIO {
                     fits_error: e,
-                    fits_filename: fptr.filename.clone(),
+                    fits_filename: fptr.file_path().to_path_buf(),
                     hdu_num: 2,
                     source_file: file!(),
                     source_line: line!(),
@@ -659,7 +662,7 @@ impl FlagFileSet {
         if header.num_rows != header.num_timesteps * baselines {
             return Err(ReadMwafError::Generic(format!(
                 "File {:?}: Expected NSCANS * NANTENNA * (NANTENNA+1) / 2 = NAXIS2, found {} * {} != {}",
-                fptr.filename,
+                fptr.file_path(),
                 header.num_timesteps, baselines, header.num_rows
             )));
         }
@@ -834,7 +837,7 @@ impl FlagFileSet {
                 }
                 fitsio::errors::check_status(status).map_err(|e| FitsIO {
                     fits_error: e,
-                    fits_filename: fptr.filename.clone(),
+                    fits_filename: fptr.file_path().to_path_buf(),
                     hdu_num: 1,
                     source_file: file!(),
                     source_line: line!(),

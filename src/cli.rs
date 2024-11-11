@@ -13,8 +13,8 @@ use indicatif::{ProgressDrawTarget, ProgressStyle};
 use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
 use mwalib::{
-    built_info::PKG_VERSION as MWALIB_PKG_VERSION, fitsio_sys::CFITSIO_VERSION, CableDelaysApplied,
-    CorrelatorContext, GeometricDelaysApplied, MWAVersion,
+    built_info::PKG_VERSION as MWALIB_PKG_VERSION, CableDelaysApplied, CorrelatorContext,
+    GeometricDelaysApplied, MWAVersion,
 };
 use prettytable::{format as prettyformat, row, table};
 
@@ -98,7 +98,6 @@ pub fn fmt_build_info(f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     writeln!(f, "libraries:")?;
     writeln!(f, "- marlu v{MARLU_PKG_VERSION}")?;
     writeln!(f, "- mwalib v{MWALIB_PKG_VERSION}")?;
-    writeln!(f, "- cfitsio (bindings) v{CFITSIO_VERSION}")?;
 
     cfg_if! {
         if #[cfg(feature = "aoflagger")] {
