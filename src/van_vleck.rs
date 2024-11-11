@@ -191,7 +191,7 @@ pub fn correct_van_vleck(
             nsamples: n2samples,
         });
     }
-    let sample_scale = n2samples as f64 * corr_ctx.metafits_context.corr_raw_scale_factor as f64;
+    let sample_scale = n2samples as f64 * corr_ctx.bscale as f64;
 
     // ant_pair indices which are unflagged autocorrelations, list of corresponding antenna indices
     let (unflagged_auto_mask, unflagged_autos): (Vec<_>, Vec<_>) = ant_pairs
