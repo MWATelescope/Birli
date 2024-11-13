@@ -124,7 +124,13 @@ dependencies = ["linux_install_aoflagger"]
 
 [tasks.mac_install_deps]
 script = """
-brew install casacore/tap/casacore mwatelescope/tap/aoflagger
+INSTALL="brew install"
+# in github actions runners:
+# - macos-13: uname -m => x86_64, arch => i386
+# - macos-14: uname -m => x86_64, arch => i386
+# but macos-14 should be arm64 ?
+# in that case, we want INSTALL="arch -arm64 $INSTALL" apparently?
+$INSTALL mwatelescope/tap/aoflagger
 """
 
 [tasks.install_deps]
