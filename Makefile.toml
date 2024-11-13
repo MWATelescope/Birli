@@ -200,6 +200,10 @@ args = ["test", "--no-default-features", "--release"]
 command = "cargo"
 args = ["test", "--no-default-features", "--release", "--features=cli"]
 
+[tasks.test_package]
+command = "cargo"
+args = ["package", "--allow-dirty"]
+
 [tasks.ci]
 dependencies = [
   "clean",
@@ -219,4 +223,5 @@ dependencies = [
   "test_no_default",
   "test",
   "rustdoc",
+  "test_package",
 ]

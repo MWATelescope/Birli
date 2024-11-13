@@ -1,7 +1,7 @@
 [package]
 name = "birli"
 description = "A preprocessing pipeline for the Murchison Widefield Array"
-version = "0.15.1"
+version = "0.16.0"
 readme = "README.md"
 homepage = "https://github.com/MWATelescope/Birli"
 repository = "https://github.com/MWATelescope/Birli"
@@ -12,7 +12,7 @@ authors = [
     "Luke A. Williams <luke.a.williams@curtin.edu.au>",
 ]
 edition = "2021"
-rust-version = "1.64"
+rust-version = "1.65"
 license = "MPL-2.0"
 keywords = ["radioastronomy", "mwa", "astronomy", "aoflagger", "cotter"]
 categories = ["science", "parsing"]
@@ -93,7 +93,10 @@ opt-level = 3
 
 [patch.crates-io]
 # marlu = { path = "../Marlu" }
-marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "mwalib-1.8.0" }
+# marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "mwalib-1.8.0" }
 # mwalib = { path = "../mwalib" }
-mwalib = { git = "https://github.com/MWATelescope/mwalib", branch = "pyo3_stub_chrono_fix" }
+# mwalib = { git = "https://github.com/MWATelescope/mwalib", branch = "pyo3_stub_chrono_fix" }
 # aoflagger_sys = { git = "https://github.com/MWATelescope/rust-aoflagger", branch = "sonoma-fix" }
+
+# TODO: update to cxx 1.0.129 when MSRV >= 1.67
+url = { git = "https://github.com/servo/rust-url", tag = "v2.5.2" }

@@ -1,5 +1,13 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.16.0 (2024-11-13)
+
+- ✨ new features:
+  - add `--van-vleck` to correct for legacy correlator quantization
+
+- ➕ update mwalib 1.8.2 via Marlu 0.15
+- ➕ fitsio 0.21.6
+
 # Version 0.15.1 (2024-09-29)
 
 - add read and write rate

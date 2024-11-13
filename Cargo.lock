@@ -49,9 +49,9 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "aoflagger_sys"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff88c275920962ffa8d5ea2f2c95cd223a75ff427847631bb8a1498581a05f30"
+checksum = "6267892179e74af7fa781e060ab6db93bfbf91ab331c75688db8cc4922bb8df5"
 dependencies = [
  "cc",
  "cxx",
@@ -125,7 +125,7 @@ dependencies = [
 
 [[package]]
 name = "birli"
-version = "0.15.1"
+version = "0.16.0"
 dependencies = [
  "aoflagger_sys",
  "approx",
@@ -726,8 +726,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "form_urlencoded"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456"
+source = "git+https://github.com/servo/rust-url?tag=v2.5.2#54346fa288e16b25b71c45149d7067c752b450e0"
 dependencies = [
  "percent-encoding",
 ]
@@ -858,8 +857,7 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 [[package]]
 name = "idna"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "634d9b1461af396cad843f47fdba5597a4f9e6ddd4bfb6ff5d85028c25cb12f6"
+source = "git+https://github.com/servo/rust-url?tag=v2.5.2#54346fa288e16b25b71c45149d7067c752b450e0"
 dependencies = [
  "unicode-bidi",
  "unicode-normalization",
@@ -1098,7 +1096,8 @@ checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 [[package]]
 name = "marlu"
 version = "0.15.0"
-source = "git+https://github.com/MWATelescope/Marlu?branch=mwalib-1.8.0#4cfad7ac12e4f362f5102c2b391dcecfb4d27585"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b1e6599e6af128994344fdeb7091e936f3b429e0de69ca09eda2f644cb9442a"
 dependencies = [
  "approx",
  "built",
@@ -1148,8 +1147,9 @@ dependencies = [
 
 [[package]]
 name = "mwalib"
-version = "1.8.0"
-source = "git+https://github.com/MWATelescope/mwalib?branch=pyo3_stub_chrono_fix#ec7225dcddb82cbc837877746ac184ffa22744fe"
+version = "1.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d16191bf878ead5724827b06e963d42d95d8813e69969653b4e9c1ae40f160b"
 dependencies = [
  "built",
  "cbindgen",
@@ -1310,8 +1310,7 @@ checksum = "e2355d85b9a3786f481747ced0e0ff2ba35213a1f9bd406ed906554d7af805a1"
 [[package]]
 name = "percent-encoding"
 version = "2.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
+source = "git+https://github.com/servo/rust-url?tag=v2.5.2#54346fa288e16b25b71c45149d7067c752b450e0"
 
 [[package]]
 name = "pkg-config"
@@ -1793,8 +1792,7 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 [[package]]
 name = "url"
 version = "2.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22784dbdf76fdde8af1aeda5622b546b422b6fc585325248a2bf9f5e41e94d6c"
+source = "git+https://github.com/servo/rust-url?tag=v2.5.2#54346fa288e16b25b71c45149d7067c752b450e0"
 dependencies = [
  "form_urlencoded",
  "idna",
@@ -1910,7 +1908,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

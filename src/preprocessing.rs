@@ -9,7 +9,7 @@ use crate::{
 };
 use cfg_if::cfg_if;
 use derive_builder::Builder;
-use log::{trace, warn};
+use log::trace;
 use std::{
     fmt::{Debug, Display},
     time::Duration,
@@ -183,7 +183,6 @@ impl<'a> PreprocessContext<'a> {
         let sel_ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 
         if self.correct_van_vleck {
-            warn!("Van Vleck correction is a work in progress!");
             trace!("correcting van vleck");
             // get flagged antennas
             let flagged_ants = corr_ctx

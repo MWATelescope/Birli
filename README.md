@@ -34,7 +34,7 @@ descriptor for the speed which this library intends to deliver.
 
 ### Prerequisites
 
-- A Rust compiler with a version >= 1.64.0 - <https://www.rust-lang.org/tools/install>
+- A Rust compiler with a version >= 1.65.0 - <https://www.rust-lang.org/tools/install>
 - [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0
   (Ubuntu > 21.04: apt install aoflagger-dev)
 - [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49
@@ -114,7 +114,7 @@ cargo test
 ### Dependencies
 
 Experiencing segfaults? I can guarantee it's because of one of the C library dependencies.
-Make sure you have the right versions of all the libraries. These are specified in [Prerequisites](#Prerequisites).
+Make sure you have the right versions of all the libraries. These are specified in [Prerequisites](#prerequisites).
 
 Get library versions on linux with:
 
