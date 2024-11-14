@@ -49,9 +49,9 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "aoflagger_sys"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff88c275920962ffa8d5ea2f2c95cd223a75ff427847631bb8a1498581a05f30"
+checksum = "6267892179e74af7fa781e060ab6db93bfbf91ab331c75688db8cc4922bb8df5"
 dependencies = [
  "cc",
  "cxx",
@@ -100,6 +100,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c4b4d0bd25bd0b74681c0ad21497610ce1b7c91b1022cd21c80c6fbdd9476b0"
 
 [[package]]
+name = "autotools"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef941527c41b0fc0dd48511a8154cd5fc7e29200a0ff8b7203c5d777dbc795cf"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "backtrace"
 version = "0.3.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -116,7 +125,7 @@ dependencies = [
 
 [[package]]
 name = "birli"
-version = "0.15.1"
+version = "0.16.0"
 dependencies = [
  "aoflagger_sys",
  "approx",
@@ -129,6 +138,7 @@ dependencies = [
  "csv",
  "derive_builder",
  "env_logger",
+ "errorfunctions",
  "float-cmp",
  "glob",
  "indicatif",
@@ -140,6 +150,7 @@ dependencies = [
  "ndarray",
  "prettytable-rs",
  "regex",
+ "serde-pickle",
  "shlex",
  "tempfile",
  "thiserror",
@@ -618,6 +629,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "errorfunctions"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2614883d4665aa4e3a34cdac27df4407913705fbc64e2e759cac60b3d11f1e6"
+dependencies = [
+ "num",
+ "num-complex",
+]
+
+[[package]]
 name = "failure"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -659,9 +680,9 @@ dependencies = [
 
 [[package]]
 name = "fitsio"
-version = "0.20.0"
+version = "0.21.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c31e99e291587ab50840bdf7e647187355978e93fdfc4c9f0d76b8e53e345d"
+checksum = "0bdc9559065f29d3d8ae5c36eb127fc87ce4fcbbedd44c0094f8ff13453dbee0"
 dependencies = [
  "fitsio-sys",
  "libc",
@@ -669,11 +690,11 @@ dependencies = [
 
 [[package]]
 name = "fitsio-sys"
-version = "0.4.0"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3189ae01f4bcdb8e6b90ec9efe5575a1b12c3e63298bde9fc45694fcc488a595"
+checksum = "3d737a0c9a1bd2579ea17ff53b7cbd46290e2dc8d3a30b9a811e156660181043"
 dependencies = [
- "libc",
+ "autotools",
  "pkg-config",
 ]
 
@@ -705,8 +726,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "form_urlencoded"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456"
+source = "git+https://github.com/servo/rust-url?tag=v2.5.2#54346fa288e16b25b71c45149d7067c752b450e0"
 dependencies = [
  "percent-encoding",
 ]
@@ -837,8 +857,7 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 [[package]]
 name = "idna"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "634d9b1461af396cad843f47fdba5597a4f9e6ddd4bfb6ff5d85028c25cb12f6"
+source = "git+https://github.com/servo/rust-url?tag=v2.5.2#54346fa288e16b25b71c45149d7067c752b450e0"
 dependencies = [
  "unicode-bidi",
  "unicode-normalization",
@@ -889,6 +908,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "iter-read"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c397ca3ea05ad509c4ec451fea28b4771236a376ca1c69fd5143aae0cf8f93c4"
+
+[[package]]
 name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -923,9 +948,9 @@ dependencies = [
 
 [[package]]
 name = "lazy_static"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
+checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lexical"
@@ -1070,9 +1095,9 @@ checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
 name = "marlu"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "207d8571a6c2fe51ba60e79bc8f840ae7bb0678168d25d61eb56fabebfd9764d"
+checksum = "8b1e6599e6af128994344fdeb7091e936f3b429e0de69ca09eda2f644cb9442a"
 dependencies = [
  "approx",
  "built",
@@ -1122,9 +1147,9 @@ dependencies = [
 
 [[package]]
 name = "mwalib"
-version = "1.5.0"
+version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "268aa01c4343e7250273fd839912fe807df701975a586d488a865238ed16471a"
+checksum = "3d16191bf878ead5724827b06e963d42d95d8813e69969653b4e9c1ae40f160b"
 dependencies = [
  "built",
  "cbindgen",
@@ -1165,6 +1190,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c96aba5aa877601bb3f6dd6a63a969e1f82e60646e81e71b14496995e9853c91"
 
 [[package]]
+name = "num"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
+dependencies = [
+ "num-bigint",
+ "num-complex",
+ "num-integer",
+ "num-iter",
+ "num-rational",
+ "num-traits",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-complex"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1190,6 +1239,28 @@ version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
 dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "num-iter"
+version = "0.1.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1429034a0490724d0075ebb2bc9e875d6503c3cf69e235a8941aa757d83ef5bf"
+dependencies = [
+ "autocfg",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-rational"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
+dependencies = [
+ "num-bigint",
+ "num-integer",
  "num-traits",
 ]
 
@@ -1239,8 +1310,7 @@ checksum = "e2355d85b9a3786f481747ced0e0ff2ba35213a1f9bd406ed906554d7af805a1"
 [[package]]
 name = "percent-encoding"
 version = "2.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
+source = "git+https://github.com/servo/rust-url?tag=v2.5.2#54346fa288e16b25b71c45149d7067c752b450e0"
 
 [[package]]
 name = "pkg-config"
@@ -1495,6 +1565,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-pickle"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c762ad136a26407c6a80825813600ceeab5e613660d93d79a41f0ec877171e71"
+dependencies = [
+ "byteorder",
+ "iter-read",
+ "num-bigint",
+ "num-traits",
+ "serde",
+]
+
+[[package]]
 name = "serde_derive"
 version = "1.0.210"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1709,8 +1792,7 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 [[package]]
 name = "url"
 version = "2.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22784dbdf76fdde8af1aeda5622b546b422b6fc585325248a2bf9f5e41e94d6c"
+source = "git+https://github.com/servo/rust-url?tag=v2.5.2#54346fa288e16b25b71c45149d7067c752b450e0"
 dependencies = [
  "form_urlencoded",
  "idna",
@@ -1826,7 +1908,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

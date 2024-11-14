@@ -14,16 +14,17 @@ use std::{
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::izip;
 use log::{trace, warn};
-use marlu::{mwalib, SelectionError, VisSelection};
 
 use crate::{
     marlu::{
         constants::MWA_LAT_RAD,
         hifitime::Duration,
         io::{ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
+        mwalib,
         mwalib::{CorrelatorContext, MwalibError},
         rayon::prelude::*,
-        Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
+        Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, SelectionError, VisContext,
+        VisSelection, ENH,
     },
     ndarray::prelude::*,
 };

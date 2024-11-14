@@ -1,12 +1,14 @@
 //! Errors that can occur in Birli
 
 use marlu::{io::error::BadArrayShape, mwalib};
-use thiserror::Error;
-
-use crate::corrections::{DigitalGainCorrection, PassbandCorrection};
-
 #[cfg(feature = "cli")]
 use shlex::QuoteError;
+use thiserror::Error;
+
+use crate::{
+    corrections::{DigitalGainCorrection, PassbandCorrection},
+    van_vleck::VanVleckCorrection,
+};
 
 /// Errors relating to CI
 #[cfg(feature = "cli")]
@@ -73,6 +75,10 @@ pub enum BirliError {
     #[error(transparent)]
     /// Error derived from [`crate::corrections::DigitalGainCorrection`]
     DigitalGainCorrection(#[from] DigitalGainCorrection),
+
+    #[error(transparent)]
+    /// Error derived from [`crate::van_vleck::VanVleckCorrection`]
+    VanVleckCorrection(#[from] VanVleckCorrection),
 
     #[error("You selected dry run")]
     /// enum variant for when a dry run is selected

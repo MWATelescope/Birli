@@ -119,10 +119,11 @@ pub fn correct_cable_lengths(
             let ant2 = &meta_ctx.antennas[ant2_idx];
 
             let pol_lengths = [
+                // note: rfinput_x and rfinput_y have historically always been the same length
                 ant2.rfinput_x.electrical_length_m - ant1.rfinput_x.electrical_length_m,
-                ant2.rfinput_y.electrical_length_m - ant1.rfinput_y.electrical_length_m,
-                ant2.rfinput_y.electrical_length_m - ant1.rfinput_x.electrical_length_m,
                 ant2.rfinput_x.electrical_length_m - ant1.rfinput_y.electrical_length_m,
+                ant2.rfinput_y.electrical_length_m - ant1.rfinput_x.electrical_length_m,
+                ant2.rfinput_y.electrical_length_m - ant1.rfinput_y.electrical_length_m,
             ];
 
             for (mut jones_array, &freq_hz) in
@@ -352,7 +353,6 @@ pub fn correct_digital_gains(
             received: format!("{:?}", ant_pairs.len()),
         }));
     }
-    assert!(vis_dims.2 == ant_pairs.len());
 
     let gains = Array2::from_shape_fn(
         (corr_ctx.metafits_context.num_ants, coarse_chan_range.len()),

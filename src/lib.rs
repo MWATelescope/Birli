@@ -149,6 +149,9 @@
 #![warn(clippy::missing_const_for_fn)]
 #![warn(clippy::option_if_let_else)]
 #![warn(clippy::equatable_if_let)]
+// whiltelist:
+#![allow(mixed_script_confusables)]
+#![allow(clippy::doc_lazy_continuation)]
 // TODO: Look at these later:
 #![allow(clippy::suboptimal_flops)]
 #![allow(clippy::redundant_pub_crate)]
@@ -191,6 +194,9 @@ pub use error::BirliError;
 
 pub mod preprocessing;
 pub use preprocessing::PreprocessContext;
+
+pub mod van_vleck;
+pub use van_vleck::correct_van_vleck;
 
 cfg_if! {
     if #[cfg(feature = "cli")] {

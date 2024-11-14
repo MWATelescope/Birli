@@ -1,7 +1,7 @@
 [package]
 name = "birli"
 description = "A preprocessing pipeline for the Murchison Widefield Array"
-version = "0.15.1"
+version = "0.16.0"
 readme = "README.md"
 homepage = "https://github.com/MWATelescope/Birli"
 repository = "https://github.com/MWATelescope/Birli"
@@ -12,7 +12,7 @@ authors = [
     "Luke A. Williams <luke.a.williams@curtin.edu.au>",
 ]
 edition = "2021"
-rust-version = "1.64"
+rust-version = "1.65"
 license = "MPL-2.0"
 keywords = ["radioastronomy", "mwa", "astronomy", "aoflagger", "cotter"]
 categories = ["science", "parsing"]
@@ -43,9 +43,11 @@ indicatif = { version = "0.17.0", features = ["rayon"] }
 itertools = "0.10.0"
 lazy_static = "1.4.0"
 log = "0.4.0"
-marlu = "0.14.0"
+marlu = "0.15.0"
 regex = "1.4.0"
 thiserror = "1.0.0"
+errorfunctions = "0.2.0"
+serde-pickle = "1.1.1"
 
 # aoflagger feature
 aoflagger_sys = { version = "0.1.2", optional = true }
@@ -64,7 +66,7 @@ csv = "1.1"
 float-cmp = "0.9"
 glob = "0.3"
 lexical = "6.0"
-marlu = { version = "0.14.0", features = ["approx"] }
+marlu = { version = "0.15.0", features = ["approx"] }
 ndarray = { version = "0.16.0", features = ["approx"] }
 tempfile = "3.3"
 
@@ -91,6 +93,10 @@ opt-level = 3
 
 [patch.crates-io]
 # marlu = { path = "../Marlu" }
-# marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "birli-150" }
+# marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "mwalib-1.8.0" }
 # mwalib = { path = "../mwalib" }
-# mwalib = { git = "https://github.com/MWATelescope/mwalib", branch = "digital_gains_plus" }
+# mwalib = { git = "https://github.com/MWATelescope/mwalib", branch = "pyo3_stub_chrono_fix" }
+# aoflagger_sys = { git = "https://github.com/MWATelescope/rust-aoflagger", branch = "sonoma-fix" }
+
+# TODO: update to cxx 1.0.129 when MSRV >= 1.67
+url = { git = "https://github.com/servo/rust-url", tag = "v2.5.2" }
