@@ -142,7 +142,7 @@ dependencies = [
  "float-cmp",
  "glob",
  "indicatif",
- "itertools",
+ "itertools 0.13.0",
  "lazy_static",
  "lexical",
  "log",
@@ -359,7 +359,7 @@ dependencies = [
  "ciborium",
  "clap",
  "criterion-plot",
- "itertools",
+ "itertools 0.10.5",
  "lazy_static",
  "num-traits",
  "oorandom",
@@ -380,7 +380,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
 dependencies = [
  "cast",
- "itertools",
+ "itertools 0.10.5",
 ]
 
 [[package]]
@@ -923,6 +923,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1107,7 +1116,7 @@ dependencies = [
  "fitsio-sys",
  "flate2",
  "hifitime",
- "itertools",
+ "itertools 0.10.5",
  "lazy_static",
  "log",
  "mwalib",
