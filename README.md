@@ -38,7 +38,7 @@ descriptor for the speed which this library intends to deliver.
 - [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0
   (Ubuntu > 21.04: apt install aoflagger-dev)
 - [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49
-  (Ubuntu > 20.10: apt install libcfitsio-dev)
+  (Ubuntu > 20.10: apt install libcfitsio-dev) Must be compiled with `--enable-reentrant` (or `-DUSE_PTHREADS=1 -D_REENTRANT=1`).
 
 for OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) CI Script; the [Makefile.toml](https://github.com/MWATelescope/Birli/blob/main/Makefile.toml); and the [Dockerfile](https://github.com/MWATelescope/Birli/blob/main/Dockerfile) as these are tested regularly. The instructions below may be updated less frequently, but are better documented.
 
@@ -62,17 +62,227 @@ export LD_LIBRARY_PATH="/usr/local/lib/"
 
 ### macOS
 
-Previously macOS was supported, however this has ben dropped due stability issues with casacore and aoflagger.
+macOS support has been rough due stability issues with casacore and aoflagger,
+but if the stars align, this should just work.
+
+```bash
+# Install Homebrew
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+# Tap the MWA Telescope Homebrew tap
+brew tap mwatelescope/tap
+brew install birli
+```
+
+<details>
+<summary>Manual macOS Setup</summary>
 
 The following may or may not work.
 
 ```bash
 brew tap mwatelescope/tap
 brew install mwatelescope/tap/aoflagger
-AOFLAGGER_INCLUDE_DIR=/opt/homebrew/include/ cargo install --path .
+AOFLAGGER_INCLUDE_DIR=/opt/homebrew/include/ cargo install --path . --locked
 export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib/
 birli
 ```
+
+#### reentrant CFitsIO
+
+If you see any segfault, it's most likely this issue.
+
+The current version of cfitsio in homebrew is not reentrant, so birli and all its dependencies that use cfitsio need to be patched out to enable a threadsafe cfitsio. so the current `brew deps --tree --installed birli` is
+
+```txt
+mwatelescope/tap/birli
+├── aoflagger
+│   ├── boost
+│   │   ├── icu4c@76
+│   │   ├── xz
+│   │   └── zstd
+│   │       ├── lz4
+│   │       └── xz
+│   ├── fftw
+│   │   ├── open-mpi
+│   │   │   ├── gcc
+│   │   │   │   ├── gmp
+│   │   │   │   ├── isl
+│   │   │   │   │   └── gmp
+│   │   │   │   ├── libmpc
+│   │   │   │   │   ├── gmp
+│   │   │   │   │   └── mpfr
+│   │   │   │   │       └── gmp
+│   │   │   │   ├── mpfr
+│   │   │   │   │   └── gmp
+│   │   │   │   └── zstd
+│   │   │   │       ├── lz4
+│   │   │   │       └── xz
+│   │   │   ├── hwloc
+│   │   │   ├── libevent
+│   │   │   │   └── openssl@3
+│   │   │   │       └── ca-certificates
+│   │   │   └── pmix
+│   │   │       ├── hwloc
+│   │   │       └── libevent
+│   │   │           └── openssl@3
+│   │   │               └── ca-certificates
+│   │   └── gcc
+│   │       ├── gmp
+│   │       ├── isl
+│   │       │   └── gmp
+│   │       ├── libmpc
+│   │       │   ├── gmp
+│   │       │   └── mpfr
+│   │       │       └── gmp
+│   │       ├── mpfr
+│   │       │   └── gmp
+│   │       └── zstd
+│   │           ├── lz4
+│   │           └── xz
+│   ├── lapack
+│   │   └── gcc
+│   │       ├── gmp
+│   │       ├── isl
+│   │       │   └── gmp
+│   │       ├── libmpc
+│   │       │   ├── gmp
+│   │       │   └── mpfr
+│   │       │       └── gmp
+│   │       ├── mpfr
+│   │       │   └── gmp
+│   │       └── zstd
+│   │           ├── lz4
+│   │           └── xz
+│   ├── libpng
+│   ├── lua@5.4
+│   ├── mwatelescope/tap/casacore
+│   │   ├── fftw
+│   │   │   ├── open-mpi
+│   │   │   │   ├── gcc
+│   │   │   │   │   ├── gmp
+│   │   │   │   │   ├── isl
+│   │   │   │   │   │   └── gmp
+│   │   │   │   │   ├── libmpc
+│   │   │   │   │   │   ├── gmp
+│   │   │   │   │   │   └── mpfr
+│   │   │   │   │   │       └── gmp
+│   │   │   │   │   ├── mpfr
+│   │   │   │   │   │   └── gmp
+│   │   │   │   │   └── zstd
+│   │   │   │   │       ├── lz4
+│   │   │   │   │       └── xz
+│   │   │   │   ├── hwloc
+│   │   │   │   ├── libevent
+│   │   │   │   │   └── openssl@3
+│   │   │   │   │       └── ca-certificates
+│   │   │   │   └── pmix
+│   │   │   │       ├── hwloc
+│   │   │   │       └── libevent
+│   │   │   │           └── openssl@3
+│   │   │   │               └── ca-certificates
+│   │   │   └── gcc
+│   │   │       ├── gmp
+│   │   │       ├── isl
+│   │   │       │   └── gmp
+│   │   │       ├── libmpc
+│   │   │       │   ├── gmp
+│   │   │       │   └── mpfr
+│   │   │       │       └── gmp
+│   │   │       ├── mpfr
+│   │   │       │   └── gmp
+│   │   │       └── zstd
+│   │   │           ├── lz4
+│   │   │           └── xz
+│   │   ├── gcc
+│   │   │   ├── gmp
+│   │   │   ├── isl
+│   │   │   │   └── gmp
+│   │   │   ├── libmpc
+│   │   │   │   ├── gmp
+│   │   │   │   └── mpfr
+│   │   │   │       └── gmp
+│   │   │   ├── mpfr
+│   │   │   │   └── gmp
+│   │   │   └── zstd
+│   │   │       ├── lz4
+│   │   │       └── xz
+│   │   ├── gsl
+│   │   ├── hdf5
+│   │   │   ├── gcc
+│   │   │   │   ├── gmp
+│   │   │   │   ├── isl
+│   │   │   │   │   └── gmp
+│   │   │   │   ├── libmpc
+│   │   │   │   │   ├── gmp
+│   │   │   │   │   └── mpfr
+│   │   │   │   │       └── gmp
+│   │   │   │   ├── mpfr
+│   │   │   │   │   └── gmp
+│   │   │   │   └── zstd
+│   │   │   │       ├── lz4
+│   │   │   │       └── xz
+│   │   │   ├── libaec
+│   │   │   └── pkgconf
+│   │   ├── mwatelescope/tap/casacore-data
+│   │   ├── mwatelescope/tap/cfitsio_reentrant
+│   │   ├── mwatelescope/tap/wcslib
+│   │   │   └── mwatelescope/tap/cfitsio_reentrant
+│   │   ├── ncurses
+│   │   ├── openblas
+│   │   │   └── gcc
+│   │   │       ├── gmp
+│   │   │       ├── isl
+│   │   │       │   └── gmp
+│   │   │       ├── libmpc
+│   │   │       │   ├── gmp
+│   │   │       │   └── mpfr
+│   │   │       │       └── gmp
+│   │   │       ├── mpfr
+│   │   │       │   └── gmp
+│   │   │       └── zstd
+│   │   │           ├── lz4
+│   │   │           └── xz
+│   │   ├── readline
+│   │   ├── python@3.13
+│   │   │   ├── mpdecimal
+│   │   │   ├── openssl@3
+│   │   │   │   └── ca-certificates
+│   │   │   ├── sqlite
+│   │   │   │   └── readline
+│   │   │   └── xz
+│   │   ├── numpy
+│   │   │   └── openblas
+│   │   │       └── gcc
+│   │   │           ├── gmp
+│   │   │           ├── isl
+│   │   │           │   └── gmp
+│   │   │           ├── libmpc
+│   │   │           │   ├── gmp
+│   │   │           │   └── mpfr
+│   │   │           │       └── gmp
+│   │   │           ├── mpfr
+│   │   │           │   └── gmp
+│   │   │           └── zstd
+│   │   │               ├── lz4
+│   │   │               └── xz
+│   │   └── boost-python3
+│   │       ├── boost
+│   │       │   ├── icu4c@76
+│   │       │   ├── xz
+│   │       │   └── zstd
+│   │       │       ├── lz4
+│   │       │       └── xz
+│   │       └── python@3.13
+│   │           ├── mpdecimal
+│   │           ├── openssl@3
+│   │           │   └── ca-certificates
+│   │           ├── sqlite
+│   │           │   └── readline
+│   │           └── xz
+│   └── mwatelescope/tap/cfitsio_reentrant
+└── mwatelescope/tap/cfitsio_reentrant
+```
+
+#### DYLD_FALLBACK_LIBRARY_PATH
 
 It is not possible to set the library search path globally <https://github.com/Homebrew/brew/issues/13481>.
 So if you don't set `DYLD_FALLBACK_LIBRARY_PATH` you will see an error like
@@ -89,6 +299,8 @@ echo ${DYLD_FALLBACK_LIBRARY_PATH:-unset} # it's set here
 bash -c 'echo ${DYLD_FALLBACK_LIBRARY_PATH:-unset}' # but not here
 ```
 
+</details>
+
 ### Other Operating Systems
 
 Unfortunately most of the prerequisites aren't available on Windows. However, WSL is great, and there is a docker image! You could use VSCode remote for WSL or Docker. Your best best is Ubuntu LTS
@@ -96,7 +308,7 @@ Unfortunately most of the prerequisites aren't available on Windows. However, WS
 ### Installing the binary
 
 ```bash
-cargo install --path .
+cargo install --path . --locked
 ```
 
 This creates a `birli` binary in `$HOME/.cargo/bin`
@@ -149,6 +361,9 @@ Couldn't get it working on your environment? You can always run Birli in Docker
 docker run mwatelescope/birli:latest -h
 ```
 
+<details>
+<summary>Building in a Docker image</summary>
+
 Want to open a shell within a fully provisioned Birli development environment? Easy!
 
 ```bash
@@ -157,7 +372,9 @@ docker run -it --entrypoint /bin/bash --volume $PWD:/app mwatelescope/birli:late
 
 Note: This mounts the current directory to `/app` in the Docker image, meaning both of these systems share the same
 `target` folder. so if your host system is a different
-architecture than Docker, you may need to `cargo clean` each time you switch between these environments. You may also want to temporarily disable any linters or language servers that use
+architecture than Docker, you may need to `cargo clean` each time you switch between these environments. You may also want to temporarily disable conflicting linters or language servers
+
+</details>
 
 ### Singularity on HPC
 
