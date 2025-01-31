@@ -3967,39 +3967,13 @@ mod tests_aoflagger {
         );
     }
 
-    // Test generated with:
-    #[rustfmt::skip]
-    /*
-# python -m pip install pyuvdata
-# or . ../pyuvdata/.venv/bin/activate
-#? uvd.phase(lon=0, lat=-27, epoch="J2000", cat_name='eor0')
-
-python - <<EOF
-from pyuvdata import UVData
-paths = [
-    'tests/data/1196175296_mwa_ord/1196175296.metafits',
-    'tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits',
-    'tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits',
-    'tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits',
-    'tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits',
-]
-dump_csv = "tests/data/1196175296_mwa_ord/pyuvdata_1196175296.none.csv"
-exec(open('tests/data/pyuvdata_dump_csv.py').read())
-read_args = default_read_args.copy()
-uvd = UVData()
-uvd.read_mwa_corr_fits( paths, **read_args )
-# dump to CSV
-dump_uvd(uvd, dump_csv)
-EOF
-    */
-
     /// compare birli uvfits agains pyuvdata, no corrections
+    /// Test generated with pyuvdat, see: tests/data/README.md#van-vleck-test-data
     #[test]
     fn compare_pyuvdata_1196175296_mwa_ord_none() {
         let tmp_dir = tempdir().unwrap();
         let uvf_path = tmp_dir.path().join("birli_1196175296.uvfits");
         let metafits_path = PathBuf::from("tests/data/1196175296_mwa_ord/1196175296.metafits");
-
 
         let expected_csv_path =
             PathBuf::from("tests/data/1196175296_mwa_ord/pyuvdata_1196175296.none.csv");
@@ -4067,37 +4041,14 @@ EOF
         );
     }
 
-    // Test generated with:
-    #[rustfmt::skip]
-    /*
-# python -m pip install pyuvdata
-# or . ../pyuvdata/.venv/bin/activate
-#? uvd.phase(lon=0, lat=-27, epoch="J2000", cat_name='eor0')
-
-python - <<EOF
-from pyuvdata import UVData
-paths = [
-    'tests/data/1254670392_avg/1254670392.fixed.metafits',
-    'tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits'
-]
-dump_csv = "tests/data/1254670392_avg/pyuvdata_1254670392.none.csv"
-exec(open('tests/data/pyuvdata_dump_csv.py').read())
-read_args = default_read_args.copy()
-uvd = UVData()
-uvd.read_mwa_corr_fits( paths, **read_args )
-# dump to CSV
-dump_uvd(uvd, dump_csv)
-EOF
-    */
-
     /// compare birli uvfits agains pyuvdata, no corrections
+    /// Test generated with pyuvdat, see: tests/data/README.md#van-vleck-test-data
     #[test]
     fn compare_pyuvdata_1254670392_avg_none() {
         let tmp_dir = tempdir().unwrap();
         let uvf_path = tmp_dir.path().join("birli_1254670392.uvfits");
         // let uvf_path = PathBuf::from("birli_1254670392.none.uvfits");
         let metafits_path = PathBuf::from("tests/data/1254670392_avg/1254670392.metafits");
-
 
         let expected_csv_path =
             PathBuf::from("tests/data/1254670392_avg/pyuvdata_1254670392.none.csv");
@@ -4163,33 +4114,8 @@ EOF
         );
     }
 
-    // Test generated with:
-    #[rustfmt::skip]
-    /*
-# python -m pip install pyuvdata
-# or . ../pyuvdata/.venv/bin/activate
-
-
-#? uvd.phase(lon=0, lat=-27, epoch="J2000", cat_name='eor0')
-
-python - <<EOF
-from pyuvdata import UVData
-paths = [
-    'tests/data/1254670392_avg/1254670392.fixed.metafits',
-    'tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits'
-]
-dump_csv = "tests/data/1254670392_avg/pyuvdata_1254670392.vvnoc.csv"
-exec(open('tests/data/pyuvdata_dump_csv.py').read())
-read_args = default_read_args.copy()
-read_args.update(correct_van_vleck=True)
-uvd = UVData()
-uvd.read_mwa_corr_fits( paths, **read_args )
-# dump to CSV
-dump_uvd(uvd, dump_csv)
-EOF
-    */
-
     /// compare birli uvfits agains VV with no chebychev approximation
+    /// Test generated with pyuvdat, see: tests/data/README.md#van-vleck-test-data
     #[test]
     fn compare_pyuvdata_vvnoc() {
         let tmp_dir = tempdir().unwrap();

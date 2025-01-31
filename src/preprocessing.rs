@@ -119,7 +119,7 @@ impl Display for PreprocessContext<'_> {
     }
 }
 
-impl<'a> PreprocessContext<'a> {
+impl PreprocessContext<'_> {
     /// A one line description of the tasks preprocessing will do.
     pub fn as_comment(&self) -> String {
         [

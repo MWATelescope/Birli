@@ -12,6 +12,7 @@ authors = [
     "Luke A. Williams <luke.a.williams@curtin.edu.au>",
 ]
 edition = "2021"
+# before updating me, grep for other instances of this version number
 rust-version = "1.65"
 license = "MPL-2.0"
 keywords = ["radioastronomy", "mwa", "astronomy", "aoflagger", "cotter"]

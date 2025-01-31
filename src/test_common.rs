@@ -1,3 +1,4 @@
+//! Test utilities for comparing visibilities between different formats
 #![allow(clippy::cognitive_complexity)]
 #![allow(clippy::too_many_arguments)]
 
@@ -26,12 +27,14 @@ use std::{
 };
 
 #[macro_export]
+/// compare jones after converting to f32
 macro_rules! compare_jones {
     ($a:expr, $b:expr) => {
         assert_abs_diff_eq!(Jones::<f32>::from($a), Jones::<f32>::from($b));
     };
 }
 
+/// get raw file paths for the 1254670392 (averaged) dataset
 pub const fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
     let metafits_path = "tests/data/1254670392_avg/1254670392.fixed.metafits";
     let gpufits_paths = [
@@ -63,6 +66,7 @@ pub const fn get_1254670392_avg_paths() -> (&'static str, [&'static str; 24]) {
     (metafits_path, gpufits_paths)
 }
 
+/// get raw file paths for the 1119683928 (picket fence) dataset
 pub const fn get_1119683928_picket_paths() -> (&'static str, [&'static str; 24]) {
     let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
     let gpufits_paths = [
@@ -94,6 +98,7 @@ pub const fn get_1119683928_picket_paths() -> (&'static str, [&'static str; 24])
     (metafits_path, gpufits_paths)
 }
 
+/// get raw file paths for the 1297526432 mwax dataset
 pub const fn get_mwax_data_paths() -> (&'static str, [&'static str; 4]) {
     let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
     let gpufits_paths = [
@@ -111,11 +116,13 @@ pub(crate) fn get_1254670392_avg_context() -> CorrelatorContext {
     CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap()
 }
 
+/// get an mwalib correlator context for the mwax correlator
 pub fn get_mwax_context() -> CorrelatorContext {
     let (metafits_path, gpufits_paths) = get_mwax_data_paths();
     CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap()
 }
 
+/// get an mwalib correlator context for the legacy correlator
 pub fn get_mwa_ord_context() -> CorrelatorContext {
     let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
     let gpufits_paths = vec![
@@ -197,6 +204,7 @@ pub const fn decode_uvfits_baseline(bl: usize) -> (usize, usize) {
     }
 }
 
+/// test function to compare uvfits with csv
 pub fn compare_uvfits_with_csv(
     uvfits_path: &Path,
     expected_csv_path: PathBuf,
@@ -468,6 +476,7 @@ pub fn compare_uvfits_with_csv(
     }
 }
 
+/// Test helper, compare measurement set with csv
 // TODO: make this less shitty
 #[allow(clippy::cognitive_complexity)]
 pub fn compare_ms_with_csv(

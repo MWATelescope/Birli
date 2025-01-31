@@ -578,3 +578,84 @@ cargo run dump-all-data --vis-radix=16 --absolute \
   ../Birli/tests/data/1196175296_mwa_ord/1196175296_*.fits \
   | tee dump-1196175296-hex.log
 ```
+
+## Van Vleck test data
+
+generated using pyuvdata
+
+### `compare_pyuvdata_1196175296_mwa_ord_none`
+
+```bash
+# python -m pip install pyuvdata
+# or . ../pyuvdata/.venv/bin/activate
+# ? uvd.phase(lon=0, lat=-27, epoch="J2000", cat_name='eor0')
+
+python - <<EOF
+from pyuvdata import UVData
+paths = [
+    'tests/data/1196175296_mwa_ord/1196175296.metafits',
+    'tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits',
+    'tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits',
+    'tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits',
+    'tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits',
+]
+dump_csv = "tests/data/1196175296_mwa_ord/pyuvdata_1196175296.none.csv"
+exec(open('tests/data/pyuvdata_dump_csv.py').read())
+read_args = default_read_args.copy()
+uvd = UVData()
+uvd.read_mwa_corr_fits( paths, **read_args )
+
+# dump to CSV
+
+dump_uvd(uvd, dump_csv)
+EOF
+```
+
+### `compare_pyuvdata_1254670392_avg_none`
+
+```bash
+# python -m pip install pyuvdata
+# or . ../pyuvdata/.venv/bin/activate
+#? uvd.phase(lon=0, lat=-27, epoch="J2000", cat_name='eor0')
+
+python - <<EOF
+from pyuvdata import UVData
+paths = [
+    'tests/data/1254670392_avg/1254670392.fixed.metafits',
+    'tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits'
+]
+dump_csv = "tests/data/1254670392_avg/pyuvdata_1254670392.none.csv"
+exec(open('tests/data/pyuvdata_dump_csv.py').read())
+read_args = default_read_args.copy()
+uvd = UVData()
+uvd.read_mwa_corr_fits( paths, **read_args )
+# dump to CSV
+dump_uvd(uvd, dump_csv)
+EOF
+```
+
+### `compare_pyuvdata_vvnoc`
+
+```bash
+# python -m pip install pyuvdata
+# or . ../pyuvdata/.venv/bin/activate
+
+
+#? uvd.phase(lon=0, lat=-27, epoch="J2000", cat_name='eor0')
+
+python - <<EOF
+from pyuvdata import UVData
+paths = [
+    'tests/data/1254670392_avg/1254670392.fixed.metafits',
+    'tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits'
+]
+dump_csv = "tests/data/1254670392_avg/pyuvdata_1254670392.vvnoc.csv"
+exec(open('tests/data/pyuvdata_dump_csv.py').read())
+read_args = default_read_args.copy()
+read_args.update(correct_van_vleck=True)
+uvd = UVData()
+uvd.read_mwa_corr_fits( paths, **read_args )
+# dump to CSV
+dump_uvd(uvd, dump_csv)
+EOF
+```
