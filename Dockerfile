@@ -35,7 +35,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # # Get Rust
-ARG RUST_VERSION=1.80
+ARG RUST_VERSION=stable
 ENV RUSTUP_HOME=/opt/rust CARGO_HOME=/opt/cargo
 ENV PATH="${CARGO_HOME}/bin:${PATH}"
 RUN mkdir -m755 $RUSTUP_HOME $CARGO_HOME && ( \
