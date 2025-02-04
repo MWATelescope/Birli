@@ -49,6 +49,7 @@ RUN python -m pip install --force-reinstall --no-cache-dir \
     mwalib
 
 # installing aoflagger with `apt install aoflagger-dev` gives weird errors
+# looks like -j`nproc` also breaks arm64
 ARG AOFLAGGER_BRANCH=v3.4.0
 RUN git clone --depth 1 --branch=${AOFLAGGER_BRANCH} --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git /aoflagger && \
     cd /aoflagger && \
@@ -57,7 +58,7 @@ RUN git clone --depth 1 --branch=${AOFLAGGER_BRANCH} --recurse-submodules https:
     cmake $CMAKE_ARGS \
     -DENABLE_GUI=OFF \
     .. && \
-    make install -j`nproc` && \
+    make install && \
     ldconfig && \
     cd / && \
     rm -rf /aoflagger
