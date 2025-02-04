@@ -1803,8 +1803,9 @@ impl<'a> BirliContext<'a> {
                 };
             }
 
+            let sel_timestep_chunks = chunk_vis_sel.timestep_range.clone().chunks(*avg_time);
             izip!(
-                &chunk_vis_sel.timestep_range.clone().chunks(*avg_time),
+                &sel_timestep_chunks,
                 jones_array.axis_chunks_iter(Axis(0), *avg_time),
                 weight_array.axis_chunks_iter(Axis(0), *avg_time),
             )
