@@ -1,8 +1,7 @@
-FROM mwatelescope/mwalib:latest-python3.11-slim-bookworm
+FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8
-ARG DEBUG
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     automake \
@@ -20,12 +19,13 @@ RUN apt-get update \
     libboost-program-options-dev \
     libboost-system-dev \
     libboost-test-dev \
+    libcfitsio-dev \
     liberfa-dev \
     libexpat1-dev \
     libfftw3-dev \
     libhdf5-dev \
-    liblua5.3-dev \
     liblapack-dev \
+    liblua5.3-dev \
     libpng-dev \
     libssl-dev \
     libtool \
@@ -34,6 +34,21 @@ RUN apt-get update \
     zip \
     && rm -rf /var/lib/apt/lists/*
 
+# # Get Rust
+ARG RUST_VERSION=1.80
+ENV RUSTUP_HOME=/opt/rust CARGO_HOME=/opt/cargo
+ENV PATH="${CARGO_HOME}/bin:${PATH}"
+RUN mkdir -m755 $RUSTUP_HOME $CARGO_HOME && ( \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | env RUSTUP_HOME=$RUSTUP_HOME CARGO_HOME=$CARGO_HOME sh -s -- -y \
+    --profile=minimal \
+    --component llvm-tools \
+    --default-toolchain=${RUST_VERSION} \
+    )
+
+RUN python -m pip install --force-reinstall --no-cache-dir \
+    mwalib
+
+# installing aoflagger with `apt install aoflagger-dev` gives weird errors
 ARG AOFLAGGER_BRANCH=v3.4.0
 RUN git clone --depth 1 --branch=${AOFLAGGER_BRANCH} --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git /aoflagger && \
     cd /aoflagger && \
@@ -52,10 +67,11 @@ ENV PYTHONPATH="/usr/local/lib/"
 ADD . /birli
 WORKDIR /birli
 
+# e.g. docker build . --build-arg=TEST_SHIM=cargo\ test\ --release
 ARG TEST_SHIM=""
 RUN ${TEST_SHIM}
 
-RUN cargo install --path . --features aoflagger --locked $(test -z "$DEBUG" || echo "--debug") \
-    && cargo clean
+RUN cargo install --path . --locked --features=all-static && \
+    cargo clean
 
 ENTRYPOINT [ "/opt/cargo/bin/birli" ]

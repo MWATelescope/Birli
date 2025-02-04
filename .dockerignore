@@ -6,10 +6,6 @@ doc
 img
 scripts
 target
-*.ms
-*.uvfits
 *.tar
-*.metafits
-*.fits
 *.uvh5
 *.prof
