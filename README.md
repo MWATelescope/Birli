@@ -440,10 +440,10 @@ INPUT:
     <PATHS>...           GPUBox files to process
 
 SELECTION:
-        --no-sel-autos                [WIP] Deselect autocorrelations
-        --no-sel-flagged-ants         [WIP] Deselect flagged antennas
+        --no-sel-autos                Deselect autocorrelations
+        --no-sel-flagged-ants         Deselect flagged antennas
         --provided-chan-ranges        Only consider provided channels
-        --sel-ants <ANTS>...          [WIP] Antenna to select
+        --sel-ants <ANTS>...          Antenna indices to select
         --sel-chan-ranges <RANGES>    Select separate channel ranges
         --sel-time <MIN> <MAX>        Timestep index range (inclusive) to select
 
@@ -514,6 +514,7 @@ prepMS[/ CASA Measurement Set /]; class prepMS file;
 calSols[/"Calibration Solutions (.bin)"/]; class calSols file;
 mwaf[/"flags"/]; class mwaf file;
 
+sel[["Read selected chunk"]]; class sel proc;
 vv[["Van Vleck
 (iff <code>--van-vleck</code>)"]]; class vv proc;
 cableDel[["Cable Delays (unless
@@ -530,15 +531,36 @@ geometric[["Geometric Delays (unless
 <code>--no-geometric-delay</code>)"]]; class geometric proc;
 avg[["Averaging (see <code>--avg-*</code>)"]]; class avg proc;
 
-metafits -->|"--metafits (-m)"| vv
-raw --> vv
-vv --> cableDel --> digGains --> PFB --> AOFlag ---> geometric
+metafits -->|"--metafits (-m)"| sel
+raw --> sel
+sel --> vv --> cableDel --> digGains --> PFB --> AOFlag ---> geometric
 AOFlag -->|"--flag-template (-f)"| mwaf
 calSols -->|"--apply-di-cal"| applyCal
 geometric --> applyCal --> avg
 avg -->|"--uvfits-out (-u)"| prepUVFits
 avg -->|"--ms-out (-M)"| prepMS
 ```
+
+### Data Selection
+
+Birli can select a subset of tiles (`--sel-ants`), coarse channels (`--sel-chan-ranges`), and
+timesteps (`--sel-time`) to process.
+
+Birli uses mwalib to read raw files, and so selections along these axes are specified as zero-based
+indices determined by mwalib.
+
+- `--sel-ants` uses [mwalib antenna indices](https://docs.rs/mwalib/latest/mwalib/struct.Antenna.html#structfield.ant) based on the order in which the antennas appear in the metafits file, not to be confused with the tile ID.
+- `--sel-chan-ranges` uses [mwalib coarse channel indices](https://docs.rs/mwalib/latest/mwalib/struct.CoarseChannel.html#structfield.corr_chan_number), ordered ascendingly by frequency, not to be confused with the gpubox number or sky channel number
+- `--sel-time` uses [mwalib timestep indices](https://github.com/MWATelescope/mwalib/blob/223a0b64e57f2098627d66aed267a344ed0201f3/src/timestep/mod.rs#L163), ordered ascendingly by time, not to be confused with the unix timestamp.
+
+The MWA monitor and control system can sometimes flag antennas in the metafits file which should be
+considered unreliable. To ignore these antennas, use `--no-flag-metafits`.
+
+See [antenna flagging](#antenna-flagging) for details on how to flag antennas.
+Use `--no-sel-flagged-ants` to ignore antennas that are flagged.
+
+By default, Birli will also process autocorrelation baselines. To reduce wasted processing time and
+storage footprint, use `--no-sel-autos` to ignore autocorrelations.
 
 ### Van Vleck Corrections
 
@@ -584,6 +606,41 @@ The `cotter` gains were source from Cotter's `_sb128ChannelSubbandValue2014FromM
 The `jake` gains (credit to Jake Jones) are described in [this wiki article](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24972979/RRI+Receiver+PFB+Filter)
 
 When applying pfb gains to an observation that is not at the same resolution as the gains, the gains need to be averaged to fit the data, and the exact details of this averaging depends on the correlator type. For more dtails, see the mwa wiki on [averaging fine channels](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24972939/MWA+Fine+Channel+Centre+Frequencies)
+
+### Channel Flagging
+
+Most MWA observations are made with a critically sampled PFB, which is naturally
+less sensitive to signals at the edges of each coarse channel.
+Birli can flag the first and last `--flag-edge-chans` channels of each coarse channel,
+or the first and last `--flag-edge-width` kHz of each coarse channel.
+
+There is no established default value for edge channel flagging, but somewhere between 40-160kHz
+is usually good. Oversampled ovservations will not need edge channel flags.
+
+The fourier transform of each coarse channel signal results in a DC bin at the center of the
+coarse channel. For legacy correlator observations, where this is done at 10kHz, the
+DC bin is noticeable in waterfall plots, and should be ignored. The MWAX correlator
+does this at 200Hz, and so flagging the DC bin is not necessary.
+
+Birli will only flag the DC bin for legacy correlator observations. You can override this with
+`--flag-dc` or `--no-flag-dc`.
+
+You can provide a set of fine channel indices within each coarse channel to flag using `--flag-fine-chans`,
+or a set of coarse channel indices to flag using `--flag-coarse-chans`.
+
+### Timestp Flagging
+
+The first couple of seconds of data are often unusable due to the time it takes for changes to take
+effect. This is known as quack time, and is usually around 2 seconds. Birli will automatically flag
+these timesteps. You can optionally provide `--flag-init` to override the quack time, or `--flag-init-steps`
+to specify this in terms of the number of timesteps.
+
+Sometimes, last few seconds of data are unusable, and so `--flag-end` or `--flag-end-steps` are used.
+
+### Antenna flagging
+
+Birli can flag antennas by mwalib antenna index using the `--flag-antennas` option.
+This is useful for removing antennas that are known to be faulty.
 
 ### RFI Flagging
 

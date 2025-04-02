@@ -134,6 +134,15 @@ impl FlagContext {
         result
     }
 
+    /// Get the mwalib antenna indices which are flagged
+    pub fn get_flagged_antenna_idxs(&self) -> Vec<usize> {
+        self.antenna_flags
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &flag)| if flag { Some(i) } else { None })
+            .collect()
+    }
+
     /// Produce a vector of flags for baslines where either antenna is flagged in `antenna_flags`
     /// or if `autos` is true and it is an autocorrelation.
     pub fn get_baseline_flags(&self, ant_pairs: &[(usize, usize)]) -> Vec<bool> {
