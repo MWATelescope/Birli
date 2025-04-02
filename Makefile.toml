@@ -101,13 +101,14 @@ $SUDO apt-get install -y \
     libxml2-dev \
     python3
 cd /tmp
-[ -d "aoflagger" ] && rm -rf aoflagger
-git clone --recurse-submodules https://gitlab.com/aroffringa/aoflagger.git --branch v3.4.0
-cd aoflagger
+[ -d "aoflagger-v3.4.0" ] && rm -rf aoflagger-v3.4.0
+wget -O aoflagger.tar.bz2 https://gitlab.com/aroffringa/aoflagger/-/package_files/96704214/download
+tar -xjf aoflagger.tar.bz2
+cd aoflagger-v3.4.0
 chmod a+rwx .
 mkdir build
 cd build
-cmake ..
+cmake .. -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 make -j $(nproc)
 $SUDO make install
 """
