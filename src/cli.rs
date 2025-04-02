@@ -1120,6 +1120,7 @@ impl<'a> BirliContext<'a> {
                 _ => return Err(err.into()),
             },
         };
+        flag_ctx.finalise_flag_settings(corr_ctx);
         Ok(flag_ctx)
     }
 
@@ -1879,65 +1880,16 @@ impl<'a> BirliContext<'a> {
 }
 
 #[cfg(test)]
-#[cfg(feature = "aoflagger")]
-mod tests {
+mod argparse_tests {
+    use marlu::RADec;
+
     use approx::{assert_abs_diff_eq, assert_abs_diff_ne};
-    use tempfile::tempdir;
 
     use crate::{
         passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
         test_common::{get_1254670392_avg_paths, get_mwax_data_paths},
         BirliContext, BirliError, VisSelection,
     };
-
-    #[test]
-    fn test_birli_context_display_doesnt_crash() {
-        let tmp_dir = tempdir().unwrap();
-        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
-        let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
-
-        #[rustfmt::skip]
-        let mut args = vec![
-            "birli",
-            "-m", metafits_path,
-            "-u", uvfits_path.to_str().unwrap(),
-            "--no-digital-gains",
-            "--no-draw-progress",
-            "--pfb-gains", "none",
-            "--no-cable-delay",
-            "--no-geometric-delay",
-            "--emulate-cotter",
-        ];
-        args.extend_from_slice(&gpufits_paths);
-
-        let birli_ctx = BirliContext::from_args(&args).unwrap();
-
-        assert!(!birli_ctx.prep_ctx.correct_cable_lengths);
-        assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
-        assert!(!birli_ctx.prep_ctx.correct_digital_gains);
-        assert!(!birli_ctx.prep_ctx.correct_geometry);
-        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
-        assert_eq!(
-            birli_ctx.io_ctx.metafits_in.display().to_string(),
-            metafits_path
-        );
-
-        let display = format!("{}", &birli_ctx);
-        assert!(display.contains("high_2019B_2458765_EOR0"));
-        assert!(display.contains("Will not correct cable lengths"));
-        assert!(display.contains("Will not correct digital gains"));
-        assert!(display.contains("Will not correct coarse pfb passband gains"));
-        assert!(display.contains("Will flag with aoflagger"));
-        assert!(display.contains("Will not correct geometry"));
-
-        let comment = birli_ctx.prep_ctx.as_comment();
-
-        assert!(!comment.contains("cable length corrections"));
-        assert!(!comment.contains("digital gains"));
-        assert!(!comment.contains("pfb gains"));
-        assert!(comment.contains("aoflagging with"));
-        assert!(!comment.contains("geometric corrections"));
-    }
 
     /// Middle channel rounded-down is DC flagged when `flag_dc` is set.
     #[test]
@@ -1950,7 +1902,7 @@ mod tests {
             "-m", metafits_path,
             "--no-draw-progress",
             "--emulate-cotter",
-           "--flag-init", "0",
+            "--flag-init", "0",
             gpufits_paths[0],
             gpufits_paths[1],
         ];
@@ -2306,13 +2258,6 @@ mod tests {
             Err(BirliError::CLIError(_))
         ));
     }
-}
-
-#[cfg(test)]
-mod argparse_tests {
-    use marlu::RADec;
-
-    use crate::{error::BirliError, test_common::get_1254670392_avg_paths, BirliContext};
 
     #[test]
     fn test_parse_missing_input() {
@@ -3012,6 +2957,55 @@ mod tests_aoflagger {
         test_common::{compare_ms_with_csv, compare_uvfits_with_csv, get_1254670392_avg_paths},
         BirliContext,
     };
+
+    #[test]
+    fn test_birli_context_display_doesnt_crash() {
+        let tmp_dir = tempdir().unwrap();
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+        let uvfits_path = tmp_dir.path().join("1254670392.none.uvfits");
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", metafits_path,
+            "-u", uvfits_path.to_str().unwrap(),
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains", "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--emulate-cotter",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+
+        assert!(!birli_ctx.prep_ctx.correct_cable_lengths);
+        assert_eq!(birli_ctx.prep_ctx.passband_gains, None);
+        assert!(!birli_ctx.prep_ctx.correct_digital_gains);
+        assert!(!birli_ctx.prep_ctx.correct_geometry);
+        assert!(birli_ctx.prep_ctx.aoflagger_strategy.is_some());
+        assert_eq!(
+            birli_ctx.io_ctx.metafits_in.display().to_string(),
+            metafits_path
+        );
+
+        let display = format!("{}", &birli_ctx);
+        assert!(display.contains("high_2019B_2458765_EOR0"));
+        assert!(display.contains("Will not correct cable lengths"));
+        assert!(display.contains("Will not correct digital gains"));
+        assert!(display.contains("Will not correct coarse pfb passband gains"));
+        assert!(display.contains("Will flag with aoflagger"));
+        assert!(display.contains("Will not correct geometry"));
+
+        let comment = birli_ctx.prep_ctx.as_comment();
+
+        assert!(!comment.contains("cable length corrections"));
+        assert!(!comment.contains("digital gains"));
+        assert!(!comment.contains("pfb gains"));
+        assert!(comment.contains("aoflagging with"));
+        assert!(!comment.contains("geometric corrections"));
+    }
 
     #[test]
     fn compare_cotter_uvfits_nocorrect_rfi() {
