@@ -552,6 +552,28 @@ pub fn write_flags(
     Ok(())
 }
 
+/// Get the weight factor of an observation's `corr_ctx`.
+///
+/// This is a concept from Cotter, and the legacy MWA correlator where the value
+/// is a multiple of the frequency averaging factor (relative to 10kHz), and the
+/// time averaging factor (relative to 1s). These factors have been moved to
+/// Marlu for better visibility.
+pub fn get_weight_factor(corr_ctx: &CorrelatorContext) -> f64 {
+    let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
+    let fine_chan_width_hz = corr_ctx.metafits_context.corr_fine_chan_width_hz as f64;
+    (fine_chan_width_hz / marlu::constants::FREQ_WEIGHT_FACTOR)
+        * (integration_time_s / marlu::constants::TIME_WEIGHT_FACTOR)
+}
+
+/// Convert the given ndarray of boolean flags to an ndarray of float weights
+#[allow(clippy::needless_pass_by_value)]
+pub fn flag_to_weight_array<D>(flag_array: ArrayView<bool, D>, weight_factor: f64) -> Array<f32, D>
+where
+    D: Dimension,
+{
+    flag_array.map(|f| if *f { -weight_factor } else { weight_factor } as f32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::write_flags;
@@ -700,28 +722,6 @@ mod tests {
             );
         }
     }
-}
-
-/// Get the weight factor of an observation's `corr_ctx`.
-///
-/// This is a concept from Cotter, and the legacy MWA correlator where the value
-/// is a multiple of the frequency averaging factor (relative to 10kHz), and the
-/// time averaging factor (relative to 1s). These factors have been moved to
-/// Marlu for better visibility.
-pub fn get_weight_factor(corr_ctx: &CorrelatorContext) -> f64 {
-    let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
-    let fine_chan_width_hz = corr_ctx.metafits_context.corr_fine_chan_width_hz as f64;
-    (fine_chan_width_hz / marlu::constants::FREQ_WEIGHT_FACTOR)
-        * (integration_time_s / marlu::constants::TIME_WEIGHT_FACTOR)
-}
-
-/// Convert the given ndarray of boolean flags to an ndarray of float weights
-#[allow(clippy::needless_pass_by_value)]
-pub fn flag_to_weight_array<D>(flag_array: ArrayView<bool, D>, weight_factor: f64) -> Array<f32, D>
-where
-    D: Dimension,
-{
-    flag_array.map(|f| if *f { -weight_factor } else { weight_factor } as f32)
 }
 
 #[cfg(test)]
