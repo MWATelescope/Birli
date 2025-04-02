@@ -11,7 +11,8 @@ use cfg_if::cfg_if;
 use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
 use indicatif::{ProgressDrawTarget, ProgressStyle};
 use itertools::{izip, Itertools};
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace};
+use marlu::mwalib::MetafitsContext;
 use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, CableDelaysApplied, CorrelatorContext,
     GeometricDelaysApplied, MWAVersion,
@@ -656,13 +657,13 @@ impl<'a> BirliContext<'a> {
                     .help_heading("SELECTION")
                     .value_names(&["MIN", "MAX"])
                     .required(false),
-                arg!(--"sel-ants" <ANTS>... "[WIP] Antenna to select")
+                arg!(--"sel-ants" <ANTS>... "Antenna indices to select")
                     .help_heading("SELECTION")
                     .multiple_values(true)
                     .required(false),
-                arg!(--"no-sel-flagged-ants" "[WIP] Deselect flagged antennas")
+                arg!(--"no-sel-flagged-ants" "Deselect flagged antennas")
                     .help_heading("SELECTION"),
-                arg!(--"no-sel-autos" "[WIP] Deselect autocorrelations")
+                arg!(--"no-sel-autos" "Deselect autocorrelations")
                     .help_heading("SELECTION"),
 
                 arg!(--"sel-chan-ranges" <RANGES> "Select separate channel ranges")
@@ -833,18 +834,25 @@ impl<'a> BirliContext<'a> {
 
     fn parse_vis_sel_matches(
         corr_ctx: &CorrelatorContext,
+        flag_ctx: &FlagContext,
         matches: &clap::ArgMatches,
     ) -> Result<VisSelection, BirliError> {
         let mut vis_sel = VisSelection::from_mwalib(corr_ctx).unwrap();
+        let CorrelatorContext {
+            metafits_context: meta_ctx,
+            num_timesteps,
+            ..
+        } = corr_ctx;
+        let MetafitsContext { num_ants, .. } = meta_ctx;
         match matches
             .values_of_t::<usize>("sel-time")
             .map(|v| (v[0], v[1]))
         {
             Ok((from, to)) => {
-                if from > to || to >= corr_ctx.num_timesteps {
+                if from > to || to >= *num_timesteps {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--sel-time <FROM> <TO>".into(),
-                        expected: format!("from <= to < num_timesteps={}", corr_ctx.num_timesteps),
+                        expected: format!("from <= to < num_timesteps={}", num_timesteps),
                         received: format!("from={from} to={to}"),
                     }));
                 }
@@ -858,13 +866,10 @@ impl<'a> BirliContext<'a> {
         match matches.values_of_t::<usize>("sel-ants") {
             Ok(antenna_idxs) => {
                 for (value_idx, &antenna_idx) in antenna_idxs.iter().enumerate() {
-                    if antenna_idx >= corr_ctx.metafits_context.num_ants {
+                    if antenna_idx >= *num_ants {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--sel-ants <ANTS>...".into(),
-                            expected: format!(
-                                "antenna_idx < num_ants={}",
-                                corr_ctx.metafits_context.num_ants
-                            ),
+                            expected: format!("antenna_idx < num_ants={}", num_ants),
                             received: format!(
                                 "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
                             ),
@@ -872,18 +877,41 @@ impl<'a> BirliContext<'a> {
                     }
                 }
                 // filter vis_sel.baseline_idxs that correspond with antennas not in antenna_idxs
-                vis_sel.baseline_idxs.retain(|idx| {
-                    let (ant1, ant2) = (
-                        corr_ctx.metafits_context.baselines[*idx].ant1_index,
-                        corr_ctx.metafits_context.baselines[*idx].ant2_index,
-                    );
-                    antenna_idxs.contains(&ant1) && antenna_idxs.contains(&ant2)
-                });
+                vis_sel.retain_antennas(meta_ctx, &antenna_idxs);
+                // if no baselines are selected, return an error
+                if vis_sel.baseline_idxs.is_empty() {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--sel-ants <ANTS>...".into(),
+                        expected: "at least one baseline matched".into(),
+                        received: format!("antenna_idxs={antenna_idxs:?}"),
+                    }));
+                }
             }
             Err(err) => match err.kind() {
                 ArgumentNotFound { .. } => {}
                 _ => return Err(err.into()),
             },
+        }
+        if matches.is_present("no-sel-flagged-ants") {
+            let flagged_antenna_idxs = flag_ctx.get_flagged_antenna_idxs();
+            vis_sel.filter_antennas(meta_ctx, &flagged_antenna_idxs);
+            if vis_sel.baseline_idxs.is_empty() {
+                return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "--no-sel-flagged-ants".into(),
+                    expected: "at least one baseline matched".into(),
+                    received: "".into(),
+                }));
+            }
+        }
+        if matches.is_present("no-sel-autos") {
+            vis_sel.filter_autos(meta_ctx);
+            if vis_sel.baseline_idxs.is_empty() {
+                return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "--no-sel-autos".into(),
+                    expected: "at least one baseline matched".into(),
+                    received: "".into(),
+                }));
+            }
         }
         Ok(vis_sel)
     }
@@ -917,16 +945,26 @@ impl<'a> BirliContext<'a> {
         matches: &clap::ArgMatches,
     ) -> Result<FlagContext, BirliError> {
         let mut flag_ctx = FlagContext::from_mwalib(corr_ctx);
+        let CorrelatorContext {
+            metafits_context: meta_ctx,
+            num_timesteps,
+            num_coarse_chans,
+            ..
+        } = corr_ctx;
+        let MetafitsContext {
+            num_corr_fine_chans_per_coarse: fine_chans_per_coarse,
+            corr_fine_chan_width_hz,
+            corr_int_time_ms,
+            num_ants,
+            ..
+        } = meta_ctx;
         match matches.values_of_t::<usize>("flag-times") {
             Ok(timestep_idxs) => {
                 for (value_idx, &timestep_idx) in timestep_idxs.iter().enumerate() {
-                    if timestep_idx >= corr_ctx.num_timesteps {
+                    if timestep_idx >= *num_timesteps {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--flag-times <TIMESTEPS>...".into(),
-                            expected: format!(
-                                "timestep_idx < num_timesteps={}",
-                                corr_ctx.num_timesteps
-                            ),
+                            expected: format!("timestep_idx < num_timesteps={}", *num_timesteps),
                             received: format!(
                                 "timestep_idxs[{value_idx}]={timestep_idx}. all:{timestep_idxs:?}"
                             ),
@@ -943,12 +981,12 @@ impl<'a> BirliContext<'a> {
         match matches.values_of_t::<usize>("flag-coarse-chans") {
             Ok(coarse_chan_idxs) => {
                 for (value_idx, &coarse_chan_idx) in coarse_chan_idxs.iter().enumerate() {
-                    if coarse_chan_idx >= corr_ctx.num_coarse_chans {
+                    if coarse_chan_idx >= *num_coarse_chans {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--flag-coarse-chans <CHANS>...".into(),
                             expected: format!(
                                 "coarse_chan_idx < num_coarse_chans={}",
-                                corr_ctx.num_coarse_chans
+                                num_coarse_chans
                             ),
                             received: format!(
                                 "coarse_chan_idxs[{value_idx}]={coarse_chan_idx}. all:{coarse_chan_idxs:?}"
@@ -963,11 +1001,10 @@ impl<'a> BirliContext<'a> {
                 _ => return Err(err.into()),
             },
         };
-        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
         match matches.values_of_t::<usize>("flag-fine-chans") {
             Ok(fine_chan_idxs) => {
                 for (value_idx, &fine_chan_idx) in fine_chan_idxs.iter().enumerate() {
-                    if fine_chan_idx >= fine_chans_per_coarse {
+                    if fine_chan_idx >= *fine_chans_per_coarse {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--flag-fine-chans <CHANS>...".into(),
                             expected: format!(
@@ -994,13 +1031,10 @@ impl<'a> BirliContext<'a> {
         match matches.values_of_t::<usize>("flag-antennas") {
             Ok(antenna_idxs) => {
                 for (value_idx, &antenna_idx) in antenna_idxs.iter().enumerate() {
-                    if antenna_idx >= corr_ctx.metafits_context.num_ants {
+                    if antenna_idx >= *num_ants {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--flag-antennas <ANTS>...".into(),
-                            expected: format!(
-                                "antenna_idx < num_ants={}",
-                                corr_ctx.metafits_context.num_ants
-                            ),
+                            expected: format!("antenna_idx < num_ants={}", *num_ants),
                             received: format!(
                                 "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
                             ),
@@ -1041,7 +1075,7 @@ impl<'a> BirliContext<'a> {
         };
         match matches.value_of_t::<usize>("flag-edge-width") {
             Ok(width) => {
-                let fine_chan_width = corr_ctx.metafits_context.corr_fine_chan_width_hz / 1000;
+                let fine_chan_width = *corr_fine_chan_width_hz / 1000;
                 let n = width as f32 / fine_chan_width as f32;
                 if (n - n.floor()).abs() > 0.00001 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
@@ -1066,7 +1100,7 @@ impl<'a> BirliContext<'a> {
         };
         match matches.value_of_t::<f32>("flag-init") {
             Ok(init_time) => {
-                let d = corr_ctx.metafits_context.corr_int_time_ms as f32 / 1000.0;
+                let d = *corr_int_time_ms as f32 / 1000.0;
                 if init_time % d < 0.000001 {
                     flag_ctx.flag_init = init_time;
                 } else {
@@ -1084,7 +1118,7 @@ impl<'a> BirliContext<'a> {
         };
         match matches.value_of_t::<f32>("flag-end") {
             Ok(end_time) => {
-                let d = corr_ctx.metafits_context.corr_int_time_ms as f32 / 1000.0;
+                let d = *corr_int_time_ms as f32 / 1000.0;
                 if end_time % d < 0.000001 {
                     flag_ctx.flag_end = end_time;
                 } else {
@@ -1102,8 +1136,7 @@ impl<'a> BirliContext<'a> {
         };
         match matches.value_of_t::<u32>("flag-init-steps") {
             Ok(init_steps) => {
-                flag_ctx.flag_init =
-                    init_steps as f32 * corr_ctx.metafits_context.corr_int_time_ms as f32 / 1000.0;
+                flag_ctx.flag_init = init_steps as f32 * *corr_int_time_ms as f32 / 1000.0;
             }
             Err(err) => match err.kind() {
                 ArgumentNotFound { .. } => {}
@@ -1112,8 +1145,7 @@ impl<'a> BirliContext<'a> {
         };
         match matches.value_of_t::<u32>("flag-end-steps") {
             Ok(end_steps) => {
-                flag_ctx.flag_end =
-                    end_steps as f32 * corr_ctx.metafits_context.corr_int_time_ms as f32 / 1000.0;
+                flag_ctx.flag_end = end_steps as f32 * *corr_int_time_ms as f32 / 1000.0;
             }
             Err(err) => match err.kind() {
                 ArgumentNotFound { .. } => {}
@@ -1137,6 +1169,16 @@ impl<'a> BirliContext<'a> {
         matches: &clap::ArgMatches,
         corr_ctx: &CorrelatorContext,
     ) -> Result<(usize, usize), BirliError> {
+        let CorrelatorContext {
+            metafits_context: meta_ctx,
+            ..
+        } = corr_ctx;
+        let MetafitsContext {
+            corr_int_time_ms,
+            corr_fine_chan_width_hz,
+            ..
+        } = meta_ctx;
+
         let avg_time: usize = match (
             matches.value_of_t::<usize>("avg-time-factor"),
             matches.value_of_t::<f64>("avg-time-res"),
@@ -1159,7 +1201,7 @@ impl<'a> BirliContext<'a> {
                 factor
             }
             (_, Ok(res)) => {
-                let int_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1e3;
+                let int_time_s = *corr_int_time_ms as f64 / 1e3;
                 let ratio = res / int_time_s;
                 if ratio.is_infinite() || ratio.fract() > 1e-6 || ratio < 1.0 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
@@ -1194,8 +1236,7 @@ impl<'a> BirliContext<'a> {
                 factor
             }
             (_, Ok(res)) => {
-                let fine_chan_width_khz =
-                    corr_ctx.metafits_context.corr_fine_chan_width_hz as f64 / 1e3;
+                let fine_chan_width_khz = *corr_fine_chan_width_hz as f64 / 1e3;
                 let ratio = res / fine_chan_width_khz;
                 if ratio.is_infinite() || ratio.fract() > 1e-6 || ratio < 1.0 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
@@ -1219,7 +1260,14 @@ impl<'a> BirliContext<'a> {
         avg_time: usize,
         vis_sel: &VisSelection,
     ) -> Result<Option<usize>, BirliError> {
-        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let CorrelatorContext {
+            metafits_context: meta_ctx,
+            ..
+        } = corr_ctx;
+        let MetafitsContext {
+            num_corr_fine_chans_per_coarse: fine_chans_per_coarse,
+            ..
+        } = meta_ctx;
         let num_timesteps_per_chunk: Option<usize> = match (
             matches.value_of_t::<usize>("time-chunk"),
             matches.value_of_t::<f64>("max-memory"),
@@ -1252,7 +1300,7 @@ impl<'a> BirliContext<'a> {
                         received: format!("{max_mem_bytes}B"),
                     }));
                 }
-                let bytes_selected = vis_sel.estimate_bytes_best(fine_chans_per_coarse);
+                let bytes_selected = vis_sel.estimate_bytes_best(*fine_chans_per_coarse);
                 let bytes_per_timestep = bytes_selected / vis_sel.timestep_range.len();
                 let bytes_per_avg_time = bytes_per_timestep * avg_time;
                 if max_mem_bytes < bytes_selected as f64 {
@@ -1287,6 +1335,11 @@ impl<'a> BirliContext<'a> {
             draw_progress: !matches.is_present("no-draw-progress"),
             ..PreprocessContext::default()
         };
+        let CorrelatorContext {
+            metafits_context: meta_ctx,
+            mwa_version,
+            ..
+        } = corr_ctx;
         prep_ctx.array_pos = if matches.is_present("emulate-cotter") {
             info!("Using array position from Cotter.");
             LatLngHeight {
@@ -1309,23 +1362,23 @@ impl<'a> BirliContext<'a> {
                 unreachable!("--phase-centre conflicts with --pointing-centre, enforced by clap");
             }
             (Ok((ra, dec)), _) => RADec::from_degrees(ra, dec),
-            (_, true) => RADec::from_mwalib_tile_pointing(&corr_ctx.metafits_context),
-            _ => RADec::from_mwalib_phase_or_pointing(&corr_ctx.metafits_context),
+            (_, true) => RADec::from_mwalib_tile_pointing(meta_ctx),
+            _ => RADec::from_mwalib_phase_or_pointing(meta_ctx),
         };
-        prep_ctx.correct_van_vleck = match (matches.is_present("van-vleck"), corr_ctx.mwa_version) {
+        prep_ctx.correct_van_vleck = match (matches.is_present("van-vleck"), mwa_version) {
             (true, MWAVersion::CorrLegacy) => true,
             (true, _) => {
                 return Err(BirliError::CLIError(InvalidCommandLineArgument {
                     option: "--van-vleck".into(),
                     expected: "legacy correlator files".into(),
-                    received: corr_ctx.mwa_version.to_string(),
+                    received: mwa_version.to_string(),
                 }))
             }
             _ => false,
         };
         prep_ctx.correct_cable_lengths = {
             let cable_delays_disabled = matches.is_present("no-cable-delay");
-            let cable_delays_applied = corr_ctx.metafits_context.cable_delays_applied;
+            let cable_delays_applied = meta_ctx.cable_delays_applied;
             debug!(
                 "cable corrections: applied={}, disabled={}",
                 cable_delays_applied, cable_delays_disabled
@@ -1340,7 +1393,7 @@ impl<'a> BirliContext<'a> {
             None | Some("none") => None,
             Some("jake") => Some(PFB_JAKE_2022_200HZ),
             Some("cotter") => Some(PFB_COTTER_2014_10KHZ),
-            Some("auto") => match corr_ctx.mwa_version {
+            Some("auto") => match mwa_version {
                 MWAVersion::CorrMWAXv2 => Some(PFB_JAKE_2022_200HZ),
                 MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy => Some(PFB_COTTER_2014_10KHZ),
                 #[rustfmt::skip]
@@ -1350,7 +1403,7 @@ impl<'a> BirliContext<'a> {
         };
         prep_ctx.correct_geometry = {
             let geometric_delays_disabled = matches.is_present("no-geometric-delay");
-            let geometric_delays_applied = corr_ctx.metafits_context.geometric_delays_applied;
+            let geometric_delays_applied = meta_ctx.geometric_delays_applied;
             debug!(
                 "geometric corrections: applied={:?}, disabled={}",
                 geometric_delays_applied, !geometric_delays_disabled
@@ -1394,32 +1447,15 @@ impl<'a> BirliContext<'a> {
         let matches = Self::get_matches(args)?;
         trace!("arg matches:\n{:?}", &matches);
 
-        for unimplemented_option in &["no-sel-autos", "no-sel-flagged-ants"] {
-            assert!(
-                !matches.is_present(unimplemented_option),
-                "option not yet implemented: --{unimplemented_option}"
-            );
-        }
-
-        for untested_option in &["sel-ants"] {
-            if matches.is_present(untested_option) {
-                warn!(
-                    "option does not have full test coverage, use with caution: --{}",
-                    untested_option
-                );
-            }
-        }
-
         let io_ctx = Self::parse_io_matches(&matches);
         let corr_ctx = io_ctx.get_corr_ctx()?;
         debug!("mwalib correlator context:\n{}", &corr_ctx);
-        let vis_sel = Self::parse_vis_sel_matches(&corr_ctx, &matches)?;
-        let mut flag_ctx = Self::parse_flag_matches(&corr_ctx, &matches)?;
+        let flag_ctx = Self::parse_flag_matches(&corr_ctx, &matches)?;
+        let vis_sel = Self::parse_vis_sel_matches(&corr_ctx, &flag_ctx, &matches)?;
         let prep_ctx = Self::parse_prep_matches(&matches, &corr_ctx)?;
         let (avg_time, avg_freq) = Self::parse_avg_matches(&matches, &corr_ctx)?;
         let num_timesteps_per_chunk =
             Self::parse_chunk_matches(&corr_ctx, &matches, avg_time, &vis_sel)?;
-        flag_ctx.finalise_flag_settings(&corr_ctx);
         let channel_range_sel = Self::parse_sel_chan_ranges(&corr_ctx, &matches)?;
         let result = Self {
             corr_ctx,
@@ -2257,6 +2293,79 @@ mod argparse_tests {
             BirliContext::from_args(&args),
             Err(BirliError::CLIError(_))
         ));
+    }
+
+    /// Test `--no-sel-flagged-ants` does not include flagged antennas in selection
+    #[test]
+    fn test_no_sel_flagged_ants() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--flag-antennas", "1", "2",
+            "--no-sel-flagged-ants",
+            "--no-draw-progress",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext {
+            flag_ctx, vis_sel, ..
+        } = BirliContext::from_args(&args).unwrap();
+
+        let flagged_ants = flag_ctx.get_flagged_antenna_idxs();
+        assert_eq!(flagged_ants.len(), 2);
+        assert!(flagged_ants.contains(&1));
+        assert!(flagged_ants.contains(&2));
+
+        assert_eq!(vis_sel.baseline_idxs.len(), 8001);
+        assert!(vis_sel.baseline_idxs.contains(&0));
+        assert!(!vis_sel.baseline_idxs.contains(&1));
+        assert!(!vis_sel.baseline_idxs.contains(&2));
+        assert!(vis_sel.baseline_idxs.contains(&3));
+        assert!(!vis_sel.baseline_idxs.contains(&128));
+        assert!(!vis_sel.baseline_idxs.contains(&129));
+        assert!(!vis_sel.baseline_idxs.contains(&130));
+        assert!(!vis_sel.baseline_idxs.contains(&254));
+        assert!(!vis_sel.baseline_idxs.contains(&255));
+        assert!(!vis_sel.baseline_idxs.contains(&256));
+        assert!(vis_sel.baseline_idxs.contains(&381));
+        assert!(vis_sel.baseline_idxs.contains(&8255));
+    }
+
+    /// Test `--no-sel-autos` does not include autos
+    #[test]
+    fn test_no_sel_autos() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-sel-autos",
+            "--no-draw-progress",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { vis_sel, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert_eq!(vis_sel.baseline_idxs.len(), 8128);
+        assert!(!vis_sel.baseline_idxs.contains(&0));
+        assert!(vis_sel.baseline_idxs.contains(&1));
+        assert!(vis_sel.baseline_idxs.contains(&2));
+        assert!(vis_sel.baseline_idxs.contains(&3));
+        assert!(!vis_sel.baseline_idxs.contains(&128));
+        assert!(vis_sel.baseline_idxs.contains(&129));
+        assert!(vis_sel.baseline_idxs.contains(&130));
+        assert!(vis_sel.baseline_idxs.contains(&254));
+        assert!(!vis_sel.baseline_idxs.contains(&255));
+        assert!(vis_sel.baseline_idxs.contains(&256));
+        assert!(!vis_sel.baseline_idxs.contains(&381));
+        assert!(vis_sel.baseline_idxs.contains(&8127));
+        assert!(!vis_sel.baseline_idxs.contains(&8255));
     }
 
     #[test]

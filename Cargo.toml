@@ -44,7 +44,7 @@ indicatif = { version = "0.17.0", features = ["rayon"] }
 itertools = "0.14.0"
 lazy_static = "1.4.0"
 log = "0.4.0"
-marlu = "0.15.0"
+marlu = "0.15.1"
 regex = "1.4.0"
 thiserror = "1.0.0"
 errorfunctions = "0.2.0"
@@ -66,7 +66,7 @@ csv = "1.1"
 float-cmp = "0.9"
 glob = "0.3"
 lexical = "7.0"
-marlu = { version = "0.15.0", features = ["approx"] }
+marlu = { version = "0.15.1", features = ["approx"] }
 ndarray = { version = "0.16.0", features = ["approx"] }
 tempfile = "3.3"
 
