@@ -1,10 +1,17 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.16.1 (2025-04-02)
+
+- ✨ new features:
+  - `--no-sel-flagged-ants`
+  - `--sel-ants`
+  - `--no-sel-autos`
+- ➕ marlu 0.15.1
+
 # Version 0.16.0 (2024-11-13)
 
 - ✨ new features:
   - add `--van-vleck` to correct for legacy correlator quantization
-
 - ➕ update mwalib 1.8.2 via Marlu 0.15
 - ➕ fitsio 0.21.6
 
