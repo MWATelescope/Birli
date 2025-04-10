@@ -1,5 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.17.0 (2025-04-10)
+
+- ➕ marlu 0.16.0 (with mwalib 1.8.7 to support observations with large numbers of tiles/antennas)
+- 🙏 quality of life:
+  - Fixed clippy lints
+
 # Version 0.16.1 (2025-04-02)
 
 - ✨ new features:

@@ -859,7 +859,7 @@ impl<'a> BirliContext<'a> {
                 vis_sel.timestep_range = from..(to + 1);
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         }
@@ -888,7 +888,7 @@ impl<'a> BirliContext<'a> {
                 }
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         }
@@ -974,7 +974,7 @@ impl<'a> BirliContext<'a> {
                 }
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         };
@@ -997,7 +997,7 @@ impl<'a> BirliContext<'a> {
                 }
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         };
@@ -1019,7 +1019,7 @@ impl<'a> BirliContext<'a> {
                 }
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         };
@@ -1044,7 +1044,7 @@ impl<'a> BirliContext<'a> {
                 }
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         };
@@ -1069,7 +1069,7 @@ impl<'a> BirliContext<'a> {
                 Self::flag_edge_channels(n, &mut flag_ctx.fine_chan_flags);
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         };
@@ -1094,7 +1094,7 @@ impl<'a> BirliContext<'a> {
                 Self::flag_edge_channels(n as usize, &mut flag_ctx.fine_chan_flags);
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         };
@@ -1112,7 +1112,7 @@ impl<'a> BirliContext<'a> {
                 }
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         };
@@ -1130,7 +1130,7 @@ impl<'a> BirliContext<'a> {
                 }
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         };
@@ -1139,7 +1139,7 @@ impl<'a> BirliContext<'a> {
                 flag_ctx.flag_init = init_steps as f32 * *corr_int_time_ms as f32 / 1000.0;
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         };
@@ -1148,7 +1148,7 @@ impl<'a> BirliContext<'a> {
                 flag_ctx.flag_end = end_steps as f32 * *corr_int_time_ms as f32 / 1000.0;
             }
             Err(err) => match err.kind() {
-                ArgumentNotFound { .. } => {}
+                ArgumentNotFound => {}
                 _ => return Err(err.into()),
             },
         };
@@ -1540,7 +1540,7 @@ impl<'a> BirliContext<'a> {
     ///
     /// can raise:
     /// - `BadArrayShape` if the shape of the calibration solutions
-    ///     is incompatible with the visibility shape.
+    ///   is incompatible with the visibility shape.
     /// - preprocessing errors
     pub fn run(&self) -> Result<(), BirliError> {
         let Self {
@@ -2378,7 +2378,7 @@ mod argparse_tests {
         match BirliContext::from_args(&args) {
             Err(BirliError::ClapError(inner)) => assert!(matches!(
                 inner.kind(),
-                clap::error::ErrorKind::MissingRequiredArgument { .. }
+                clap::error::ErrorKind::MissingRequiredArgument
             )),
             Err(e) => panic!("expected missing required argument error, not {e}"),
             Ok(_) => panic!("expected error, but got Ok(_)"),
@@ -2391,7 +2391,7 @@ mod argparse_tests {
         match BirliContext::from_args(&args) {
             Err(BirliError::ClapError(inner)) => assert!(matches!(
                 inner.kind(),
-                clap::error::ErrorKind::MissingRequiredArgument { .. }
+                clap::error::ErrorKind::MissingRequiredArgument
             )),
             Err(e) => panic!("expected missing required argument error, not {e}"),
             Ok(_) => panic!("expected error, but got Ok(_)"),

@@ -378,6 +378,7 @@ pub fn van_vleck_autos(hat: &[f64]) -> Vec<f64> {
 }
 
 #[allow(clippy::doc_markdown)]
+#[allow(unstable_name_collisions)]
 /// Generate quantized $\hat\sigma$ using Van Vleck relation.
 /// $$\hat\sigma(\sigma_i) = \left[ 7^2 - \sum_{k=0}^6(2k+1){\rm erf}\left({ k+0.5 \over \sigma_i\sqrt{2} }\right) \right]^{1/2}$$
 /// substitute $K=(k+0.5)$
