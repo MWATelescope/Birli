@@ -157,7 +157,7 @@ impl FlagFileSet {
     /// * `corr_ctx` is an [`mwalib::CorrelatorContext`].
     ///
     /// * `vis_sel` contains the selection of coarse channels, timesteps and
-    ///    baselines corresponding to the flags that will be written.
+    ///   baselines corresponding to the flags that will be written.
     ///
     /// * `aoflagger_version` is the version of `aoflagger` used to generate the
     ///   flags that will be provided to this `FlagFileSet`.
