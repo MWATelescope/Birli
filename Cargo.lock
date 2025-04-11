@@ -125,7 +125,7 @@ dependencies = [
 
 [[package]]
 name = "birli"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "aoflagger_sys",
  "approx",
@@ -1152,9 +1152,9 @@ checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
 name = "marlu"
-version = "0.16.0"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cbbcb9f712cd18c77560c8d84d6018b629c327dbdc161462af041e8d3ac25a2"
+checksum = "a22b2a223e3d76259ae1f7b6c8621a1fece7dd6b01a7583e1bf1b24a6bda0385"
 dependencies = [
  "approx",
  "built",
