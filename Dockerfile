@@ -72,7 +72,7 @@ WORKDIR /birli
 ARG TEST_SHIM=""
 RUN ${TEST_SHIM}
 
-RUN cargo install --path . --locked --features=all-static && \
+RUN cargo install --path . --locked --features=all-static,aoflagger && \
     cargo clean
 
 ENTRYPOINT [ "/opt/cargo/bin/birli" ]
