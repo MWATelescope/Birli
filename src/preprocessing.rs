@@ -259,17 +259,40 @@ impl PreprocessContext<'_> {
                 if let Some(strategy) = self.aoflagger_strategy.as_ref() {
                     trace!("using aoflagger");
                     let aoflagger = unsafe { cxx_aoflagger_new() };
+                    // Get antenna pairs and find cross-correlation baseline indices
+                    let cross_bl_indices: Vec<usize> = sel_ant_pairs.iter()
+                        .enumerate()
+                        .filter_map(|(bl_idx, (ant1, ant2))| {
+                            if ant1 != ant2 {
+                                Some(bl_idx)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    // Get views of all cross-correlation baselines at once
+                    let jones_selected = jones_array.select(Axis(2), &cross_bl_indices);
+                    let mut flag_selected = flag_array.select(Axis(2), &cross_bl_indices);
+                    let jones_view = jones_selected.view();
+                    let flag_view = flag_selected.view_mut();
+
                     with_increment_duration!(
                         "flag",
                         flag_jones_array_existing(
                             &aoflagger,
                             strategy,
-                            jones_array.view(),
-                            flag_array.view_mut(),
+                            jones_view,
+                            flag_view,
                             true,
                             self.draw_progress,
                         )
                     );
+
+                    // Copy the flags back to the original array
+                    for (i, bl_idx) in cross_bl_indices.iter().enumerate() {
+                        flag_array.slice_mut(s![.., .., *bl_idx]).assign(&flag_selected.slice(s![.., .., i]));
+                    }
                 }
             }
         }
@@ -482,5 +505,82 @@ mod tests {
         );
 
         assert!(matches!(result, Err(BirliError::BadMWAVersion { .. })));
+    }
+
+    #[cfg(feature = "aoflagger")]
+    #[test]
+    fn test_aoflagger_skips_autos() {
+        // Create a small test case with 3 antennas (0,1,2)
+        // This gives us 3 auto-correlations (0-0, 1-1, 2-2) and 3 cross-correlations (0-1, 0-2, 1-2)
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
+
+        // Create a selection with just 3 antennas
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.retain_antennas(&corr_ctx.metafits_context, &[0, 1, 2]);
+
+        // Allocate arrays
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let mut weight_array = vis_sel.allocate_weights(fine_chans_per_coarse).unwrap();
+
+        // Read data
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
+
+        // Create a PreprocessContext with AOFlagger enabled
+        let mut prep_ctx = PreprocessContext::default();
+        prep_ctx.draw_progress = false;
+
+        // Run preprocessing
+        prep_ctx
+            .preprocess(
+                &corr_ctx,
+                jones_array.view_mut(),
+                weight_array.view_mut(),
+                flag_array.view_mut(),
+                &vis_sel,
+            )
+            .unwrap();
+
+        // Get antenna pairs to identify auto and cross correlations
+        let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+
+        // Verify that auto-correlations are not flagged
+        for (bl_idx, (ant1, ant2)) in ant_pairs.iter().enumerate() {
+            if ant1 == ant2 {
+                // This is an auto-correlation, should not be flagged
+                let auto_flags = flag_array.slice(s![.., .., bl_idx]);
+                assert!(
+                    !auto_flags.iter().any(|&f| f),
+                    "Auto-correlation {}-{} was flagged by AOFlagger",
+                    ant1,
+                    ant2
+                );
+            }
+        }
+
+        // Verify that at least some cross-correlations were flagged
+        let mut any_cross_flagged = false;
+        for (bl_idx, (ant1, ant2)) in ant_pairs.iter().enumerate() {
+            if ant1 != ant2 {
+                let cross_flags = flag_array.slice(s![.., .., bl_idx]);
+                if cross_flags.iter().any(|&f| f) {
+                    any_cross_flagged = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            any_cross_flagged,
+            "No cross-correlations were flagged by AOFlagger"
+        );
     }
 }
