@@ -4,7 +4,7 @@ use crate::{
     correct_cable_lengths, correct_geometry,
     corrections::{correct_coarse_passband_gains, correct_digital_gains, ScrunchType},
     marlu::{mwalib::CorrelatorContext, ndarray::prelude::*, Jones, LatLngHeight, RADec},
-    van_vleck::correct_van_vleck,
+    van_vleck::{correct_van_vleck, get_vv_sample_scale},
     with_increment_duration, BirliError, VisSelection,
 };
 use cfg_if::cfg_if;
@@ -180,31 +180,32 @@ impl PreprocessContext<'_> {
         mut flag_array: ArrayViewMut3<bool>,
         vis_sel: &VisSelection,
     ) -> Result<(), BirliError> {
+        // get selected antenna pairs, and flagged antenna
         let sel_ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+        let flagged_ants = corr_ctx
+            .metafits_context
+            .antennas
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, ant)| {
+                if ant.rfinput_x.flagged || ant.rfinput_y.flagged {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let sample_scale = get_vv_sample_scale(corr_ctx)?;
 
         if self.correct_van_vleck {
             trace!("correcting van vleck");
-            // get flagged antennas
-            let flagged_ants = corr_ctx
-                .metafits_context
-                .antennas
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, ant)| {
-                    if ant.rfinput_x.flagged || ant.rfinput_y.flagged {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
             with_increment_duration!(
                 "correct_van_vleck",
                 correct_van_vleck(
-                    corr_ctx,
                     jones_array.view_mut(),
                     &sel_ant_pairs,
                     &flagged_ants,
+                    sample_scale,
                     self.draw_progress
                 )?
             );

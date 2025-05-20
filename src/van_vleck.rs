@@ -120,7 +120,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use birli::{correct_van_vleck, mwalib::CorrelatorContext, VisSelection, io::read_mwalib};
+/// use birli::{correct_van_vleck, get_vv_sample_scale, mwalib::CorrelatorContext, VisSelection, io::read_mwalib};
 ///
 /// // define our input files
 /// let metafits_path = "tests/data/1297526432_mwax/1297526432.metafits";
@@ -151,19 +151,19 @@ use thiserror::Error;
 ///         None
 ///     }
 /// }).collect::<Vec<_>>();
-/// correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, &flagged_ants, false).unwrap();
+/// let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
+/// correct_van_vleck(jones_array.view_mut(), &ant_pairs, &flagged_ants, sample_scale, false).unwrap();
 /// ```
 ///
 /// # Errors
 /// - [`VanVleckCorrection::BadArrayShape`] - The shape of the provided `ant_pairs` argument is incorrect.
 /// - [`VanVleckCorrection::NoUnflaggedAutos`] - There are no unflagged autocorrelations in the provided `ant_pairs`.
-/// - [`VanVleckCorrection::BadNSamples`] - The number of correlation samples (calculated from the correlator context) is less than 1.
 pub fn correct_van_vleck(
-    corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
     // baseline_idxs: &[usize],
     ant_pairs: &[(usize, usize)],
     flagged_ant_idxs: &[usize],
+    sample_scale: f64,
     draw_progress: bool,
 ) -> Result<(), VanVleckCorrection> {
     trace!("start correct_van_vleck");
@@ -177,21 +177,6 @@ pub fn correct_van_vleck(
             received: format!("{:?}", ant_pairs.len()),
         }));
     }
-
-    // scale the data by 1/2N, where N is the number of samples per fine channel
-    //  = channel width (Hz)
-    //  * integration time (s)
-    // circular symmetry gives a factor of two
-    // e.g. 40kHz * 2s = 160_000
-    let n2samples = corr_ctx.metafits_context.corr_fine_chan_width_hz
-        * corr_ctx.metafits_context.corr_int_time_ms as u32
-        / 500;
-    if n2samples < 1 {
-        return Err(VanVleckCorrection::BadNSamples {
-            nsamples: n2samples,
-        });
-    }
-    let sample_scale = n2samples as f64 * corr_ctx.bscale as f64;
 
     // ant_pair indices which are unflagged autocorrelations, list of corresponding antenna indices
     let (unflagged_auto_mask, unflagged_autos): (Vec<_>, Vec<_>) = ant_pairs
@@ -343,6 +328,29 @@ pub fn correct_van_vleck(
     trace!("end correct_van_vleck");
 
     Ok(())
+}
+
+/// Get the Van Vleck scale factor.
+///
+/// Scales the data by 1/2N, where N is the number of samples per fine channel
+///  = channel width (Hz)
+///  * integration time (s)
+/// circular symmetry gives a factor of two
+/// e.g. 40000Hz * 2s * 2 = 160000.
+///
+/// # Errors
+/// - [`VanVleckCorrection::BadNSamples`] - The number of correlation samples (calculated from the correlator context) is less than 1.
+pub fn get_vv_sample_scale(corr_ctx: &CorrelatorContext) -> Result<f64, VanVleckCorrection> {
+    let n2samples = corr_ctx.metafits_context.corr_fine_chan_width_hz
+        * corr_ctx.metafits_context.corr_int_time_ms as u32
+        / 500;
+    if n2samples < 1 {
+        return Err(VanVleckCorrection::BadNSamples {
+            nsamples: n2samples,
+        });
+    }
+    let sample_scale = n2samples as f64 * corr_ctx.bscale as f64;
+    Ok(sample_scale)
 }
 
 /// Use Newton's method to solve the inverse of `sighat_vector`.
@@ -512,8 +520,7 @@ mod vv_auto_tests {
     }
 
     #[test]
-    fn test_correct_van_vleck_autos_bad_nsamples() {
-        let vis_dims = (1, 1, 3);
+    fn test_bad_nsamples() {
         let mut corr_ctx = CorrelatorContext::new(
             "tests/data/1297526432_mwax/1297526432.metafits",
             &["tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits"],
@@ -522,14 +529,11 @@ mod vv_auto_tests {
         corr_ctx.metafits_context.corr_fine_chan_width_hz = 1;
         corr_ctx.metafits_context.corr_int_time_ms = 1;
 
-        let mut jones_array = Array3::<Jones<f32>>::zeros(vis_dims);
-
-        let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
-
         // assert error is BadNSamples
-        assert!(
-            correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, &[], false).is_err()
-        );
+        assert!(matches!(
+            get_vv_sample_scale(&corr_ctx),
+            Err(VanVleckCorrection::BadNSamples { .. })
+        ));
     }
     #[test]
     fn test_correct_van_vleck_autos_good() {
@@ -546,23 +550,15 @@ mod vv_auto_tests {
         let mut jones_array = Array3::<Jones<f32>>::zeros(vis_dims);
 
         jones_array[(0, 0, 0)][0].re = SIGHATS[0].powi(2) as f32;
-        // jones_array[(0, 0, 0)][1].re =
-        // jones_array[(0, 0, 0)][2].re =
         jones_array[(0, 0, 0)][3].re = SIGHATS[3].powi(2) as f32;
 
-        // jones_array[(0, 0, 1)][0].re =
-        // jones_array[(0, 0, 1)][1].re =
-        // jones_array[(0, 0, 1)][2].re =
-        // jones_array[(0, 0, 1)][3].re =
-
         jones_array[(0, 0, 2)][0].re = SIGHATS[8].powi(2) as f32;
-        // jones_array[(0, 0, 2)][1].re =
-        // jones_array[(0, 0, 2)][2].re =
         jones_array[(0, 0, 2)][3].re = SIGHATS[11].powi(2) as f32;
 
         let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
+        let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
 
-        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, &[], false).unwrap();
+        correct_van_vleck(jones_array.view_mut(), &ant_pairs, &[], sample_scale, false).unwrap();
 
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, SIGMAS[0].powi(2) as f32);
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][3].re, SIGMAS[3].powi(2) as f32);
@@ -1492,8 +1488,9 @@ mod vv_cross_tests {
         jones_array[(0, 0, 2)][3].re = sighats2[1].powi(2) as f32;
 
         let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
+        let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
 
-        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, &[], false).unwrap();
+        correct_van_vleck(jones_array.view_mut(), &ant_pairs, &[], sample_scale, false).unwrap();
 
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, sigmas1[0].powi(2) as f32);
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].re, kappas1[0] as f32, epsilon=1e-9);
@@ -1576,8 +1573,9 @@ mod vv_cross_tests {
 
         let ant_pairs = vec![(1, 1), (1, 2), (2, 2)];
         let flagged_ants = [2];
+        let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
 
-        correct_van_vleck(&corr_ctx, jones_array.view_mut(), &ant_pairs, &flagged_ants, false).unwrap();
+        correct_van_vleck(jones_array.view_mut(), &ant_pairs, &flagged_ants, sample_scale, false).unwrap();
 
         // ant1 is corrected, but ant2 isn't.
 

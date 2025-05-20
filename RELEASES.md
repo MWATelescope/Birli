@@ -1,5 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.18.0 (unreleased)
+
+- 🏗 api changes:
+  - `correct_van_vleck` now takes a `sample_scale` argument instead of a `CorrelatorContext`
+  - `get_vv_sample_scale` added to public API.
+
 # Version 0.17.1 (2025-04-11)
 
 - ➕ marlu 0.16.1
