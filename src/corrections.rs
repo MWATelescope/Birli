@@ -55,21 +55,25 @@ use thiserror::Error;
 /// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &vis_sel.baseline_idxs, false);
+/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &vis_sel.baseline_idxs);
 /// ```
 ///
 /// # Accuracy
 ///
 /// Corrections are performed in double precision, which is more accurate than
 /// Cotter.
+///
+/// # Errors
+///
+/// - Will throw [`BadArrayShape`] if:
+///     - `jones_array.dim().1 != coarse_chan_range.len() * num_fine_chans_per_coarse`
+///     - `jones_array.dim().2 != baseline_idxs.len()`
 pub fn correct_cable_lengths(
     corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
-    // TODO: take a VisSelection
     coarse_chan_range: &Range<usize>,
     baseline_idxs: &[usize],
-    draw_progress: bool,
-) {
+) -> Result<(), BadArrayShape> {
     trace!("start correct_cable_lengths");
 
     let meta_ctx = &corr_ctx.metafits_context;
@@ -87,24 +91,23 @@ pub fn correct_cable_lengths(
         })
         .collect::<Vec<_>>();
 
-    let draw_target = if draw_progress {
-        ProgressDrawTarget::stderr()
-    } else {
-        ProgressDrawTarget::hidden()
-    };
-
-    // Create a progress bar to show the status of the correction
-    let correction_progress =
-        ProgressBar::with_draw_target(Some(ant_pairs.len() as u64), draw_target);
-    correction_progress.set_style(
-        ProgressStyle::default_bar()
-            .template(
-                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
-            )
-            .unwrap()
-            .progress_chars("=> "),
-    );
-    correction_progress.set_message("cable corrections");
+    let vis_dims = jones_array.dim();
+    if vis_dims.1 != all_freqs_hz.len() {
+        return Err(BadArrayShape {
+            argument: "jones_array",
+            function: "correct_cable_lengths",
+            expected: format!("(vis_dims.1={}(all_freqs_hz.len()))", all_freqs_hz.len()),
+            received: format!("{:?}", vis_dims.1),
+        });
+    }
+    if vis_dims.2 != ant_pairs.len() {
+        return Err(BadArrayShape {
+            argument: "jones_array",
+            function: "correct_cable_lengths",
+            expected: format!("(vis_dims.2={}(ant_pairs.len()))", ant_pairs.len()),
+            received: format!("{:?}", vis_dims.2),
+        });
+    }
 
     jones_array
         .axis_iter_mut(Axis(2))
@@ -138,12 +141,10 @@ pub fn correct_cable_lengths(
                     *jones = Jones::<f32>::from(corrected);
                 }
             }
-            correction_progress.inc(1);
         });
 
-    correction_progress.finish();
-
     trace!("end correct_cable_lengths");
+    Ok(())
 }
 
 /// Perform geometric corrections, given an observation's
@@ -194,7 +195,7 @@ pub fn correct_cable_lengths(
 /// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &vis_sel.baseline_idxs, false);
+/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &vis_sel.baseline_idxs);
 ///
 /// correct_geometry(
 ///     &corr_ctx,
@@ -805,13 +806,13 @@ mod tests {
         // baseline 1, pol YY, chan 3 (cc 1, fc 1)
         let angle_1_yy_3: f64 = -2.0 * PI * length_m_1_yy * all_freqs_hz[3] / VEL_C;
 
-        correct_cable_lengths(
+        assert!(correct_cable_lengths(
             &corr_ctx,
             jones_array.view_mut(),
             &vis_sel.coarse_chan_range,
             &vis_sel.baseline_idxs,
-            false,
-        );
+        )
+        .is_ok());
 
         // there should be no difference in baseline 0
         // ts 0, chan 0, baseline 0
@@ -946,13 +947,13 @@ mod tests {
         // baseline 5, pol YY, chan 3 (cc 1, fc 1)
         let angle_5_yy_3: f64 = -2.0 * PI * length_m_5_yy * (all_freqs_hz[3] as f64) / VEL_C;
 
-        correct_cable_lengths(
+        assert!(correct_cable_lengths(
             &corr_ctx,
             jones_array.view_mut(),
             &vis_sel.coarse_chan_range,
             &vis_sel.baseline_idxs,
-            false,
-        );
+        )
+        .is_ok());
 
         // there should be no difference in baseline 0
         // ts 0 (batch 0, scan 0), chan 0 (cc 0, fc 0), baseline 0

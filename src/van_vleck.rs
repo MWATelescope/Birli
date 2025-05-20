@@ -104,8 +104,6 @@ use marlu::{
     io::error::BadArrayShape, mwalib::CorrelatorContext, ndarray::ShapeError,
     rayon::iter::ParallelBridge,
 };
-// use rayon::prelude::*;
-use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use std::f64::consts::PI;
 use thiserror::Error;
 
@@ -152,7 +150,7 @@ use thiserror::Error;
 ///     }
 /// }).collect::<Vec<_>>();
 /// let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
-/// correct_van_vleck(jones_array.view_mut(), &ant_pairs, &flagged_ants, sample_scale, false).unwrap();
+/// correct_van_vleck(jones_array.view_mut(), &ant_pairs, &flagged_ants, sample_scale).unwrap();
 /// ```
 ///
 /// # Errors
@@ -164,7 +162,6 @@ pub fn correct_van_vleck(
     ant_pairs: &[(usize, usize)],
     flagged_ant_idxs: &[usize],
     sample_scale: f64,
-    draw_progress: bool,
 ) -> Result<(), VanVleckCorrection> {
     trace!("start correct_van_vleck");
 
@@ -196,25 +193,6 @@ pub fn correct_van_vleck(
         return Err(VanVleckCorrection::NoUnflaggedAutos);
     }
 
-    let draw_target = if draw_progress {
-        ProgressDrawTarget::stderr()
-    } else {
-        ProgressDrawTarget::hidden()
-    };
-
-    // Create a progress bar to show the status of the correction
-    let correction_progress =
-        ProgressBar::with_draw_target(Some(ant_pairs.len() as u64), draw_target);
-    correction_progress.set_style(
-        ProgressStyle::default_bar()
-            .template(
-                "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
-            )
-            .unwrap()
-            .progress_chars("=> "),
-    );
-    correction_progress.set_message("vv autos");
-
     // partition of auto jones matrix into xx real and yy real, for van_vleck_autos
     let (sighat_xxr, sighat_yyr): (Vec<_>, Vec<_>) = jones_array
         .select(Axis(2), &unflagged_auto_mask)
@@ -237,14 +215,11 @@ pub fn correct_van_vleck(
         n_unflagged_autos,
     ))?;
 
-    correction_progress.set_message("vv crosses");
-
     jones_array
         .axis_iter_mut(Axis(2))
         .zip_eq(ant_pairs.iter())
         .par_bridge()
         .for_each(|(mut j_tf, &(ant1, ant2))| {
-            correction_progress.inc(1);
             // debug!("van vleck correcting ant1={ant1} ant2={ant2}");
             match (
                 unflagged_autos.binary_search(&ant1),
@@ -558,7 +533,7 @@ mod vv_auto_tests {
         let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
         let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
 
-        correct_van_vleck(jones_array.view_mut(), &ant_pairs, &[], sample_scale, false).unwrap();
+        correct_van_vleck(jones_array.view_mut(), &ant_pairs, &[], sample_scale).unwrap();
 
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, SIGMAS[0].powi(2) as f32);
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][3].re, SIGMAS[3].powi(2) as f32);
@@ -1490,7 +1465,7 @@ mod vv_cross_tests {
         let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
         let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
 
-        correct_van_vleck(jones_array.view_mut(), &ant_pairs, &[], sample_scale, false).unwrap();
+        correct_van_vleck(jones_array.view_mut(), &ant_pairs, &[], sample_scale).unwrap();
 
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, sigmas1[0].powi(2) as f32);
         assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].re, kappas1[0] as f32, epsilon=1e-9);
@@ -1575,7 +1550,7 @@ mod vv_cross_tests {
         let flagged_ants = [2];
         let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
 
-        correct_van_vleck(jones_array.view_mut(), &ant_pairs, &flagged_ants, sample_scale, false).unwrap();
+        correct_van_vleck(jones_array.view_mut(), &ant_pairs, &flagged_ants, sample_scale).unwrap();
 
         // ant1 is corrected, but ant2 isn't.
 

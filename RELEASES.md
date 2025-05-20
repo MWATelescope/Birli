@@ -2,7 +2,12 @@
 
 # Version 0.18.0 (unreleased)
 
+- 🙏 quality of life:
+  - `correct_van_vleck`, `correct_cable_lengths`, `correct_digital_gains` only applied to
+    unflagged visibilities, avoids printing hundreds of gigabytes of warnings.
 - 🏗 api changes:
+  - `correct_van_vleck`, `correct_cable_lengths` no longer have progress bars.
+  - `correct_cable_lengths` returns a `Result`.
   - `correct_van_vleck` now takes a `sample_scale` argument instead of a `CorrelatorContext`
   - `get_vv_sample_scale` added to public API.
 

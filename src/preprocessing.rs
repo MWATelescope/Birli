@@ -9,6 +9,8 @@ use crate::{
 };
 use cfg_if::cfg_if;
 use derive_builder::Builder;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use itertools::izip;
 use log::trace;
 use std::{
     fmt::{Debug, Display},
@@ -168,9 +170,9 @@ impl PreprocessContext<'_> {
     /// * `flag_array` - Array of flags associated with Jones visibilities
     ///
     /// # Errors
-    /// will wrap errors from `correct_digital_gains`, `correct_coarse_passband_gains`
-    ///
-    /// TODO: more granular error types: `PreprocessingError` -> {`DigitalGainsError`, etc.}
+    /// will wrap errors from `correct_van_vleck`, `correct_cable_lengths`, `correct_digital_gains`,
+    /// `correct_coarse_passband_gains`, `flag_jones_array_existing`, `correct_geometry`,
+    /// `apply_di_calsol`
     #[allow(clippy::too_many_arguments)]
     pub fn preprocess(
         &self,
@@ -180,79 +182,154 @@ impl PreprocessContext<'_> {
         mut flag_array: ArrayViewMut3<bool>,
         vis_sel: &VisSelection,
     ) -> Result<(), BirliError> {
-        // get selected antenna pairs, and flagged antenna
         let sel_ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
-        let flagged_ants = corr_ctx
-            .metafits_context
-            .antennas
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, ant)| {
-                if ant.rfinput_x.flagged || ant.rfinput_y.flagged {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        let sample_scale = get_vv_sample_scale(corr_ctx)?;
-
-        if self.correct_van_vleck {
-            trace!("correcting van vleck");
-            with_increment_duration!(
-                "correct_van_vleck",
-                correct_van_vleck(
-                    jones_array.view_mut(),
-                    &sel_ant_pairs,
-                    &flagged_ants,
-                    sample_scale,
-                    self.draw_progress
-                )?
-            );
-        }
-
-        if self.correct_cable_lengths {
-            trace!("correcting cable lengths");
-            with_increment_duration!(
-                "correct_cable",
-                correct_cable_lengths(
-                    corr_ctx,
-                    jones_array.view_mut(),
-                    &vis_sel.coarse_chan_range,
-                    &vis_sel.baseline_idxs,
-                    self.draw_progress
-                )
-            );
-        }
-
-        if self.correct_digital_gains {
-            trace!("correcting digital gains");
-            with_increment_duration!(
-                "correct_digital",
-                correct_digital_gains(
-                    corr_ctx,
-                    jones_array.view_mut(),
-                    &vis_sel.coarse_chan_range,
-                    &sel_ant_pairs,
-                )?
-            );
-        }
-
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 
-        // perform pfb passband gain corrections
-        if let Some(passband_gains) = self.passband_gains {
-            trace!("correcting pfb gains");
-            with_increment_duration!(
-                "correct_passband",
-                correct_coarse_passband_gains(
-                    jones_array.view_mut(),
-                    weight_array.view_mut(),
-                    passband_gains,
-                    fine_chans_per_coarse,
-                    &ScrunchType::from_mwa_version(corr_ctx.metafits_context.mwa_version.unwrap())?,
-                )?
+        if self.correct_van_vleck
+            || self.correct_cable_lengths
+            || self.correct_digital_gains
+            || self.passband_gains.is_some()
+        {
+            // get selected antenna pairs, and flagged antenna
+            let flagged_ants = corr_ctx
+                .metafits_context
+                .antennas
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, ant)| {
+                    if ant.rfinput_x.flagged || ant.rfinput_y.flagged {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let sample_scale = get_vv_sample_scale(corr_ctx)?;
+            // mwalib reads data one timestep and coarse channel at a time.
+            // each of these reads can fail, in which case the whole chunk is flagged.
+
+            // For each timestep and coarse channel pair
+            let (num_timesteps, num_channels, _) = jones_array.dim();
+            let num_coarse_chans = num_channels / fine_chans_per_coarse;
+            let scrunch_type =
+                ScrunchType::from_mwa_version(corr_ctx.metafits_context.mwa_version.unwrap())?;
+            // combined progress bar for vv, cable, digital
+            let draw_target = if self.draw_progress {
+                ProgressDrawTarget::stderr()
+            } else {
+                ProgressDrawTarget::hidden()
+            };
+
+            // Create a progress bar to show the status of the correction
+            let preflag_progress = ProgressBar::with_draw_target(
+                Some(num_coarse_chans as u64 * num_timesteps as u64),
+                draw_target,
             );
+            preflag_progress.set_style(
+                ProgressStyle::default_bar()
+                    .template(
+                        "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+                    )
+                    .unwrap()
+                    .progress_chars("=> "),
+            );
+            preflag_progress.set_message("preflag");
+
+            // iterate over coarse channels
+            for (mut jones_chunk, mut weight_chunk, flag_chunk, coarse_chan_idx) in izip!(
+                jones_array.axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse),
+                weight_array.axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse),
+                flag_array.axis_chunks_iter(Axis(1), fine_chans_per_coarse),
+                vis_sel.coarse_chan_range.clone(), // todo: .chunks(size)?,
+            ) {
+                let coarse_chan_range = coarse_chan_idx..(coarse_chan_idx + 1);
+
+                // determine which timestep ranges are not completely flagged
+                let unflagged_timestep_ranges = flag_chunk
+                    .axis_iter(Axis(0))
+                    .enumerate()
+                    .filter_map(|(timestep_idx, flag_chunk)| {
+                        if flag_chunk.iter().any(|&x| !x) {
+                            Some(timestep_idx)
+                        } else {
+                            None
+                        }
+                    })
+                    // now convert this iterator of unflagged timestep ranges to an iterator of contiguous ranges
+                    .fold(Vec::new(), |mut acc, timestep_idx| {
+                        if acc.is_empty() {
+                            acc.push(timestep_idx..timestep_idx);
+                        } else {
+                            let mut last_acc = acc.pop().unwrap();
+                            if last_acc.end == timestep_idx - 1 {
+                                last_acc.end = timestep_idx;
+                                acc.push(last_acc);
+                            } else {
+                                acc.push(last_acc);
+                                acc.push(timestep_idx..timestep_idx);
+                            }
+                        }
+                        acc
+                    });
+
+                for timestep_range in unflagged_timestep_ranges {
+                    let mut jones_chunk = jones_chunk.slice_mut(s![timestep_range.clone(), .., ..]);
+                    let mut weight_chunk = weight_chunk.slice_mut(s![timestep_range, .., ..]);
+                    if self.correct_van_vleck {
+                        trace!("correcting van vleck");
+                        // Only correct successfully read data
+                        with_increment_duration!(
+                            "correct_van_vleck",
+                            correct_van_vleck(
+                                jones_chunk.view_mut(),
+                                &sel_ant_pairs,
+                                &flagged_ants,
+                                sample_scale,
+                            )?
+                        );
+                    }
+                    if self.correct_cable_lengths {
+                        trace!("correcting cable lengths");
+                        with_increment_duration!(
+                            "correct_cable",
+                            correct_cable_lengths(
+                                corr_ctx,
+                                jones_chunk.view_mut(),
+                                &coarse_chan_range,
+                                &vis_sel.baseline_idxs,
+                            )?
+                        );
+                    }
+                    if self.correct_digital_gains {
+                        trace!("correcting digital gains");
+                        with_increment_duration!(
+                            "correct_digital",
+                            correct_digital_gains(
+                                corr_ctx,
+                                jones_chunk.view_mut(),
+                                &coarse_chan_range,
+                                &sel_ant_pairs,
+                            )?
+                        );
+                    }
+                    // perform pfb passband gain corrections
+                    if let Some(passband_gains) = self.passband_gains {
+                        trace!("correcting pfb gains");
+                        with_increment_duration!(
+                            "correct_passband",
+                            correct_coarse_passband_gains(
+                                jones_chunk.view_mut(),
+                                weight_chunk.view_mut(),
+                                passband_gains,
+                                fine_chans_per_coarse,
+                                &scrunch_type,
+                            )?
+                        );
+                    }
+                    preflag_progress.inc(1);
+                }
+            }
+            preflag_progress.finish();
         }
 
         cfg_if! {
