@@ -105,6 +105,7 @@ fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
     let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
     let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
     let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+    let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
     read_mwalib(
         &vis_sel,
         &corr_ctx,
@@ -120,7 +121,7 @@ fn bench_correct_cable_lengths_mwax_half_1247842824(crt: &mut Criterion) {
                 black_box(&corr_ctx),
                 black_box(jones_array.view_mut()),
                 black_box(&vis_sel.coarse_chan_range),
-                black_box(&vis_sel.baseline_idxs),
+                black_box(&ant_pairs),
             )
         })
     });
@@ -133,6 +134,7 @@ fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
     let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
     let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
     let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+    let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
     read_mwalib(
         &vis_sel,
         &corr_ctx,
@@ -147,7 +149,7 @@ fn bench_correct_cable_lengths_ord_half_1196175296(crt: &mut Criterion) {
                 black_box(&corr_ctx),
                 black_box(jones_array.view_mut()),
                 black_box(&vis_sel.coarse_chan_range),
-                black_box(&vis_sel.baseline_idxs),
+                black_box(&ant_pairs),
             )
         })
     });

@@ -296,7 +296,7 @@ impl PreprocessContext<'_> {
                                 corr_ctx,
                                 jones_chunk.view_mut(),
                                 &coarse_chan_range,
-                                &vis_sel.baseline_idxs,
+                                &sel_ant_pairs,
                             )?
                         );
                     }

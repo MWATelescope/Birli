@@ -50,12 +50,13 @@ use thiserror::Error;
 /// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 /// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
 /// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+/// let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 ///
 /// // read visibilities out of the gpubox files
 /// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &vis_sel.baseline_idxs);
+/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &ant_pairs);
 /// ```
 ///
 /// # Accuracy
@@ -72,47 +73,43 @@ pub fn correct_cable_lengths(
     corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
     coarse_chan_range: &Range<usize>,
-    baseline_idxs: &[usize],
+    ant_pairs: &[(usize, usize)],
 ) -> Result<(), BadArrayShape> {
     trace!("start correct_cable_lengths");
 
     let meta_ctx = &corr_ctx.metafits_context;
+    let num_fine_chans_per_coarse = meta_ctx.num_corr_fine_chans_per_coarse;
 
     let all_freqs_hz =
         corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>());
 
-    let ant_pairs = baseline_idxs
-        .iter()
-        .map(|b| {
-            (
-                meta_ctx.baselines[*b].ant1_index,
-                meta_ctx.baselines[*b].ant2_index,
-            )
-        })
-        .collect::<Vec<_>>();
-
     let vis_dims = jones_array.dim();
-    if vis_dims.1 != all_freqs_hz.len() {
+    if vis_dims.1 != coarse_chan_range.len() * num_fine_chans_per_coarse {
         return Err(BadArrayShape {
-            argument: "jones_array",
+            argument: "coarse_chan_range",
             function: "correct_cable_lengths",
-            expected: format!("(vis_dims.1={}(all_freqs_hz.len()))", all_freqs_hz.len()),
-            received: format!("{:?}", vis_dims.1),
+            expected: format!(
+                "(vis_dims.1={}) / (num_fine_chans_per_coarse={}) = {}",
+                vis_dims.1,
+                num_fine_chans_per_coarse,
+                vis_dims.1 / num_fine_chans_per_coarse
+            ),
+            received: format!("{:?}", coarse_chan_range.len()),
         });
     }
     if vis_dims.2 != ant_pairs.len() {
         return Err(BadArrayShape {
-            argument: "jones_array",
+            argument: "ant_pairs",
             function: "correct_cable_lengths",
-            expected: format!("(vis_dims.2={}(ant_pairs.len()))", ant_pairs.len()),
-            received: format!("{:?}", vis_dims.2),
+            expected: format!("vis_dims.2={}", vis_dims.2,),
+            received: format!("{:?}", ant_pairs.len()),
         });
     }
 
     jones_array
         .axis_iter_mut(Axis(2))
         .into_par_iter()
-        .zip_eq(&ant_pairs)
+        .zip_eq(ant_pairs)
         .for_each(|(mut jones_array, &(ant1_idx, ant2_idx))| {
             if ant1_idx == ant2_idx {
                 return;
@@ -190,12 +187,13 @@ pub fn correct_cable_lengths(
 /// let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 /// let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
 /// let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+/// let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 ///
 /// // read visibilities out of the gpubox files
 /// read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
 ///     .unwrap();
 ///
-/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &vis_sel.baseline_idxs);
+/// correct_cable_lengths(&corr_ctx, jones_array.view_mut(), &vis_sel.coarse_chan_range, &ant_pairs);
 ///
 /// correct_geometry(
 ///     &corr_ctx,
@@ -806,11 +804,13 @@ mod tests {
         // baseline 1, pol YY, chan 3 (cc 1, fc 1)
         let angle_1_yy_3: f64 = -2.0 * PI * length_m_1_yy * all_freqs_hz[3] / VEL_C;
 
+        let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+
         assert!(correct_cable_lengths(
             &corr_ctx,
             jones_array.view_mut(),
             &vis_sel.coarse_chan_range,
-            &vis_sel.baseline_idxs,
+            &ant_pairs,
         )
         .is_ok());
 
@@ -947,11 +947,13 @@ mod tests {
         // baseline 5, pol YY, chan 3 (cc 1, fc 1)
         let angle_5_yy_3: f64 = -2.0 * PI * length_m_5_yy * (all_freqs_hz[3] as f64) / VEL_C;
 
+        let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+
         assert!(correct_cable_lengths(
             &corr_ctx,
             jones_array.view_mut(),
             &vis_sel.coarse_chan_range,
-            &vis_sel.baseline_idxs,
+            &ant_pairs,
         )
         .is_ok());
 
