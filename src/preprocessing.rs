@@ -258,15 +258,15 @@ impl PreprocessContext<'_> {
                     // now convert this iterator of unflagged timestep ranges to an iterator of contiguous ranges
                     .fold(Vec::new(), |mut acc, timestep_idx| {
                         if acc.is_empty() {
-                            acc.push(timestep_idx..timestep_idx);
+                            acc.push(timestep_idx..(timestep_idx + 1));
                         } else {
                             let mut last_acc = acc.pop().unwrap();
-                            if last_acc.end == timestep_idx - 1 {
-                                last_acc.end = timestep_idx;
+                            if last_acc.end == timestep_idx {
+                                last_acc.end = timestep_idx + 1;
                                 acc.push(last_acc);
                             } else {
                                 acc.push(last_acc);
-                                acc.push(timestep_idx..timestep_idx);
+                                acc.push(timestep_idx..(timestep_idx + 1));
                             }
                         }
                         acc
@@ -560,5 +560,135 @@ mod tests {
         );
 
         assert!(matches!(result, Err(BirliError::BadMWAVersion { .. })));
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn test_preprocess_runs_correct_van_vleck() {
+        use float_cmp::assert_approx_eq;
+        use marlu::mwalib::CorrelatorContext;
+        use ndarray::Array3;
+
+        let vis_dims = (1, 1, 3);
+        let mut corr_ctx = CorrelatorContext::new(
+            "tests/data/1297526432_mwax/1297526432.metafits",
+            &["tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits"],
+        )
+        .unwrap();
+        corr_ctx.metafits_context.corr_fine_chan_width_hz = 1;
+        corr_ctx.metafits_context.corr_int_time_ms = 500;
+        corr_ctx.metafits_context.corr_raw_scale_factor = 1.0;
+        let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
+        assert_eq!(sample_scale, 1.0);
+
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.retain_antennas(&corr_ctx.metafits_context, &[0, 1]);
+        assert_eq!(vis_sel.get_ant_pairs(&corr_ctx.metafits_context), vec![(0, 0), (0, 1), (1, 1)]);
+
+        let mut jones_array = Array3::<Jones<f32>>::zeros(vis_dims);
+
+        // $\hat σ$
+        let sighats1: [f64; 2] = [1.453730115943, 1.373255711803];
+        let sighats2: [f64; 2] = [1.495798281855, 1.441745903410];
+        // $\hat κ$
+        let khats1: [f64; 2] = [-0.046568750000, 0.012337500000];
+        let khats2: [f64; 2] = [-0.042031250000, -0.011650000000];
+
+        let khatsxx: [f64; 2] = [-0.000037500000, 0.001550000000];
+        let khatsyy: [f64; 2] = [-0.008881250000, -0.004287500000];
+        let khatsxy: [f64; 2] = [-0.001587500000, 0.009337500000];
+        let khatsyx: [f64; 2] = [-0.002425000000, -0.004268750000];
+        // $σ$
+        let sigmas1: [f64; 2] = [1.424780710577, 1.342571513473];
+        let sigmas2: [f64; 2] = [1.467679841384, 1.412550740902];
+        // $κ$
+        let kappas1: [f64; 2] = [-0.046568781137, 0.012337508611];
+        let kappas2: [f64; 2] = [-0.042031317949, -0.011650019325];
+
+        let kappasxx: [f64; 2] = [-0.000037500067, 0.001550002722];
+        let kappasyy: [f64; 2] = [-0.008881254122, -0.004287502263];
+        let kappasxy: [f64; 2] = [-0.001587501562, 0.009337509186];
+        let kappasyx: [f64; 2] = [-0.002425003098, -0.004268755205];
+
+        jones_array[(0, 0, 0)][0].re = sighats1[0].powi(2) as f32;
+        jones_array[(0, 0, 0)][1].re = khats1[0] as f32;
+        jones_array[(0, 0, 0)][1].im = khats1[1] as f32;
+        jones_array[(0, 0, 0)][2].re = khats1[0] as f32;
+        jones_array[(0, 0, 0)][2].im = -khats1[1] as f32;
+        jones_array[(0, 0, 0)][3].re = sighats1[1].powi(2) as f32;
+
+        jones_array[(0, 0, 1)][0].re = khatsxx[0] as f32;
+        jones_array[(0, 0, 1)][0].im = khatsxx[1] as f32;
+        jones_array[(0, 0, 1)][1].re = khatsxy[0] as f32;
+        jones_array[(0, 0, 1)][1].im = khatsxy[1] as f32;
+        jones_array[(0, 0, 1)][2].re = khatsyx[0] as f32;
+        jones_array[(0, 0, 1)][2].im = khatsyx[1] as f32;
+        jones_array[(0, 0, 1)][3].re = khatsyy[0] as f32;
+        jones_array[(0, 0, 1)][3].im = khatsyy[1] as f32;
+
+        jones_array[(0, 0, 2)][0].re = sighats2[0].powi(2) as f32;
+        jones_array[(0, 0, 2)][1].re = khats2[0] as f32;
+        jones_array[(0, 0, 2)][1].im = khats2[1] as f32;
+        jones_array[(0, 0, 2)][2].re = khats2[0] as f32;
+        jones_array[(0, 0, 2)][2].im = -khats2[1] as f32;
+        jones_array[(0, 0, 2)][3].re = sighats2[1].powi(2) as f32;
+
+        // Set up PreprocessContext to only run Van Vleck
+        let mut prep_ctx = PreprocessContext::default();
+        prep_ctx.correct_van_vleck = true;
+        prep_ctx.correct_cable_lengths = false;
+        prep_ctx.correct_digital_gains = false;
+        prep_ctx.correct_geometry = false;
+        prep_ctx.draw_progress = false;
+        prep_ctx.passband_gains = None;
+        // phase_centre and array_pos are required but not used for van vleck
+        prep_ctx.array_pos = LatLngHeight {
+            longitude_rad: 0.0,
+            latitude_rad: 0.0,
+            height_metres: 0.0,
+        };
+        prep_ctx.phase_centre = RADec { ra: 0.0, dec: 0.0 };
+        println!("prep_ctx: {}", prep_ctx.as_comment());
+
+        // Dummy arrays for weights and flags
+        let mut weight_array = Array3::<f32>::ones(vis_dims);
+        let mut flag_array = Array3::<bool>::from_elem(vis_dims, false);
+
+        // Call preprocess
+        prep_ctx
+            .preprocess(
+                &corr_ctx,
+                jones_array.view_mut(),
+                weight_array.view_mut(),
+                flag_array.view_mut(),
+                &vis_sel,
+            )
+            .unwrap();
+
+        // Check that the output matches the expected values after correction
+
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, sigmas1[0].powi(2) as f32);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].re, kappas1[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].im, kappas1[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][2].re, kappas1[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][2].im, -kappas1[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][3].re, sigmas1[1].powi(2) as f32);
+
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][0].re, kappasxx[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][0].im, kappasxx[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][1].re, kappasxy[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][1].im, kappasxy[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][2].re, kappasyx[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][2].im, kappasyx[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][3].re, kappasyy[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][3].im, kappasyy[1] as f32, epsilon=1e-9);
+
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][0].re, sigmas2[0].powi(2) as f32);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][1].re, kappas2[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][1].im, kappas2[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].re, kappas2[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].im, -kappas2[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][3].re, sigmas2[1].powi(2) as f32);
+
     }
 }
