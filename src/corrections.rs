@@ -687,6 +687,7 @@ mod tests {
     use itertools::izip;
     use marlu::{
         hifitime::{Duration, Epoch},
+        io::error::BadArrayShape,
         precession::precess_time,
         Complex, Jones, LatLngHeight, RADec, XyzGeodetic, UVW,
     };
@@ -988,6 +989,42 @@ mod tests {
                 viz_3_3_5_f64[3] * Complex::from_polar(1., angle_5_yy_3),
             ])
         );
+    }
+
+    #[test]
+    fn test_cable_length_corrections_bad_array_shape() {
+        use ndarray::Array3;
+        let corr_ctx = crate::test_common::get_mwa_ord_context();
+        let vis_sel = crate::VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+        let num_fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+
+        // Case 1: jones_array has too few channels (should trigger the guard)
+        let mut jones_array = Array3::from_shape_fn((1, 1, 1), |_| crate::Jones::nan());
+        assert!(matches!(
+            correct_cable_lengths(
+                &corr_ctx,
+                jones_array.view_mut(),
+                &vis_sel.coarse_chan_range,
+                &ant_pairs,
+            ),
+            Err(BadArrayShape { .. })
+        ));
+
+        // Case 2: jones_array has correct number of channels but wrong number of baselines
+        let num_chans = vis_sel.coarse_chan_range.len() * num_fine_chans_per_coarse;
+        let mut jones_array = Array3::from_shape_fn((1, num_chans, 1), |_| crate::Jones::nan());
+        // Use too few ant_pairs
+        let bad_ant_pairs = vec![(0, 1), (0, 2)];
+        assert!(matches!(
+            correct_cable_lengths(
+                &corr_ctx,
+                jones_array.view_mut(),
+                &vis_sel.coarse_chan_range,
+                &bad_ant_pairs,
+            ),
+            Err(BadArrayShape { .. })
+        ));
     }
 
     #[test]
