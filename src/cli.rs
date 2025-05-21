@@ -1385,8 +1385,8 @@ impl<'a> BirliContext<'a> {
         };
         prep_ctx.correct_cable_lengths = {
             let cable_delays_disabled = matches.is_present("no-cable-delay");
-            debug!(
-                "cable corrections: applied={}, disabled={}",
+            info!(
+                "cable corrections: applied={:?}, disabled={}",
                 cable_delays_applied, cable_delays_disabled
             );
             matches!(
@@ -1397,13 +1397,29 @@ impl<'a> BirliContext<'a> {
         prep_ctx.correct_digital_gains = !matches.is_present("no-digital-gains");
         prep_ctx.passband_gains = match matches.value_of("passband-gains") {
             None | Some("none") => None,
-            Some("jake") => Some(PFB_JAKE_2022_200HZ),
-            Some("jake_oversampled") => Some(OSPFB_JAKE_2025_200HZ),
-            Some("cotter") => Some(PFB_COTTER_2014_10KHZ),
-            Some("auto") => match (mwa_version, oversampled) {
-                (MWAVersion::CorrMWAXv2, false) => Some(PFB_JAKE_2022_200HZ),
-                (MWAVersion::CorrMWAXv2, true) => Some(OSPFB_JAKE_2025_200HZ),
+            Some(g) if g == "jake" => {
+                info!("passband gains: {} (mwax, not oversampled)", g);
+                Some(PFB_JAKE_2022_200HZ)
+            }
+            Some(g) if g == "jake_oversampled" => {
+                info!("passband gains: {} (mwax, oversampled)", g);
+                Some(OSPFB_JAKE_2025_200HZ)
+            }
+            Some(g) if g == "cotter" => {
+                info!("passband gains: {} (legacy)", g);
+                Some(PFB_COTTER_2014_10KHZ)
+            }
+            Some(g) if g == "auto" => match (mwa_version, oversampled) {
+                (MWAVersion::CorrMWAXv2, false) => {
+                    info!("passband gains: {} (mwax, not oversampled)", g);
+                    Some(PFB_JAKE_2022_200HZ)
+                }
+                (MWAVersion::CorrMWAXv2, true) => {
+                    info!("passband gains: {} (mwax, oversampled)", g);
+                    Some(OSPFB_JAKE_2025_200HZ)
+                }
                 (MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy, _) => {
+                    info!("passband gains: {} (legacy)", g);
                     Some(PFB_COTTER_2014_10KHZ)
                 }
                 (ver, _) => {
@@ -1417,7 +1433,7 @@ impl<'a> BirliContext<'a> {
         };
         prep_ctx.correct_geometry = {
             let geometric_delays_disabled = matches.is_present("no-geometric-delay");
-            debug!(
+            info!(
                 "geometric corrections: applied={:?}, disabled={}",
                 geometric_delays_applied, !geometric_delays_disabled
             );
@@ -1930,12 +1946,12 @@ impl<'a> BirliContext<'a> {
 
 #[cfg(test)]
 mod argparse_tests {
-    use marlu::RADec;
+    use marlu::{mwalib::MWAVersion, RADec};
 
     use approx::{assert_abs_diff_eq, assert_abs_diff_ne};
 
     use crate::{
-        passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
+        passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
         test_common::{get_1254670392_avg_paths, get_mwax_data_paths},
         BirliContext, BirliError, VisSelection,
     };
@@ -2034,7 +2050,7 @@ mod argparse_tests {
         assert_abs_diff_ne!(prep_ctx.passband_gains.unwrap()[0], PFB_JAKE_2022_200HZ[0]);
     }
 
-    /// pfb gains is cotter by default for legacy correlator.
+    /// invalid pfb gains are rejected.
     #[test]
     fn test_invalid_pfb() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
@@ -2052,6 +2068,52 @@ mod argparse_tests {
         let birli_ctx = BirliContext::from_args(&args);
 
         assert!(birli_ctx.is_err());
+    }
+
+    /// correlator version throws an error when pfb gains are auto,
+    /// selects oversampled pfb for oversampled ovservations.
+    #[test]
+    fn test_corr_type_auto_pfb() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--pfb-gains", "auto",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        // create an initial birli context so we can give it an unfamiliar correlator version and parse again
+        let mut birli_ctx = BirliContext::from_args(&args).unwrap();
+        let matches = BirliContext::get_matches(&args).unwrap();
+
+        // case 1: invalid corr type
+        birli_ctx.corr_ctx.mwa_version = MWAVersion::VCSLegacyRecombined;
+        let result = BirliContext::<'_>::parse_prep_matches(&matches, &birli_ctx.corr_ctx);
+        assert!(matches!(result, Err(BirliError::BadMWAVersion { .. })));
+
+        // case 2: mwax, oversampled
+        // TODO: make this its own test case, need new metafits, ideally with sigchain corrections
+        birli_ctx.corr_ctx.mwa_version = MWAVersion::CorrMWAXv2;
+        birli_ctx.corr_ctx.metafits_context.oversampled = true;
+        let result = BirliContext::<'_>::parse_prep_matches(&matches, &birli_ctx.corr_ctx);
+        assert!(result.is_ok());
+        assert_abs_diff_eq!(
+            result.unwrap().passband_gains.unwrap()[0..10],
+            OSPFB_JAKE_2025_200HZ[0..10]
+        );
+
+        // case 3: mwax, not oversampled
+        birli_ctx.corr_ctx.metafits_context.oversampled = false;
+        let result = BirliContext::<'_>::parse_prep_matches(&matches, &birli_ctx.corr_ctx);
+        assert!(result.is_ok());
+        assert_abs_diff_eq!(
+            result.unwrap().passband_gains.unwrap()[0..10],
+            PFB_JAKE_2022_200HZ[0..10]
+        );
     }
 
     /// pfb gains is jake by default for mwax correlator.
