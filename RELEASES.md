@@ -2,6 +2,8 @@
 
 # Version 0.18.0 (unreleased)
 
+- ✨ new features:
+  - oversampled pfb gains for SHAO and NI receivers, automatically applied for oversampled observations
 - 🙏 quality of life:
   - `correct_van_vleck`, `correct_cable_lengths`, `correct_digital_gains`, `correct_coarse_passband_gains` only applied to
     unflagged visibilities, avoids printing hundreds of gigabytes of warnings.
