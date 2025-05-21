@@ -270,7 +270,6 @@ pub fn read_mwalib(
                         hdu_buffer.as_mut_slice(),
                     ) {
                         Ok(()) => {
-                            // arrays: [chan]
                             for (mut jones_array, baseline_idx) in izip!(
                                 jones_array.axis_iter_mut(Axis(1)),
                                 vis_sel.baseline_idxs.iter()

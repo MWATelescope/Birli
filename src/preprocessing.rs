@@ -3,12 +3,15 @@ use crate::{
     calibration::apply_di_calsol,
     correct_cable_lengths, correct_geometry,
     corrections::{correct_coarse_passband_gains, correct_digital_gains, ScrunchType},
+    flags::get_unflagged_timestep_ranges,
     marlu::{mwalib::CorrelatorContext, ndarray::prelude::*, Jones, LatLngHeight, RADec},
-    van_vleck::correct_van_vleck,
+    van_vleck::{correct_van_vleck, get_vv_sample_scale},
     with_increment_duration, BirliError, VisSelection,
 };
 use cfg_if::cfg_if;
 use derive_builder::Builder;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use itertools::izip;
 use log::trace;
 use std::{
     fmt::{Debug, Display},
@@ -168,9 +171,9 @@ impl PreprocessContext<'_> {
     /// * `flag_array` - Array of flags associated with Jones visibilities
     ///
     /// # Errors
-    /// will wrap errors from `correct_digital_gains`, `correct_coarse_passband_gains`
-    ///
-    /// TODO: more granular error types: `PreprocessingError` -> {`DigitalGainsError`, etc.}
+    /// will wrap errors from `correct_van_vleck`, `correct_cable_lengths`, `correct_digital_gains`,
+    /// `correct_coarse_passband_gains`, `flag_jones_array_existing`, `correct_geometry`,
+    /// `apply_di_calsol`
     #[allow(clippy::too_many_arguments)]
     pub fn preprocess(
         &self,
@@ -181,10 +184,14 @@ impl PreprocessContext<'_> {
         vis_sel: &VisSelection,
     ) -> Result<(), BirliError> {
         let sel_ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
 
-        if self.correct_van_vleck {
-            trace!("correcting van vleck");
-            // get flagged antennas
+        if self.correct_van_vleck
+            || self.correct_cable_lengths
+            || self.correct_digital_gains
+            || self.passband_gains.is_some()
+        {
+            // get selected antenna pairs, and flagged antenna
             let flagged_ants = corr_ctx
                 .metafits_context
                 .antennas
@@ -198,60 +205,107 @@ impl PreprocessContext<'_> {
                     }
                 })
                 .collect::<Vec<_>>();
-            with_increment_duration!(
-                "correct_van_vleck",
-                correct_van_vleck(
-                    corr_ctx,
-                    jones_array.view_mut(),
-                    &sel_ant_pairs,
-                    &flagged_ants,
-                    self.draw_progress
-                )?
-            );
-        }
+            let sample_scale = get_vv_sample_scale(corr_ctx)?;
+            // mwalib reads data one timestep and coarse channel at a time.
+            // each of these reads can fail, in which case the whole chunk is flagged.
 
-        if self.correct_cable_lengths {
-            trace!("correcting cable lengths");
-            with_increment_duration!(
-                "correct_cable",
-                correct_cable_lengths(
-                    corr_ctx,
-                    jones_array.view_mut(),
-                    &vis_sel.coarse_chan_range,
-                    &vis_sel.baseline_idxs,
-                    self.draw_progress
-                )
-            );
-        }
+            // For each timestep and coarse channel pair
+            let (num_timesteps, num_channels, _) = jones_array.dim();
+            let num_coarse_chans = num_channels / fine_chans_per_coarse;
+            let scrunch_type =
+                ScrunchType::from_mwa_version(corr_ctx.metafits_context.mwa_version.unwrap())?;
+            // combined progress bar for vv, cable, digital
+            let draw_target = if self.draw_progress {
+                ProgressDrawTarget::stderr()
+            } else {
+                ProgressDrawTarget::hidden()
+            };
 
-        if self.correct_digital_gains {
-            trace!("correcting digital gains");
-            with_increment_duration!(
-                "correct_digital",
-                correct_digital_gains(
-                    corr_ctx,
-                    jones_array.view_mut(),
-                    &vis_sel.coarse_chan_range,
-                    &sel_ant_pairs,
-                )?
+            // Create a progress bar to show the status of the correction
+            let preflag_progress = ProgressBar::with_draw_target(
+                Some(num_coarse_chans as u64 * num_timesteps as u64),
+                draw_target,
             );
-        }
-
-        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
-
-        // perform pfb passband gain corrections
-        if let Some(passband_gains) = self.passband_gains {
-            trace!("correcting pfb gains");
-            with_increment_duration!(
-                "correct_passband",
-                correct_coarse_passband_gains(
-                    jones_array.view_mut(),
-                    weight_array.view_mut(),
-                    passband_gains,
-                    fine_chans_per_coarse,
-                    &ScrunchType::from_mwa_version(corr_ctx.metafits_context.mwa_version.unwrap())?,
-                )?
+            preflag_progress.set_style(
+                ProgressStyle::default_bar()
+                    .template(
+                        "{msg:16}: [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:3}% ({eta:5})",
+                    )
+                    .unwrap()
+                    .progress_chars("=> "),
             );
+            preflag_progress.set_message("preflag");
+
+            // iterate over coarse channels
+            for (mut jones_chunk, mut weight_chunk, flag_chunk, coarse_chan_idx) in izip!(
+                jones_array.axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse),
+                weight_array.axis_chunks_iter_mut(Axis(1), fine_chans_per_coarse),
+                flag_array.axis_chunks_iter(Axis(1), fine_chans_per_coarse),
+                vis_sel.coarse_chan_range.clone(), // todo: .chunks(size)?,
+            ) {
+                let coarse_chan_range = coarse_chan_idx..(coarse_chan_idx + 1);
+
+                // determine which timestep ranges are not completely flagged
+                let unflagged_timestep_ranges = get_unflagged_timestep_ranges(flag_chunk);
+
+                for timestep_range in unflagged_timestep_ranges {
+                    let mut jones_chunk = jones_chunk.slice_mut(s![timestep_range.clone(), .., ..]);
+                    let mut weight_chunk = weight_chunk.slice_mut(s![timestep_range, .., ..]);
+                    if self.correct_van_vleck {
+                        trace!("correcting van vleck");
+                        // Only correct successfully read data
+                        with_increment_duration!(
+                            "correct_van_vleck",
+                            correct_van_vleck(
+                                jones_chunk.view_mut(),
+                                &sel_ant_pairs,
+                                &flagged_ants,
+                                sample_scale,
+                            )?
+                        );
+                    }
+                    if self.correct_cable_lengths {
+                        trace!("correcting cable lengths");
+                        with_increment_duration!(
+                            "correct_cable",
+                            correct_cable_lengths(
+                                corr_ctx,
+                                jones_chunk.view_mut(),
+                                &coarse_chan_range,
+                                &sel_ant_pairs,
+                            )?
+                        );
+                    }
+                    if self.correct_digital_gains {
+                        trace!("correcting digital gains");
+                        with_increment_duration!(
+                            "correct_digital",
+                            correct_digital_gains(
+                                corr_ctx,
+                                jones_chunk.view_mut(),
+                                &coarse_chan_range,
+                                &sel_ant_pairs,
+                            )?
+                        );
+                    }
+                    // perform pfb passband gain corrections
+                    if let Some(passband_gains) = self.passband_gains {
+                        trace!("correcting pfb gains");
+                        with_increment_duration!(
+                            "correct_passband",
+                            correct_coarse_passband_gains(
+                                jones_chunk.view_mut(),
+                                weight_chunk.view_mut(),
+                                passband_gains,
+                                fine_chans_per_coarse,
+                                &scrunch_type,
+                            )?
+                        );
+                    }
+                    preflag_progress.inc(1);
+                }
+            }
+            preflag_progress.finish();
         }
 
         cfg_if! {
@@ -482,5 +536,132 @@ mod tests {
         );
 
         assert!(matches!(result, Err(BirliError::BadMWAVersion { .. })));
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn test_preprocess_runs_correct_van_vleck() {
+        use float_cmp::assert_approx_eq;
+        use marlu::mwalib::CorrelatorContext;
+        use ndarray::Array3;
+
+        let vis_dims = (1, 1, 3);
+        let mut corr_ctx = CorrelatorContext::new(
+            "tests/data/1297526432_mwax/1297526432.metafits",
+            &["tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits"],
+        )
+        .unwrap();
+        corr_ctx.metafits_context.corr_fine_chan_width_hz = 1;
+        corr_ctx.metafits_context.corr_int_time_ms = 500;
+        corr_ctx.metafits_context.corr_raw_scale_factor = 1.0;
+        let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
+        assert_approx_eq!(f64, sample_scale, 1.0, epsilon=1e-9);
+
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.retain_antennas(&corr_ctx.metafits_context, &[0, 1]);
+        assert_eq!(vis_sel.get_ant_pairs(&corr_ctx.metafits_context), vec![(0, 0), (0, 1), (1, 1)]);
+
+        let mut jones_array = Array3::<Jones<f32>>::zeros(vis_dims);
+
+        // $\hat σ$
+        let sighats1: [f64; 2] = [1.453730115943, 1.373255711803];
+        let sighats2: [f64; 2] = [1.495798281855, 1.441745903410];
+        // $\hat κ$
+        let khats1: [f64; 2] = [-0.046568750000, 0.012337500000];
+        let khats2: [f64; 2] = [-0.042031250000, -0.011650000000];
+
+        let khatsxx: [f64; 2] = [-0.000037500000, 0.001550000000];
+        let khatsyy: [f64; 2] = [-0.008881250000, -0.004287500000];
+        let khatsxy: [f64; 2] = [-0.001587500000, 0.009337500000];
+        let khatsyx: [f64; 2] = [-0.002425000000, -0.004268750000];
+        // $σ$
+        let sigmas1: [f64; 2] = [1.424780710577, 1.342571513473];
+        let sigmas2: [f64; 2] = [1.467679841384, 1.412550740902];
+        // $κ$
+        let kappas1: [f64; 2] = [-0.046568781137, 0.012337508611];
+        let kappas2: [f64; 2] = [-0.042031317949, -0.011650019325];
+
+        let kappasxx: [f64; 2] = [-0.000037500067, 0.001550002722];
+        let kappasyy: [f64; 2] = [-0.008881254122, -0.004287502263];
+        let kappasxy: [f64; 2] = [-0.001587501562, 0.009337509186];
+        let kappasyx: [f64; 2] = [-0.002425003098, -0.004268755205];
+
+        jones_array[(0, 0, 0)][0].re = sighats1[0].powi(2) as f32;
+        jones_array[(0, 0, 0)][1].re = khats1[0] as f32;
+        jones_array[(0, 0, 0)][1].im = khats1[1] as f32;
+        jones_array[(0, 0, 0)][2].re = khats1[0] as f32;
+        jones_array[(0, 0, 0)][2].im = -khats1[1] as f32;
+        jones_array[(0, 0, 0)][3].re = sighats1[1].powi(2) as f32;
+
+        jones_array[(0, 0, 1)][0].re = khatsxx[0] as f32;
+        jones_array[(0, 0, 1)][0].im = khatsxx[1] as f32;
+        jones_array[(0, 0, 1)][1].re = khatsxy[0] as f32;
+        jones_array[(0, 0, 1)][1].im = khatsxy[1] as f32;
+        jones_array[(0, 0, 1)][2].re = khatsyx[0] as f32;
+        jones_array[(0, 0, 1)][2].im = khatsyx[1] as f32;
+        jones_array[(0, 0, 1)][3].re = khatsyy[0] as f32;
+        jones_array[(0, 0, 1)][3].im = khatsyy[1] as f32;
+
+        jones_array[(0, 0, 2)][0].re = sighats2[0].powi(2) as f32;
+        jones_array[(0, 0, 2)][1].re = khats2[0] as f32;
+        jones_array[(0, 0, 2)][1].im = khats2[1] as f32;
+        jones_array[(0, 0, 2)][2].re = khats2[0] as f32;
+        jones_array[(0, 0, 2)][2].im = -khats2[1] as f32;
+        jones_array[(0, 0, 2)][3].re = sighats2[1].powi(2) as f32;
+
+        // Set up PreprocessContext to only run Van Vleck
+        let prep_ctx = PreprocessContext {
+            correct_van_vleck: true,
+            correct_cable_lengths: false,
+            correct_digital_gains: false,
+            correct_geometry: false,
+            draw_progress: false,
+            passband_gains: None,
+            array_pos: LatLngHeight::default(),
+            phase_centre: RADec::default(),
+            ..Default::default()
+        };
+        println!("prep_ctx: {}", prep_ctx.as_comment());
+
+        // Dummy arrays for weights and flags
+        let mut weight_array = Array3::<f32>::ones(vis_dims);
+        let mut flag_array = Array3::<bool>::from_elem(vis_dims, false);
+
+        // Call preprocess
+        prep_ctx
+            .preprocess(
+                &corr_ctx,
+                jones_array.view_mut(),
+                weight_array.view_mut(),
+                flag_array.view_mut(),
+                &vis_sel,
+            )
+            .unwrap();
+
+        // Check that the output matches the expected values after correction
+
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][0].re, sigmas1[0].powi(2) as f32);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].re, kappas1[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][1].im, kappas1[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][2].re, kappas1[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][2].im, -kappas1[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 0)][3].re, sigmas1[1].powi(2) as f32);
+
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][0].re, kappasxx[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][0].im, kappasxx[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][1].re, kappasxy[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][1].im, kappasxy[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][2].re, kappasyx[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][2].im, kappasyx[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][3].re, kappasyy[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 1)][3].im, kappasyy[1] as f32, epsilon=1e-9);
+
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][0].re, sigmas2[0].powi(2) as f32);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][1].re, kappas2[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][1].im, kappas2[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].re, kappas2[0] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].im, -kappas2[1] as f32, epsilon=1e-9);
+        assert_approx_eq!(f32, jones_array[(0, 0, 2)][3].re, sigmas2[1].powi(2) as f32);
+
     }
 }

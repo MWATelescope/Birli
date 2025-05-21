@@ -1,7 +1,7 @@
 [package]
 name = "birli"
 description = "A preprocessing pipeline for the Murchison Widefield Array"
-version = "0.17.1"
+version = "0.18.0"
 readme = "README.md"
 homepage = "https://github.com/MWATelescope/Birli"
 repository = "https://github.com/MWATelescope/Birli"
@@ -101,7 +101,7 @@ console = { git = "https://github.com/console-rs/console", tag = "0.15.8" }
 flate2 = { git = "https://github.com/rust-lang/flate2-rs", tag = "1.0.35" }
 unicode-width = { git = "https://github.com/unicode-rs/unicode-width", tag = "v0.1.13" }
 cxx-build = { git = "https://github.com/dtolnay/cxx", tag = "1.0.124" }
-cxx = { git = "https://github.com/dtolnay/cxx", tag = "1.0.124" } 
+cxx = { git = "https://github.com/dtolnay/cxx", tag = "1.0.124" }
 half = { git = "https://github.com/VoidStarKat/half-rs", tag="v2.2.1" }
 # TODO: update to cxx 1.0.129 when MSRV >= 1.67
 url = { git = "https://github.com/servo/rust-url", tag = "v2.5.2" }
