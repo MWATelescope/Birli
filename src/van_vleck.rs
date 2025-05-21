@@ -1464,7 +1464,7 @@ mod vv_cross_tests {
 
         let ant_pairs = vec![(0, 0), (0, 1), (1, 1)];
         let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
-        assert_eq!(sample_scale, 1.0);
+        assert_approx_eq!(f64, sample_scale, 1.0, epsilon=1e-9);
 
         correct_van_vleck(jones_array.view_mut(), &ant_pairs, &[], sample_scale).unwrap();
 

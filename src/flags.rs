@@ -583,19 +583,49 @@ where
     flag_array.map(|f| if *f { -weight_factor } else { weight_factor } as f32)
 }
 
+pub(crate) fn get_unflagged_timestep_ranges(flag_chunk: ArrayView3<bool>) -> Vec<Range<usize>> {
+    flag_chunk
+        .axis_iter(Axis(0))
+        .enumerate()
+        .filter_map(|(timestep_idx, flag_chunk)| {
+            if flag_chunk.iter().any(|&x| !x) {
+                Some(timestep_idx)
+            } else {
+                None
+            }
+        })
+        // now convert this iterator of unflagged timestep ranges to an iterator of contiguous ranges
+        .fold(Vec::new(), |mut acc, timestep_idx| {
+            if acc.is_empty() {
+                acc.push(timestep_idx..(timestep_idx + 1));
+            } else {
+                let mut last_acc = acc.pop().unwrap();
+                if last_acc.end == timestep_idx {
+                    last_acc.end = timestep_idx + 1;
+                    acc.push(last_acc);
+                } else {
+                    acc.push(last_acc);
+                    acc.push(timestep_idx..(timestep_idx + 1));
+                }
+            }
+            acc
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::write_flags;
     use glob::glob;
+    use ndarray::Array3;
     use std::ffi::c_char;
     use tempfile::tempdir;
 
     use crate::{
+        flags::get_unflagged_timestep_ranges,
         marlu::selection::SelectionError::{NoCommonTimesteps, NoProvidedTimesteps},
-        test_common::get_mwax_context,
         test_common::{
             get_mwa_ord_dodgy_context, get_mwa_ord_no_overlap_context,
-            get_mwa_ord_no_timesteps_context,
+            get_mwa_ord_no_timesteps_context, get_mwax_context,
         },
         FlagFileSet, VisSelection,
     };
@@ -730,6 +760,22 @@ mod tests {
                 "with timestep {timestep_idx}, baseline {baseline_idx}, fine_chan {fine_chan_idx}, expected {expected_flag} at row_idx {row_idx}, offset {offset}"
             );
         }
+    }
+
+    #[test]
+    fn test_get_unflagged_timestep_ranges() {
+        let mut flag_array = Array3::from_elem((3, 3, 3), false);
+        flag_array[[1, 0, 0]] = true;
+        flag_array[[1, 0, 1]] = true;
+        flag_array[[1, 0, 2]] = true;
+        flag_array[[1, 1, 0]] = true;
+        flag_array[[1, 1, 1]] = true;
+        flag_array[[1, 1, 2]] = true;
+        flag_array[[1, 2, 0]] = true;
+        flag_array[[1, 2, 1]] = true;
+        flag_array[[1, 2, 2]] = true;
+        let unflagged_timestep_ranges = get_unflagged_timestep_ranges(flag_array.view());
+        assert_eq!(unflagged_timestep_ranges, vec![0..1, 2..3]);
     }
 }
 

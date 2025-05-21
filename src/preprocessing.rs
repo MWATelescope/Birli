@@ -3,6 +3,7 @@ use crate::{
     calibration::apply_di_calsol,
     correct_cable_lengths, correct_geometry,
     corrections::{correct_coarse_passband_gains, correct_digital_gains, ScrunchType},
+    flags::get_unflagged_timestep_ranges,
     marlu::{mwalib::CorrelatorContext, ndarray::prelude::*, Jones, LatLngHeight, RADec},
     van_vleck::{correct_van_vleck, get_vv_sample_scale},
     with_increment_duration, BirliError, VisSelection,
@@ -245,32 +246,7 @@ impl PreprocessContext<'_> {
                 let coarse_chan_range = coarse_chan_idx..(coarse_chan_idx + 1);
 
                 // determine which timestep ranges are not completely flagged
-                let unflagged_timestep_ranges = flag_chunk
-                    .axis_iter(Axis(0))
-                    .enumerate()
-                    .filter_map(|(timestep_idx, flag_chunk)| {
-                        if flag_chunk.iter().any(|&x| !x) {
-                            Some(timestep_idx)
-                        } else {
-                            None
-                        }
-                    })
-                    // now convert this iterator of unflagged timestep ranges to an iterator of contiguous ranges
-                    .fold(Vec::new(), |mut acc, timestep_idx| {
-                        if acc.is_empty() {
-                            acc.push(timestep_idx..(timestep_idx + 1));
-                        } else {
-                            let mut last_acc = acc.pop().unwrap();
-                            if last_acc.end == timestep_idx {
-                                last_acc.end = timestep_idx + 1;
-                                acc.push(last_acc);
-                            } else {
-                                acc.push(last_acc);
-                                acc.push(timestep_idx..(timestep_idx + 1));
-                            }
-                        }
-                        acc
-                    });
+                let unflagged_timestep_ranges = get_unflagged_timestep_ranges(flag_chunk);
 
                 for timestep_range in unflagged_timestep_ranges {
                     let mut jones_chunk = jones_chunk.slice_mut(s![timestep_range.clone(), .., ..]);
@@ -579,7 +555,7 @@ mod tests {
         corr_ctx.metafits_context.corr_int_time_ms = 500;
         corr_ctx.metafits_context.corr_raw_scale_factor = 1.0;
         let sample_scale = get_vv_sample_scale(&corr_ctx).unwrap();
-        assert_eq!(sample_scale, 1.0);
+        assert_approx_eq!(f64, sample_scale, 1.0, epsilon=1e-9);
 
         let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
         vis_sel.retain_antennas(&corr_ctx.metafits_context, &[0, 1]);
@@ -634,20 +610,17 @@ mod tests {
         jones_array[(0, 0, 2)][3].re = sighats2[1].powi(2) as f32;
 
         // Set up PreprocessContext to only run Van Vleck
-        let mut prep_ctx = PreprocessContext::default();
-        prep_ctx.correct_van_vleck = true;
-        prep_ctx.correct_cable_lengths = false;
-        prep_ctx.correct_digital_gains = false;
-        prep_ctx.correct_geometry = false;
-        prep_ctx.draw_progress = false;
-        prep_ctx.passband_gains = None;
-        // phase_centre and array_pos are required but not used for van vleck
-        prep_ctx.array_pos = LatLngHeight {
-            longitude_rad: 0.0,
-            latitude_rad: 0.0,
-            height_metres: 0.0,
+        let prep_ctx = PreprocessContext {
+            correct_van_vleck: true,
+            correct_cable_lengths: false,
+            correct_digital_gains: false,
+            correct_geometry: false,
+            draw_progress: false,
+            passband_gains: None,
+            array_pos: LatLngHeight::default(),
+            phase_centre: RADec::default(),
+            ..Default::default()
         };
-        prep_ctx.phase_centre = RADec { ra: 0.0, dec: 0.0 };
         println!("prep_ctx: {}", prep_ctx.as_comment());
 
         // Dummy arrays for weights and flags
