@@ -1,6 +1,6 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.18.0 (unreleased)
+# Version 0.18.0 (2025-05-21)
 
 - ✨ new features:
   - oversampled pfb gains for SHAO and NI receivers, automatically applied for oversampled observations
