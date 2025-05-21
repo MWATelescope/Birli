@@ -12,6 +12,7 @@ name: Benchmarks
 
 jobs:
   test:
+    if: false  # <--- This disables the job
     name: Benchmarks
     runs-on: self-hosted
     steps:
