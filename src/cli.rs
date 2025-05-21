@@ -21,8 +21,7 @@ use prettytable::{format as prettyformat, row, table};
 
 use crate::{
     error::{
-        BirliError,
-        BirliError::{BadMWAVersion, DryRun},
+        BirliError::{self, BadMWAVersion, DryRun},
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
     },
     flags::FlagContext,
@@ -39,7 +38,7 @@ use crate::{
         precession::{precess_time, PrecessionInfo},
         History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
     },
-    passband_gains::{PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
+    passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
     with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection,
 };
 
@@ -760,8 +759,10 @@ impl<'a> BirliContext<'a> {
                             ),
                         PossibleValue::new("jake")
                             .help("see: PFB_JAKE_2022_200HZ in src/passband_gains.rs"),
+                        PossibleValue::new("jake_oversampled")
+                            .help("see: OSPFB_JAKE_2025_200HZ in src/passband_gains.rs"),
                         PossibleValue::new("auto")
-                            .help("MWAX => jake, legacy => cotter"),
+                            .help("MWAX => jake or jake_oversampled, legacy => cotter"),
                     ])
                     .default_value("auto")
                     .alias("pfb-gains")
@@ -1340,6 +1341,12 @@ impl<'a> BirliContext<'a> {
             mwa_version,
             ..
         } = corr_ctx;
+        let MetafitsContext {
+            oversampled,
+            cable_delays_applied,
+            geometric_delays_applied,
+            ..
+        } = meta_ctx;
         prep_ctx.array_pos = if matches.is_present("emulate-cotter") {
             info!("Using array position from Cotter.");
             LatLngHeight {
@@ -1378,7 +1385,6 @@ impl<'a> BirliContext<'a> {
         };
         prep_ctx.correct_cable_lengths = {
             let cable_delays_disabled = matches.is_present("no-cable-delay");
-            let cable_delays_applied = meta_ctx.cable_delays_applied;
             debug!(
                 "cable corrections: applied={}, disabled={}",
                 cable_delays_applied, cable_delays_disabled
@@ -1392,18 +1398,25 @@ impl<'a> BirliContext<'a> {
         prep_ctx.passband_gains = match matches.value_of("passband-gains") {
             None | Some("none") => None,
             Some("jake") => Some(PFB_JAKE_2022_200HZ),
+            Some("jake_oversampled") => Some(OSPFB_JAKE_2025_200HZ),
             Some("cotter") => Some(PFB_COTTER_2014_10KHZ),
-            Some("auto") => match mwa_version {
-                MWAVersion::CorrMWAXv2 => Some(PFB_JAKE_2022_200HZ),
-                MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy => Some(PFB_COTTER_2014_10KHZ),
-                #[rustfmt::skip]
-                ver => { return Err(BadMWAVersion { message: "unknown mwa version".into(), version: ver.to_string() }) },
+            Some("auto") => match (mwa_version, oversampled) {
+                (MWAVersion::CorrMWAXv2, false) => Some(PFB_JAKE_2022_200HZ),
+                (MWAVersion::CorrMWAXv2, true) => Some(OSPFB_JAKE_2025_200HZ),
+                (MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy, _) => {
+                    Some(PFB_COTTER_2014_10KHZ)
+                }
+                (ver, _) => {
+                    return Err(BadMWAVersion {
+                        message: "unknown mwa version".into(),
+                        version: ver.to_string(),
+                    })
+                }
             },
             Some(option) => panic!("unknown option for --passband-gains: {option}"),
         };
         prep_ctx.correct_geometry = {
             let geometric_delays_disabled = matches.is_present("no-geometric-delay");
-            let geometric_delays_applied = meta_ctx.geometric_delays_applied;
             debug!(
                 "geometric corrections: applied={:?}, disabled={}",
                 geometric_delays_applied, !geometric_delays_disabled
