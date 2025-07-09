@@ -49,6 +49,8 @@ pub struct IOContext {
     pub ms_out: Option<PathBuf>,
     /// Optional .mwaf flag file path template (see `io::mwaf::FlagFileSet`)
     pub flag_template: Option<String>,
+    /// Optional .csv metrics path
+    pub metrics_out: Option<PathBuf>,
 }
 
 impl IOContext {
