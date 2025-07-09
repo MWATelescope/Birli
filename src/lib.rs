@@ -198,6 +198,8 @@ pub use preprocessing::PreprocessContext;
 pub mod van_vleck;
 pub use van_vleck::{correct_van_vleck, get_vv_sample_scale};
 
+pub mod ssins;
+
 cfg_if! {
     if #[cfg(feature = "cli")] {
         pub mod cli;

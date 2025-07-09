@@ -272,6 +272,45 @@ pub fn jones_baseline_view_to_imageset(
     imgset
 }
 
+/// Create an aoflagger [`CxxImageSet`] for array of amplitudes
+///
+/// since most strategies assume jones matrix, the imageset will have a count
+/// of 2x the polarization count. imaginary values are set to 0.
+///
+/// # Assumptions
+///
+/// - `amps_tfp` is `[timestep][channel][pol]` for one baseline
+/// - imageset is timesteps wide, and channels high
+///
+pub(crate) fn amps_tfp_to_imageset(
+    aoflagger: &CxxAOFlagger,
+    amps_tfp: ArrayView3<f32>,
+) -> UniquePtr<CxxImageSet> {
+    let array_dims = amps_tfp.dim();
+    let img_count = array_dims.2 * 2;
+    let imgset = unsafe {
+        aoflagger.MakeImageSet(
+            array_dims.0,
+            array_dims.1,
+            img_count,
+            0 as f32,
+            array_dims.0,
+        )
+    };
+
+    let img_stride = imgset.HorizontalStride();
+    let mut img_bufs: Vec<&mut [f32]> = (0..img_count)
+        .map(|img_idx| unsafe { imgset.ImageBufferMutUnsafe(img_idx) })
+        .collect();
+
+    for ((t, f, q), &amp) in amps_tfp.indexed_iter() {
+        img_bufs[q * 2][f * img_stride + t] = amp;
+        img_bufs[q * 2 + 1][f * img_stride + t] = 0.0;
+    }
+
+    imgset
+}
+
 /// Create an aoflagger [`CxxFlagMask`] for a from the given flag array view
 ///
 /// # Assumptions

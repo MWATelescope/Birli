@@ -14,35 +14,32 @@ use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::
 use indicatif::{ProgressDrawTarget, ProgressStyle};
 use itertools::{izip, Itertools};
 use log::{debug, info, trace};
-use marlu::mwalib::MetafitsContext;
-use mwalib::{
-    built_info::PKG_VERSION as MWALIB_PKG_VERSION, CableDelaysApplied, CorrelatorContext,
-    GeometricDelaysApplied, MWAVersion,
-};
 use prettytable::{format as prettyformat, row, table};
 
-use crate::{
-    error::{
-        BirliError::{self, BadMWAVersion, DryRun},
-        CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
-    },
-    flags::FlagContext,
-    io::{aocal::AOCalSols, read_mwalib, IOContext},
-    marlu::{
-        built_info::PKG_VERSION as MARLU_PKG_VERSION,
-        constants::{
-            COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
-        },
-        hifitime::{self, Epoch},
-        io::{error::BadArrayShape, ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
-        mwalib,
-        ndarray::s,
-        precession::{precess_time, PrecessionInfo},
-        History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
-    },
-    passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
-    with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection,
+use crate::error::{
+    BirliError::{self, BadMWAVersion, DryRun},
+    CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
 };
+use crate::flags::FlagContext;
+use crate::io::{aocal::AOCalSols, read_mwalib, IOContext};
+use crate::marlu::{
+    built_info::PKG_VERSION as MARLU_PKG_VERSION,
+    constants::{
+        COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
+    },
+    hifitime::{self, Epoch},
+    io::{error::BadArrayShape, ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
+    mwalib::{
+        built_info::PKG_VERSION as MWALIB_PKG_VERSION, CableDelaysApplied, CorrelatorContext,
+        GeometricDelaysApplied, MWAVersion, MetafitsContext,
+    },
+    ndarray::s,
+    precession::{precess_time, PrecessionInfo},
+    History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
+};
+use crate::passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ};
+use crate::ssins::SSINS;
+use crate::{with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection};
 
 cfg_if! {
     if #[cfg(feature = "aoflagger")] {
@@ -803,6 +800,9 @@ impl<'a> BirliContext<'a> {
                 arg!(-M --"ms-out" <PATH> "Path for measurement set output")
                     .help_heading("OUTPUT")
                     .required(false),
+                arg!(--"metrics-out" <PATH> "Path for csv metrics output")
+                    .help_heading("OUTPUT")
+                    .required(false),
             ]);
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
@@ -832,6 +832,7 @@ impl<'a> BirliContext<'a> {
             uvfits_out: matches.value_of("uvfits-out").map(Into::into),
             ms_out: matches.value_of("ms-out").map(Into::into),
             flag_template: matches.value_of("flag-template").map(Into::into),
+            metrics_out: matches.value_of("metrics-out").map(Into::into),
         }
     }
 
@@ -1860,7 +1861,34 @@ impl<'a> BirliContext<'a> {
                 &chunk_vis_sel,
             )?;
 
-            // output flags (before averaging)
+            let mut ssins = SSINS::new(jones_array.view(), &corr_ctx, &chunk_vis_sel);
+            // this requires the aoflagger feature flag.
+            #[cfg(feature = "aoflagger")]
+            {
+                ssins.flag(
+                    None,
+                    // Some( "/Users/dev/Code/aoflagger/data/strategies/generic-minimal.lua".to_string(), ),
+                );
+                println!("SSINS flags:");
+                let flag_dims = ssins.flag_array.dim();
+                for t in 0..flag_dims.0 {
+                    for f in 0..flag_dims.1 {
+                        let c = if ssins.flag_array[[t, f]] { "#" } else { " " };
+                        print!("{}", c);
+                    }
+                    println!();
+                }
+            }
+
+            // Save SSINS metrics to CSV if output path is specified
+            if let Some(metrics_path) = &io_ctx.metrics_out {
+                if let Err(e) = ssins.save_to_fits(metrics_path.to_str().unwrap()) {
+                    log::warn!("Failed to save SSINS metrics to FITS: {}", e);
+                } else {
+                    log::info!("Saved SSINS metrics to {}", metrics_path.display());
+                }
+            }
+
             if let Some(flag_file_set) = flag_file_set.as_mut() {
                 with_increment_duration!(
                     "write",
