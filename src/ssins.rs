@@ -156,13 +156,12 @@ impl SSINS {
             // Frequency axis info
             hdu.write_key(fptr, "CTYPE2", "TIME")?;
             hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
-            hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64 * 1000.0)?;
+            hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64)?;
             hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
             hdu.write_key(fptr, "CUNIT2", "s")?;
 
             // SSINS-specific metadata
             hdu.write_key(fptr, "POL", pol_names[pol_idx])?;
-            hdu.write_key(fptr, "OBJECT", "SSINS")?;
             hdu.write_key(fptr, "TELESCOP", "MWA")?;
             hdu.write_key(fptr, "INSTRUME", "SSINS")?;
             hdu.write_key(fptr, "ORIGIN", "Birli")?;
@@ -218,12 +217,11 @@ impl SSINS {
         // Frequency axis info
         hdu.write_key(fptr, "CTYPE2", "TIME")?;
         hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
-        hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64 * 1000.0)?;
+        hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64)?;
         hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
         hdu.write_key(fptr, "CUNIT2", "s")?;
 
         // SSINS-specific metadata
-        hdu.write_key(fptr, "OBJECT", "SSINS")?;
         hdu.write_key(fptr, "TELESCOP", "MWA")?;
         hdu.write_key(fptr, "INSTRUME", "SSINS")?;
         hdu.write_key(fptr, "ORIGIN", "Birli")?;
@@ -330,12 +328,11 @@ impl EAVILS {
             // Frequency axis info
             hdu.write_key(fptr, "CTYPE2", "TIME")?;
             hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
-            hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64 * 1000.0)?;
+            hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64)?;
             hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
             hdu.write_key(fptr, "CUNIT2", "s")?;
 
             // SSINS-specific metadata
-            hdu.write_key(fptr, "OBJECT", "EAVILS")?;
             hdu.write_key(fptr, "TELESCOP", "MWA")?;
             hdu.write_key(fptr, "INSTRUME", "EAVILS")?;
             hdu.write_key(fptr, "ORIGIN", "Birli")?;
@@ -382,12 +379,11 @@ impl EAVILS {
         // Frequency axis info
         hdu.write_key(fptr, "CTYPE2", "TIME")?;
         hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
-        hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64 * 1000.0)?;
+        hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64)?;
         hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
         hdu.write_key(fptr, "CUNIT2", "s")?;
 
         // SSINS-specific metadata
-        hdu.write_key(fptr, "OBJECT", "EAVILS")?;
         hdu.write_key(fptr, "TELESCOP", "MWA")?;
         hdu.write_key(fptr, "INSTRUME", "EAVILS")?;
         hdu.write_key(fptr, "ORIGIN", "Birli")?;
@@ -398,6 +394,88 @@ impl EAVILS {
             "COMMENT",
             "EAVILS (Expected Amplitude of VisibILities Spectra)",
         )?;
+        Ok(())
+    }
+}
+
+pub(crate) struct AOFlagMetrics {
+    pub occupancy_tf: Array2<f64>, // (times, frequencies)
+    pub start_time_gps_s: f64,
+    pub integration_time_s: f64,
+    pub start_freq_hz: f64,
+    pub channel_width_hz: f64,
+}
+
+impl AOFlagMetrics {
+    pub(crate) fn new(
+        flag_array_tfb: ArrayView3<bool>,
+        corr_ctx: &CorrelatorContext,
+        chunk_vis_sel: &VisSelection,
+    ) -> Self {
+        let (num_timesteps, num_freqs, num_baselines) = flag_array_tfb.dim();
+        let mut occupancy_tf = Array2::<f64>::zeros((num_timesteps, num_freqs));
+
+        for t in 0..num_timesteps {
+            for f in 0..num_freqs {
+                for b in 0..num_baselines {
+                    occupancy_tf[[t, f]] += flag_array_tfb[[t, f, b]] as u8 as f64;
+                }
+            }
+        }
+
+        let total_samples = num_timesteps * num_baselines;
+        occupancy_tf /= total_samples as f64;
+
+        let timesteps_nodiff = &corr_ctx.timesteps[chunk_vis_sel.timestep_range.clone()]
+            .iter()
+            .map(|ts| ts.gps_time_ms as f64 / 1000.0)
+            .collect::<Vec<_>>();
+        let integration_time_s = timesteps_nodiff[1] - timesteps_nodiff[0];
+
+        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(
+            &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
+        );
+        let freq_width_hz = all_freqs_hz[1] - all_freqs_hz[0];
+
+        Self {
+            occupancy_tf,
+            start_time_gps_s: timesteps_nodiff[0],
+            integration_time_s,
+            start_freq_hz: all_freqs_hz[0],
+            channel_width_hz: freq_width_hz,
+        }
+    }
+
+    pub(crate) fn save_to_fits(
+        &self,
+        fptr: &mut FitsFile,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let flag_dim: (usize, usize) = self.occupancy_tf.dim();
+        let flag_image_description = ImageDescription {
+            data_type: ImageType::Double,
+            dimensions: &[flag_dim.0, flag_dim.1],
+        };
+        let flag_extname = "AO_FLAG_METRICS";
+        let hdu = fptr.create_image(flag_extname, &flag_image_description)?;
+        hdu.write_image(fptr, &self.occupancy_tf.iter().cloned().collect::<Vec<_>>())?;
+        // Basic image info
+        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
+        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+        hdu.write_key(fptr, "BZERO", 0.0f64)?;
+
+        // Time axis info
+        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
+        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz as f64)?;
+        hdu.write_key(fptr, "CDELT1", self.channel_width_hz as f64)?;
+        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT1", "Hz")?;
+
+        // Frequency axis info
+        hdu.write_key(fptr, "CTYPE2", "TIME")?;
+        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
+        hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64)?;
+        hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT2", "s")?;
         Ok(())
     }
 }

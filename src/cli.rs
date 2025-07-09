@@ -1863,34 +1863,43 @@ impl<'a> BirliContext<'a> {
                 &chunk_vis_sel,
             )?;
 
-            let mut ssins = SSINS::new(jones_array.view(), &corr_ctx, &chunk_vis_sel);
-            // this requires the aoflagger feature flag.
-            #[cfg(feature = "aoflagger")]
-            {
-                ssins.flag(
-                    None,
-                    // Some( "/Users/dev/Code/aoflagger/data/strategies/generic-minimal.lua".to_string(), ),
-                );
-                println!("SSINS flags:");
-                let flag_dims = ssins.flag_array.dim();
-                for t in 0..flag_dims.0 {
-                    for f in 0..flag_dims.1 {
-                        let c = if ssins.flag_array[[t, f]] { "#" } else { " " };
-                        print!("{}", c);
-                    }
-                    println!();
-                }
-            }
-
-            let eavils = EAVILS::new(jones_array.view(), &corr_ctx, &chunk_vis_sel);
-
             // Save SSINS metrics to CSV if output path is specified
             if let Some(metrics_path) = &io_ctx.metrics_out {
+                let mut ssins = SSINS::new(jones_array.view(), &corr_ctx, &chunk_vis_sel);
+                let eavils = EAVILS::new(jones_array.view(), &corr_ctx, &chunk_vis_sel);
+
                 let path = Path::new(metrics_path.to_str().unwrap());
                 if path.exists() {
                     std::fs::remove_file(path).unwrap();
                 }
                 let mut fptr = FitsFile::create(path).open().unwrap();
+
+                // this requires the aoflagger feature flag.
+                #[cfg(feature = "aoflagger")]
+                {
+                    use crate::ssins::AOFlagMetrics;
+
+                    let aoflagger_metrics =
+                        AOFlagMetrics::new(flag_array.view(), &corr_ctx, &chunk_vis_sel);
+                    if let Err(e) = aoflagger_metrics.save_to_fits(&mut fptr) {
+                        log::warn!("Failed to save AOFlagger metrics to FITS: {}", e);
+                    }
+
+                    ssins.flag(
+                        None,
+                        // Some( "/Users/dev/Code/aoflagger/data/strategies/generic-minimal.lua".to_string(), ),
+                    );
+                    println!("SSINS flags:");
+                    let flag_dims = ssins.flag_array.dim();
+                    for t in 0..flag_dims.0 {
+                        for f in 0..flag_dims.1 {
+                            let c = if ssins.flag_array[[t, f]] { "#" } else { " " };
+                            print!("{}", c);
+                        }
+                        println!();
+                    }
+                }
+
                 if let Err(e) = ssins.save_to_fits(&mut fptr) {
                     log::warn!("Failed to save SSINS metrics to FITS: {}", e);
                 }
