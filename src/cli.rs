@@ -6,6 +6,7 @@ use std::{
     convert::Into,
     ffi::OsString,
     fmt::{Debug, Display},
+    path::Path,
     time::Duration,
 };
 
@@ -27,6 +28,7 @@ use crate::marlu::{
     constants::{
         COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
     },
+    fitsio::FitsFile,
     hifitime::{self, Epoch},
     io::{error::BadArrayShape, ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
     mwalib::{
@@ -38,7 +40,7 @@ use crate::marlu::{
     History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
 };
 use crate::passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ};
-use crate::ssins::SSINS;
+use crate::ssins::{EAVILS, SSINS};
 use crate::{with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection};
 
 cfg_if! {
@@ -1880,13 +1882,25 @@ impl<'a> BirliContext<'a> {
                 }
             }
 
+            let eavils = EAVILS::new(jones_array.view(), &corr_ctx, &chunk_vis_sel);
+
             // Save SSINS metrics to CSV if output path is specified
             if let Some(metrics_path) = &io_ctx.metrics_out {
-                if let Err(e) = ssins.save_to_fits(metrics_path.to_str().unwrap()) {
-                    log::warn!("Failed to save SSINS metrics to FITS: {}", e);
-                } else {
-                    log::info!("Saved SSINS metrics to {}", metrics_path.display());
+                let path = Path::new(metrics_path.to_str().unwrap());
+                if path.exists() {
+                    std::fs::remove_file(path).unwrap();
                 }
+                let mut fptr = FitsFile::create(path).open().unwrap();
+                if let Err(e) = ssins.save_to_fits(&mut fptr) {
+                    log::warn!("Failed to save SSINS metrics to FITS: {}", e);
+                }
+                if let Err(e) = eavils.save_to_fits(&mut fptr) {
+                    log::warn!("Failed to save EAVILS metrics to FITS: {}", e);
+                }
+                log::info!(
+                    "Saved SSINS and EAVILS metrics to {}",
+                    metrics_path.display()
+                );
             }
 
             if let Some(flag_file_set) = flag_file_set.as_mut() {

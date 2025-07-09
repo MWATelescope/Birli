@@ -8,8 +8,12 @@
 //! - <https://ssins.readthedocs.io/en/latest/>
 
 use crate::marlu::{
-    fitsio::images::ImageDescription,
+    fitsio::{
+        images::{ImageDescription, ImageType},
+        FitsFile,
+    },
     mwalib::CorrelatorContext,
+    ndarray::s,
     ndarray::{Array2, Array3, ArrayView3},
     Jones, VisSelection,
 };
@@ -110,21 +114,10 @@ impl SSINS {
         }
     }
 
-    pub(crate) fn save_to_fits(&self, filepath: &str) -> Result<(), Box<dyn std::error::Error>> {
-        use crate::{
-            fitsio::{images::ImageType, FitsFile},
-            marlu::ndarray::s,
-        };
-
-        use std::path::Path;
-
-        let path = Path::new(filepath);
-        if path.exists() {
-            std::fs::remove_file(path)?;
-        }
-        // create even if it already exists
-        let mut fptr = FitsFile::create(path).open()?;
-
+    pub(crate) fn save_to_fits(
+        &self,
+        fptr: &mut FitsFile,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Write one image per polarization
         let pol_names = ["XX", "YY", "XY", "YX"];
         let (num_times, num_freqs, num_pols) = self.diff_mean_amp_tfp.dim();
@@ -146,47 +139,47 @@ impl SSINS {
                 .cloned()
                 .collect();
 
-            hdu.write_image(&mut fptr, &pol_data)?;
+            hdu.write_image(fptr, &pol_data)?;
 
             // Basic image info
-            hdu.write_key(&mut fptr, "BUNIT", "arbitrary")?;
-            hdu.write_key(&mut fptr, "BSCALE", 1.0f64)?;
-            hdu.write_key(&mut fptr, "BZERO", 0.0f64)?;
+            hdu.write_key(fptr, "BUNIT", "arbitrary")?;
+            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+            hdu.write_key(fptr, "BZERO", 0.0f64)?;
 
             // Time axis info
-            hdu.write_key(&mut fptr, "CTYPE1", "FREQ")?;
-            hdu.write_key(&mut fptr, "CRVAL1", self.start_freq_hz as f64)?;
-            hdu.write_key(&mut fptr, "CDELT1", self.channel_width_hz as f64)?;
-            hdu.write_key(&mut fptr, "CRPIX1", 1.0f64)?;
-            hdu.write_key(&mut fptr, "CUNIT1", "Hz")?;
+            hdu.write_key(fptr, "CTYPE1", "FREQ")?;
+            hdu.write_key(fptr, "CRVAL1", self.start_freq_hz as f64)?;
+            hdu.write_key(fptr, "CDELT1", self.channel_width_hz as f64)?;
+            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+            hdu.write_key(fptr, "CUNIT1", "Hz")?;
 
             // Frequency axis info
-            hdu.write_key(&mut fptr, "CTYPE2", "TIME")?;
-            hdu.write_key(&mut fptr, "CRVAL2", self.start_time_gps_s as f64)?;
-            hdu.write_key(&mut fptr, "CDELT2", self.integration_time_s as f64 * 1000.0)?;
-            hdu.write_key(&mut fptr, "CRPIX2", 1.0f64)?;
-            hdu.write_key(&mut fptr, "CUNIT2", "s")?;
+            hdu.write_key(fptr, "CTYPE2", "TIME")?;
+            hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
+            hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64 * 1000.0)?;
+            hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
+            hdu.write_key(fptr, "CUNIT2", "s")?;
 
             // SSINS-specific metadata
-            hdu.write_key(&mut fptr, "POL", pol_names[pol_idx])?;
-            hdu.write_key(&mut fptr, "OBJECT", "SSINS")?;
-            hdu.write_key(&mut fptr, "TELESCOP", "MWA")?;
-            hdu.write_key(&mut fptr, "INSTRUME", "SSINS")?;
-            hdu.write_key(&mut fptr, "ORIGIN", "Birli")?;
+            hdu.write_key(fptr, "POL", pol_names[pol_idx])?;
+            hdu.write_key(fptr, "OBJECT", "SSINS")?;
+            hdu.write_key(fptr, "TELESCOP", "MWA")?;
+            hdu.write_key(fptr, "INSTRUME", "SSINS")?;
+            hdu.write_key(fptr, "ORIGIN", "Birli")?;
 
             // Add description
             hdu.write_key(
-                &mut fptr,
+                fptr,
                 "COMMENT",
                 "SSINS (Sky-Subtract Incoherent Noise Spectra)",
             )?;
             hdu.write_key(
-                &mut fptr,
+                fptr,
                 "COMMENT",
                 "Incoherently averaged difference between visibilities in time",
             )?;
             hdu.write_key(
-                &mut fptr,
+                fptr,
                 "COMMENT",
                 "One image per polarization (XX, YY, XY, YX)",
             )?;
@@ -201,7 +194,7 @@ impl SSINS {
         let flag_extname = "SSINS_FLAGS";
         let hdu = fptr.create_image(flag_extname, &flag_image_description)?;
         hdu.write_image(
-            &mut fptr,
+            fptr,
             &self
                 .flag_array
                 .iter()
@@ -211,30 +204,200 @@ impl SSINS {
         )?;
 
         // Basic image info
-        hdu.write_key(&mut fptr, "BUNIT", "arbitrary")?;
-        hdu.write_key(&mut fptr, "BSCALE", 1.0f64)?;
-        hdu.write_key(&mut fptr, "BZERO", 0.0f64)?;
+        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
+        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+        hdu.write_key(fptr, "BZERO", 0.0f64)?;
 
         // Time axis info
-        hdu.write_key(&mut fptr, "CTYPE1", "FREQ")?;
-        hdu.write_key(&mut fptr, "CRVAL1", self.start_freq_hz as f64)?;
-        hdu.write_key(&mut fptr, "CDELT1", self.channel_width_hz as f64)?;
-        hdu.write_key(&mut fptr, "CRPIX1", 1.0f64)?;
-        hdu.write_key(&mut fptr, "CUNIT1", "Hz")?;
+        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
+        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz as f64)?;
+        hdu.write_key(fptr, "CDELT1", self.channel_width_hz as f64)?;
+        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT1", "Hz")?;
 
         // Frequency axis info
-        hdu.write_key(&mut fptr, "CTYPE2", "TIME")?;
-        hdu.write_key(&mut fptr, "CRVAL2", self.start_time_gps_s as f64)?;
-        hdu.write_key(&mut fptr, "CDELT2", self.integration_time_s as f64 * 1000.0)?;
-        hdu.write_key(&mut fptr, "CRPIX2", 1.0f64)?;
-        hdu.write_key(&mut fptr, "CUNIT2", "s")?;
+        hdu.write_key(fptr, "CTYPE2", "TIME")?;
+        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
+        hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64 * 1000.0)?;
+        hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT2", "s")?;
 
         // SSINS-specific metadata
-        hdu.write_key(&mut fptr, "OBJECT", "SSINS")?;
-        hdu.write_key(&mut fptr, "TELESCOP", "MWA")?;
-        hdu.write_key(&mut fptr, "INSTRUME", "SSINS")?;
-        hdu.write_key(&mut fptr, "ORIGIN", "Birli")?;
+        hdu.write_key(fptr, "OBJECT", "SSINS")?;
+        hdu.write_key(fptr, "TELESCOP", "MWA")?;
+        hdu.write_key(fptr, "INSTRUME", "SSINS")?;
+        hdu.write_key(fptr, "ORIGIN", "Birli")?;
 
+        Ok(())
+    }
+}
+
+pub(crate) struct EAVILS {
+    pub nodiff_mean_amp_tfp: Array3<f32>, // (times, frequencies, polarizations)
+    pub flag_array: Array2<bool>,         // (times, frequencies)
+    pub start_time_gps_s: f64,
+    pub integration_time_s: f64,
+    pub start_freq_hz: f64,
+    pub channel_width_hz: f64,
+}
+
+impl EAVILS {
+    pub(crate) fn new(
+        jones_array_tfb: ArrayView3<Jones<f32>>,
+        corr_ctx: &CorrelatorContext,
+        chunk_vis_sel: &VisSelection,
+    ) -> Self {
+        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+        let mut nodiff_mean_amp_tfp = Array3::<f32>::zeros((num_timesteps, num_freqs, 4));
+
+        for t in 0..num_timesteps {
+            for f in 0..num_freqs {
+                for b in 0..num_baselines {
+                    let jones_nodiff = jones_array_tfb[[t, f, b]];
+                    nodiff_mean_amp_tfp[[t, f, 0]] += jones_nodiff[0].norm();
+                    nodiff_mean_amp_tfp[[t, f, 1]] += jones_nodiff[1].norm();
+                    nodiff_mean_amp_tfp[[t, f, 2]] += jones_nodiff[2].norm();
+                    nodiff_mean_amp_tfp[[t, f, 3]] += jones_nodiff[3].norm();
+                }
+            }
+        }
+
+        let total_samples = num_timesteps * num_baselines;
+        nodiff_mean_amp_tfp /= total_samples as f32;
+
+        let flag_array = Array2::<bool>::default((num_timesteps, num_freqs));
+
+        let timesteps_nodiff = &corr_ctx.timesteps[chunk_vis_sel.timestep_range.clone()]
+            .iter()
+            .map(|ts| ts.gps_time_ms as f64 / 1000.0)
+            .collect::<Vec<_>>();
+        let integration_time_s = timesteps_nodiff[1] - timesteps_nodiff[0];
+
+        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(
+            &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
+        );
+        let freq_width_hz = all_freqs_hz[1] - all_freqs_hz[0];
+
+        Self {
+            nodiff_mean_amp_tfp,
+            flag_array,
+            start_time_gps_s: timesteps_nodiff[0],
+            integration_time_s,
+            start_freq_hz: all_freqs_hz[0],
+            channel_width_hz: freq_width_hz,
+        }
+    }
+
+    pub(crate) fn save_to_fits(
+        &self,
+        fptr: &mut FitsFile,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Write one image per polarization
+        let pol_names = ["XX", "YY", "XY", "YX"];
+        let (num_times, num_freqs, num_pols) = self.nodiff_mean_amp_tfp.dim();
+
+        for pol_idx in 0..num_pols {
+            let dim = [num_times, num_freqs];
+            let image_description = ImageDescription {
+                data_type: ImageType::Double,
+                dimensions: &dim,
+            };
+            let extname = format!("EAVILS_POL={}", pol_names[pol_idx]);
+            let hdu = fptr.create_image(&extname, &image_description)?;
+
+            // Write the data for this polarization
+            let pol_data: Vec<f32> = self
+                .nodiff_mean_amp_tfp
+                .slice(s![.., .., pol_idx])
+                .iter()
+                .cloned()
+                .collect();
+
+            hdu.write_image(fptr, &pol_data)?;
+
+            // Basic image info
+            hdu.write_key(fptr, "BUNIT", "arbitrary")?;
+            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+            hdu.write_key(fptr, "BZERO", 0.0f64)?;
+
+            // Time axis info
+            hdu.write_key(fptr, "CTYPE1", "FREQ")?;
+            hdu.write_key(fptr, "CRVAL1", self.start_freq_hz as f64)?;
+            hdu.write_key(fptr, "CDELT1", self.channel_width_hz as f64)?;
+            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+            hdu.write_key(fptr, "CUNIT1", "Hz")?;
+
+            // Frequency axis info
+            hdu.write_key(fptr, "CTYPE2", "TIME")?;
+            hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
+            hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64 * 1000.0)?;
+            hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
+            hdu.write_key(fptr, "CUNIT2", "s")?;
+
+            // SSINS-specific metadata
+            hdu.write_key(fptr, "OBJECT", "EAVILS")?;
+            hdu.write_key(fptr, "TELESCOP", "MWA")?;
+            hdu.write_key(fptr, "INSTRUME", "EAVILS")?;
+            hdu.write_key(fptr, "ORIGIN", "Birli")?;
+            hdu.write_key(fptr, "POL", pol_names[pol_idx])?;
+
+            // Add description
+            hdu.write_key(
+                fptr,
+                "COMMENT",
+                "EAVILS (Expected Amplitude of VisibILities Spectra)",
+            )?;
+        }
+
+        // Write flag array
+        let flag_dim = self.flag_array.dim();
+        let flag_image_description = ImageDescription {
+            data_type: ImageType::Double,
+            dimensions: &[flag_dim.0, flag_dim.1],
+        };
+        let flag_extname = "EAVILS_FLAGS";
+        let hdu = fptr.create_image(flag_extname, &flag_image_description)?;
+        hdu.write_image(
+            fptr,
+            &self
+                .flag_array
+                .iter()
+                .cloned()
+                .map(|b| if b { 1.0 } else { 0.0 })
+                .collect::<Vec<_>>(),
+        )?;
+
+        // Basic image info
+        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
+        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+        hdu.write_key(fptr, "BZERO", 0.0f64)?;
+
+        // Time axis info
+        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
+        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz as f64)?;
+        hdu.write_key(fptr, "CDELT1", self.channel_width_hz as f64)?;
+        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT1", "Hz")?;
+
+        // Frequency axis info
+        hdu.write_key(fptr, "CTYPE2", "TIME")?;
+        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
+        hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64 * 1000.0)?;
+        hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT2", "s")?;
+
+        // SSINS-specific metadata
+        hdu.write_key(fptr, "OBJECT", "EAVILS")?;
+        hdu.write_key(fptr, "TELESCOP", "MWA")?;
+        hdu.write_key(fptr, "INSTRUME", "EAVILS")?;
+        hdu.write_key(fptr, "ORIGIN", "Birli")?;
+
+        // Add description
+        hdu.write_key(
+            fptr,
+            "COMMENT",
+            "EAVILS (Expected Amplitude of VisibILities Spectra)",
+        )?;
         Ok(())
     }
 }
