@@ -19,9 +19,12 @@ use crate::marlu::{
 };
 
 // SSINS (Sky-Subtract Incoherent Noise Spectra)
+#[allow(clippy::upper_case_acronyms)]
 pub(crate) struct SSINS {
-    pub diff_mean_amp_tfp: Array3<f32>, // (times-1, frequencies, polarizations)
-    pub flag_array: Array2<bool>,       // (times-1, frequencies)
+    pub zscore: Array3<f32>,           // (times-1, frequencies, polarizations)
+    pub diff_mean_amp_fp: Array2<f32>, // (frequencies, polarizations)
+    pub flag_array: Array2<bool>,      // (times-1, frequencies)
+    pub num_baselines: usize,
     pub start_time_gps_s: f64,
     pub integration_time_s: f64,
     pub start_freq_hz: f64,
@@ -35,9 +38,13 @@ impl SSINS {
         chunk_vis_sel: &VisSelection,
     ) -> Self {
         // incoherently averaged (along baseline) difference between the visibilities in time.
-        // product is a 3D array of shape (num_timesteps - 1, num_freqs, num_pols=4)
+        // product is a 3D zscore array of shape (num_timesteps - 1, num_freqs, num_pols=4)
+        // C = (4/pi - 1)
+        // zscore = (N_bl / C).sqrt() * (mean_amp_tfp - mean_amp_fp) / mean_amp_fp
+
         let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
         let mut diff_mean_amp_tfp = Array3::<f32>::zeros((num_timesteps - 1, num_freqs, 4));
+        let mut diff_mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
 
         let flag_array = Array2::<bool>::default((num_timesteps - 1, num_freqs));
 
@@ -54,9 +61,28 @@ impl SSINS {
             }
         }
 
-        let total_samples = (num_timesteps - 1) * num_baselines;
-        diff_mean_amp_tfp /= total_samples as f32;
+        diff_mean_amp_tfp /= num_baselines as f32;
+        for t in 0..num_timesteps - 1 {
+            for f in 0..num_freqs {
+                for p in 0..4 {
+                    diff_mean_amp_fp[[f, p]] += diff_mean_amp_tfp[[t, f, p]];
+                }
+            }
+        }
+        diff_mean_amp_fp /= (num_timesteps - 1) as f32;
 
+        // subtract mean_amp_fp from mean_amp_tfp, divide by mean_amp_fp and multiply by mean_stdev_ratio
+        let mut zscore = diff_mean_amp_tfp;
+        let mean_stdev_ratio = (num_baselines as f32 / (4.0 / std::f32::consts::PI - 1.0)).sqrt();
+        for t in 0..num_timesteps - 1 {
+            for f in 0..num_freqs {
+                for p in 0..4 {
+                    zscore[[t, f, p]] = mean_stdev_ratio
+                        * (zscore[[t, f, p]] - diff_mean_amp_fp[[f, p]])
+                        / diff_mean_amp_fp[[f, p]];
+                }
+            }
+        }
         let timesteps_nodiff = &corr_ctx.timesteps[chunk_vis_sel.timestep_range.clone()]
             .iter()
             .map(|ts| ts.gps_time_ms as f64 / 1000.0)
@@ -75,8 +101,10 @@ impl SSINS {
         let freq_width_hz = all_freqs_hz[1] - all_freqs_hz[0];
 
         Self {
-            diff_mean_amp_tfp,
+            zscore,
+            diff_mean_amp_fp,
             flag_array,
+            num_baselines,
             start_time_gps_s: timesteps_diff[0],
             integration_time_s,
             start_freq_hz: all_freqs_hz[0],
@@ -91,13 +119,11 @@ impl SSINS {
         use crate::flags::{amps_tfp_to_imageset, flag_baseline_view_to_flagmask};
 
         let aoflagger = unsafe { cxx_aoflagger_new() };
-        let imgset = amps_tfp_to_imageset(&aoflagger, self.diff_mean_amp_tfp.view());
-        let flag_strategy = if let Some(strategy) = strategy_filename {
-            aoflagger.LoadStrategyFile(&strategy.to_string())
-        } else {
-            let strategy_filename = aoflagger.FindStrategyFileGeneric(&String::from("minimal"));
-            aoflagger.LoadStrategyFile(&strategy_filename)
-        };
+        let imgset = amps_tfp_to_imageset(&aoflagger, self.zscore.view());
+        let strategy_filename = strategy_filename
+            .unwrap_or(aoflagger.FindStrategyFileGeneric(&String::from("minimal")));
+        let flag_strategy = aoflagger.LoadStrategyFile(&strategy_filename.to_string());
+
         // This lets us pass in our mutable flag array view to something not expecting a mutable.
         let flagmask = flag_baseline_view_to_flagmask(&aoflagger, self.flag_array.view());
         let new_flagmask = flag_strategy.RunExisting(&imgset, &flagmask);
@@ -119,24 +145,24 @@ impl SSINS {
         fptr: &mut FitsFile,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Write one image per polarization
-        let pol_names = ["XX", "YY", "XY", "YX"];
-        let (num_times, num_freqs, num_pols) = self.diff_mean_amp_tfp.dim();
+        let pol_names = ["XX", "XY", "YX", "YY"];
+        let (num_times, num_freqs, num_pols) = self.zscore.dim();
 
-        for pol_idx in 0..num_pols {
+        for (pol_idx, &pol_name) in pol_names.iter().enumerate().take(num_pols) {
             let dim = [num_times, num_freqs];
             let image_description = ImageDescription {
                 data_type: ImageType::Double,
                 dimensions: &dim,
             };
-            let extname = format!("SSINS_POL={}", pol_names[pol_idx]);
+            let extname = format!("SSINS_POL={}", pol_name);
             let hdu = fptr.create_image(&extname, &image_description)?;
 
             // Write the data for this polarization
             let pol_data: Vec<f32> = self
-                .diff_mean_amp_tfp
+                .zscore
                 .slice(s![.., .., pol_idx])
                 .iter()
-                .cloned()
+                .copied()
                 .collect();
 
             hdu.write_image(fptr, &pol_data)?;
@@ -148,20 +174,21 @@ impl SSINS {
 
             // Time axis info
             hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-            hdu.write_key(fptr, "CRVAL1", self.start_freq_hz as f64)?;
-            hdu.write_key(fptr, "CDELT1", self.channel_width_hz as f64)?;
+            hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+            hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
             hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
             hdu.write_key(fptr, "CUNIT1", "Hz")?;
 
             // Frequency axis info
             hdu.write_key(fptr, "CTYPE2", "TIME")?;
-            hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
-            hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64)?;
+            hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
+            hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
             hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
             hdu.write_key(fptr, "CUNIT2", "s")?;
 
             // SSINS-specific metadata
-            hdu.write_key(fptr, "POL", pol_names[pol_idx])?;
+            hdu.write_key(fptr, "POL", pol_name)?;
+            hdu.write_key(fptr, "N_BL", self.num_baselines as u32)?;
             hdu.write_key(fptr, "TELESCOP", "MWA")?;
             hdu.write_key(fptr, "INSTRUME", "SSINS")?;
             hdu.write_key(fptr, "ORIGIN", "Birli")?;
@@ -197,7 +224,7 @@ impl SSINS {
             &self
                 .flag_array
                 .iter()
-                .cloned()
+                .copied()
                 .map(|b| if b { 1.0 } else { 0.0 })
                 .collect::<Vec<_>>(),
         )?;
@@ -209,15 +236,15 @@ impl SSINS {
 
         // Time axis info
         hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz as f64)?;
-        hdu.write_key(fptr, "CDELT1", self.channel_width_hz as f64)?;
+        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
         hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
         hdu.write_key(fptr, "CUNIT1", "Hz")?;
 
         // Frequency axis info
         hdu.write_key(fptr, "CTYPE2", "TIME")?;
-        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
-        hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64)?;
+        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
+        hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
         hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
         hdu.write_key(fptr, "CUNIT2", "s")?;
 
@@ -226,13 +253,44 @@ impl SSINS {
         hdu.write_key(fptr, "INSTRUME", "SSINS")?;
         hdu.write_key(fptr, "ORIGIN", "Birli")?;
 
+        // write diff_mean_amp_fp
+        let diff_mean_amp_fp_dim = self.diff_mean_amp_fp.dim();
+        let diff_mean_amp_fp_image_description = ImageDescription {
+            data_type: ImageType::Double,
+            dimensions: &[diff_mean_amp_fp_dim.0, diff_mean_amp_fp_dim.1],
+        };
+        let diff_mean_amp_fp_extname = "SSINS_DIFF_MEAN_AMP_FP";
+        let hdu = fptr.create_image(
+            diff_mean_amp_fp_extname,
+            &diff_mean_amp_fp_image_description,
+        )?;
+        hdu.write_image(
+            fptr,
+            &self.diff_mean_amp_fp.iter().copied().collect::<Vec<_>>(),
+        )?;
+        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
+        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+        hdu.write_key(fptr, "BZERO", 0.0f64)?;
+        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
+        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+
         Ok(())
     }
 }
 
+#[allow(clippy::upper_case_acronyms)]
 pub(crate) struct EAVILS {
-    pub nodiff_mean_amp_tfp: Array3<f32>, // (times, frequencies, polarizations)
-    pub flag_array: Array2<bool>,         // (times, frequencies)
+    // Ntimes,Nbls,Nfreqs,Npols = uvd_or_data.shape
+    // blmean_data = np.mean(np.abs(uvd_or_data),axis=1)
+    // blmean_data_sub = blmean_data - np.mean(blmean_data,axis=0)
+    // stdv_array = np.sqrt(np.mean(np.var(np.abs(uvd_or_data),axis=0,ddof=1),axis=0))
+    // stdv_array =  stdv_array * np.full((Ntimes,Nfreqs,Npols),1) #giving it same shape as other arrays
+    pub zscore: Array3<f32>, // (mean_amp_tfp - mean_amp_fp)/sqrt_mean_var_amp_fp (times, frequencies, polarizations)
+    pub mean_amp_fp: Array2<f32>, // np.mean(blmean_data,axis=0) (frequencies, polarizations)
+    // pub mean_amp_fbp: Array3<f32>, // np.mean(np.abs(uvd_or_data),axis=0) (frequencies, baselines, polarizations)
+    // pub var_amp_fbp: Array3<f32>, // np.var(np.abs(uvd_or_data),axis=0,ddof=1) (frequencies, baselines, polarizations)
+    pub sqrt_mean_var_amp_fp: Array2<f32>, // np.sqrt(np.mean(np.var(np.abs(uvd_or_data),axis=0,ddof=1),axis=0)) (frequencies, polarizations)
+    pub flag_array: Array2<bool>,          // (times, frequencies)
     pub start_time_gps_s: f64,
     pub integration_time_s: f64,
     pub start_freq_hz: f64,
@@ -246,22 +304,85 @@ impl EAVILS {
         chunk_vis_sel: &VisSelection,
     ) -> Self {
         let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
-        let mut nodiff_mean_amp_tfp = Array3::<f32>::zeros((num_timesteps, num_freqs, 4));
+        // mean_amp_fbp = jones_nodiff.sum(TIME) / num_timesteps
+        // var_amp_fbp = (jones_nodiff.norm() - mean_amp_fbp).pow(2)
+        // sqrt_mean_var_amp_fp = var_amp_fbp.mean(BL).sqrt()
+        // zscore = (mean_amp_tfp - mean_amp_fp) / sqrt_mean_var_amp_fp
+
+        let mut mean_amp_tfp = Array3::<f32>::zeros((num_timesteps, num_freqs, 4));
+        let mut mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
+        let mut mean_amp_fbp = Array3::<f32>::zeros((num_freqs, num_baselines, 4));
 
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
                 for b in 0..num_baselines {
                     let jones_nodiff = jones_array_tfb[[t, f, b]];
-                    nodiff_mean_amp_tfp[[t, f, 0]] += jones_nodiff[0].norm();
-                    nodiff_mean_amp_tfp[[t, f, 1]] += jones_nodiff[1].norm();
-                    nodiff_mean_amp_tfp[[t, f, 2]] += jones_nodiff[2].norm();
-                    nodiff_mean_amp_tfp[[t, f, 3]] += jones_nodiff[3].norm();
+                    mean_amp_tfp[[t, f, 0]] += jones_nodiff[0].norm();
+                    mean_amp_tfp[[t, f, 1]] += jones_nodiff[1].norm();
+                    mean_amp_tfp[[t, f, 2]] += jones_nodiff[2].norm();
+                    mean_amp_tfp[[t, f, 3]] += jones_nodiff[3].norm();
+                    mean_amp_fbp[[f, b, 0]] += jones_nodiff[0].norm();
+                    mean_amp_fbp[[f, b, 1]] += jones_nodiff[1].norm();
+                    mean_amp_fbp[[f, b, 2]] += jones_nodiff[2].norm();
+                    mean_amp_fbp[[f, b, 3]] += jones_nodiff[3].norm();
                 }
             }
         }
 
-        let total_samples = num_timesteps * num_baselines;
-        nodiff_mean_amp_tfp /= total_samples as f32;
+        mean_amp_tfp /= num_baselines as f32;
+        mean_amp_fbp /= num_timesteps as f32;
+
+        for t in 0..num_timesteps {
+            for f in 0..num_freqs {
+                for p in 0..4 {
+                    mean_amp_fp[[f, p]] += mean_amp_tfp[[t, f, p]];
+                }
+            }
+        }
+        mean_amp_fp /= num_timesteps as f32;
+
+        // calculate the time-variance of amplitude for each freq, bl, pol
+        let mut var_amp_fbp = Array3::<f32>::zeros((num_freqs, num_baselines, 4));
+        for t in 0..num_timesteps {
+            for f in 0..num_freqs {
+                for b in 0..num_baselines {
+                    let jones_nodiff = jones_array_tfb[[t, f, b]];
+                    var_amp_fbp[[f, b, 0]] +=
+                        (jones_nodiff[0].norm() - mean_amp_fbp[[f, b, 0]]).powi(2);
+                    var_amp_fbp[[f, b, 1]] +=
+                        (jones_nodiff[1].norm() - mean_amp_fbp[[f, b, 1]]).powi(2);
+                    var_amp_fbp[[f, b, 2]] +=
+                        (jones_nodiff[2].norm() - mean_amp_fbp[[f, b, 2]]).powi(2);
+                    var_amp_fbp[[f, b, 3]] +=
+                        (jones_nodiff[3].norm() - mean_amp_fbp[[f, b, 3]]).powi(2);
+                }
+            }
+        }
+
+        var_amp_fbp /= num_timesteps as f32;
+
+        // calculate mean_var_amp_fp
+        let mut sqrt_mean_var_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
+        for f in 0..num_freqs {
+            for b in 0..num_baselines {
+                for p in 0..4 {
+                    sqrt_mean_var_amp_fp[[f, p]] += var_amp_fbp[[f, b, p]];
+                }
+            }
+        }
+        sqrt_mean_var_amp_fp /= num_baselines as f32;
+        sqrt_mean_var_amp_fp = sqrt_mean_var_amp_fp.sqrt();
+
+        // calculate zscore
+        let mut zscore = mean_amp_tfp;
+        for t in 0..num_timesteps {
+            for f in 0..num_freqs {
+                for p in 0..4 {
+                    zscore[[t, f, p]] =
+                        (zscore[[t, f, p]] - mean_amp_fp[[f, p]]) / sqrt_mean_var_amp_fp[[f, p]];
+                }
+            }
+        }
 
         let flag_array = Array2::<bool>::default((num_timesteps, num_freqs));
 
@@ -277,7 +398,11 @@ impl EAVILS {
         let freq_width_hz = all_freqs_hz[1] - all_freqs_hz[0];
 
         Self {
-            nodiff_mean_amp_tfp,
+            zscore,
+            mean_amp_fp,
+            // mean_amp_fbp,
+            // var_amp_fbp,
+            sqrt_mean_var_amp_fp,
             flag_array,
             start_time_gps_s: timesteps_nodiff[0],
             integration_time_s,
@@ -291,24 +416,24 @@ impl EAVILS {
         fptr: &mut FitsFile,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Write one image per polarization
-        let pol_names = ["XX", "YY", "XY", "YX"];
-        let (num_times, num_freqs, num_pols) = self.nodiff_mean_amp_tfp.dim();
+        let pol_names = ["XX", "XY", "YX", "YY"];
+        let (num_times, num_freqs, num_pols) = self.zscore.dim();
 
-        for pol_idx in 0..num_pols {
+        for (pol_idx, &pol_name) in pol_names.iter().enumerate().take(num_pols) {
             let dim = [num_times, num_freqs];
             let image_description = ImageDescription {
                 data_type: ImageType::Double,
                 dimensions: &dim,
             };
-            let extname = format!("EAVILS_POL={}", pol_names[pol_idx]);
+            let extname = format!("EAVILS_POL={}", pol_name);
             let hdu = fptr.create_image(&extname, &image_description)?;
 
             // Write the data for this polarization
             let pol_data: Vec<f32> = self
-                .nodiff_mean_amp_tfp
+                .zscore
                 .slice(s![.., .., pol_idx])
                 .iter()
-                .cloned()
+                .copied()
                 .collect();
 
             hdu.write_image(fptr, &pol_data)?;
@@ -320,15 +445,15 @@ impl EAVILS {
 
             // Time axis info
             hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-            hdu.write_key(fptr, "CRVAL1", self.start_freq_hz as f64)?;
-            hdu.write_key(fptr, "CDELT1", self.channel_width_hz as f64)?;
+            hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+            hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
             hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
             hdu.write_key(fptr, "CUNIT1", "Hz")?;
 
             // Frequency axis info
             hdu.write_key(fptr, "CTYPE2", "TIME")?;
-            hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
-            hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64)?;
+            hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
+            hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
             hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
             hdu.write_key(fptr, "CUNIT2", "s")?;
 
@@ -336,7 +461,7 @@ impl EAVILS {
             hdu.write_key(fptr, "TELESCOP", "MWA")?;
             hdu.write_key(fptr, "INSTRUME", "EAVILS")?;
             hdu.write_key(fptr, "ORIGIN", "Birli")?;
-            hdu.write_key(fptr, "POL", pol_names[pol_idx])?;
+            hdu.write_key(fptr, "POL", pol_name)?;
 
             // Add description
             hdu.write_key(
@@ -359,7 +484,7 @@ impl EAVILS {
             &self
                 .flag_array
                 .iter()
-                .cloned()
+                .copied()
                 .map(|b| if b { 1.0 } else { 0.0 })
                 .collect::<Vec<_>>(),
         )?;
@@ -371,15 +496,15 @@ impl EAVILS {
 
         // Time axis info
         hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz as f64)?;
-        hdu.write_key(fptr, "CDELT1", self.channel_width_hz as f64)?;
+        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
         hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
         hdu.write_key(fptr, "CUNIT1", "Hz")?;
 
         // Frequency axis info
         hdu.write_key(fptr, "CTYPE2", "TIME")?;
-        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
-        hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64)?;
+        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
+        hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
         hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
         hdu.write_key(fptr, "CUNIT2", "s")?;
 
@@ -394,6 +519,53 @@ impl EAVILS {
             "COMMENT",
             "EAVILS (Expected Amplitude of VisibILities Spectra)",
         )?;
+
+        // write mean_amp_fp
+        let mean_amp_fp_dim = self.mean_amp_fp.dim();
+        let mean_amp_fp_image_description = ImageDescription {
+            data_type: ImageType::Double,
+            dimensions: &[mean_amp_fp_dim.0, mean_amp_fp_dim.1],
+        };
+        let mean_amp_fp_extname = "EAVILS_MEAN_AMP_FP";
+        let hdu = fptr.create_image(mean_amp_fp_extname, &mean_amp_fp_image_description)?;
+        hdu.write_image(fptr, &self.mean_amp_fp.iter().copied().collect::<Vec<_>>())?;
+        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
+        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+        hdu.write_key(fptr, "BZERO", 0.0f64)?;
+        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
+        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
+        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT1", "Hz")?;
+
+        // write sqrt_mean_var_amp_fp
+        let sqrt_mean_var_amp_fp_dim = self.sqrt_mean_var_amp_fp.dim();
+        let sqrt_mean_var_amp_fp_image_description = ImageDescription {
+            data_type: ImageType::Double,
+            dimensions: &[sqrt_mean_var_amp_fp_dim.0, sqrt_mean_var_amp_fp_dim.1],
+        };
+        let sqrt_mean_var_amp_fp_extname = "EAVILS_SQRT_MEAN_VAR_AMP_FP";
+        let hdu = fptr.create_image(
+            sqrt_mean_var_amp_fp_extname,
+            &sqrt_mean_var_amp_fp_image_description,
+        )?;
+        hdu.write_image(
+            fptr,
+            &self
+                .sqrt_mean_var_amp_fp
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+        )?;
+        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
+        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+        hdu.write_key(fptr, "BZERO", 0.0f64)?;
+        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
+        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
+        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT1", "Hz")?;
+
         Ok(())
     }
 }
@@ -457,7 +629,7 @@ impl AOFlagMetrics {
         };
         let flag_extname = "AO_FLAG_METRICS";
         let hdu = fptr.create_image(flag_extname, &flag_image_description)?;
-        hdu.write_image(fptr, &self.occupancy_tf.iter().cloned().collect::<Vec<_>>())?;
+        hdu.write_image(fptr, &self.occupancy_tf.iter().copied().collect::<Vec<_>>())?;
         // Basic image info
         hdu.write_key(fptr, "BUNIT", "arbitrary")?;
         hdu.write_key(fptr, "BSCALE", 1.0f64)?;
@@ -465,15 +637,15 @@ impl AOFlagMetrics {
 
         // Time axis info
         hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz as f64)?;
-        hdu.write_key(fptr, "CDELT1", self.channel_width_hz as f64)?;
+        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
         hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
         hdu.write_key(fptr, "CUNIT1", "Hz")?;
 
         // Frequency axis info
         hdu.write_key(fptr, "CTYPE2", "TIME")?;
-        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s as f64)?;
-        hdu.write_key(fptr, "CDELT2", self.integration_time_s as f64)?;
+        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
+        hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
         hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
         hdu.write_key(fptr, "CUNIT2", "s")?;
         Ok(())

@@ -79,9 +79,15 @@ where
                     }
                 )
             );
-            let read_time = get_durations().get("read").unwrap().as_secs_f32();
+            let read_time = get_durations()
+                .get("read")
+                .expect("no data was read")
+                .as_secs_f32();
             let read_rate_mibs = (mem_selected_bytes / 1024_usize.pow(2)) as f32 / read_time;
-            let write_time = get_durations().get("write").unwrap().as_secs_f32();
+            let write_time = get_durations()
+                .get("write")
+                .expect("no data was written")
+                .as_secs_f32();
             let write_rate_mibs = (avg_mem_per_timestep_bytes * num_avg_timesteps
                 / 1024_usize.pow(2)) as f32
                 / write_time;
