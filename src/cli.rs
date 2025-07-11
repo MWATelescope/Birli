@@ -174,7 +174,7 @@ impl ChannelRanges {
                         }
                         _ => {
                             return Err(BirliError::CLIError(InvalidRangeSpecifier {
-                                reason: format!("invalid channel range: {}", range),
+                                reason: format!("invalid channel range: {range}"),
                             }));
                         }
                     }
@@ -187,14 +187,14 @@ impl ChannelRanges {
                         }
                         _ => {
                             return Err(BirliError::CLIError(InvalidRangeSpecifier {
-                                reason: format!("invalid channel range: {}", range),
+                                reason: format!("invalid channel range: {range}"),
                             }));
                         }
                     }
                 }
                 _ => {
                     return Err(BirliError::CLIError(InvalidRangeSpecifier {
-                        reason: format!("invalid channel range: {}", range),
+                        reason: format!("invalid channel range: {range}"),
                     }));
                 }
             }
@@ -501,7 +501,11 @@ impl Display for BirliContext<'_> {
                 if good {"g"} else {""},
                 if selected {"s"} else {""},
                 if flagged {"f"} else {""},
-                if let Some((idx, (start,end))) = range { format!("{} ({}-{})", idx, start, end) } else { "".into() }
+                if let Some((idx, (start, end))) = range {
+                    format!("{idx} ({start}-{end})")
+                } else {
+                    "".into()
+                }
             ];
             coarse_chan_table.add_row(row);
         }
@@ -858,7 +862,7 @@ impl<'a> BirliContext<'a> {
                 if from > to || to >= *num_timesteps {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--sel-time <FROM> <TO>".into(),
-                        expected: format!("from <= to < num_timesteps={}", num_timesteps),
+                        expected: format!("from <= to < num_timesteps={num_timesteps}"),
                         received: format!("from={from} to={to}"),
                     }));
                 }
@@ -875,7 +879,7 @@ impl<'a> BirliContext<'a> {
                     if antenna_idx >= *num_ants {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--sel-ants <ANTS>...".into(),
-                            expected: format!("antenna_idx < num_ants={}", num_ants),
+                            expected: format!("antenna_idx < num_ants={num_ants}"),
                             received: format!(
                                 "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
                             ),
@@ -970,7 +974,7 @@ impl<'a> BirliContext<'a> {
                     if timestep_idx >= *num_timesteps {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--flag-times <TIMESTEPS>...".into(),
-                            expected: format!("timestep_idx < num_timesteps={}", *num_timesteps),
+                            expected: format!("timestep_idx < num_timesteps={num_timesteps}"),
                             received: format!(
                                 "timestep_idxs[{value_idx}]={timestep_idx}. all:{timestep_idxs:?}"
                             ),
@@ -991,8 +995,7 @@ impl<'a> BirliContext<'a> {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--flag-coarse-chans <CHANS>...".into(),
                             expected: format!(
-                                "coarse_chan_idx < num_coarse_chans={}",
-                                num_coarse_chans
+                                "coarse_chan_idx < num_coarse_chans={num_coarse_chans}"
                             ),
                             received: format!(
                                 "coarse_chan_idxs[{value_idx}]={coarse_chan_idx}. all:{coarse_chan_idxs:?}"
@@ -1040,7 +1043,7 @@ impl<'a> BirliContext<'a> {
                     if antenna_idx >= *num_ants {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
                             option: "--flag-antennas <ANTS>...".into(),
-                            expected: format!("antenna_idx < num_ants={}", *num_ants),
+                            expected: format!("antenna_idx < num_ants={num_ants}"),
                             received: format!(
                                 "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
                             ),
@@ -1327,7 +1330,7 @@ impl<'a> BirliContext<'a> {
 
         // validate chunk size
         if let Some(chunk_size) = num_timesteps_per_chunk {
-            info!("chunking output to {} timesteps per chunk", chunk_size);
+            info!("chunking output to {chunk_size} timesteps per chunk");
         }
 
         Ok(num_timesteps_per_chunk)
@@ -1404,15 +1407,15 @@ impl<'a> BirliContext<'a> {
         prep_ctx.passband_gains = match matches.value_of("passband-gains") {
             None | Some("none") => None,
             Some(g) if g == "jake" => {
-                info!("passband gains: {} (mwax, not oversampled)", g);
+                info!("passband gains: {g} (mwax, not oversampled)");
                 Some(PFB_JAKE_2022_200HZ)
             }
             Some(g) if g == "jake_oversampled" => {
-                info!("passband gains: {} (mwax, oversampled)", g);
+                info!("passband gains: {g} (mwax, oversampled)");
                 Some(OSPFB_JAKE_2025_200HZ)
             }
             Some(g) if g == "cotter" => {
-                info!("passband gains: {} (legacy)", g);
+                info!("passband gains: {g} (legacy)");
                 Some(PFB_COTTER_2014_10KHZ)
             }
             Some(g) if g == "auto" => {
@@ -1604,7 +1607,7 @@ impl<'a> BirliContext<'a> {
             with_increment_duration!(
                 "write",
                 if let Err(e) = aoflagger_metrics.save_to_fits(&mut fptr) {
-                    log::warn!("Failed to save AOFlagger metrics to FITS: {}", e);
+                    log::warn!("Failed to save AOFlagger metrics to FITS: {e}");
                 }
             );
 
@@ -1626,20 +1629,17 @@ impl<'a> BirliContext<'a> {
         with_increment_duration!(
             "write",
             if let Err(e) = ssins.save_to_fits(&mut fptr) {
-                log::warn!("Failed to save SSINS metrics to FITS: {}", e);
+                log::warn!("Failed to save SSINS metrics to FITS: {e}");
             }
         );
         with_increment_duration!(
             "write",
             if let Err(e) = eavils.save_to_fits(&mut fptr) {
-                log::warn!("Failed to save EAVILS metrics to FITS: {}", e);
+                log::warn!("Failed to save EAVILS metrics to FITS: {e}");
             }
         );
 
-        log::info!(
-            "Saved SSINS and EAVILS metrics to {}",
-            metrics_path.display()
-        );
+        log::info!("Saved SSINS and EAVILS metrics to {metrics_path:?}");
     }
 
     /// Read, Preprocess and write corrected visibilities chunks.
