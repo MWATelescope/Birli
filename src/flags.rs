@@ -282,7 +282,8 @@ pub fn jones_baseline_view_to_imageset(
 /// - `amps_tfp` is `[timestep][channel][pol]` for one baseline
 /// - imageset is timesteps wide, and channels high
 ///
-pub(crate) fn amps_tfp_to_imageset(
+#[cfg(feature = "aoflagger")]
+pub fn amps_tfp_to_imageset(
     aoflagger: &CxxAOFlagger,
     amps_tfp: ArrayView3<f32>,
 ) -> UniquePtr<CxxImageSet> {

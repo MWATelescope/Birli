@@ -35,12 +35,12 @@ use crate::marlu::{
         built_info::PKG_VERSION as MWALIB_PKG_VERSION, CableDelaysApplied, CorrelatorContext,
         GeometricDelaysApplied, MWAVersion, MetafitsContext,
     },
-    ndarray::s,
+    ndarray::{s, ArrayView3},
     precession::{precess_time, PrecessionInfo},
     History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
 };
+use crate::metrics::{EAVILS, SSINS};
 use crate::passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ};
-use crate::ssins::{EAVILS, SSINS};
 use crate::{with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection};
 
 cfg_if! {
@@ -1576,6 +1576,72 @@ impl<'a> BirliContext<'a> {
         Ok(())
     }
 
+    /// Save SSINS and EAVILS metrics to FITS.
+    pub fn save_metrics_to_fits(
+        &self,
+        jones_array: ArrayView3<Jones<f32>>,
+        flag_array: ArrayView3<bool>,
+        corr_ctx: &CorrelatorContext,
+        chunk_vis_sel: &VisSelection,
+        metrics_path: &Path,
+    ) {
+        let mut ssins = SSINS::new(jones_array, corr_ctx, chunk_vis_sel);
+        let eavils = EAVILS::new(jones_array, corr_ctx, chunk_vis_sel);
+
+        let path = Path::new(metrics_path.to_str().unwrap());
+        if path.exists() {
+            std::fs::remove_file(path).unwrap();
+        }
+        let mut fptr = FitsFile::create(path).open().unwrap();
+
+        // this requires the aoflagger feature flag.
+        #[cfg(feature = "aoflagger")]
+        {
+            use crate::metrics::AOFlagMetrics;
+
+            let aoflagger_metrics = AOFlagMetrics::new(flag_array, corr_ctx, chunk_vis_sel);
+
+            with_increment_duration!(
+                "write",
+                if let Err(e) = aoflagger_metrics.save_to_fits(&mut fptr) {
+                    log::warn!("Failed to save AOFlagger metrics to FITS: {}", e);
+                }
+            );
+
+            ssins.flag(
+                None,
+                // Some( "/Users/dev/Code/aoflagger/data/strategies/generic-minimal.lua".to_string(), ),
+            );
+            println!("SSINS flags:");
+            let flag_dims = ssins.flag_array.dim();
+            for t in 0..flag_dims.0 {
+                for f in 0..flag_dims.1 {
+                    let c = if ssins.flag_array[[t, f]] { "#" } else { " " };
+                    print!("{}", c);
+                }
+                println!();
+            }
+        }
+
+        with_increment_duration!(
+            "write",
+            if let Err(e) = ssins.save_to_fits(&mut fptr) {
+                log::warn!("Failed to save SSINS metrics to FITS: {}", e);
+            }
+        );
+        with_increment_duration!(
+            "write",
+            if let Err(e) = eavils.save_to_fits(&mut fptr) {
+                log::warn!("Failed to save EAVILS metrics to FITS: {}", e);
+            }
+        );
+
+        log::info!(
+            "Saved SSINS and EAVILS metrics to {}",
+            metrics_path.display()
+        );
+    }
+
     /// Read, Preprocess and write corrected visibilities chunks.
     ///
     /// # Errors
@@ -1863,52 +1929,14 @@ impl<'a> BirliContext<'a> {
                 &chunk_vis_sel,
             )?;
 
-            // Save SSINS metrics to CSV if output path is specified
+            // Save SSINS metrics to FITS if output path is specified
             if let Some(metrics_path) = &io_ctx.metrics_out {
-                let mut ssins = SSINS::new(jones_array.view(), &corr_ctx, &chunk_vis_sel);
-                let eavils = EAVILS::new(jones_array.view(), &corr_ctx, &chunk_vis_sel);
-
-                let path = Path::new(metrics_path.to_str().unwrap());
-                if path.exists() {
-                    std::fs::remove_file(path).unwrap();
-                }
-                let mut fptr = FitsFile::create(path).open().unwrap();
-
-                // this requires the aoflagger feature flag.
-                #[cfg(feature = "aoflagger")]
-                {
-                    use crate::ssins::AOFlagMetrics;
-
-                    let aoflagger_metrics =
-                        AOFlagMetrics::new(flag_array.view(), &corr_ctx, &chunk_vis_sel);
-                    if let Err(e) = aoflagger_metrics.save_to_fits(&mut fptr) {
-                        log::warn!("Failed to save AOFlagger metrics to FITS: {}", e);
-                    }
-
-                    ssins.flag(
-                        None,
-                        // Some( "/Users/dev/Code/aoflagger/data/strategies/generic-minimal.lua".to_string(), ),
-                    );
-                    println!("SSINS flags:");
-                    let flag_dims = ssins.flag_array.dim();
-                    for t in 0..flag_dims.0 {
-                        for f in 0..flag_dims.1 {
-                            let c = if ssins.flag_array[[t, f]] { "#" } else { " " };
-                            print!("{}", c);
-                        }
-                        println!();
-                    }
-                }
-
-                if let Err(e) = ssins.save_to_fits(&mut fptr) {
-                    log::warn!("Failed to save SSINS metrics to FITS: {}", e);
-                }
-                if let Err(e) = eavils.save_to_fits(&mut fptr) {
-                    log::warn!("Failed to save EAVILS metrics to FITS: {}", e);
-                }
-                log::info!(
-                    "Saved SSINS and EAVILS metrics to {}",
-                    metrics_path.display()
+                self.save_metrics_to_fits(
+                    jones_array.view(),
+                    flag_array.view(),
+                    corr_ctx,
+                    &chunk_vis_sel,
+                    metrics_path,
                 );
             }
 

@@ -155,6 +155,7 @@
 // TODO: Look at these later:
 #![allow(clippy::suboptimal_flops)]
 #![allow(clippy::redundant_pub_crate)]
+#![allow(confusable_idents)]
 // won't fix:
 #![allow(clippy::debug_assert_with_mut_call)]
 
@@ -198,7 +199,7 @@ pub use preprocessing::PreprocessContext;
 pub mod van_vleck;
 pub use van_vleck::{correct_van_vleck, get_vv_sample_scale};
 
-pub mod ssins;
+pub mod metrics;
 
 cfg_if! {
     if #[cfg(feature = "cli")] {
