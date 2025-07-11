@@ -7,6 +7,10 @@
 //! - <https://arxiv.org/abs/1906.01093>
 //! - <https://ssins.readthedocs.io/en/latest/>
 
+use std::collections::HashMap;
+
+use marlu::{XyzGeocentric, XyzGeodetic, ENH};
+
 use crate::marlu::{
     fitsio::{
         images::{ImageDescription, ImageType},
@@ -14,14 +18,41 @@ use crate::marlu::{
     },
     mwalib::CorrelatorContext,
     ndarray::s,
-    ndarray::{Array2, Array3, ArrayView3},
+    ndarray::{Array2, Array3, Array4, ArrayView3},
     Jones, VisSelection,
 };
 
+// when you want to convert hyperdrive stokes order to standard stokes order.
+// fits standard:
+// −5 'XX' X parallel linear
+// −6 'YY' Y parallel linear
+// −7 'XY' XY cross linear
+// −8 'YX' Y X cross linear
+// but hyperdrive is XX XY YX YY
+pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
+    match pol {
+        0 => 0,
+        1 => 2,
+        2 => 3,
+        3 => 1,
+        _ => panic!("Invalid pol: {}", pol),
+    }
+}
+
 // Autocorrelation metrics
 pub(crate) struct AutoMetrics {
-    pub auto_spectrum: Array3<f32>, // (antenna, frequencies, polarizations)
-    // pub antenna_names: Vec<String>,
+    pub auto_power_aptf: Array4<f32>, // (antenna, times, frequencies, polarizations)
+    pub auto_spectrum_afp: Array3<f32>, // (antenna, frequencies, polarizations)
+    pub antenna_names: Vec<String>,
+    pub antenna_positions: Vec<XyzGeocentric>,
+    pub antenna_ids: Vec<u32>,
+    pub antenna_nums: Vec<u32>,
+    pub rx_numbers: Vec<u32>,
+    pub rx_slots: Vec<u32>,
+    pub rx_types: Vec<String>,
+    pub cable_flavours: Vec<String>,
+    pub whitening_filters: Vec<bool>,
+
     pub start_freq_hz: f64,
     pub channel_width_hz: f64,
 }
@@ -33,31 +64,79 @@ impl AutoMetrics {
         chunk_vis_sel: &VisSelection,
     ) -> Self {
         let sel_ant_pairs = chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+        let sel_auto_pairs: HashMap<_, _> = sel_ant_pairs
+            .iter()
+            .enumerate()
+            .filter(|&(_, (a, b))| a == b)
+            .map(|(i, &(a, _))| (a, i))
+            .collect();
         let num_sel_ants = sel_ant_pairs.iter().filter(|(a, b)| a == b).count();
+        assert_eq!(num_sel_ants, sel_auto_pairs.len());
+        let sel_auto_idxs = sel_auto_pairs.keys().copied().collect::<Vec<_>>();
         let num_freqs = jones_array_tfb.dim().1;
         let num_timesteps = jones_array_tfb.dim().0;
-        let mut auto_spectrum = Array3::<f32>::zeros((num_sel_ants, num_freqs, 4));
+        let mut auto_power_aptf = Array4::<f32>::zeros((num_sel_ants, 4, num_timesteps, num_freqs));
+        let mut auto_spectrum_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, 4));
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
-                for (bl_idx, &(a, b)) in sel_ant_pairs.iter().enumerate() {
-                    if a != b {
-                        continue;
-                    }
+                for (&a, &i) in sel_auto_pairs.iter() {
                     for p in 0..4 {
-                        auto_spectrum[[a, f, p]] += jones_array_tfb[[t, f, bl_idx]][p].norm();
+                        auto_spectrum_afp[[a, f, hyperdrive_to_fits_stokes(p)]] +=
+                            jones_array_tfb[[t, f, i]][p].norm();
+                        auto_power_aptf[[a, hyperdrive_to_fits_stokes(p), t, f]] +=
+                            jones_array_tfb[[t, f, i]][p].norm();
                     }
                 }
             }
         }
-        auto_spectrum /= num_timesteps as f32;
+        auto_spectrum_afp /= num_timesteps as f32;
+
+        let mut antenna_ids = Vec::<u32>::with_capacity(num_sel_ants);
+        let mut antenna_names = Vec::<String>::with_capacity(num_sel_ants);
+        let mut antenna_positions = Vec::<XyzGeocentric>::with_capacity(num_sel_ants);
+        let mut antenna_nums = Vec::<u32>::with_capacity(num_sel_ants);
+        let mut rx_numbers = Vec::<u32>::with_capacity(num_sel_ants);
+        let mut rx_slots = Vec::<u32>::with_capacity(num_sel_ants);
+        let mut rx_types = Vec::<String>::with_capacity(num_sel_ants);
+        let mut cable_flavours = Vec::<String>::with_capacity(num_sel_ants);
+        let mut whitening_filters = Vec::<bool>::with_capacity(num_sel_ants);
+
+        println!("sel_auto_idxs: {:?}", sel_auto_idxs);
+
+        corr_ctx
+            .metafits_context
+            .antennas
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| sel_auto_idxs.contains(i))
+            .for_each(|(_, a)| {
+                antenna_ids.push(a.ant);
+                antenna_names.push(a.tile_name.clone());
+                antenna_positions.push(XyzGeocentric {
+                    x: a.north_m,
+                    y: a.east_m,
+                    z: a.height_m,
+                });
+                antenna_nums.push(a.tile_id);
+                let rfinput_x = a.rfinput_x.clone();
+                rx_numbers.push(rfinput_x.rec_number);
+                rx_slots.push(rfinput_x.rec_slot_number);
+                rx_types.push(rfinput_x.rec_type.to_string());
+                cable_flavours.push(rfinput_x.flavour.clone());
+                whitening_filters.push(rfinput_x.has_whitening_filter);
+            });
         Self {
-            auto_spectrum,
-            // antenna_names: corr_ctx
-            //     .metafits_context
-            //     .antennas
-            //     .iter()
-            //     .map(|a| a.tile_name.clone())
-            //     .collect(),
+            auto_power_aptf,
+            auto_spectrum_afp,
+            antenna_names,
+            antenna_positions,
+            antenna_ids,
+            antenna_nums,
+            rx_numbers,
+            rx_slots,
+            rx_types,
+            cable_flavours,
+            whitening_filters,
             start_freq_hz: corr_ctx.get_fine_chan_freqs_hz_array(
                 &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
             )[0],
@@ -73,9 +152,66 @@ impl AutoMetrics {
         &self,
         fptr: &mut FitsFile,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let (num_ants, num_freqs, num_pols) = self.auto_spectrum.dim();
+        let (num_ants, num_freqs, num_pols) = self.auto_spectrum_afp.dim();
+
+        for a in 0..self.auto_power_aptf.dim().0 {
+            let antenna_name = self.antenna_names[a].clone();
+            let dim = [
+                self.auto_power_aptf.dim().1,
+                self.auto_power_aptf.dim().2,
+                self.auto_power_aptf.dim().3,
+            ];
+            let image_description = ImageDescription {
+                data_type: ImageType::Double,
+                dimensions: &dim,
+            };
+            let extname = format!("AUTO_POWER_ANT={antenna_name}");
+            let hdu = fptr.create_image(&extname, &image_description)?;
+            hdu.write_image(
+                fptr,
+                &self
+                    .auto_power_aptf
+                    .slice(s![a, .., .., ..])
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>(),
+            )?;
+            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+            hdu.write_key(fptr, "BZERO", 0.0f64)?;
+            hdu.write_key(fptr, "CTYPE3", "FREQ")?;
+            hdu.write_key(fptr, "CRVAL3", self.start_freq_hz)?;
+            // hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
+            hdu.write_key(fptr, "CRPIX3", 1.0f64)?;
+            hdu.write_key(fptr, "CUNIT3", "Hz")?;
+            hdu.write_key(fptr, "CTYPE2", "TIME")?;
+            hdu.write_key(fptr, "CRVAL2", 0.0f64)?;
+            hdu.write_key(fptr, "CDELT2", 1.0f64)?;
+            hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
+
+            hdu.write_key(fptr, "CTYPE1", "STOKES")?;
+            hdu.write_key(fptr, "CRVAL1", -5)?; // xx
+            hdu.write_key(fptr, "CDELT1", -1)?;
+            hdu.write_key(fptr, "CRPIX1", 1)?;
+
+            hdu.write_key(fptr, "ANTNAME", antenna_name)?;
+            hdu.write_key(fptr, "ANT_ID", self.antenna_ids[a])?;
+            hdu.write_key(fptr, "ANT_NUM", self.antenna_nums[a])?;
+            hdu.write_key(fptr, "ANT_TYPE", self.rx_types[a].clone())?;
+            hdu.write_key(fptr, "CABLE_FLAVOUR", self.cable_flavours[a].clone())?;
+            hdu.write_key(fptr, "WHITENING_FILTER", self.whitening_filters[a] as i32)?;
+            hdu.write_key(fptr, "RX_NUMBER", self.rx_numbers[a])?;
+            hdu.write_key(fptr, "RX_SLOT", self.rx_slots[a])?;
+            hdu.write_key(fptr, "RX_TYPE", self.rx_types[a].clone())?;
+
+            let position = self.antenna_positions[a];
+            hdu.write_key(fptr, "OBSGEO-X", position.x)?;
+            hdu.write_key(fptr, "OBSGEO-Y", position.y)?;
+            hdu.write_key(fptr, "OBSGEO-Z", position.z)?;
+        }
+
         for pol_idx in 0..num_pols {
-            let pol_name = ["XX", "XY", "YX", "YY"][pol_idx];
+            // this is in fits standard order, not hyperdrive order
+            let pol_name = ["XX", "YY", "XY", "YX"][pol_idx];
             let dim = [num_ants, num_freqs];
             let image_description = ImageDescription {
                 data_type: ImageType::Double,
@@ -86,7 +222,7 @@ impl AutoMetrics {
             hdu.write_image(
                 fptr,
                 &self
-                    .auto_spectrum
+                    .auto_spectrum_afp
                     .slice(s![.., .., pol_idx])
                     .iter()
                     .copied()
