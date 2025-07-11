@@ -297,10 +297,7 @@ pub fn read_mwalib(
                             }
                         }
                         Err(mwalib::GpuboxError::NoDataForTimeStepCoarseChannel { .. }) => {
-                            warn!(
-                                "Flagging missing HDU @ ts={}, cc={}",
-                                timestep_idx, coarse_chan_idx
-                            );
+                            warn!("Flagging missing HDU @ ts={timestep_idx}, cc={coarse_chan_idx}");
                             flag_array.fill(true);
                         }
                         Err(e) => return Err(e),

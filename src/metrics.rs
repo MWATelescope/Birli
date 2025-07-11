@@ -154,7 +154,7 @@ impl SSINS {
                 data_type: ImageType::Double,
                 dimensions: &dim,
             };
-            let extname = format!("SSINS_POL={}", pol_name);
+            let extname = format!("SSINS_POL={pol_name}");
             let hdu = fptr.create_image(&extname, &image_description)?;
 
             // Write the data for this polarization
@@ -425,7 +425,7 @@ impl EAVILS {
                 data_type: ImageType::Double,
                 dimensions: &dim,
             };
-            let extname = format!("EAVILS_POL={}", pol_name);
+            let extname = format!("EAVILS_POL={pol_name}");
             let hdu = fptr.create_image(&extname, &image_description)?;
 
             // Write the data for this polarization
