@@ -18,6 +18,102 @@ use crate::marlu::{
     Jones, VisSelection,
 };
 
+// Autocorrelation metrics
+pub(crate) struct AutoMetrics {
+    pub auto_spectrum: Array3<f32>, // (antenna, frequencies, polarizations)
+    // pub antenna_names: Vec<String>,
+    pub start_freq_hz: f64,
+    pub channel_width_hz: f64,
+}
+
+impl AutoMetrics {
+    pub(crate) fn new(
+        jones_array_tfb: ArrayView3<Jones<f32>>,
+        corr_ctx: &CorrelatorContext,
+        chunk_vis_sel: &VisSelection,
+    ) -> Self {
+        let sel_ant_pairs = chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+        let num_sel_ants = sel_ant_pairs.iter().filter(|(a, b)| a == b).count();
+        let num_freqs = jones_array_tfb.dim().1;
+        let num_timesteps = jones_array_tfb.dim().0;
+        let mut auto_spectrum = Array3::<f32>::zeros((num_sel_ants, num_freqs, 4));
+        for t in 0..num_timesteps {
+            for f in 0..num_freqs {
+                for (bl_idx, &(a, b)) in sel_ant_pairs.iter().enumerate() {
+                    if a != b {
+                        continue;
+                    }
+                    for p in 0..4 {
+                        auto_spectrum[[a, f, p]] += jones_array_tfb[[t, f, bl_idx]][p].norm();
+                    }
+                }
+            }
+        }
+        auto_spectrum /= num_timesteps as f32;
+        Self {
+            auto_spectrum,
+            // antenna_names: corr_ctx
+            //     .metafits_context
+            //     .antennas
+            //     .iter()
+            //     .map(|a| a.tile_name.clone())
+            //     .collect(),
+            start_freq_hz: corr_ctx.get_fine_chan_freqs_hz_array(
+                &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
+            )[0],
+            channel_width_hz: corr_ctx.get_fine_chan_freqs_hz_array(
+                &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
+            )[1] - corr_ctx.get_fine_chan_freqs_hz_array(
+                &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
+            )[0],
+        }
+    }
+
+    pub(crate) fn save_to_fits(
+        &self,
+        fptr: &mut FitsFile,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (num_ants, num_freqs, num_pols) = self.auto_spectrum.dim();
+        for pol_idx in 0..num_pols {
+            let pol_name = ["XX", "XY", "YX", "YY"][pol_idx];
+            let dim = [num_ants, num_freqs];
+            let image_description = ImageDescription {
+                data_type: ImageType::Double,
+                dimensions: &dim,
+            };
+            let extname = format!("AUTO_POL={pol_name}");
+            let hdu = fptr.create_image(&extname, &image_description)?;
+            hdu.write_image(
+                fptr,
+                &self
+                    .auto_spectrum
+                    .slice(s![.., .., pol_idx])
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>(),
+            )?;
+            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+            hdu.write_key(fptr, "BZERO", 0.0f64)?;
+            hdu.write_key(fptr, "CTYPE1", "FREQ")?;
+            hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+            hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
+            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+            hdu.write_key(fptr, "CUNIT1", "Hz")?;
+            hdu.write_key(fptr, "CTYPE2", "BASELINE")?;
+            hdu.write_key(fptr, "CRVAL2", 0.0f64)?;
+            // hdu.write_key(fptr, "CDELT2", 1.0f64)?;
+            // this is needed otherwise carta does not display it properly.
+            hdu.write_key(fptr, "CDELT2", self.channel_width_hz)?;
+            hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
+            hdu.write_key(fptr, "POL", pol_name)?;
+            hdu.write_key(fptr, "N_ANTS", num_ants as u32)?;
+            hdu.write_key(fptr, "TELESCOP", "MWA")?;
+        }
+
+        Ok(())
+    }
+}
+
 // SSINS (Sky-Subtract Incoherent Noise Spectra)
 #[allow(clippy::upper_case_acronyms)]
 pub(crate) struct SSINS {
@@ -168,7 +264,6 @@ impl SSINS {
             hdu.write_image(fptr, &pol_data)?;
 
             // Basic image info
-            hdu.write_key(fptr, "BUNIT", "arbitrary")?;
             hdu.write_key(fptr, "BSCALE", 1.0f64)?;
             hdu.write_key(fptr, "BZERO", 0.0f64)?;
 
@@ -230,7 +325,6 @@ impl SSINS {
         )?;
 
         // Basic image info
-        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
         hdu.write_key(fptr, "BSCALE", 1.0f64)?;
         hdu.write_key(fptr, "BZERO", 0.0f64)?;
 
@@ -268,7 +362,6 @@ impl SSINS {
             fptr,
             &self.diff_mean_amp_fp.iter().copied().collect::<Vec<_>>(),
         )?;
-        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
         hdu.write_key(fptr, "BSCALE", 1.0f64)?;
         hdu.write_key(fptr, "BZERO", 0.0f64)?;
         hdu.write_key(fptr, "CTYPE1", "FREQ")?;
@@ -439,7 +532,6 @@ impl EAVILS {
             hdu.write_image(fptr, &pol_data)?;
 
             // Basic image info
-            hdu.write_key(fptr, "BUNIT", "arbitrary")?;
             hdu.write_key(fptr, "BSCALE", 1.0f64)?;
             hdu.write_key(fptr, "BZERO", 0.0f64)?;
 
@@ -490,7 +582,6 @@ impl EAVILS {
         )?;
 
         // Basic image info
-        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
         hdu.write_key(fptr, "BSCALE", 1.0f64)?;
         hdu.write_key(fptr, "BZERO", 0.0f64)?;
 
@@ -529,7 +620,6 @@ impl EAVILS {
         let mean_amp_fp_extname = "EAVILS_MEAN_AMP_FP";
         let hdu = fptr.create_image(mean_amp_fp_extname, &mean_amp_fp_image_description)?;
         hdu.write_image(fptr, &self.mean_amp_fp.iter().copied().collect::<Vec<_>>())?;
-        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
         hdu.write_key(fptr, "BSCALE", 1.0f64)?;
         hdu.write_key(fptr, "BZERO", 0.0f64)?;
         hdu.write_key(fptr, "CTYPE1", "FREQ")?;
@@ -557,7 +647,6 @@ impl EAVILS {
                 .copied()
                 .collect::<Vec<_>>(),
         )?;
-        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
         hdu.write_key(fptr, "BSCALE", 1.0f64)?;
         hdu.write_key(fptr, "BZERO", 0.0f64)?;
         hdu.write_key(fptr, "CTYPE1", "FREQ")?;
@@ -631,7 +720,6 @@ impl AOFlagMetrics {
         let hdu = fptr.create_image(flag_extname, &flag_image_description)?;
         hdu.write_image(fptr, &self.occupancy_tf.iter().copied().collect::<Vec<_>>())?;
         // Basic image info
-        hdu.write_key(fptr, "BUNIT", "arbitrary")?;
         hdu.write_key(fptr, "BSCALE", 1.0f64)?;
         hdu.write_key(fptr, "BZERO", 0.0f64)?;
 

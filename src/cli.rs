@@ -39,7 +39,7 @@ use crate::marlu::{
     precession::{precess_time, PrecessionInfo},
     History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
 };
-use crate::metrics::{EAVILS, SSINS};
+use crate::metrics::{AutoMetrics, EAVILS, SSINS};
 use crate::passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ};
 use crate::{with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection};
 
@@ -1590,12 +1590,20 @@ impl<'a> BirliContext<'a> {
     ) {
         let mut ssins = SSINS::new(jones_array, corr_ctx, chunk_vis_sel);
         let eavils = EAVILS::new(jones_array, corr_ctx, chunk_vis_sel);
+        let auto_metrics = AutoMetrics::new(jones_array, corr_ctx, chunk_vis_sel);
 
         let path = Path::new(metrics_path.to_str().unwrap());
         if path.exists() {
             std::fs::remove_file(path).unwrap();
         }
         let mut fptr = FitsFile::create(path).open().unwrap();
+
+        with_increment_duration!(
+            "write",
+            if let Err(e) = auto_metrics.save_to_fits(&mut fptr) {
+                log::warn!("Failed to save AutoMetrics to FITS: {e}");
+            }
+        );
 
         // this requires the aoflagger feature flag.
         #[cfg(feature = "aoflagger")]
