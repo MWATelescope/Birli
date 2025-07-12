@@ -9,17 +9,19 @@
 
 use std::collections::HashMap;
 
-use marlu::{XyzGeocentric, XyzGeodetic, ENH};
+use marlu::XyzGeocentric;
 
-use crate::marlu::{
-    fitsio::{
-        images::{ImageDescription, ImageType},
-        FitsFile,
+use crate::{
+    marlu::{
+        fitsio::{
+            images::{ImageDescription, ImageType},
+            FitsFile,
+        },
+        mwalib::CorrelatorContext,
+        ndarray::{s, Array2, Array3, Array4, ArrayView3},
+        Jones, VisSelection,
     },
-    mwalib::CorrelatorContext,
-    ndarray::s,
-    ndarray::{Array2, Array3, Array4, ArrayView3},
-    Jones, VisSelection,
+    FlagContext,
 };
 
 // when you want to convert hyperdrive stokes order to standard stokes order.
@@ -62,7 +64,9 @@ impl AutoMetrics {
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
+        flag_ctx: &FlagContext,
     ) -> Self {
+        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
         let sel_ant_pairs = chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
         let sel_auto_pairs: HashMap<_, _> = sel_ant_pairs
             .iter()
@@ -77,10 +81,18 @@ impl AutoMetrics {
         let num_timesteps = jones_array_tfb.dim().0;
         let mut auto_power_aptf = Array4::<f32>::zeros((num_sel_ants, 4, num_timesteps, num_freqs));
         let mut auto_spectrum_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, 4));
+        let mut unflagged_timesteps = 0;
         for t in 0..num_timesteps {
+            if !timestep_flags[t] {
+                unflagged_timesteps += 1;
+            }
             for f in 0..num_freqs {
-                for (&a, &i) in sel_auto_pairs.iter() {
+                for (&a, &i) in &sel_auto_pairs {
                     for p in 0..4 {
+                        if timestep_flags[t] {
+                            auto_power_aptf[[a, hyperdrive_to_fits_stokes(p), t, f]] = f32::NAN;
+                            continue;
+                        }
                         auto_spectrum_afp[[a, f, hyperdrive_to_fits_stokes(p)]] +=
                             jones_array_tfb[[t, f, i]][p].norm();
                         auto_power_aptf[[a, hyperdrive_to_fits_stokes(p), t, f]] +=
@@ -89,7 +101,9 @@ impl AutoMetrics {
                 }
             }
         }
-        auto_spectrum_afp /= num_timesteps as f32;
+        if unflagged_timesteps > 0 {
+            auto_spectrum_afp /= unflagged_timesteps as f32;
+        }
 
         let mut antenna_ids = Vec::<u32>::with_capacity(num_sel_ants);
         let mut antenna_names = Vec::<String>::with_capacity(num_sel_ants);
@@ -232,14 +246,13 @@ impl AutoMetrics {
             hdu.write_key(fptr, "BZERO", 0.0f64)?;
             hdu.write_key(fptr, "CTYPE1", "FREQ")?;
             hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
-            hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
+            // if left uncommented, carta will not display it properly.
+            // hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
+            hdu.write_key(fptr, "CHAN_WIDTH", self.channel_width_hz)?;
             hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
             hdu.write_key(fptr, "CUNIT1", "Hz")?;
             hdu.write_key(fptr, "CTYPE2", "BASELINE")?;
             hdu.write_key(fptr, "CRVAL2", 0.0f64)?;
-            // hdu.write_key(fptr, "CDELT2", 1.0f64)?;
-            // this is needed otherwise carta does not display it properly.
-            hdu.write_key(fptr, "CDELT2", self.channel_width_hz)?;
             hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
             hdu.write_key(fptr, "POL", pol_name)?;
             hdu.write_key(fptr, "N_ANTS", num_ants as u32)?;
@@ -268,6 +281,7 @@ impl SSINS {
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
+        flag_ctx: &FlagContext,
     ) -> Self {
         // incoherently averaged (along baseline) difference between the visibilities in time.
         // product is a 3D zscore array of shape (num_timesteps - 1, num_freqs, num_pols=4)
@@ -279,29 +293,41 @@ impl SSINS {
         let mut diff_mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
 
         let flag_array = Array2::<bool>::default((num_timesteps - 1, num_freqs));
+        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
 
         for t in 0..num_timesteps - 1 {
             for f in 0..num_freqs {
                 for b in 0..num_baselines {
-                    let jones_diff = jones_array_tfb[[t, f, b]] - jones_array_tfb[[t + 1, f, b]];
+                    if timestep_flags[t] || timestep_flags[t + 1] {
+                        for p in 0..4 {
+                            diff_mean_amp_tfp[[t, f, p]] = f32::NAN;
+                        }
+                        continue;
+                    }
 
-                    diff_mean_amp_tfp[[t, f, 0]] += jones_diff[0].norm();
-                    diff_mean_amp_tfp[[t, f, 1]] += jones_diff[1].norm();
-                    diff_mean_amp_tfp[[t, f, 2]] += jones_diff[2].norm();
-                    diff_mean_amp_tfp[[t, f, 3]] += jones_diff[3].norm();
+                    let jones_diff = jones_array_tfb[[t, f, b]] - jones_array_tfb[[t + 1, f, b]];
+                    for p in 0..4 {
+                        diff_mean_amp_tfp[[t, f, p]] += jones_diff[p].norm();
+                    }
                 }
             }
         }
 
         diff_mean_amp_tfp /= num_baselines as f32;
+        let mut num_unflagged_timesteps = 0;
         for t in 0..num_timesteps - 1 {
-            for f in 0..num_freqs {
-                for p in 0..4 {
-                    diff_mean_amp_fp[[f, p]] += diff_mean_amp_tfp[[t, f, p]];
+            if !timestep_flags[t] && !timestep_flags[t + 1] {
+                num_unflagged_timesteps += 1;
+                for f in 0..num_freqs {
+                    for p in 0..4 {
+                        diff_mean_amp_fp[[f, p]] += diff_mean_amp_tfp[[t, f, p]];
+                    }
                 }
             }
         }
-        diff_mean_amp_fp /= (num_timesteps - 1) as f32;
+        if num_unflagged_timesteps > 0 {
+            diff_mean_amp_fp /= num_unflagged_timesteps as f32;
+        }
 
         // subtract mean_amp_fp from mean_amp_tfp, divide by mean_amp_fp and multiply by mean_stdev_ratio
         let mut zscore = diff_mean_amp_tfp;
@@ -531,6 +557,7 @@ impl EAVILS {
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
+        flag_ctx: &FlagContext,
     ) -> Self {
         let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
         // mean_amp_fbp = jones_nodiff.sum(TIME) / num_timesteps
@@ -541,54 +568,68 @@ impl EAVILS {
         let mut mean_amp_tfp = Array3::<f32>::zeros((num_timesteps, num_freqs, 4));
         let mut mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
         let mut mean_amp_fbp = Array3::<f32>::zeros((num_freqs, num_baselines, 4));
+        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
+        let mut num_unflagged_timesteps = 0;
 
         for t in 0..num_timesteps {
+            if !timestep_flags[t] {
+                num_unflagged_timesteps += 1;
+            }
             for f in 0..num_freqs {
                 for b in 0..num_baselines {
+                    if timestep_flags[t] {
+                        for p in 0..4 {
+                            mean_amp_tfp[[t, f, p]] = f32::NAN;
+                        }
+                        continue;
+                    }
+
                     let jones_nodiff = jones_array_tfb[[t, f, b]];
-                    mean_amp_tfp[[t, f, 0]] += jones_nodiff[0].norm();
-                    mean_amp_tfp[[t, f, 1]] += jones_nodiff[1].norm();
-                    mean_amp_tfp[[t, f, 2]] += jones_nodiff[2].norm();
-                    mean_amp_tfp[[t, f, 3]] += jones_nodiff[3].norm();
-                    mean_amp_fbp[[f, b, 0]] += jones_nodiff[0].norm();
-                    mean_amp_fbp[[f, b, 1]] += jones_nodiff[1].norm();
-                    mean_amp_fbp[[f, b, 2]] += jones_nodiff[2].norm();
-                    mean_amp_fbp[[f, b, 3]] += jones_nodiff[3].norm();
+                    for p in 0..4 {
+                        mean_amp_tfp[[t, f, p]] += jones_nodiff[p].norm();
+                        mean_amp_fbp[[f, b, p]] += jones_nodiff[p].norm();
+                    }
                 }
             }
         }
 
         mean_amp_tfp /= num_baselines as f32;
-        mean_amp_fbp /= num_timesteps as f32;
+        if num_unflagged_timesteps > 0 {
+            mean_amp_fbp /= num_unflagged_timesteps as f32;
+        }
 
         for t in 0..num_timesteps {
+            if timestep_flags[t] {
+                continue;
+            }
             for f in 0..num_freqs {
                 for p in 0..4 {
                     mean_amp_fp[[f, p]] += mean_amp_tfp[[t, f, p]];
                 }
             }
         }
-        mean_amp_fp /= num_timesteps as f32;
+        mean_amp_fp /= num_unflagged_timesteps as f32;
 
         // calculate the time-variance of amplitude for each freq, bl, pol
         let mut var_amp_fbp = Array3::<f32>::zeros((num_freqs, num_baselines, 4));
         for t in 0..num_timesteps {
+            if timestep_flags[t] {
+                continue;
+            }
             for f in 0..num_freqs {
                 for b in 0..num_baselines {
                     let jones_nodiff = jones_array_tfb[[t, f, b]];
-                    var_amp_fbp[[f, b, 0]] +=
-                        (jones_nodiff[0].norm() - mean_amp_fbp[[f, b, 0]]).powi(2);
-                    var_amp_fbp[[f, b, 1]] +=
-                        (jones_nodiff[1].norm() - mean_amp_fbp[[f, b, 1]]).powi(2);
-                    var_amp_fbp[[f, b, 2]] +=
-                        (jones_nodiff[2].norm() - mean_amp_fbp[[f, b, 2]]).powi(2);
-                    var_amp_fbp[[f, b, 3]] +=
-                        (jones_nodiff[3].norm() - mean_amp_fbp[[f, b, 3]]).powi(2);
+                    for p in 0..4 {
+                        var_amp_fbp[[f, b, p]] +=
+                            (jones_nodiff[p].norm() - mean_amp_fbp[[f, b, p]]).powi(2);
+                    }
                 }
             }
         }
 
-        var_amp_fbp /= num_timesteps as f32;
+        if num_unflagged_timesteps > 0 {
+            var_amp_fbp /= num_unflagged_timesteps as f32;
+        }
 
         // calculate mean_var_amp_fp
         let mut sqrt_mean_var_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
@@ -808,13 +849,19 @@ impl AOFlagMetrics {
         flag_array_tfb: ArrayView3<bool>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
+        flag_ctx: &FlagContext,
     ) -> Self {
         let (num_timesteps, num_freqs, num_baselines) = flag_array_tfb.dim();
         let mut occupancy_tf = Array2::<f64>::zeros((num_timesteps, num_freqs));
+        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
 
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
                 for b in 0..num_baselines {
+                    if timestep_flags[t] {
+                        occupancy_tf[[t, f]] = f64::NAN;
+                        continue;
+                    }
                     occupancy_tf[[t, f]] += flag_array_tfb[[t, f, b]] as u8 as f64;
                 }
             }
