@@ -1584,13 +1584,14 @@ impl<'a> BirliContext<'a> {
         &self,
         jones_array: ArrayView3<Jones<f32>>,
         flag_array: ArrayView3<bool>,
+        flag_ctx: &FlagContext,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         metrics_path: &Path,
     ) {
-        let mut ssins = SSINS::new(jones_array, corr_ctx, chunk_vis_sel);
-        let eavils = EAVILS::new(jones_array, corr_ctx, chunk_vis_sel);
-        let auto_metrics = AutoMetrics::new(jones_array, corr_ctx, chunk_vis_sel);
+        let mut ssins = SSINS::new(jones_array, corr_ctx, chunk_vis_sel, flag_ctx);
+        let eavils = EAVILS::new(jones_array, corr_ctx, chunk_vis_sel, flag_ctx);
+        let auto_metrics = AutoMetrics::new(jones_array, corr_ctx, chunk_vis_sel, flag_ctx);
 
         let path = Path::new(metrics_path.to_str().unwrap());
         if path.exists() {
@@ -1610,7 +1611,8 @@ impl<'a> BirliContext<'a> {
         {
             use crate::metrics::AOFlagMetrics;
 
-            let aoflagger_metrics = AOFlagMetrics::new(flag_array, corr_ctx, chunk_vis_sel);
+            let aoflagger_metrics =
+                AOFlagMetrics::new(flag_array, corr_ctx, chunk_vis_sel, flag_ctx);
 
             with_increment_duration!(
                 "write",
@@ -1942,6 +1944,7 @@ impl<'a> BirliContext<'a> {
                 self.save_metrics_to_fits(
                     jones_array.view(),
                     flag_array.view(),
+                    flag_ctx,
                     corr_ctx,
                     &chunk_vis_sel,
                     metrics_path,
