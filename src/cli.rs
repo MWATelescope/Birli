@@ -723,6 +723,10 @@ impl<'a> BirliContext<'a> {
                     .help_heading("FLAGGING")
                     .multiple_values(true)
                     .required(false),
+                arg!(--"flag-raw-chans" <CHANS>... "Flag specific fine chan indices across selected coarse chans")
+                    .help_heading("FLAGGING")
+                    .multiple_values(true)
+                    .required(false),
                 arg!(--"flag-dc" "Force flagging of DC centre chans")
                     .help_heading("FLAGGING")
                     .conflicts_with("no-flag-dc"),
@@ -1025,6 +1029,29 @@ impl<'a> BirliContext<'a> {
                         }));
                     }
                     flag_ctx.fine_chan_flags[fine_chan_idx] = true;
+                }
+            }
+            Err(err) => match err.kind() {
+                ArgumentNotFound => {}
+                _ => return Err(err.into()),
+            },
+        };
+        match matches.values_of_t::<usize>("flag-raw-chans") {
+            Ok(raw_chan_idxs) => {
+                let total_fine_chans = *num_coarse_chans * *fine_chans_per_coarse;
+                for (value_idx, &raw_chan_idx) in raw_chan_idxs.iter().enumerate() {
+                    if raw_chan_idx >= total_fine_chans {
+                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                            option: "--flag-raw-chans <CHANS>...".into(),
+                            expected: format!(
+                                "raw_chan_idx < total_fine_chans={total_fine_chans} (num_coarse_chans * fine_chans_per_coarse)"
+                            ),
+                            received: format!(
+                                "raw_chan_idxs[{value_idx}]={raw_chan_idx}. all:{raw_chan_idxs:?}"
+                            ),
+                        }));
+                    }
+                    flag_ctx.raw_chan_flags[raw_chan_idx] = true;
                 }
             }
             Err(err) => match err.kind() {
@@ -2891,6 +2918,36 @@ mod argparse_tests {
 
         assert!(flag_ctx.fine_chan_flags[2]);
         assert!(!flag_ctx.fine_chan_flags[1]);
+    }
+
+    #[test]
+    fn test_parse_valid_raw_chan_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-raw-chans", "5", "10", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.raw_chan_flags[5]);
+        assert!(flag_ctx.raw_chan_flags[10]);
+        assert!(!flag_ctx.raw_chan_flags[4]);
+        assert!(!flag_ctx.raw_chan_flags[11]);
+    }
+
+    #[test]
+    fn test_parse_invalid_raw_chan_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-raw-chans", "0", "9999", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
     }
 
     #[test]
