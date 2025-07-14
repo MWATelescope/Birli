@@ -67,6 +67,7 @@ impl AutoMetrics {
         flag_ctx: &FlagContext,
     ) -> Self {
         let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
+        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
         let sel_ant_pairs = chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
         let sel_auto_pairs: HashMap<_, _> = sel_ant_pairs
             .iter()
@@ -81,28 +82,28 @@ impl AutoMetrics {
         let num_timesteps = jones_array_tfb.dim().0;
         let mut auto_power_aptf = Array4::<f32>::zeros((num_sel_ants, 4, num_timesteps, num_freqs));
         let mut auto_spectrum_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, 4));
-        let mut unflagged_timesteps = 0;
+        let num_unflagged_times = timestep_flags.iter().filter(|&t| !t).count();
         for t in 0..num_timesteps {
-            if !timestep_flags[t] {
-                unflagged_timesteps += 1;
-            }
             for f in 0..num_freqs {
                 for (&a, &i) in &sel_auto_pairs {
                     for p in 0..4 {
-                        if timestep_flags[t] {
+                        if chan_flags[f] {
                             auto_power_aptf[[a, hyperdrive_to_fits_stokes(p), t, f]] = f32::NAN;
-                            continue;
+                            auto_spectrum_afp[[a, f, hyperdrive_to_fits_stokes(p)]] = f32::NAN;
+                        } else if timestep_flags[t] {
+                            auto_power_aptf[[a, hyperdrive_to_fits_stokes(p), t, f]] = f32::NAN;
+                        } else {
+                            let jones_p_norm = jones_array_tfb[[t, f, i]][p].norm();
+                            auto_spectrum_afp[[a, f, hyperdrive_to_fits_stokes(p)]] += jones_p_norm;
+                            auto_power_aptf[[a, hyperdrive_to_fits_stokes(p), t, f]] +=
+                                jones_p_norm;
                         }
-                        auto_spectrum_afp[[a, f, hyperdrive_to_fits_stokes(p)]] +=
-                            jones_array_tfb[[t, f, i]][p].norm();
-                        auto_power_aptf[[a, hyperdrive_to_fits_stokes(p), t, f]] +=
-                            jones_array_tfb[[t, f, i]][p].norm();
                     }
                 }
             }
         }
-        if unflagged_timesteps > 0 {
-            auto_spectrum_afp /= unflagged_timesteps as f32;
+        if num_unflagged_times > 0 {
+            auto_spectrum_afp /= num_unflagged_times as f32;
         }
 
         let mut antenna_ids = Vec::<u32>::with_capacity(num_sel_ants);
@@ -203,9 +204,9 @@ impl AutoMetrics {
             hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
 
             hdu.write_key(fptr, "CTYPE1", "STOKES")?;
-            hdu.write_key(fptr, "CRVAL1", -5)?; // xx
-            hdu.write_key(fptr, "CDELT1", -1)?;
-            hdu.write_key(fptr, "CRPIX1", 1)?;
+            hdu.write_key(fptr, "CRVAL1", -5.0f64)?; // xx
+            hdu.write_key(fptr, "CDELT1", -1.0f64)?;
+            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
 
             hdu.write_key(fptr, "ANTNAME", antenna_name)?;
             hdu.write_key(fptr, "ANT_ID", self.antenna_ids[a])?;
@@ -294,39 +295,40 @@ impl SSINS {
 
         let flag_array = Array2::<bool>::default((num_timesteps - 1, num_freqs));
         let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
+        let num_unflagged_diff_timesteps = timestep_flags
+            .iter()
+            .zip(timestep_flags[1..].iter())
+            .filter(|&(a, b)| !a && !b)
+            .count();
+        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
 
         for t in 0..num_timesteps - 1 {
             for f in 0..num_freqs {
                 for b in 0..num_baselines {
-                    if timestep_flags[t] || timestep_flags[t + 1] {
-                        for p in 0..4 {
+                    for p in 0..4 {
+                        if chan_flags[f] {
                             diff_mean_amp_tfp[[t, f, p]] = f32::NAN;
+                            diff_mean_amp_fp[[f, p]] = f32::NAN;
+                        } else if timestep_flags[t] || timestep_flags[t + 1] {
+                            diff_mean_amp_tfp[[t, f, p]] = f32::NAN;
+                        } else {
+                            let jones_diff_p_norm = (jones_array_tfb[[t, f, b]]
+                                - jones_array_tfb[[t + 1, f, b]])[p]
+                                .norm();
+                            diff_mean_amp_tfp[[t, f, p]] += jones_diff_p_norm;
+                            diff_mean_amp_fp[[f, p]] += jones_diff_p_norm;
                         }
-                        continue;
-                    }
-
-                    let jones_diff = jones_array_tfb[[t, f, b]] - jones_array_tfb[[t + 1, f, b]];
-                    for p in 0..4 {
-                        diff_mean_amp_tfp[[t, f, p]] += jones_diff[p].norm();
                     }
                 }
             }
         }
 
-        diff_mean_amp_tfp /= num_baselines as f32;
-        let mut num_unflagged_timesteps = 0;
-        for t in 0..num_timesteps - 1 {
-            if !timestep_flags[t] && !timestep_flags[t + 1] {
-                num_unflagged_timesteps += 1;
-                for f in 0..num_freqs {
-                    for p in 0..4 {
-                        diff_mean_amp_fp[[f, p]] += diff_mean_amp_tfp[[t, f, p]];
-                    }
-                }
-            }
+        if num_baselines > 0 {
+            diff_mean_amp_tfp /= num_baselines as f32;
+            diff_mean_amp_fp /= num_baselines as f32;
         }
-        if num_unflagged_timesteps > 0 {
-            diff_mean_amp_fp /= num_unflagged_timesteps as f32;
+        if num_unflagged_diff_timesteps > 0 {
+            diff_mean_amp_fp /= num_unflagged_diff_timesteps as f32;
         }
 
         // subtract mean_amp_fp from mean_amp_tfp, divide by mean_amp_fp and multiply by mean_stdev_ratio
@@ -569,25 +571,23 @@ impl EAVILS {
         let mut mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
         let mut mean_amp_fbp = Array3::<f32>::zeros((num_freqs, num_baselines, 4));
         let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
-        let mut num_unflagged_timesteps = 0;
+        let num_unflagged_timesteps = timestep_flags.iter().filter(|&t| !t).count();
+        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
 
         for t in 0..num_timesteps {
-            if !timestep_flags[t] {
-                num_unflagged_timesteps += 1;
-            }
             for f in 0..num_freqs {
                 for b in 0..num_baselines {
-                    if timestep_flags[t] {
-                        for p in 0..4 {
-                            mean_amp_tfp[[t, f, p]] = f32::NAN;
-                        }
-                        continue;
-                    }
-
-                    let jones_nodiff = jones_array_tfb[[t, f, b]];
                     for p in 0..4 {
-                        mean_amp_tfp[[t, f, p]] += jones_nodiff[p].norm();
-                        mean_amp_fbp[[f, b, p]] += jones_nodiff[p].norm();
+                        if chan_flags[f] {
+                            mean_amp_fbp[[f, b, p]] = f32::NAN;
+                            mean_amp_tfp[[t, f, p]] = f32::NAN;
+                        } else if timestep_flags[t] {
+                            mean_amp_tfp[[t, f, p]] = f32::NAN;
+                        } else {
+                            let jones_p_norm = jones_array_tfb[[t, f, b]][p].norm();
+                            mean_amp_tfp[[t, f, p]] += jones_p_norm;
+                            mean_amp_fbp[[f, b, p]] += jones_p_norm;
+                        }
                     }
                 }
             }
@@ -604,6 +604,10 @@ impl EAVILS {
             }
             for f in 0..num_freqs {
                 for p in 0..4 {
+                    if chan_flags[f] {
+                        mean_amp_fp[[f, p]] = f32::NAN;
+                        continue;
+                    }
                     mean_amp_fp[[f, p]] += mean_amp_tfp[[t, f, p]];
                 }
             }
@@ -618,8 +622,12 @@ impl EAVILS {
             }
             for f in 0..num_freqs {
                 for b in 0..num_baselines {
-                    let jones_nodiff = jones_array_tfb[[t, f, b]];
                     for p in 0..4 {
+                        if chan_flags[f] {
+                            var_amp_fbp[[f, b, p]] = f32::NAN;
+                            continue;
+                        }
+                        let jones_nodiff = jones_array_tfb[[t, f, b]];
                         var_amp_fbp[[f, b, p]] +=
                             (jones_nodiff[p].norm() - mean_amp_fbp[[f, b, p]]).powi(2);
                     }
@@ -854,11 +862,13 @@ impl AOFlagMetrics {
         let (num_timesteps, num_freqs, num_baselines) = flag_array_tfb.dim();
         let mut occupancy_tf = Array2::<f64>::zeros((num_timesteps, num_freqs));
         let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
+        let num_unflagged_timesteps = timestep_flags.iter().filter(|&t| !t).count();
+        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
 
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
                 for b in 0..num_baselines {
-                    if timestep_flags[t] {
+                    if timestep_flags[t] || chan_flags[f] {
                         occupancy_tf[[t, f]] = f64::NAN;
                         continue;
                     }
@@ -867,7 +877,7 @@ impl AOFlagMetrics {
             }
         }
 
-        let total_samples = num_timesteps * num_baselines;
+        let total_samples = num_unflagged_timesteps * num_baselines;
         occupancy_tf /= total_samples as f64;
 
         let timesteps_nodiff = &corr_ctx.timesteps[chunk_vis_sel.timestep_range.clone()]
