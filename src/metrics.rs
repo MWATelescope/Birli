@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use marlu::XyzGeocentric;
 
 use crate::{
+    delay_transform::{calculate_delay_channels, delay_transform, DelayTransformConfig},
     marlu::{
         fitsio::{
             images::{ImageDescription, ImageType},
@@ -24,13 +25,13 @@ use crate::{
     FlagContext,
 };
 
-// when you want to convert hyperdrive stokes order to standard stokes order.
-// fits standard:
-// −5 'XX' X parallel linear
-// −6 'YY' Y parallel linear
-// −7 'XY' XY cross linear
-// −8 'YX' Y X cross linear
-// but hyperdrive is XX XY YX YY
+/// when you want to convert hyperdrive stokes order to standard stokes order.
+/// fits standard:
+/// −5 'XX' X parallel linear
+/// −6 'YY' Y parallel linear
+/// −7 'XY' XY cross linear
+/// −8 'YX' YX cross linear
+/// but hyperdrive is XX XY YX YY
 pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
     match pol {
         0 => 0,
@@ -45,6 +46,7 @@ pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
 pub(crate) struct AutoMetrics {
     pub auto_power_aptf: Array4<f32>, // (antenna, times, frequencies, polarizations)
     pub auto_spectrum_afp: Array3<f32>, // (antenna, frequencies, polarizations)
+    pub auto_delay_spectrum_afp: Array3<f32>, // (antenna, frequencies, polarizations)
     pub antenna_names: Vec<String>,
     pub antenna_positions: Vec<XyzGeocentric>,
     pub antenna_ids: Vec<u32>,
@@ -60,6 +62,16 @@ pub(crate) struct AutoMetrics {
 }
 
 impl AutoMetrics {
+    /// TODO: there's a bug around here somewhere:
+    /// export obsid=1436298936
+    /// cd /data/curtin_mwaeor/nfdata/$obsid/raw/
+    /// singularity exec --cleanenv -B $PWD -W $PWD docker://mwatelescope/birli:eavil_ssins \
+    /// birli \
+    /// -m ${obsid}.metafits \
+    /// --metrics-out ${obsid}_metrics_rx33-34.fits \
+    /// -u birli_${obsid}.uvfits \
+    /// --sel-ants {48..63} \
+    /// -- ${obsid}_2*.fits
     pub(crate) fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
@@ -80,6 +92,7 @@ impl AutoMetrics {
         let sel_auto_idxs = sel_auto_pairs.keys().copied().collect::<Vec<_>>();
         let num_freqs = jones_array_tfb.dim().1;
         let num_timesteps = jones_array_tfb.dim().0;
+        let num_pols = 4;
         let mut auto_power_aptf = Array4::<f32>::zeros((num_sel_ants, 4, num_timesteps, num_freqs));
         let mut auto_spectrum_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, 4));
         let num_unflagged_times = timestep_flags.iter().filter(|&t| !t).count();
@@ -106,6 +119,8 @@ impl AutoMetrics {
             auto_spectrum_afp /= num_unflagged_times as f32;
         }
 
+        // TODO: auto_spectrum_afp should have its mean, auto_power_aptf subtracted.
+
         let mut antenna_ids = Vec::<u32>::with_capacity(num_sel_ants);
         let mut antenna_names = Vec::<String>::with_capacity(num_sel_ants);
         let mut antenna_positions = Vec::<XyzGeocentric>::with_capacity(num_sel_ants);
@@ -117,6 +132,106 @@ impl AutoMetrics {
         let mut whitening_filters = Vec::<bool>::with_capacity(num_sel_ants);
 
         println!("sel_auto_idxs: {:?}", sel_auto_idxs);
+
+        let freqs = corr_ctx.get_fine_chan_freqs_hz_array(
+            &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
+        );
+        // use delay_transform to get the delay spectrum of each antenna in auto_spectrum_afp
+        let delay_transform_config = DelayTransformConfig {
+            min_delay_ns: 10.0,
+            max_delay_ns: 2000.0,
+            target_delay_res_ns: 1.0,
+        };
+        let freqs_arr = marlu::ndarray::Array1::from(freqs.clone());
+        let delay_info = calculate_delay_channels(num_freqs, &freqs_arr, &delay_transform_config);
+        let num_delays = delay_info.n_delay_channels;
+        let mut auto_delay_spectrum_afp =
+            Array3::<f32>::zeros((num_sel_ants, num_delays, num_pols));
+        for pol in 0..num_pols {
+            // Convert spectrum to f64 and shape (ants, freqs)
+            let spectrum_f64 = auto_spectrum_afp
+                .slice(s![.., .., pol])
+                .mapv(|x| x as f64)
+                .to_owned();
+
+            // Debug: check spectral shapes for first few antennas
+            if pol == 0 && spectrum_f64.nrows() >= 3 {
+                eprintln!("Input spectra analysis for pol {}:", pol);
+                for ant in 0..3.min(spectrum_f64.nrows()) {
+                    let ant_spectrum = spectrum_f64.row(ant);
+                    let finite_data: Vec<f64> = ant_spectrum
+                        .iter()
+                        .filter(|&&x| x.is_finite())
+                        .copied()
+                        .collect();
+                    if !finite_data.is_empty() {
+                        let min_val = finite_data.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+                        let max_val = finite_data.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+                        let mean_val = finite_data.iter().sum::<f64>() / finite_data.len() as f64;
+                        eprintln!(
+                            "  Ant {}: {:.2e} to {:.2e}, mean={:.2e}, shape={:?}",
+                            ant,
+                            min_val,
+                            max_val,
+                            mean_val,
+                            ant_spectrum.dim()
+                        );
+
+                        // Show first few and last few frequency points
+                        let first_few: Vec<f64> = ant_spectrum.iter().take(5).copied().collect();
+                        let last_few: Vec<f64> =
+                            ant_spectrum.iter().rev().take(5).copied().collect();
+                        eprintln!("    First 5: {:?}", first_few);
+                        eprintln!("    Last 5: {:?}", last_few);
+                    }
+                }
+
+                // Check if all antennas have identical normalized shapes
+                if spectrum_f64.nrows() >= 2 {
+                    let ant0 = spectrum_f64.row(0);
+                    let ant1 = spectrum_f64.row(1);
+                    let ant0_finite: Vec<f64> =
+                        ant0.iter().filter(|&&x| x.is_finite()).copied().collect();
+                    let ant1_finite: Vec<f64> =
+                        ant1.iter().filter(|&&x| x.is_finite()).copied().collect();
+
+                    if ant0_finite.len() == ant1_finite.len() && !ant0_finite.is_empty() {
+                        let ant0_mean = ant0_finite.iter().sum::<f64>() / ant0_finite.len() as f64;
+                        let ant1_mean = ant1_finite.iter().sum::<f64>() / ant1_finite.len() as f64;
+
+                        // Normalize and compare
+                        let norm0: Vec<f64> = ant0_finite.iter().map(|&x| x / ant0_mean).collect();
+                        let norm1: Vec<f64> = ant1_finite.iter().map(|&x| x / ant1_mean).collect();
+
+                        let shape_diff: f64 = norm0
+                            .iter()
+                            .zip(norm1.iter())
+                            .map(|(&a, &b)| (a - b).abs())
+                            .sum::<f64>()
+                            / norm0.len() as f64;
+                        eprintln!(
+                            "  Normalized shape difference between ant0 and ant1: {:.6}",
+                            shape_diff
+                        );
+
+                        if shape_diff < 1e-6 {
+                            eprintln!(
+                                "  WARNING: Antennas have nearly identical normalized shapes!"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Convert freqs to ndarray of f64
+            let freqs_arr = marlu::ndarray::Array1::from(freqs.clone());
+            let delay_spectrum =
+                delay_transform(&spectrum_f64, &freqs_arr, &delay_transform_config)
+                    .expect("delay_transform failed");
+            auto_delay_spectrum_afp
+                .slice_mut(s![.., .., pol])
+                .assign(&delay_spectrum.delay_spectrum.mapv(|x| x as f32));
+        }
 
         corr_ctx
             .metafits_context
@@ -143,6 +258,7 @@ impl AutoMetrics {
         Self {
             auto_power_aptf,
             auto_spectrum_afp,
+            auto_delay_spectrum_afp,
             antenna_names,
             antenna_positions,
             antenna_ids,
@@ -258,6 +374,39 @@ impl AutoMetrics {
             hdu.write_key(fptr, "POL", pol_name)?;
             hdu.write_key(fptr, "N_ANTS", num_ants as u32)?;
             hdu.write_key(fptr, "TELESCOP", "MWA")?;
+        }
+
+        let num_delays = self.auto_delay_spectrum_afp.dim().1;
+        // write out auto_delay_spectrum_afp
+        for pol_idx in 0..num_pols {
+            let pol_name = ["XX", "YY", "XY", "YX"][pol_idx];
+            let dim = [num_ants, num_delays];
+            let image_description = ImageDescription {
+                data_type: ImageType::Double,
+                dimensions: &dim,
+            };
+            let extname = format!("AUTO_DELAY_POL={pol_name}");
+            let hdu = fptr.create_image(&extname, &image_description)?;
+            hdu.write_image(
+                fptr,
+                &self
+                    .auto_delay_spectrum_afp
+                    .slice(s![.., .., pol_idx])
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>(),
+            )?;
+            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+            hdu.write_key(fptr, "BZERO", 0.0f64)?;
+            hdu.write_key(fptr, "CTYPE1", "DELAY")?;
+            hdu.write_key(fptr, "CRVAL1", 0.0f64)?;
+            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+            hdu.write_key(fptr, "CUNIT1", "ns")?;
+            hdu.write_key(fptr, "CTYPE2", "BASELINE")?;
+            hdu.write_key(fptr, "CRVAL2", 0.0f64)?;
+            hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
+            hdu.write_key(fptr, "POL", pol_name)?;
+            hdu.write_key(fptr, "N_ANTS", num_ants as u32)?;
         }
 
         Ok(())

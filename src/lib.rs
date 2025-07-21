@@ -196,7 +196,9 @@ pub use error::BirliError;
 pub mod preprocessing;
 pub use preprocessing::PreprocessContext;
 
+pub mod delay_transform;
 pub mod van_vleck;
+pub use delay_transform::{delay_transform, DelayTransformConfig, DelayTransformResult};
 pub use van_vleck::{correct_van_vleck, get_vv_sample_scale};
 
 pub mod metrics;
