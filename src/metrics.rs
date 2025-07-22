@@ -59,6 +59,8 @@ pub(crate) struct AutoMetrics {
 
     pub start_freq_hz: f64,
     pub channel_width_hz: f64,
+    pub start_time_gps_s: f64,
+    pub integration_time_s: f64,
 }
 
 impl AutoMetrics {
@@ -120,6 +122,18 @@ impl AutoMetrics {
             }
         }
 
+        // variance over frequency for each antenna, time, and polarization
+        // let mut auto_var_atp = Array3::<f32>::zeros((num_sel_ants, num_timesteps, num_pols));
+        // for a in 0..num_sel_ants {
+        //     for t in 0..num_timesteps {
+        //         for p in 0..num_pols {
+        //             auto_var_atp[[a, t, p]] = auto_sub_aptf
+        //                 .slice(s![a, hyperdrive_to_fits_stokes(p), t, ..])
+        //                 .var(0.0);
+        //         }
+        //     }
+        // }
+
         let mut antenna_ids = Vec::<u32>::with_capacity(num_sel_ants);
         let mut antenna_names = Vec::<String>::with_capacity(num_sel_ants);
         let mut antenna_positions = Vec::<XyzGeocentric>::with_capacity(num_sel_ants);
@@ -144,8 +158,7 @@ impl AutoMetrics {
         let freqs_arr = marlu::ndarray::Array1::from(freqs.clone());
         let delay_info = calculate_delay_channels(num_freqs, &freqs_arr, &delay_transform_config);
         let num_delays = delay_info.n_delay_channels;
-        let mut auto_delay_spectrum_afp =
-            Array3::<f32>::zeros((num_sel_ants, num_delays, num_pols));
+        let mut auto_delay_afp = Array3::<f32>::zeros((num_sel_ants, num_delays, num_pols));
         for pol in 0..num_pols {
             // Convert spectrum to f64 and shape (ants, freqs)
             let spectrum_f64 = auto_spectrum_afp
@@ -158,7 +171,7 @@ impl AutoMetrics {
             let delay_spectrum =
                 delay_transform(&spectrum_f64, &freqs_arr, &delay_transform_config)
                     .expect("delay_transform failed");
-            auto_delay_spectrum_afp
+            auto_delay_afp
                 .slice_mut(s![.., .., pol])
                 .assign(&delay_spectrum.delay_spectrum.mapv(|x| x as f32));
         }
@@ -185,10 +198,16 @@ impl AutoMetrics {
                 cable_flavours.push(rfinput_x.flavour.clone());
                 whitening_filters.push(rfinput_x.has_whitening_filter);
             });
+
+        let timesteps = &corr_ctx.timesteps[chunk_vis_sel.timestep_range.clone()]
+            .iter()
+            .map(|ts| ts.gps_time_ms as f64 / 1000.0)
+            .collect::<Vec<_>>();
+
         Self {
             auto_sub_aptf,
             auto_spectrum_afp,
-            auto_delay_afp: auto_delay_spectrum_afp,
+            auto_delay_afp,
             antenna_names,
             antenna_positions,
             antenna_ids,
@@ -198,14 +217,10 @@ impl AutoMetrics {
             rx_types,
             cable_flavours,
             whitening_filters,
-            start_freq_hz: corr_ctx.get_fine_chan_freqs_hz_array(
-                &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
-            )[0],
-            channel_width_hz: corr_ctx.get_fine_chan_freqs_hz_array(
-                &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
-            )[1] - corr_ctx.get_fine_chan_freqs_hz_array(
-                &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
-            )[0],
+            start_freq_hz: freqs[0],
+            channel_width_hz: freqs[1] - freqs[0],
+            start_time_gps_s: timesteps[0],
+            integration_time_s: timesteps[1] - timesteps[0],
         }
     }
 
@@ -213,7 +228,7 @@ impl AutoMetrics {
         &self,
         fptr: &mut FitsFile,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let (num_ants, num_freqs, num_pols) = self.auto_spectrum_afp.dim();
+        let (num_ants, num_pols, _num_times, num_freqs) = self.auto_sub_aptf.dim();
 
         for a in 0..self.auto_sub_aptf.dim().0 {
             let antenna_name = self.antenna_names[a].clone();
@@ -245,8 +260,8 @@ impl AutoMetrics {
             hdu.write_key(fptr, "CRPIX3", 1.0f64)?;
             hdu.write_key(fptr, "CUNIT3", "Hz")?;
             hdu.write_key(fptr, "CTYPE2", "TIME")?;
-            hdu.write_key(fptr, "CRVAL2", 0.0f64)?;
-            hdu.write_key(fptr, "CDELT2", 1.0f64)?;
+            hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
+            hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
             hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
 
             hdu.write_key(fptr, "CTYPE1", "STOKES")?;
@@ -305,6 +320,35 @@ impl AutoMetrics {
             hdu.write_key(fptr, "N_ANTS", num_ants as u32)?;
             hdu.write_key(fptr, "TELESCOP", "MWA")?;
         }
+
+        // // write out auto_var_atp
+        // for pol_idx in 0..num_pols {
+        //     let pol_name = ["XX", "YY", "XY", "YX"][pol_idx];
+        //     let dim = [num_ants, num_timesteps];
+        //     let image_description = ImageDescription {
+        //         data_type: ImageType::Double,
+        //         dimensions: &dim,
+        //     };
+        //     let extname = format!("AUTO_VAR_POL={pol_name}");
+        //     let hdu = fptr.create_image(&extname, &image_description)?;
+        //     hdu.write_image(
+        //         fptr,
+        //         &self
+        //             .auto_var_atp
+        //             .slice(s![.., .., pol_idx])
+        //             .iter()
+        //             .copied()
+        //             .collect::<Vec<_>>(),
+        //     )?;
+        //     hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+        //     hdu.write_key(fptr, "BZERO", 0.0f64)?;
+        //     hdu.write_key(fptr, "CTYPE1", "TIME")?;
+        //     hdu.write_key(fptr, "CRVAL1", self.start_time_gps_s)?;
+        //     hdu.write_key(fptr, "CDELT1", self.integration_time_s)?;
+        //     hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+        //     hdu.write_key(fptr, "CUNIT1", "s")?;
+        //     hdu.write_key(fptr, "CTYPE2", "BASELINE")?;
+        // }
 
         let num_delays = self.auto_delay_afp.dim().1;
         // write out auto_delay_spectrum_afp
