@@ -474,13 +474,13 @@ impl SSINS {
             .iter()
             .map(|ts| ts.gps_time_ms as f64 / 1000.0)
             .collect::<Vec<_>>();
+        let integration_time_s = timesteps_nodiff[1] - timesteps_nodiff[0];
         // Compute the average time between adjacent timesteps
         let timesteps_diff: Vec<f64> = timesteps_nodiff[1..]
             .iter()
             .zip(&timesteps_nodiff[..num_timesteps - 1])
             .map(|(a, b)| (a + b) / 2.0)
             .collect();
-        let integration_time_s = timesteps_diff[1] - timesteps_diff[0];
 
         let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(
             &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
