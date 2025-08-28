@@ -691,6 +691,7 @@ impl EAVILS {
         // zscore = (mean_amp_tfp - mean_amp_fp) / sqrt_mean_var_amp_fp
 
         let mut mean_amp_tfp = Array3::<f32>::zeros((num_timesteps, num_freqs, 4));
+        // EAVILS_MEAN_AMP_FP
         let mut mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
         let mut mean_amp_fbp = Array3::<f32>::zeros((num_freqs, num_baselines, 4));
         let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
@@ -738,6 +739,7 @@ impl EAVILS {
         mean_amp_fp /= num_unflagged_timesteps as f32;
 
         // calculate the time-variance of amplitude for each freq, bl, pol
+        // variance is mean of the squared deviations from the mean
         let mut var_amp_fbp = Array3::<f32>::zeros((num_freqs, num_baselines, 4));
         for t in 0..num_timesteps {
             if timestep_flags[t] {
@@ -762,7 +764,7 @@ impl EAVILS {
             var_amp_fbp /= num_unflagged_timesteps as f32;
         }
 
-        // calculate mean_var_amp_fp
+        // calculate mean_var_amp_fp, EAVILS_SQRT_MEAN_VAR_AMP_FP
         let mut sqrt_mean_var_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
         for f in 0..num_freqs {
             for b in 0..num_baselines {
@@ -774,7 +776,7 @@ impl EAVILS {
         sqrt_mean_var_amp_fp /= num_baselines as f32;
         sqrt_mean_var_amp_fp = sqrt_mean_var_amp_fp.sqrt();
 
-        // calculate zscore
+        // calculate zscore (EAVILS_POL)
         let mut zscore = mean_amp_tfp;
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
@@ -784,6 +786,8 @@ impl EAVILS {
                 }
             }
         }
+        // multiply zscore by sqrt_num_unflagged_baselines
+        zscore *= (num_baselines as f32).sqrt();
 
         let flag_array = Array2::<bool>::default((num_timesteps, num_freqs));
 
@@ -967,6 +971,7 @@ impl EAVILS {
     }
 }
 
+#[cfg(feature = "aoflagger")]
 pub(crate) struct AOFlagMetrics {
     pub occupancy_tf: Array2<f64>, // (times, frequencies)
     pub start_time_gps_s: f64,
@@ -975,33 +980,63 @@ pub(crate) struct AOFlagMetrics {
     pub channel_width_hz: f64,
 }
 
+#[cfg(feature = "aoflagger")]
 impl AOFlagMetrics {
+    /// Compute occupancy across baselines excluding autocorrelations
+    ///
+    /// occupancy[t,f] = fraction of cross-correlation baselines flagged at (t,f)
+    fn compute_cross_occupancy(
+        flag_array_tfb: ArrayView3<bool>,
+        timestep_flags: &[bool],
+        chan_flags: &[bool],
+        ant_pairs: &[(usize, usize)],
+    ) -> Array2<f64> {
+        let (num_timesteps, num_freqs, _num_baselines) = flag_array_tfb.dim();
+        let mut occupancy_tf = Array2::<f64>::zeros((num_timesteps, num_freqs));
+
+        // indices of cross-correlation baselines (exclude a==b)
+        let cross_baseline_indices: Vec<usize> = ant_pairs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &(a, b))| if a != b { Some(i) } else { None })
+            .collect();
+        let num_cross_baselines = cross_baseline_indices.len();
+
+        for t in 0..num_timesteps {
+            for f in 0..num_freqs {
+                if timestep_flags[t] || chan_flags[f] {
+                    occupancy_tf[[t, f]] = f64::NAN;
+                    continue;
+                }
+                let mut sum_flags = 0u32;
+                for &b_idx in &cross_baseline_indices {
+                    sum_flags += flag_array_tfb[[t, f, b_idx]] as u32;
+                }
+                if num_cross_baselines > 0 {
+                    occupancy_tf[[t, f]] = sum_flags as f64 / num_cross_baselines as f64;
+                } else {
+                    occupancy_tf[[t, f]] = f64::NAN;
+                }
+            }
+        }
+
+        occupancy_tf
+    }
     pub(crate) fn new(
         flag_array_tfb: ArrayView3<bool>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
     ) -> Self {
-        let (num_timesteps, num_freqs, num_baselines) = flag_array_tfb.dim();
-        let mut occupancy_tf = Array2::<f64>::zeros((num_timesteps, num_freqs));
         let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
-        let num_unflagged_timesteps = timestep_flags.iter().filter(|&t| !t).count();
         let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
-
-        for t in 0..num_timesteps {
-            for f in 0..num_freqs {
-                for b in 0..num_baselines {
-                    if timestep_flags[t] || chan_flags[f] {
-                        occupancy_tf[[t, f]] = f64::NAN;
-                        continue;
-                    }
-                    occupancy_tf[[t, f]] += flag_array_tfb[[t, f, b]] as u8 as f64;
-                }
-            }
-        }
-
-        let total_samples = num_unflagged_timesteps * num_baselines;
-        occupancy_tf /= total_samples as f64;
+        let sel_ant_pairs = chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+        let occupancy_tf = Self::compute_cross_occupancy(
+            flag_array_tfb,
+            &timestep_flags,
+            &chan_flags,
+            &sel_ant_pairs,
+        );
 
         let timesteps_nodiff = &corr_ctx.timesteps[chunk_vis_sel.timestep_range.clone()]
             .iter()
@@ -1053,5 +1088,60 @@ impl AOFlagMetrics {
         hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
         hdu.write_key(fptr, "CUNIT2", "s")?;
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "aoflagger"))]
+mod aoflagmetrics_tests {
+    use super::AOFlagMetrics;
+    use crate::marlu::ndarray::{Array2, Array3};
+
+    #[test]
+    fn test_crosses_only_occupancy_helper() {
+        // Two timesteps, two freqs, three baselines: (0,0) auto, (0,1) cross, (1,1) auto
+        let mut flags = Array3::<bool>::from_elem((2, 2, 3), false);
+        // Set autos flagged everywhere
+        for t in 0..2 {
+            for f in 0..2 {
+                flags[[t, f, 0]] = true; // auto 0-0
+                flags[[t, f, 2]] = true; // auto 1-1
+            }
+        }
+        // Cross baseline initially unflagged
+        flags[[0, 0, 1]] = false;
+        flags[[0, 1, 1]] = false;
+        flags[[1, 0, 1]] = true; // flag cross at (t=1,f=0)
+        flags[[1, 1, 1]] = false;
+
+        let timestep_flags = vec![false, false];
+        let chan_flags = vec![false, false];
+        let ant_pairs = vec![(0usize, 0usize), (0usize, 1usize), (1usize, 1usize)];
+
+        let occ = AOFlagMetrics::compute_cross_occupancy(
+            flags.view(),
+            &timestep_flags,
+            &chan_flags,
+            &ant_pairs,
+        );
+
+        // Expected: fraction over crosses only. Only one cross baseline exists.
+        let mut expected = Array2::<f64>::zeros((2, 2));
+        expected[[0, 0]] = 0.0; // cross false
+        expected[[0, 1]] = 0.0; // cross false
+        expected[[1, 0]] = 1.0; // cross true
+        expected[[1, 1]] = 0.0; // cross false
+
+        for t in 0..2 {
+            for f in 0..2 {
+                assert!(
+                    (occ[[t, f]] - expected[[t, f]]).abs() < 1e-12,
+                    "mismatch at (t={}, f={}): got {}, expected {}",
+                    t,
+                    f,
+                    occ[[t, f]],
+                    expected[[t, f]]
+                );
+            }
+        }
     }
 }
