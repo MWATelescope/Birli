@@ -413,6 +413,10 @@ impl SSINS {
         // zscore = (N_bl / C).sqrt() * (mean_amp_tfp - mean_amp_fp) / mean_amp_fp
 
         let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+
+        if num_timesteps < 2 {
+            panic!("SSINS requires at least 2 timesteps");
+        }
         let mut diff_mean_amp_tfp = Array3::<f32>::zeros((num_timesteps - 1, num_freqs, 4));
         let mut diff_mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
 
