@@ -1,22 +1,8 @@
 #!/usr/bin/env python
 
-from os.path import abspath, exists, dirname
-from os.path import join as path_join, exists as path_exists
-from os import makedirs
-# from tests.data.dump_mwaf import chunk
-
 from astropy.io import fits
-from pprint import pformat
-import numpy as np
-import pandas as pd
-import math
-import re
-import itertools
 import sys
 from argparse import ArgumentParser
-import pyuvdata
-from pyuvdata import UVData
-from tabulate import tabulate
 
 from common import get_gpufits_num_scans, chunk
 
@@ -67,7 +53,7 @@ def main(argv):
     args = parse_args(argv)
 
     hdus = fits.open(args.gpufile)
-    print(f"-> hdus.info():")
+    print("-> hdus.info():")
     hdus.info()
 
     print("")
@@ -85,7 +71,7 @@ def main(argv):
     print("")
 
     if args.corr_type == "MWAX":
-        scan_hdu_chunks = chunk(hdus[1:][:timestep_limit*2], 2)
+        scan_hdu_chunks = chunk(hdus[1:][:timestep_limit * 2], 2)
         for (scan_idx, (img_hdu, flag_hdu)) in enumerate(scan_hdu_chunks):
 
             dump_img_hdu(scan_idx, img_hdu)
