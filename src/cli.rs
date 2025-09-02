@@ -1,5 +1,7 @@
 //! Command Line Interface helpers for Birli
 
+#![allow(clippy::doc_markdown)]
+
 use std::{
     convert::Into,
     ffi::OsString,
@@ -2149,7 +2151,7 @@ mod argparse_tests {
         );
     }
 
-    /// pfb gains is disabled when deripple_applied is true
+    /// pfb gains is disabled when `deripple_applied` is true
     #[test]
     fn test_no_pfb_when_deripple_applied() {
         #[rustfmt::skip]
