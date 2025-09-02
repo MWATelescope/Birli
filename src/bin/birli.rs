@@ -300,4 +300,68 @@ mod tests {
 
         assert_ne!(main_with_args(&args), 0);
     }
+
+    #[test]
+    fn main_successful_with_metrics_output() {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("test_metrics.fits");
+
+        let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
+        let gpufits_paths = vec![
+            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits",
+        ];
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "--metrics-out", metrics_path.to_str().unwrap(),
+            "-m", metafits_path,
+            "--sel-ants", "1", "2",
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains", "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        // This should succeed with the fixed array indexing
+        assert_eq!(main_with_args(&args), 0);
+
+        // Verify metrics file was created
+        assert!(metrics_path.exists());
+        assert!(metrics_path.metadata().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn main_successful_with_metrics_output_sequential_ants() {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("test_metrics_sequential.fits");
+
+        let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
+        let gpufits_paths = vec![
+            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits",
+        ];
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "--metrics-out", metrics_path.to_str().unwrap(),
+            "-m", metafits_path,
+            "--sel-ants", "0", "1",
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains", "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        // This should also succeed with sequential antenna selection
+        assert_eq!(main_with_args(&args), 0);
+
+        // Verify metrics file was created
+        assert!(metrics_path.exists());
+        assert!(metrics_path.metadata().unwrap().len() > 0);
+    }
 }
