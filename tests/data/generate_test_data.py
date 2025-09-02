@@ -683,13 +683,6 @@ def generate(args):
                     flag_hdu.header['MILLITIM'] = int(1000 * (hdu_time % 1))
                     if args.get('rewrite_viz'):
                         flag_hdu.data = flag_hdu.data[:naxis2, :]
-
-        # print(
-        #     f" -> modified img_hdu.header\n{repr(img_hdu.header)}"
-        # )
-        # print(
-        #     f" -> modified flag_hdu.header\n{repr(flag_hdu.header)}"
-        # )
                     scan_hdus.append(img_hdu)
                     scan_hdus.append(flag_hdu)
 
