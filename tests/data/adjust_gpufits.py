@@ -1,22 +1,13 @@
 #!/usr/bin/env python
 
-from os.path import abspath, exists, dirname
-from os.path import join as path_join, exists as path_exists
+from os.path import dirname
+from os.path import exists as path_exists
 from os import makedirs
-# from tests.data.dump_mwaf import chunk
 
 from astropy.io import fits
-from pprint import pformat
 import numpy as np
-import pandas as pd
-import math
-import re
-import itertools
 import sys
 from argparse import ArgumentParser
-import pyuvdata
-from pyuvdata import UVData
-from tabulate import tabulate
 
 from common import get_gpufits_num_scans, chunk
 
@@ -71,7 +62,7 @@ def main(argv):
     args = parse_args(argv)
 
     hdus = fits.open(args.in_file)
-    print(f"-> hdus.info():")
+    print("-> hdus.info():")
     hdus.info()
 
     print("")
@@ -99,7 +90,7 @@ def main(argv):
     scan_hdus = []
 
     if args.corr_type == "MWAX":
-        scan_hdu_chunks = chunk(hdus[1:][:timestep_limit*2], 2)
+        scan_hdu_chunks = chunk(hdus[1:][:timestep_limit * 2], 2)
         for (_, (img_hdu, flag_hdu)) in enumerate(scan_hdu_chunks):
 
             if time_offset:
@@ -126,8 +117,9 @@ def main(argv):
     new_gpu_fits = fits.HDUList([primary_hdu] + scan_hdus)
 
     print(f'-> writing {len(scan_hdus)} scans to {args.out_file}')
-    if not path_exists(dirname(args.out_file)):
-        makedirs(dirname(args.out_file))
+    parent = dirname(args.out_file)
+    if parent and not path_exists(parent):
+        makedirs(parent)
     new_gpu_fits.writeto(args.out_file, overwrite=True)
 
 

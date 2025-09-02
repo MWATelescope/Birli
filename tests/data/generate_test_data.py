@@ -80,10 +80,16 @@ TEST_GPUFITS_NAMES_MWA_ORD_FLAGS = [
     "1247842824_20190722150008_gpubox01_00.fits",
 ]
 RE_MWAX_NAME = (
-    r"(?P<obsid>\d{10})_(?P<datetime>\d{8}(.)?\d{6})_ch(?P<rec_chan>\d{3})_(?P<batch>\d{3}).fits"
+    r"(?P<obsid>\d{10})_"
+    r"(?P<datetime>\d{8}(.)?\d{6})_"
+    r"ch(?P<rec_chan>\d{3})_"
+    r"(?P<batch>\d{3}).fits"
 )
 RE_MWA_ORD_NAME = (
-    r"(?P<obsid>\d{10})_(?P<datetime>\d{14})_gpubox(?P<gpubox_num>\d{2})_(?P<batch>\d{2}).fits"
+    r"(?P<obsid>\d{10})_"
+    r"(?P<datetime>\d{14})_"
+    r"gpubox(?P<gpubox_num>\d{2})_"
+    r"(?P<batch>\d{2}).fits"
 )
 
 MAX_COARSE_CHANS = 2
@@ -93,7 +99,14 @@ MAX_ANTENNAS = 2
 MAX_FINE_CHANS = 2
 
 
-def parse_filename(name, corr_type="MWAX", metafits_coarse_chans=[], with_src_dir=(lambda x: x)):
+def parse_filename(
+    name,
+    corr_type="MWAX",
+    metafits_coarse_chans=None,
+    with_src_dir=(lambda x: x),
+):
+    if metafits_coarse_chans is None:
+        metafits_coarse_chans = []
     result = {}
     if corr_type == "MWAX":
         result = re.match(RE_MWAX_NAME, name).groupdict()
@@ -106,7 +119,10 @@ def parse_filename(name, corr_type="MWAX", metafits_coarse_chans=[], with_src_di
     with fits.open(with_src_dir(name)) as gpu_fits:
         num_hdus = len(gpu_fits)
         result['hdus'] = num_hdus
-        result['time'] = gpu_fits[1].header['TIME'] + gpu_fits[1].header['MILLITIM'] / 1000
+        result['time'] = (
+            gpu_fits[1].header['TIME'] +
+            gpu_fits[1].header['MILLITIM'] / 1000
+        )
 
         result['nscans'] = get_gpufits_num_scans(num_hdus, corr_type)
     return result
@@ -127,7 +143,13 @@ def get_limited_antennas(input_df, max_antennas=None):
     return antennas
 
 
-def get_global_scan_index(channel_index, batch_index, max_batches, scan_index, max_scans):
+def get_global_scan_index(
+    channel_index,
+    batch_index,
+    max_batches,
+    scan_index,
+    max_scans,
+):
     result = channel_index
     result = result << math.ceil(math.log2(max_batches)) | batch_index
     result = result << math.ceil(math.log2(max_scans)) | scan_index
@@ -135,49 +157,65 @@ def get_global_scan_index(channel_index, batch_index, max_batches, scan_index, m
 
 
 def display_float(flt):
-    return f"{flt} (0x{flt:08x}, {flt:064b}, ~2^{math.log2(flt + 1)})"
+    return (
+        f"{flt} (0x{flt:08x}, {flt:064b}, ~2^{math.log2(flt + 1)})"
+    )
 
 
 def split_strip_filter(str):
-    return list(filter(None, map(lambda tok: tok.strip(), str.split(','))))
+    return list(
+        filter(None, map(lambda tok: tok.strip(), str.split(',')))
+    )
 
 
 """
+Notes and references (wrapped for linting):
+
 for mwalib/mwax:
-    fine chan width = FINECHAN
-    coarse chan width = bandwidth / len(CHANNELS)
+    - fine chan width = FINECHAN
+    - coarse chan width = bandwidth / len(CHANNELS)
 
 for mwalib/legacy:
-    coarse_chan_width_hz = BANDWIDTH / CHANNELS.len()
-    num_corr_fine_chans_per_coarse = metafits_coarse_chan_width_hz / FINECHAN
-    naxis2 = metafits_fine_chans_per_coarse
+    - coarse_chan_width_hz = BANDWIDTH / CHANNELS.len()
+    - num_corr_fine_chans_per_coarse =
+      metafits_coarse_chan_width_hz / FINECHAN
+    - naxis2 = metafits_fine_chans_per_coarse
 
 for cotter:
 
-    double ChannelFrequencyHz(size_t channelIndex) const
-    {
-        const double channelWidthMHz = _header.bandwidthMHz / _header.nChannels;
-        return (_header.centralFrequencyMHz +
-            (channelIndex - _header.nChannels*0.5) * channelWidthMHz) * 1000000.0;
-    }
-    double ChannelFrequencyHz(size_t coarseChannelNr, size_t channelIndexInSubband) const
-    {
-        const double channelWidthHz = 1000000.0*_header.bandwidthMHz / _header.nChannels;
-        return (double(coarseChannelNr) - 0.5) * 1280000.0 + double(channelIndexInSubband)*channelWidthHz;
+    double ChannelFrequencyHz(size_t channelIndex) const {
+        const double channelWidthMHz =
+            _header.bandwidthMHz / _header.nChannels;
+        return (
+            _header.centralFrequencyMHz +
+            (channelIndex - _header.nChannels*0.5) * channelWidthMHz
+        ) * 1000000.0;
     }
 
+    double ChannelFrequencyHz(size_t coarseChannelNr,
+                               size_t channelIndexInSubband) const {
+        const double channelWidthHz =
+            1000000.0*_header.bandwidthMHz / _header.nChannels;
+        return (
+            (double(coarseChannelNr) - 0.5) * 1280000.0 +
+            double(channelIndexInSubband) * channelWidthHz
+        );
+    }
 
-	std::cout << "Observation covers " << (ChannelFrequencyHz(0)/1000000.0) << '-' << (ChannelFrequencyHz(_header.nChannels-1)/1000000.0) << " MHz.\n";
+    std::cout << "Observation covers "
+              << (ChannelFrequencyHz(0)/1000000.0)
+              << '-'
+              << (ChannelFrequencyHz(_header.nChannels-1)/1000000.0)
+              << " MHz.\n";
 
-
-    timeAvgFactor = round( timeRes_s / INTTIME );
-	if(timeAvgFactor == 0)
-		timeAvgFactor = 1;
-	timeRes_s = timeAvgFactor * INTTIME;
-	freqAvgFactor = round( freqRes_kHz / (1000.0 * BANDWIDTH / N_CHANS));
-	if(freqAvgFactor == 0)
-		freqAvgFactor = 1;
-	freqRes_kHz = freqAvgFactor * (1000.0 * BANDWIDTH / N_CHANS);
+    timeAvgFactor = round(timeRes_s / INTTIME);
+    if (timeAvgFactor == 0)
+        timeAvgFactor = 1;
+    timeRes_s = timeAvgFactor * INTTIME;
+    freqAvgFactor = round(freqRes_kHz / (1000.0 * BANDWIDTH / N_CHANS));
+    if (freqAvgFactor == 0)
+        freqAvgFactor = 1;
+    freqRes_kHz = freqAvgFactor * (1000.0 * BANDWIDTH / N_CHANS);
 
     _subbandCount = `-sbcount`
 
@@ -209,7 +247,9 @@ def generate(args):
         print(f" -> primary_hdu.header\n{repr(primary_hdu.header)}")
         # print(f" -> meta_fits[1].header\n{repr(meta_fits[1].header)}")
         # print(f" -> meta_fits[1].columns\n{repr(meta_fits[1].columns)}")
-        # print(f" -> meta_fits[1].data.shape\n{repr(meta_fits[1].data.shape)}")
+        # print(
+        #     f" -> meta_fits[1].data.shape\n{repr(meta_fits[1].data.shape)}"
+        # )
 
         ####
         # Handle TILE_DATA: inputs, antennas, baselines
@@ -268,9 +308,14 @@ def generate(args):
         # Handle Coarse Channels
         ####
 
-        metafits_coarse_chans = split_strip_filter(primary_hdu.header['CHANNELS'])
+        metafits_coarse_chans = split_strip_filter(
+            primary_hdu.header['CHANNELS']
+        )
         num_metafits_coarse_chans = len(metafits_coarse_chans)
-        print(f" -> metafits_coarse_chans({num_metafits_coarse_chans}):\n{metafits_coarse_chans}")
+        print(
+            f" -> metafits_coarse_chans({num_metafits_coarse_chans}):\n"
+            f"{metafits_coarse_chans}"
+        )
 
         ####
         # Analyse GPUFits
@@ -279,21 +324,34 @@ def generate(args):
         print("anaylsing gpufits...")
 
         gpufits_df = pd.DataFrame([
-            parse_filename(gpubox_name, args['corr_type'], metafits_coarse_chans, with_src_dir)
+            parse_filename(
+                gpubox_name,
+                args['corr_type'],
+                metafits_coarse_chans,
+                with_src_dir,
+            )
             for gpubox_name in args['gpufits_names']
         ])
         print(f" -> gpufits_df:\n{gpufits_df}")
 
         rec_coarse_chans = np.unique(gpufits_df.rec_chan)
-        print(f" -> rec_coarse_chans({len(rec_coarse_chans)}):\n{rec_coarse_chans}")
+        print(
+            f" -> rec_coarse_chans({len(rec_coarse_chans)}):\n"
+            f"{rec_coarse_chans}"
+        )
         # valid_coarse_chans = sorted(rec_coarse_chans)
         valid_coarse_chans = list(rec_coarse_chans)
         if 'max_coarse_chans' in args:
             valid_coarse_chans = valid_coarse_chans[:args['max_coarse_chans']]
         num_coarse_chans = len(valid_coarse_chans)
-        print(f" -> valid_coarse_chans({num_coarse_chans}):\n{valid_coarse_chans}")
+        print(
+            f" -> valid_coarse_chans({num_coarse_chans}):\n"
+            f"{valid_coarse_chans}"
+        )
 
-        # batches_df = sorted(list(np.unique(gpufits_df.batch)[:args['max_batches']]))
+        # batches_df = sorted(
+        #     list(np.unique(gpufits_df.batch)[:args['max_batches']])
+        # )
         batches_df = pd.DataFrame(
             sorted(list(
                 (
@@ -306,18 +364,31 @@ def generate(args):
         )
         num_batches = len(batches_df)
         max_scans_per_batch = np.max(batches_df.max_scans)
-        print(f" -> batches_df (len: {num_batches}, max: {max_scans_per_batch}):\n{batches_df}")
+        print(
+            f" -> batches_df (len: {num_batches},"
+            f" max: {max_scans_per_batch}):\n"
+            f"{batches_df}"
+        )
         if args.get('max_batches'):
             batches_df = batches_df[:args['max_batches']]
         if args.get('max_scans'):
-            batches_df.max_scans = batches_df.max_scans.apply(lambda x: min(x, args['max_scans']))
+            batches_df.max_scans = batches_df.max_scans.apply(
+                lambda x: min(x, args['max_scans'])
+            )
         num_batches = len(batches_df)
         max_scans_per_batch = np.max(batches_df.max_scans)
         print(
-            f" -> batches_df (limited, len: {num_batches}, max: {max_scans_per_batch}):\n{batches_df}")
+            f" -> batches_df (limited, len: {num_batches},"
+            f" max: {max_scans_per_batch}):\n{batches_df}"
+        )
 
-        filtered_gpufits = gpufits_df[np.isin(gpufits_df.rec_chan, valid_coarse_chans) * np.isin(gpufits_df.batch, batches_df.batch)]\
+        filtered_gpufits = (
+            gpufits_df[
+                np.isin(gpufits_df.rec_chan, valid_coarse_chans) &
+                np.isin(gpufits_df.batch, batches_df.batch)
+            ]
             .sort_values(['corr_chan', 'batch'])
+        )
         print(f" -> filtered_gpufits:\n{filtered_gpufits}")
 
         ####
@@ -337,26 +408,54 @@ def generate(args):
         # Handle Coarse/Fine Channel Bandwidth
         ####
 
-        fine_chan_bandwidth_hz = int(primary_hdu.header['FINECHAN'] * 1_000)  # Header in KHz
+        # Header in KHz
+        fine_chan_bandwidth_hz = int(primary_hdu.header['FINECHAN'] * 1_000)
         print(f" -> fine_chan_bandwidth (Hz): {fine_chan_bandwidth_hz}")
-        total_chan_bandwidth_hz = int(primary_hdu.header['BANDWDTH'] * 1_000_000)  # Header in MHz
-        print(f" -> total_chan_bandwidth (Hz): {total_chan_bandwidth_hz}")
-        coarse_chan_bandwidth_hz = total_chan_bandwidth_hz // num_metafits_coarse_chans
-        # coarse_chan_bandwidth_hz = total_chan_bandwidth_hz // num_coarse_chans
-        print(f" -> coarse_chan_bandwidth (Hz, derived): {coarse_chan_bandwidth_hz}")
+        # Header in MHz
+        total_chan_bandwidth_hz = int(
+            primary_hdu.header['BANDWDTH'] * 1_000_000
+        )
+        print(
+            f" -> total_chan_bandwidth (Hz): {total_chan_bandwidth_hz}"
+        )
+        coarse_chan_bandwidth_hz = (
+            total_chan_bandwidth_hz // num_metafits_coarse_chans
+        )
+        # coarse_chan_bandwidth_hz = (
+        #     total_chan_bandwidth_hz // num_coarse_chans
+        # )
+        print(
+            f" -> coarse_chan_bandwidth (Hz, derived): "
+            f"{coarse_chan_bandwidth_hz}"
+        )
         num_fine_chans = coarse_chan_bandwidth_hz // fine_chan_bandwidth_hz
         print(f" -> num_fine_chans (derived): {num_fine_chans}")
         if args.get('max_fine_chans'):
             num_fine_chans = min(args['max_fine_chans'], num_fine_chans)
             print(f" -> num_fine_chans (limited): {num_fine_chans}")
             fine_chan_bandwidth_hz = coarse_chan_bandwidth_hz // num_fine_chans
-            print(f" -> fine_chan_bandwidth (Hz, limited): {fine_chan_bandwidth_hz}")
+            print(
+                f" -> fine_chan_bandwidth (Hz, limited): "
+                f"{fine_chan_bandwidth_hz}"
+            )
             coarse_chan_bandwidth_hz = fine_chan_bandwidth_hz * num_fine_chans
-            print(f" -> coarse_chan_bandwidth (Hz, limited): {coarse_chan_bandwidth_hz}")
+            print(
+                f" -> coarse_chan_bandwidth (Hz, limited): "
+                f"{coarse_chan_bandwidth_hz}"
+            )
         # total_chan_bandwidth_hz = coarse_chan_bandwidth_hz * num_coarse_chans
-        total_chan_bandwidth_hz = coarse_chan_bandwidth_hz * num_metafits_coarse_chans
-        print(f" -> total_chan_bandwidth (Hz, limited): {total_chan_bandwidth_hz}")
-        assert total_chan_bandwidth_hz / num_metafits_coarse_chans / fine_chan_bandwidth_hz == num_fine_chans
+        total_chan_bandwidth_hz = (
+            coarse_chan_bandwidth_hz * num_metafits_coarse_chans
+        )
+        print(
+            f" -> total_chan_bandwidth (Hz, limited): "
+            f"{total_chan_bandwidth_hz}"
+        )
+        assert (
+            total_chan_bandwidth_hz / num_metafits_coarse_chans /
+            fine_chan_bandwidth_hz ==
+            num_fine_chans
+        )
         primary_hdu.header['FINECHAN'] = fine_chan_bandwidth_hz / 1_000
         primary_hdu.header['BANDWDTH'] = total_chan_bandwidth_hz / 1_000_000
 
@@ -364,16 +463,29 @@ def generate(args):
         # Handle Fine Channel Selection
         ####
 
-        # coarse_channel_selection = split_strip_filter( primary_hdu.header['CHANSEL'])
+        # coarse_channel_selection = split_strip_filter(
+        #     primary_hdu.header['CHANSEL']
+        # )
         coarse_channel_selection = [
             # str(metafits_coarse_chans.index(i)) for i in rec_coarse_chans
             str(metafits_coarse_chans.index(i)) for i in valid_coarse_chans
         ]
-        # print(f" -> coarse_channel_selection (derived): {coarse_channel_selection}")
-        # coarse_channel_selection = coarse_channel_selection[:num_coarse_chans]
-        print(f" -> coarse_channel_selection: {coarse_channel_selection}")
-        # primary_hdu.header['CENTCHAN'] = coarse_channel_selection[num_coarse_chans//2]
-        # primary_hdu.header['CHANNELS'] = ','.join(f'{chan}' for chan in valid_coarse_chans)
+        # print(
+        #     f" -> coarse_channel_selection (derived):"
+        #     f" {coarse_channel_selection}"
+        # )
+        # coarse_channel_selection = (
+        #     coarse_channel_selection[:num_coarse_chans]
+        # )
+        print(
+            f" -> coarse_channel_selection: {coarse_channel_selection}"
+        )
+        # primary_hdu.header['CENTCHAN'] = (
+        #     coarse_channel_selection[num_coarse_chans//2]
+        # )
+        # primary_hdu.header['CHANNELS'] = ','.join(
+        #     f'{chan}' for chan in valid_coarse_chans
+        # )
         primary_hdu.header['CHANSEL'] = ','.join(coarse_channel_selection)
 
         # Observation covers 200.32-231.03 MHz.
@@ -381,9 +493,15 @@ def generate(args):
         # Using a-priori subband passband with 1536 channels.
 
         print(
-            f" -> num_metafits_coarse_chans: {num_metafits_coarse_chans} num_fine_chans: {num_fine_chans}")
-        primary_hdu.header['NCHANS'] = num_metafits_coarse_chans * num_fine_chans
-        # primary_hdu.header['CHANNELS'] = ','.join(f'{chan}' for chan in valid_coarse_chans)
+            f" -> num_metafits_coarse_chans: {num_metafits_coarse_chans} "
+            f"num_fine_chans: {num_fine_chans}"
+        )
+        primary_hdu.header['NCHANS'] = (
+            num_metafits_coarse_chans * num_fine_chans
+        )
+        # primary_hdu.header['CHANNELS'] = ','.join(
+        #     f'{chan}' for chan in valid_coarse_chans
+        # )
 
         ####
         # handle NAXIS*
@@ -421,16 +539,33 @@ def generate(args):
 
         # now write cotter-friendly
         if args['corr_type'] == "MWA_ORD":
-            print(f" -> num_coarse_chans: {num_coarse_chans} num_fine_chans: {num_fine_chans}")
-            total_chan_bandwidth_hz = coarse_chan_bandwidth_hz * num_coarse_chans
-            print(f" -> total_chan_bandwidth (Hz, limited): {total_chan_bandwidth_hz}")
-            assert total_chan_bandwidth_hz / num_coarse_chans / fine_chan_bandwidth_hz == num_fine_chans
+            print(
+                f" -> num_coarse_chans: {num_coarse_chans} "
+                f"num_fine_chans: {num_fine_chans}"
+            )
+            total_chan_bandwidth_hz = (
+                coarse_chan_bandwidth_hz * num_coarse_chans
+            )
+            print(
+                f" -> total_chan_bandwidth (Hz, limited): "
+                f"{total_chan_bandwidth_hz}"
+            )
+            assert (
+                total_chan_bandwidth_hz / num_coarse_chans /
+                fine_chan_bandwidth_hz ==
+                num_fine_chans
+            )
             primary_hdu.header['FINECHAN'] = fine_chan_bandwidth_hz / 1_000
-            primary_hdu.header['BANDWDTH'] = total_chan_bandwidth_hz / 1_000_000
+            primary_hdu.header['BANDWDTH'] = (
+                total_chan_bandwidth_hz / 1_000_000
+            )
             num_chans = num_coarse_chans * num_fine_chans
             primary_hdu.header['NCHANS'] = num_chans
 
-            assert total_chan_bandwidth_hz / num_chans == fine_chan_bandwidth_hz
+            assert (
+                total_chan_bandwidth_hz / num_chans ==
+                fine_chan_bandwidth_hz
+            )
 
             meta_fits.writeto(dst_metafits_path.replace(
                 ".metafits", ".cotter.metafits"), overwrite=True)
@@ -448,20 +583,32 @@ def generate(args):
         # channel_index = row['corr_chan']
         channel_index = valid_coarse_chans.index(row['rec_chan'])
         print(f" -> channel_index: 0x{channel_index:08b}")
-        batch_index = batches_df.batch.index[batches_df.batch == row['batch']][0]
+        batch_mask = (batches_df.batch == row['batch'])
+        batch_index = batches_df.batch.index[batch_mask][0]
         gpufits_path = with_src_dir(gpufits_name)
         dst_gpufits_path = with_dst_dir(gpufits_name)
         with fits.open(gpufits_path) as gpu_fits:
-            # print(f" -> gpu_fits[0].info()\n{pformat(gpu_fits.info())}")
-            print(f" -> gpu_fits[0].header\n{repr(gpu_fits[0].header)}")
-            print(f" -> gpu_fits[1].header\n{repr(gpu_fits[1].header)}")
+            # print(
+            #     f" -> gpu_fits[0].info()\n{pformat(gpu_fits.info())}"
+            # )
+            print(
+                f" -> gpu_fits[0].header\n{repr(gpu_fits[0].header)}"
+            )
+            print(
+                f" -> gpu_fits[1].header\n{repr(gpu_fits[1].header)}"
+            )
             # print(f" -> gpu_fits[2].header\n{repr(gpu_fits[2].header)}")
 
-            time = gpu_fits[1].header['TIME'] + gpu_fits[1].header['MILLITIM'] / 1000
+            time = (
+                gpu_fits[1].header['TIME'] +
+                gpu_fits[1].header['MILLITIM'] / 1000
+            )
             if batch_index == 0:
                 start_times[channel_index] = time
             elif args.get('max_scans'):
-                cum_scans = np.max(batches_df.max_scans[batches_df.index < batch_index])
+                cum_scans = np.max(
+                    batches_df.max_scans[batches_df.index < batch_index]
+                )
                 time = start_times[channel_index] + (int_time * cum_scans)
                 gpu_fits[0].header['TIME'] = int(time)
                 gpu_fits[0].header['MILLITIM'] = int(1000 * (time % 1))
@@ -474,57 +621,84 @@ def generate(args):
             primary_hdu.header['NINPUTS'] = num_inputs
             scan_hdus = []
 
-            num_scans = list(batches_df.max_scans[batches_df.batch == row['batch']])[0]
+            scan_mask = (batches_df.batch == row['batch'])
+            num_scans = list(batches_df.max_scans[scan_mask])[0]
 
             if args['corr_type'] == "MWAX":
                 primary_hdu.header['CORR_VER'] = 2
 
-                scan_hdu_chunks = chunk(gpu_fits[1:][:num_scans*2], 2)
-                for (scan_index, (img_hdu, flag_hdu)) in enumerate(scan_hdu_chunks):
+                scan_hdu_chunks = chunk(gpu_fits[1:][:num_scans * 2], 2)
+                for (
+                    scan_index,
+                    (img_hdu, flag_hdu),
+                ) in enumerate(scan_hdu_chunks):
                     # print(f" -> img_hdu.header\n{repr(img_hdu.header)}")
                     # print(f" -> flag_hdu.header\n{repr(flag_hdu.header)}")
                     hdu_time = time + int_time * scan_index
 
                     print(
-                        f" -> img_hdu[{scan_index}].data ({img_hdu.data.shape}, {img_hdu.data.dtype}): \n{img_hdu.data}")
+                        f" -> img_hdu[{scan_index}].data ("
+                        f"{img_hdu.data.shape}, {img_hdu.data.dtype}): \n"
+                        f"{img_hdu.data}"
+                    )
                     img_hdu.header['TIME'] = int(hdu_time)
                     img_hdu.header['MILLITIM'] = int(1000 * (hdu_time % 1))
 
                     if args.get('rewrite_viz'):
                         global_scan_index = get_global_scan_index(
-                            channel_index, batch_index, num_batches, scan_index, num_scans)
+                            channel_index,
+                            batch_index,
+                            num_batches,
+                            scan_index,
+                            num_scans,
+                        )
                         # prefix scan indices to start with the char 'A'
                         global_scan_index = (0x41 << 8) | global_scan_index
-                        print(f" -> global_scan_index: {global_scan_index:08b}")
+                        print(
+                            f" -> global_scan_index: {global_scan_index:08b}"
+                        )
                         img_hdu.header['NAXIS1'] = naxis1
                         img_hdu.header['NAXIS2'] = naxis2
-                        float_start = global_scan_index << 8 * \
-                            math.ceil(math.log2(floats_per_img) / 8)
-                        print(f" -> float_start: {display_float(float_start)}")
+                        float_start = (
+                            global_scan_index <<
+                            8 * math.ceil(math.log2(floats_per_img) / 8)
+                        )
+                        print(
+                            f" -> float_start: {display_float(float_start)}"
+                        )
                         float_end = float_start + floats_per_img
-                        print(f" -> float_end: {display_float(float_end)}")
-                        img_hdu.data = np.arange(float_start, float_end).reshape(
-                            (naxis2, naxis1)).astype(np.int32)
+                        print(
+                            f" -> float_end: {display_float(float_end)}"
+                        )
+                        arr = np.arange(float_start, float_end)
+                        img_hdu.data = arr.reshape(
+                            (naxis2, naxis1)
+                        ).astype(np.int32)
 
                     print(
-                        f" -> flag_hdu[{scan_index}].data.shape({flag_hdu.data.shape}, {flag_hdu.data.dtype})")
+                        f" -> flag_hdu[{scan_index}].data.shape("
+                        f"{flag_hdu.data.shape}, {flag_hdu.data.dtype})"
+                    )
                     flag_hdu.header['TIME'] = int(hdu_time)
                     flag_hdu.header['MILLITIM'] = int(1000 * (hdu_time % 1))
                     if args.get('rewrite_viz'):
                         flag_hdu.data = flag_hdu.data[:naxis2, :]
-
-                    # print(f" -> modified img_hdu.header\n{repr(img_hdu.header)}")
-                    # print(f" -> modified flag_hdu.header\n{repr(flag_hdu.header)}")
                     scan_hdus.append(img_hdu)
                     scan_hdus.append(flag_hdu)
 
             elif args['corr_type'] == "MWA_ORD":
-                for (scan_index, img_hdu) in enumerate(gpu_fits[1:][:num_scans]):
+                for (
+                    scan_index,
+                    img_hdu,
+                ) in enumerate(gpu_fits[1:][:num_scans]):
                     # print(f" -> img_hdu.header\n{repr(img_hdu.header)}")
                     hdu_time = time + int_time * scan_index
 
                     print(
-                        f" -> img_hdu[{scan_index}].data ({img_hdu.data.shape}, {img_hdu.data.dtype}): \n{img_hdu.data}")
+                        f" -> img_hdu[{scan_index}].data ("
+                        f"{img_hdu.data.shape}, {img_hdu.data.dtype}): \n"
+                        f"{img_hdu.data}"
+                    )
                     img_hdu.header['TIME'] = int(hdu_time)
                     img_hdu.header['MILLITIM'] = int(1000 * (hdu_time % 1))
 
@@ -532,29 +706,50 @@ def generate(args):
                         img_hdu.header['NAXIS1'] = naxis1
                         img_hdu.header['NAXIS2'] = naxis2
                         global_scan_index = get_global_scan_index(
-                            channel_index, batch_index, num_batches, scan_index, num_scans)
+                            channel_index,
+                            batch_index,
+                            num_batches,
+                            scan_index,
+                            num_scans,
+                        )
                         # global_scan_index = (0x1001 << 8) | global_scan_index
-                        print(f" -> global_scan_index: {global_scan_index:08b}")
+                        print(
+                            f" -> global_scan_index: {global_scan_index:08b}"
+                        )
                         if args.get('sequential'):
                             float_start = float_count
                         else:
-                            float_start = global_scan_index << math.ceil(math.log2(floats_per_img))
+                            float_start = (
+                                global_scan_index <<
+                                math.ceil(math.log2(floats_per_img))
+                            )
                         print(f" -> float_start: {display_float(float_start)}")
                         float_end = float_start + floats_per_img
                         print(f" -> float_end: {display_float(float_end)}")
-                        img_hdu.data = np.arange(float_start, float_end).reshape(
-                            (naxis2, naxis1)).astype(np.float64)
+                        arr = np.arange(float_start, float_end)
+                        img_hdu.data = arr.reshape(
+                            (naxis2, naxis1)
+                        ).astype(np.float64)
 
                     float_count += floats_per_img
 
-                    # print(f" -> modified img_hdu.header\n{repr(img_hdu.header)}")
+                    # print(
+                    #     f" -> modified img_hdu.header\n"
+                    #     f"{repr(img_hdu.header)}"
+                    # )
                     scan_hdus.append(img_hdu)
 
             new_gpu_fits = fits.HDUList([primary_hdu] + scan_hdus)
-            # print(f" -> new_gpu_fits[0].header\n{repr(new_gpu_fits[0].header)}")
-            # print(f" -> new_gpu_fits[1].header\n{repr(new_gpu_fits[1].header)}")
+            # print(
+            #     f" -> new_gpu_fits[0].header\n{repr(new_gpu_fits[0].header)}"
+            # )
+            # print(
+            #     f" -> new_gpu_fits[1].header\n{repr(new_gpu_fits[1].header)}"
+            # )
 
-            print(f'-> writing {len(scan_hdus)} scans to {dst_gpufits_path}')
+            print(
+                f"-> writing {len(scan_hdus)} scans to {dst_gpufits_path}"
+            )
             if not path_exists(dirname(dst_gpufits_path)):
                 makedirs(dirname(dst_gpufits_path))
             new_gpu_fits.writeto(dst_gpufits_path, overwrite=True)
@@ -583,7 +778,8 @@ def main():
         'max_coarse_chans': MAX_COARSE_CHANS,
         'max_batches': MAX_BATCHES,
         'max_scans': MAX_SCANS,
-        # 'max_antennas': MAX_ANTENNAS, <- limiting ord antennas breaks mwalib and cotter.
+        # 'max_antennas': MAX_ANTENNAS,
+        #   limiting ord antennas breaks mwalib and cotter.
         'max_fine_chans': MAX_FINE_CHANS,
         'rewrite_viz': True,
     })
@@ -596,7 +792,8 @@ def main():
         'max_coarse_chans': 1,
         'max_batches': 1,
         'max_scans': 2,
-        # 'max_antennas': MAX_ANTENNAS, <- limiting ord antennas breaks mwalib and cotter.
+        # 'max_antennas': MAX_ANTENNAS,
+        #   limiting ord antennas breaks mwalib and cotter.
         # 'max_fine_chans': MAX_FINE_CHANS,
         'rewrite_viz': False,
     })

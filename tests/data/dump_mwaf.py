@@ -1,12 +1,8 @@
 #!/usr/bin/env python
 
 from itertools import combinations_with_replacement, combinations
-from os.path import abspath, exists, dirname
-from os.path import join as path_join, exists as path_exists
-from os import makedirs
 
 from astropy.io import fits
-from pprint import pformat
 import sys
 from argparse import ArgumentParser
 from tabulate import tabulate
@@ -37,7 +33,7 @@ def main(argv):
     args = parse_args(argv)
     print(f"-> args {vars(args)}")
     hdus = fits.open(args.file)
-    print(f"-> hdus.info():")
+    print("-> hdus.info():")
     hdus.info()
 
     print_heading("HEADER")

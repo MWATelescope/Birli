@@ -82,7 +82,7 @@ The following may or may not work.
 brew tap mwatelescope/tap
 brew install mwatelescope/tap/aoflagger
 AOFLAGGER_INCLUDE_DIR=/opt/homebrew/include/ cargo install --path . --locked
-export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib/
+export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib/ AOFLAGGER_INCLUDE_DIR=/opt/homebrew/include/
 birli
 ```
 

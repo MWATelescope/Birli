@@ -1,22 +1,10 @@
 #!/usr/bin/env python
 
-from os.path import abspath, exists, dirname
-from os.path import join as path_join, exists as path_exists
-from os import makedirs
 
 from astropy.io import fits
-from pprint import pformat
-import numpy as np
-import pandas as pd
-import math
-import re
-import itertools
 import sys
 from argparse import ArgumentParser
-import pyuvdata
 from tabulate import tabulate
-
-import numpy as np
 
 
 def parse_args(argv):
@@ -31,7 +19,7 @@ def parse_args(argv):
 def main(argv):
     args = parse_args(argv)
     hdus = fits.open(args.file)
-    print(f"-> hdus.info():")
+    print("-> hdus.info():")
     hdus.info()
 
     print("")
