@@ -1,5 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.18.1 (2025-09-02)
+
+- 🐛 bug fixes:
+  - Fix #184 - pfb gains are disabled when deripple_applied is true
+
 # Version 0.18.0 (2025-05-21)
 
 - ✨ new features:
