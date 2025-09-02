@@ -117,8 +117,8 @@ def main(argv):
     new_gpu_fits = fits.HDUList([primary_hdu] + scan_hdus)
 
     print(f'-> writing {len(scan_hdus)} scans to {args.out_file}')
-    if not path_exists(dirname(args.out_file)):
-        makedirs(dirname(args.out_file))
+    if (parent := dirname(args.out_file)) and not path_exists(parent):
+        makedirs(parent)
     new_gpu_fits.writeto(args.out_file, overwrite=True)
 
 

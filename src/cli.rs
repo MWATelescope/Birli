@@ -1345,6 +1345,7 @@ impl<'a> BirliContext<'a> {
             oversampled,
             cable_delays_applied,
             geometric_delays_applied,
+            deripple_applied,
             ..
         } = meta_ctx;
         prep_ctx.array_pos = if matches.is_present("emulate-cotter") {
@@ -1409,26 +1410,33 @@ impl<'a> BirliContext<'a> {
                 info!("passband gains: {} (legacy)", g);
                 Some(PFB_COTTER_2014_10KHZ)
             }
-            Some(g) if g == "auto" => match (mwa_version, oversampled) {
-                (MWAVersion::CorrMWAXv2, false) => {
-                    info!("passband gains: {} (mwax, not oversampled)", g);
-                    Some(PFB_JAKE_2022_200HZ)
+            Some(g) if g == "auto" => {
+                if *deripple_applied {
+                    info!("passband gains: {} (disabled, deripple already applied)", g);
+                    None
+                } else {
+                    match (mwa_version, oversampled) {
+                        (MWAVersion::CorrMWAXv2, false) => {
+                            info!("passband gains: {} (mwax, not oversampled)", g);
+                            Some(PFB_JAKE_2022_200HZ)
+                        }
+                        (MWAVersion::CorrMWAXv2, true) => {
+                            info!("passband gains: {} (mwax, oversampled)", g);
+                            Some(OSPFB_JAKE_2025_200HZ)
+                        }
+                        (MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy, _) => {
+                            info!("passband gains: {} (legacy)", g);
+                            Some(PFB_COTTER_2014_10KHZ)
+                        }
+                        (ver, _) => {
+                            return Err(BadMWAVersion {
+                                message: "unknown mwa version".into(),
+                                version: ver.to_string(),
+                            })
+                        }
+                    }
                 }
-                (MWAVersion::CorrMWAXv2, true) => {
-                    info!("passband gains: {} (mwax, oversampled)", g);
-                    Some(OSPFB_JAKE_2025_200HZ)
-                }
-                (MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy, _) => {
-                    info!("passband gains: {} (legacy)", g);
-                    Some(PFB_COTTER_2014_10KHZ)
-                }
-                (ver, _) => {
-                    return Err(BadMWAVersion {
-                        message: "unknown mwa version".into(),
-                        version: ver.to_string(),
-                    })
-                }
-            },
+            }
             Some(option) => panic!("unknown option for --passband-gains: {option}"),
         };
         prep_ctx.correct_geometry = {
@@ -2139,6 +2147,22 @@ mod argparse_tests {
             prep_ctx.passband_gains.unwrap()[0],
             PFB_COTTER_2014_10KHZ[0]
         );
+    }
+
+    /// pfb gains is disabled when deripple_applied is true
+    #[test]
+    fn test_no_pfb_when_deripple_applied() {
+        #[rustfmt::skip]
+        let args_no_dry_run = vec![
+            "birli",
+            "-m", "tests/data/1439922144_deripple/1439922144.metafits",
+            "--no-draw-progress",
+            "tests/data/1439922144_deripple/1439922144_20250822182206_ch137_000.fits",
+        ];
+
+        let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args_no_dry_run).unwrap();
+
+        assert!(prep_ctx.passband_gains.is_none());
     }
 
     /// DC flagging is off by default for MWAX inputs.

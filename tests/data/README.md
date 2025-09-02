@@ -659,3 +659,12 @@ uvd.read_mwa_corr_fits( paths, **read_args )
 dump_uvd(uvd, dump_csv)
 EOF
 ```
+
+## Deripple Test Data
+
+```bash
+python3 tests/data/adjust_gpufits.py \
+  --in-file=1439922144_20250822182206_ch137_000.fits \
+  --out-file=tests/data/1439922144_deripple/1439922144_20250822182206_ch137_000.fits \
+  --corr-type=MWAX --timestep-limit=1
+```
