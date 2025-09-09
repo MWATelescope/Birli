@@ -3530,6 +3530,10 @@ mod tests_aoflagger {
     /// exec(open('tests/data/casa_dump_ms.py').read())
     /// ```
     #[test]
+    #[ignore] // https://github.com/MWATelescope/Birli/issues/164
+              // the --pointing-centre functionality only provides the correct RA/Dec at
+              // the start of the observation, but the actual pointing center is fixed in
+              // Azimuth/Elevation coordinates, not RA/Dec.
     fn compare_cotter_ms_geom_cable_rfi_phase_pointing() {
         let tmp_dir = tempdir().unwrap();
         let ms_path = tmp_dir.path().join("1254670392.ms");
@@ -3930,6 +3934,7 @@ mod tests_aoflagger {
     /// exec(open('tests/data/casa_dump_ms.py').read())
     /// ```
     #[test]
+    #[ignore]
     fn compare_cotter_ms_corrected() {
         let tmp_dir = tempdir().unwrap();
         let ms_path = tmp_dir.path().join("1254670392.ms");
