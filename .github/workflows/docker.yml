@@ -14,19 +14,35 @@ jobs:
         include:
           - os: ubuntu-22.04
             platform: linux/amd64
+            dockerfile: Dockerfile
           - os: ubuntu-22.04-arm
             platform: linux/arm64
+            dockerfile: Dockerfile
+          - os: ubuntu-22.04
+            platform: linux/amd64
+            dockerfile: spack.Dockerfile
+            suffix: -spack
+          - os: ubuntu-22.04-arm
+            platform: linux/arm64
+            dockerfile: spack.Dockerfile
+            suffix: -spack
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Prepare
         run: |
           platform=${{ matrix.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+          echo "SUFFIX=${{ matrix.suffix || '' }}" >> $GITHUB_ENV
 
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY_IMAGE }}
+          flavor: |
+            suffix=${{ env.SUFFIX }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -48,21 +64,23 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
+          context: .
+          file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p /tmp/digests/${{ matrix.dockerfile }}${{ env.SUFFIX }}
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "/tmp/digests/${{ matrix.dockerfile }}${{ env.SUFFIX }}/${digest#sha256:}"
 
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ env.PLATFORM_PAIR }}
-          path: /tmp/digests/*
+          name: digests-${{ env.PLATFORM_PAIR }}-${{ matrix.dockerfile }}${{ env.SUFFIX }}
+          path: /tmp/digests/${{ matrix.dockerfile }}${{ env.SUFFIX }}/*
           if-no-files-found: error
           retention-days: 1
 
@@ -70,14 +88,22 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build
+    strategy:
+      matrix:
+        dockerfile: [Dockerfile, spack.Dockerfile]
+        include:
+          - dockerfile: Dockerfile
+            suffix: ""
+          - dockerfile: spack.Dockerfile
+            suffix: "-spack"
     outputs:
-      container: ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}
+      container: ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}${{ matrix.suffix }}
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-*
+          pattern: digests-*-${{ matrix.dockerfile }}${{ matrix.suffix }}
           merge-multiple: true
 
       - name: Set up Docker Buildx
@@ -88,6 +114,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY_IMAGE }}
+          flavor: |
+            suffix=${{ matrix.suffix }}
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -103,4 +131,4 @@ jobs:
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}
+          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}${{ matrix.suffix }}
