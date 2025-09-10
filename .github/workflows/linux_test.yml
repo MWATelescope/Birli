@@ -20,7 +20,7 @@ jobs:
           - "ubuntu-24.04"
         feature_set:
           - "_no_flag"
-          - ""
+          - "_aoflagger"
     runs-on: "${{ matrix.os }}"
     steps:
       - name: Checkout sources

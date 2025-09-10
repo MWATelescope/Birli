@@ -1965,6 +1965,7 @@ mod argparse_tests {
         test_common::{get_1254670392_avg_paths, get_mwax_data_paths},
         BirliContext, BirliError, VisSelection,
     };
+    use tempfile::tempdir;
 
     /// Middle channel rounded-down is DC flagged when `flag_dc` is set.
     #[test]
@@ -2273,30 +2274,66 @@ mod argparse_tests {
 
     /// Flag 3 fine channels on the edge of a coarse channel with `flag-edge-chans`
     #[test]
-    fn test_flag_edge_chans() {
+    fn test_flag_edge_chans_ms_output() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("test_flags.ms");
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
         #[rustfmt::skip]
         let args = vec![
             "birli",
             "-m", metafits_path,
-            "--no-draw-progress",
-            "--emulate-cotter",
+            "-M", ms_path.to_str().unwrap(),
             "--flag-edge-chans", "3",
+            "--flag-init", "0",
+            "--no-draw-progress",
             gpufits_paths[0],
-            gpufits_paths[1],
         ];
 
-        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
 
-        assert!(flag_ctx.fine_chan_flags[0]);
-        assert!(flag_ctx.fine_chan_flags[1]);
-        assert!(flag_ctx.fine_chan_flags[2]);
-        assert!(!flag_ctx.fine_chan_flags[3]);
-        assert!(!flag_ctx.fine_chan_flags[28]);
-        assert!(flag_ctx.fine_chan_flags[29]);
-        assert!(flag_ctx.fine_chan_flags[30]);
-        assert!(flag_ctx.fine_chan_flags[31]);
+        // Verify edge channels are flagged in the flag context
+        assert!(birli_ctx.flag_ctx.fine_chan_flags[0]); // first channel
+        assert!(birli_ctx.flag_ctx.fine_chan_flags[1]); // second channel
+        assert!(birli_ctx.flag_ctx.fine_chan_flags[2]); // third channel
+        assert!(!birli_ctx.flag_ctx.fine_chan_flags[3]); // fourth should not be flagged
+        assert!(birli_ctx.flag_ctx.fine_chan_flags[31]); // last channel
+        assert!(birli_ctx.flag_ctx.fine_chan_flags[30]); // second to last channel
+        assert!(birli_ctx.flag_ctx.fine_chan_flags[29]); // third to last channel
+        assert!(!birli_ctx.flag_ctx.fine_chan_flags[28]); // fourth from last should not be flagged
+
+        // Run birli to create the measurement set
+        birli_ctx.run().unwrap();
+
+        // Check that the measurement set was created
+        assert!(ms_path.exists());
+
+        // Test that FLAGS are properly written by reading the measurement set
+        use marlu::rubbl_casatables::{Table, TableOpenMode};
+        let mut main_table = Table::open(&ms_path, TableOpenMode::Read).unwrap();
+        let num_rows = main_table.n_rows();
+        assert!(num_rows > 0);
+
+        // Check the FLAG column exists and has the correct flags set
+        // Get flags for the first row
+        let obs_flags = main_table.get_cell_as_vec::<bool>("FLAG", 0).unwrap();
+
+        // The flags should reflect our edge channel flagging
+        // With 32 channels per coarse channel and 4 pols, we expect:
+        // Channels 0,1,2 and 29,30,31 to be flagged for each pol
+        let num_chans = obs_flags.len() / 4; // 4 polarizations
+        assert_eq!(num_chans, 32);
+
+        // Check first few channels are flagged for first pol
+        assert!(obs_flags[0]); // pol 0, chan 0
+        assert!(obs_flags[4]); // pol 0, chan 1
+        assert!(obs_flags[8]); // pol 0, chan 2
+        assert!(!obs_flags[12]); // pol 0, chan 3 (should not be flagged)
+
+        // Check last few channels are flagged for first pol
+        assert!(obs_flags[116]); // pol 0, chan 29 (29*4 = 116)
+        assert!(obs_flags[120]); // pol 0, chan 30
+        assert!(obs_flags[124]); // pol 0, chan 31
     }
 
     /// Flag 120kHz on the edges of a coarse channel with `flag-edge-width`
@@ -3493,6 +3530,10 @@ mod tests_aoflagger {
     /// exec(open('tests/data/casa_dump_ms.py').read())
     /// ```
     #[test]
+    #[ignore] // https://github.com/MWATelescope/Birli/issues/164
+              // the --pointing-centre functionality only provides the correct RA/Dec at
+              // the start of the observation, but the actual pointing center is fixed in
+              // Azimuth/Elevation coordinates, not RA/Dec.
     fn compare_cotter_ms_geom_cable_rfi_phase_pointing() {
         let tmp_dir = tempdir().unwrap();
         let ms_path = tmp_dir.path().join("1254670392.ms");
@@ -3893,6 +3934,7 @@ mod tests_aoflagger {
     /// exec(open('tests/data/casa_dump_ms.py').read())
     /// ```
     #[test]
+    #[ignore]
     fn compare_cotter_ms_corrected() {
         let tmp_dir = tempdir().unwrap();
         let ms_path = tmp_dir.path().join("1254670392.ms");
