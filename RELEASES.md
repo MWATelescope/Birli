@@ -1,5 +1,9 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.18.2 (2025-09-11)
+
+- clean up aoflagger tests
+
 # Version 0.18.1 (2025-09-02)
 
 - 🐛 bug fixes:
