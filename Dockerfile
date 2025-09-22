@@ -19,7 +19,7 @@ RUN apt-get update \
     libboost-program-options-dev \
     libboost-system-dev \
     libboost-test-dev \
-    libcfitsio-dev \
+    # libcfitsio-dev \
     liberfa-dev \
     libexpat1-dev \
     libfftw3-dev \
@@ -31,8 +31,21 @@ RUN apt-get update \
     libtool \
     pkg-config \
     unzip \
+    wget \
     zip \
     && rm -rf /var/lib/apt/lists/*
+
+ARG CFITSIO_VERSION=3.49
+RUN cd / && \
+    wget https://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz && \
+    tar -zxvf cfitsio-3.49.tar.gz && \
+    cd cfitsio-3.49/ && \
+    CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2 && \
+    make -j $(nproc) && \
+    make install && \
+    ldconfig && \
+    cd / && \
+    rm -rf /cfitsio-3.49*
 
 # # Get Rust
 ARG RUST_VERSION=stable
@@ -64,6 +77,7 @@ RUN git clone --depth 1 --branch=${AOFLAGGER_BRANCH} --recurse-submodules https:
     rm -rf /aoflagger
 # set up aoflagger python library
 ENV PYTHONPATH="/usr/local/lib/"
+ENV AOFLAGGER_LIB="/usr/local/lib"
 
 ADD . /birli
 WORKDIR /birli
