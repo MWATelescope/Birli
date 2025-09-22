@@ -1445,7 +1445,7 @@ impl<'a> BirliContext<'a> {
             let geometric_delays_disabled = matches.is_present("no-geometric-delay");
             info!(
                 "geometric corrections: applied={:?}, disabled={}",
-                geometric_delays_applied, !geometric_delays_disabled
+                geometric_delays_applied, geometric_delays_disabled
             );
             matches!(geometric_delays_applied, GeometricDelaysApplied::No)
                 && !geometric_delays_disabled
