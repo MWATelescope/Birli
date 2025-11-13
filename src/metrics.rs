@@ -64,6 +64,7 @@ pub(crate) struct AutoMetrics {
 }
 
 impl AutoMetrics {
+    // RUST_LOG=birli=debug cargo run --release -- --sel-ants 5 4 20 19 --provided-chan-ranges --flag-init 0 --metrics-out metrics_1119683928.fits -m tests/data/1119683928_picket/1119683928.metafits tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits 2>&1 | tee birli.log
     pub(crate) fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
@@ -72,29 +73,40 @@ impl AutoMetrics {
     ) -> Self {
         let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
         let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
+        assert_eq!(chunk_vis_sel.baseline_idxs.len(), jones_array_tfb.dim().2);
         let sel_ant_pairs = chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+        // map from baseline index to auto-correlation antenna index
         let sel_auto_pairs: HashMap<_, _> = sel_ant_pairs
             .iter()
             .enumerate()
             .filter(|&(_, (a, b))| a == b)
             .map(|(i, &(a, _))| (a, i))
             .collect();
-        let num_sel_ants = sel_ant_pairs.iter().filter(|(a, b)| a == b).count();
-        assert_eq!(num_sel_ants, sel_auto_pairs.len());
-        let sel_auto_idxs = sel_auto_pairs.keys().copied().collect::<Vec<_>>();
-        
+        let num_sel_ants = sel_auto_pairs.len();
+        let sel_auto_idxs = {
+            let mut sel_auto_idxs = sel_auto_pairs.keys().copied().collect::<Vec<_>>();
+            sel_auto_idxs.sort_unstable();
+            sel_auto_idxs
+        };
+
         // Create a mapping from antenna numbers to their positions in the selected antennas list
         let mut ant_to_pos: HashMap<usize, usize> = HashMap::new();
         for (pos, &ant_num) in sel_auto_idxs.iter().enumerate() {
             ant_to_pos.insert(ant_num, pos);
         }
-        
+
         let num_freqs = jones_array_tfb.dim().1;
         let num_timesteps = jones_array_tfb.dim().0;
         let num_pols = 4;
         let mut auto_power_aptf = Array4::<f32>::zeros((num_sel_ants, 4, num_timesteps, num_freqs));
         let mut auto_spectrum_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, 4));
         let num_unflagged_times_f32: f32 = timestep_flags.iter().filter(|&t| !t).count() as f32;
+        if (num_unflagged_times_f32 - 0.0).abs() < 0.00001 {
+            panic!("all timesteps are flagged");
+        }
+        if (chan_flags.iter().filter(|&c| !c).count()) == 0 {
+            panic!("all channels are flagged");
+        }
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
                 for (&a, &i) in &sel_auto_pairs {
@@ -151,8 +163,6 @@ impl AutoMetrics {
         let mut rx_types = Vec::<String>::with_capacity(num_sel_ants);
         let mut cable_flavours = Vec::<String>::with_capacity(num_sel_ants);
         let mut whitening_filters = Vec::<bool>::with_capacity(num_sel_ants);
-
-        println!("sel_auto_idxs: {:?}", sel_auto_idxs);
 
         let freqs = corr_ctx.get_fine_chan_freqs_hz_array(
             &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
@@ -1162,11 +1172,7 @@ mod aoflagmetrics_tests {
 mod autometrics_tests {
     use super::AutoMetrics;
     use crate::{
-        marlu::{
-            mwalib::CorrelatorContext,
-            ndarray::Array3,
-            Jones, VisSelection,
-        },
+        marlu::{mwalib::CorrelatorContext, ndarray::Array3, Jones, VisSelection},
         FlagContext,
     };
     use tempfile::tempdir;
@@ -1176,42 +1182,36 @@ mod autometrics_tests {
         // This test specifically verifies the fix for the array indexing bug
         // where antenna numbers (like 1, 2) were used directly as array indices
         // instead of their positions in the selected antennas list (0, 1)
-        
+
         let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits",
-        ];
+        let gpufits_paths =
+            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
 
         // Create correlator context
         let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
-        
+
         // Create visibility selection with non-sequential antenna selection (1, 2)
         let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
         vis_sel.retain_antennas(&corr_ctx.metafits_context, &[1, 2]);
-        
+
         // Verify that we have the expected antenna pairs
         let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
         assert_eq!(ant_pairs, vec![(1, 1), (1, 2), (2, 2)]);
-        
+
         // Create flag context
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-        
+
         // Create a small jones array for testing (2 timesteps, 1 frequency, 3 baselines)
         let jones_array = Array3::<Jones<f32>>::zeros((2, 1, 3));
-        
+
         // This should not panic with the fixed indexing
-        let auto_metrics = AutoMetrics::new(
-            jones_array.view(),
-            &corr_ctx,
-            &vis_sel,
-            &flag_ctx,
-        );
-        
+        let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+
         // Verify that the metrics were created successfully
         assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 2); // 2 selected antennas
         assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 2); // 2 selected antennas
         assert_eq!(auto_metrics.auto_delay_afp.dim().0, 2); // 2 selected antennas
-        
+
         // Verify antenna names and IDs are correct
         assert_eq!(auto_metrics.antenna_names.len(), 2);
         assert_eq!(auto_metrics.antenna_ids.len(), 2);
@@ -1222,30 +1222,24 @@ mod autometrics_tests {
     fn test_autometrics_with_sequential_antenna_selection() {
         // Test with sequential antenna selection (0, 1) to ensure
         // the fix doesn't break the normal case
-        
+
         let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits",
-        ];
+        let gpufits_paths =
+            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
 
         let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
-        
+
         let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
         vis_sel.retain_antennas(&corr_ctx.metafits_context, &[0, 1]);
-        
+
         let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
         assert_eq!(ant_pairs, vec![(0, 0), (0, 1), (1, 1)]);
-        
+
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
         let jones_array = Array3::<Jones<f32>>::zeros((2, 1, 3));
-        
-        let auto_metrics = AutoMetrics::new(
-            jones_array.view(),
-            &corr_ctx,
-            &vis_sel,
-            &flag_ctx,
-        );
-        
+
+        let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+
         assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 2);
         assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 2);
         assert_eq!(auto_metrics.auto_delay_afp.dim().0, 2);
@@ -1254,30 +1248,24 @@ mod autometrics_tests {
     #[test]
     fn test_autometrics_with_single_antenna_selection() {
         // Test with single antenna selection to ensure edge case works
-        
+
         let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits",
-        ];
+        let gpufits_paths =
+            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
 
         let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
-        
+
         let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
         vis_sel.retain_antennas(&corr_ctx.metafits_context, &[5]);
-        
+
         let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
         assert_eq!(ant_pairs, vec![(5, 5)]);
-        
+
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
         let jones_array = Array3::<Jones<f32>>::zeros((2, 1, 1));
-        
-        let auto_metrics = AutoMetrics::new(
-            jones_array.view(),
-            &corr_ctx,
-            &vis_sel,
-            &flag_ctx,
-        );
-        
+
+        let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+
         assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 1);
         assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 1);
         assert_eq!(auto_metrics.auto_delay_afp.dim().0, 1);
@@ -1286,34 +1274,30 @@ mod autometrics_tests {
     #[test]
     fn test_autometrics_save_to_fits() {
         // Test that AutoMetrics can be saved to FITS without errors
-        
+
         let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits",
-        ];
+        let gpufits_paths =
+            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
 
         let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
-        
+
         let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
         vis_sel.retain_antennas(&corr_ctx.metafits_context, &[1, 2]);
-        
+
         let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
         let jones_array = Array3::<Jones<f32>>::zeros((2, 1, 3));
-        
-        let auto_metrics = AutoMetrics::new(
-            jones_array.view(),
-            &corr_ctx,
-            &vis_sel,
-            &flag_ctx,
-        );
-        
+
+        let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+
         // Test saving to FITS
         let tmp_dir = tempdir().unwrap();
         let fits_path = tmp_dir.path().join("test_autometrics.fits");
-        
-        let mut fptr = crate::marlu::fitsio::FitsFile::create(&fits_path).open().unwrap();
+
+        let mut fptr = crate::marlu::fitsio::FitsFile::create(&fits_path)
+            .open()
+            .unwrap();
         assert!(auto_metrics.save_to_fits(&mut fptr).is_ok());
-        
+
         // Verify file was created
         assert!(fits_path.exists());
         assert!(fits_path.metadata().unwrap().len() > 0);

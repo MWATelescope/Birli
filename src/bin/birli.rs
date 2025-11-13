@@ -307,16 +307,17 @@ mod tests {
         let metrics_path = tmp_dir.path().join("test_metrics.fits");
 
         let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits",
-        ];
+        let gpufits_paths =
+            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
 
         #[rustfmt::skip]
         let mut args = vec![
             "birli",
             "--metrics-out", metrics_path.to_str().unwrap(),
             "-m", metafits_path,
-            "--sel-ants", "1", "2",
+            "--sel-ants", "5", "4", "20", "19",
+            "--provided-chan-ranges",
+            "--flag-init", "0",
             "--no-digital-gains",
             "--no-draw-progress",
             "--pfb-gains", "none",
@@ -331,6 +332,32 @@ mod tests {
         // Verify metrics file was created
         assert!(metrics_path.exists());
         assert!(metrics_path.metadata().unwrap().len() > 0);
+
+        // Verify metrics contain valid data (not all NaNs)
+        use birli::marlu::fitsio::FitsFile;
+        let mut fptr = FitsFile::open(&metrics_path).unwrap();
+
+        // Check AUTO_SPECTRUM HDU
+        if fptr.hdu("AUTO_SPECTRUM").is_ok() {
+            let hdu = fptr.hdu("AUTO_SPECTRUM").unwrap();
+            let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
+            let finite_count = data.iter().filter(|x| x.is_finite()).count();
+            assert!(
+                finite_count > 0,
+                "AUTO_SPECTRUM should contain some finite values"
+            );
+        }
+
+        // Check DELAY_SPECTRUM HDU
+        if fptr.hdu("DELAY_SPECTRUM").is_ok() {
+            let hdu = fptr.hdu("DELAY_SPECTRUM").unwrap();
+            let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
+            let finite_count = data.iter().filter(|x| x.is_finite()).count();
+            assert!(
+                finite_count > 0,
+                "DELAY_SPECTRUM should contain some finite values"
+            );
+        }
     }
 
     #[test]
@@ -339,16 +366,17 @@ mod tests {
         let metrics_path = tmp_dir.path().join("test_metrics_sequential.fits");
 
         let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths = vec![
-            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits",
-        ];
+        let gpufits_paths =
+            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
 
         #[rustfmt::skip]
         let mut args = vec![
             "birli",
             "--metrics-out", metrics_path.to_str().unwrap(),
             "-m", metafits_path,
-            "--sel-ants", "0", "1",
+            "--sel-ants", "5", "4", "20", "19",
+            "--provided-chan-ranges",
+            "--flag-init", "0",
             "--no-digital-gains",
             "--no-draw-progress",
             "--pfb-gains", "none",
@@ -363,5 +391,31 @@ mod tests {
         // Verify metrics file was created
         assert!(metrics_path.exists());
         assert!(metrics_path.metadata().unwrap().len() > 0);
+
+        // Verify metrics contain valid data (not all NaNs)
+        use birli::marlu::fitsio::FitsFile;
+        let mut fptr = FitsFile::open(&metrics_path).unwrap();
+
+        // Check AUTO_SPECTRUM HDU
+        if fptr.hdu("AUTO_SPECTRUM").is_ok() {
+            let hdu = fptr.hdu("AUTO_SPECTRUM").unwrap();
+            let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
+            let finite_count = data.iter().filter(|x| x.is_finite()).count();
+            assert!(
+                finite_count > 0,
+                "AUTO_SPECTRUM should contain some finite values"
+            );
+        }
+
+        // Check DELAY_SPECTRUM HDU
+        if fptr.hdu("DELAY_SPECTRUM").is_ok() {
+            let hdu = fptr.hdu("DELAY_SPECTRUM").unwrap();
+            let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
+            let finite_count = data.iter().filter(|x| x.is_finite()).count();
+            assert!(
+                finite_count > 0,
+                "DELAY_SPECTRUM should contain some finite values"
+            );
+        }
     }
 }
