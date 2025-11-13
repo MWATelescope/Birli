@@ -68,6 +68,9 @@ ENV PYTHONPATH="/usr/local/lib/"
 ADD . /birli
 WORKDIR /birli
 
+# Force Rust linker to search /usr/local/lib for aoflagger
+ENV RUSTFLAGS="-C link-arg=-L/usr/local/lib"
+
 # e.g. docker build . --build-arg=TEST_SHIM=cargo\ test\ --release
 ARG TEST_SHIM=""
 RUN ${TEST_SHIM}
