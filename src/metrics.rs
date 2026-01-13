@@ -46,6 +46,7 @@ pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
 pub(crate) struct AutoMetrics {
     pub auto_sub_aptf: Array4<f32>, // auto with mean(time) subtracted (antenna, times, frequencies, polarizations)
     pub auto_spectrum_afp: Array3<f32>, // auto mean(time) (antenna, frequencies, polarizations)
+    pub auto_coeffs_apo: Array3<f32>, // polynomial coeffs (antenna, pol, order) - raw frequency basis
     pub auto_delay_afp: Array3<f32>, // delay transform of auto mean(time) (antenna, delays, polarizations)
     pub antenna_names: Vec<String>,
     pub antenna_positions: Vec<XyzGeocentric>,
@@ -129,6 +130,28 @@ impl AutoMetrics {
             }
         }
 
+        // fit polynomials (in frequency, Hz) to auto_spectrum_afp for each antenna and polarization
+        let poly_order = 3;
+        let freqs = corr_ctx.get_fine_chan_freqs_hz_array(
+            &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
+        );
+        let mut auto_coeffs_apo = Array3::<f32>::zeros((num_sel_ants, num_pols, poly_order + 1));
+
+        for a in 0..num_sel_ants {
+            for p in 0..num_pols {
+                let spectrum = auto_spectrum_afp.slice(s![a, .., p]);
+                let y: Vec<f32> = spectrum.iter().copied().collect();
+
+                if let Some(coeffs) = crate::math::fit_polynomial(&freqs, &y, poly_order) {
+                    for (k, &c) in coeffs.iter().enumerate() {
+                        auto_coeffs_apo[[a, p, k]] = c;
+                    }
+                } else {
+                    auto_coeffs_apo.slice_mut(s![a, p, ..]).fill(f32::NAN);
+                }
+            }
+        }
+
         // take auto_power_aptf and subtract its mean(time), auto_spectrum_afp
         let mut auto_sub_aptf = auto_power_aptf;
         for a in 0..num_sel_ants {
@@ -164,9 +187,6 @@ impl AutoMetrics {
         let mut cable_flavours = Vec::<String>::with_capacity(num_sel_ants);
         let mut whitening_filters = Vec::<bool>::with_capacity(num_sel_ants);
 
-        let freqs = corr_ctx.get_fine_chan_freqs_hz_array(
-            &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
-        );
         // use delay_transform to get the delay spectrum of each antenna in auto_spectrum_afp
         let delay_transform_config = DelayTransformConfig {
             min_delay_ns: 100.0,
@@ -225,6 +245,7 @@ impl AutoMetrics {
         Self {
             auto_sub_aptf,
             auto_spectrum_afp,
+            auto_coeffs_apo,
             auto_delay_afp,
             antenna_names,
             antenna_positions,
@@ -338,6 +359,157 @@ impl AutoMetrics {
             hdu.write_key(fptr, "N_ANTS", num_ants as u32)?;
             hdu.write_key(fptr, "TELESCOP", "MWA")?;
         }
+
+        // Write polynomial coefficients to binary table
+        let extname = "AUTO_COEFFS";
+        let poly_order = self.auto_coeffs_apo.dim().2 - 1;
+        let num_coeffs = poly_order + 1;
+
+        let mut ant_names_col = Vec::with_capacity(num_ants);
+        let mut ant_ids_col = Vec::with_capacity(num_ants);
+        let mut ant_nums_col = Vec::with_capacity(num_ants);
+        let mut ant_types_col = Vec::with_capacity(num_ants);
+        let mut cable_flavours_col = Vec::with_capacity(num_ants);
+        let mut whitening_filters_col = Vec::with_capacity(num_ants);
+        let mut rx_numbers_col = Vec::with_capacity(num_ants);
+        let mut rx_slots_col = Vec::with_capacity(num_ants);
+        let mut rx_types_col = Vec::with_capacity(num_ants);
+        let mut obsgeo_x_col = Vec::with_capacity(num_ants);
+        let mut obsgeo_y_col = Vec::with_capacity(num_ants);
+        let mut obsgeo_z_col = Vec::with_capacity(num_ants);
+
+        let mut coeffs_xx_col = Vec::with_capacity(num_ants * num_coeffs);
+        let mut coeffs_yy_col = Vec::with_capacity(num_ants * num_coeffs);
+        let mut coeffs_xy_col = Vec::with_capacity(num_ants * num_coeffs);
+        let mut coeffs_yx_col = Vec::with_capacity(num_ants * num_coeffs);
+
+        // hyperdrive order: XX XY YX YY
+        // fits order: XX YY XY YX (we want to match what we write in other extensions)
+        // But auto_coeffs_apo is indexed by hyperdrive_to_fits_stokes(p) if we were consistent?
+        // Wait, auto_spectrum_afp is indexed by hyperdrive_to_fits_stokes(p).
+        // Let's check AutoMetrics::new.
+        //   auto_spectrum_afp[[a_pos, f, hyperdrive_to_fits_stokes(p)]]
+        // So axis 2 of auto_spectrum_afp is fits stokes order.
+        // Therefore axis 1 of auto_coeffs_apo is fits stokes order.
+        // FITS Order: 0:XX, 1:YY, 2:XY, 3:YX
+
+        for a in 0..num_ants {
+            ant_names_col.push(self.antenna_names[a].clone());
+            ant_ids_col.push(self.antenna_ids[a]);
+            ant_nums_col.push(self.antenna_nums[a]);
+            ant_types_col.push(self.rx_types[a].clone());
+            cable_flavours_col.push(self.cable_flavours[a].clone());
+            whitening_filters_col.push(self.whitening_filters[a] as i32);
+            rx_numbers_col.push(self.rx_numbers[a]);
+            rx_slots_col.push(self.rx_slots[a]);
+            rx_types_col.push(self.rx_types[a].clone());
+
+            let position = self.antenna_positions[a];
+            obsgeo_x_col.push(position.x);
+            obsgeo_y_col.push(position.y);
+            obsgeo_z_col.push(position.z);
+
+            // XX (index 0)
+            for k in 0..num_coeffs {
+                coeffs_xx_col.push(self.auto_coeffs_apo[[a, 0, k]] as f64);
+            }
+            // YY (index 1)
+            for k in 0..num_coeffs {
+                coeffs_yy_col.push(self.auto_coeffs_apo[[a, 1, k]] as f64);
+            }
+            // XY (index 2)
+            for k in 0..num_coeffs {
+                coeffs_xy_col.push(self.auto_coeffs_apo[[a, 2, k]] as f64);
+            }
+            // YX (index 3)
+            for k in 0..num_coeffs {
+                coeffs_yx_col.push(self.auto_coeffs_apo[[a, 3, k]] as f64);
+            }
+        }
+
+        use crate::marlu::fitsio::tables::{ColumnDataType, ColumnDescription};
+
+        let columns = vec![
+            ColumnDescription::new("ANT_NAME")
+                .with_type(ColumnDataType::String)
+                .that_repeats(32) // String width
+                .create()?,
+            ColumnDescription::new("ANT_ID")
+                .with_type(ColumnDataType::Int)
+                .create()?,
+            ColumnDescription::new("ANT_NUM")
+                .with_type(ColumnDataType::Int)
+                .create()?,
+            ColumnDescription::new("ANT_TYPE")
+                .with_type(ColumnDataType::String)
+                .that_repeats(32)
+                .create()?,
+            ColumnDescription::new("CABLE_FLAVOUR")
+                .with_type(ColumnDataType::String)
+                .that_repeats(32)
+                .create()?,
+            ColumnDescription::new("WHITENING_FILTER")
+                .with_type(ColumnDataType::Int)
+                .create()?,
+            ColumnDescription::new("RX_NUMBER")
+                .with_type(ColumnDataType::Int)
+                .create()?,
+            ColumnDescription::new("RX_SLOT")
+                .with_type(ColumnDataType::Int)
+                .create()?,
+            ColumnDescription::new("RX_TYPE")
+                .with_type(ColumnDataType::String)
+                .that_repeats(32)
+                .create()?,
+            ColumnDescription::new("OBSGEO-X")
+                .with_type(ColumnDataType::Double)
+                .create()?,
+            ColumnDescription::new("OBSGEO-Y")
+                .with_type(ColumnDataType::Double)
+                .create()?,
+            ColumnDescription::new("OBSGEO-Z")
+                .with_type(ColumnDataType::Double)
+                .create()?,
+            ColumnDescription::new("COEFFS_XX")
+                .with_type(ColumnDataType::Double)
+                .that_repeats(num_coeffs)
+                .create()?,
+            ColumnDescription::new("COEFFS_YY")
+                .with_type(ColumnDataType::Double)
+                .that_repeats(num_coeffs)
+                .create()?,
+            ColumnDescription::new("COEFFS_XY")
+                .with_type(ColumnDataType::Double)
+                .that_repeats(num_coeffs)
+                .create()?,
+            ColumnDescription::new("COEFFS_YX")
+                .with_type(ColumnDataType::Double)
+                .that_repeats(num_coeffs)
+                .create()?,
+        ];
+
+        let mut table_hdu = fptr.create_table(extname, &columns)?;
+
+        table_hdu.write_col(fptr, "ANT_NAME", &ant_names_col)?;
+        table_hdu.write_col(fptr, "ANT_ID", &ant_ids_col)?;
+        table_hdu.write_col(fptr, "ANT_NUM", &ant_nums_col)?;
+        table_hdu.write_col(fptr, "ANT_TYPE", &ant_types_col)?;
+        table_hdu.write_col(fptr, "CABLE_FLAVOUR", &cable_flavours_col)?;
+        table_hdu.write_col(fptr, "WHITENING_FILTER", &whitening_filters_col)?;
+        table_hdu.write_col(fptr, "RX_NUMBER", &rx_numbers_col)?;
+        table_hdu.write_col(fptr, "RX_SLOT", &rx_slots_col)?;
+        table_hdu.write_col(fptr, "RX_TYPE", &rx_types_col)?;
+        table_hdu.write_col(fptr, "OBSGEO-X", &obsgeo_x_col)?;
+        table_hdu.write_col(fptr, "OBSGEO-Y", &obsgeo_y_col)?;
+        table_hdu.write_col(fptr, "OBSGEO-Z", &obsgeo_z_col)?;
+
+        table_hdu.write_col(fptr, "COEFFS_XX", &coeffs_xx_col)?;
+        table_hdu.write_col(fptr, "COEFFS_YY", &coeffs_yy_col)?;
+        table_hdu.write_col(fptr, "COEFFS_XY", &coeffs_xy_col)?;
+        table_hdu.write_col(fptr, "COEFFS_YX", &coeffs_yx_col)?;
+
+        table_hdu.write_key(fptr, "TELESCOP", "MWA")?;
+        table_hdu.write_key(fptr, "POLY_ORD", poly_order as u32)?;
 
         // // write out auto_var_atp
         // for pol_idx in 0..num_pols {
@@ -1210,6 +1382,11 @@ mod autometrics_tests {
         // Verify that the metrics were created successfully
         assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 2); // 2 selected antennas
         assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 2); // 2 selected antennas
+                                                               // auto_coeffs_apo is (ants, pols, coeffs).
+                                                               // 2 ants, 4 pols, 4 coeffs (order 3)
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 2);
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().1, 4);
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 4);
         assert_eq!(auto_metrics.auto_delay_afp.dim().0, 2); // 2 selected antennas
 
         // Verify antenna names and IDs are correct
@@ -1242,6 +1419,9 @@ mod autometrics_tests {
 
         assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 2);
         assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 2);
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 2);
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().1, 4);
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 4);
         assert_eq!(auto_metrics.auto_delay_afp.dim().0, 2);
     }
 
@@ -1268,6 +1448,9 @@ mod autometrics_tests {
 
         assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 1);
         assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 1);
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 1);
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().1, 4);
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 4);
         assert_eq!(auto_metrics.auto_delay_afp.dim().0, 1);
     }
 

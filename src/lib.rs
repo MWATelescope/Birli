@@ -202,6 +202,7 @@ pub use delay_transform::{delay_transform, DelayTransformConfig, DelayTransformR
 pub use van_vleck::{correct_van_vleck, get_vv_sample_scale};
 
 pub mod metrics;
+pub mod math;
 
 cfg_if! {
     if #[cfg(feature = "cli")] {
