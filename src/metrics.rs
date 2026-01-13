@@ -131,7 +131,7 @@ impl AutoMetrics {
         }
 
         // fit polynomials (in frequency, Hz) to auto_spectrum_afp for each antenna and polarization
-        let poly_order = 3;
+        let poly_order = 2;
         let freqs = corr_ctx.get_fine_chan_freqs_hz_array(
             &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
         );
@@ -1386,7 +1386,7 @@ mod autometrics_tests {
                                                                // 2 ants, 4 pols, 4 coeffs (order 3)
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 2);
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().1, 4);
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 4);
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 3);
         assert_eq!(auto_metrics.auto_delay_afp.dim().0, 2); // 2 selected antennas
 
         // Verify antenna names and IDs are correct
@@ -1421,7 +1421,7 @@ mod autometrics_tests {
         assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 2);
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 2);
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().1, 4);
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 4);
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 3);
         assert_eq!(auto_metrics.auto_delay_afp.dim().0, 2);
     }
 
@@ -1450,7 +1450,7 @@ mod autometrics_tests {
         assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 1);
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 1);
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().1, 4);
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 4);
+        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 3);
         assert_eq!(auto_metrics.auto_delay_afp.dim().0, 1);
     }
 
