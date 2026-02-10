@@ -21,11 +21,16 @@ use birli::{
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
         },
+        fitsio::FitsFile,
         mwalib::CorrelatorContext,
         LatLngHeight, RADec,
     },
+    metrics::{AutoMetrics, EAVILS, SSINS},
     FlagContext, PreprocessContext, VisSelection,
 };
+
+#[cfg(feature = "aoflagger")]
+use birli::metrics::CrossMetrics;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -92,6 +97,36 @@ fn main() {
         .unwrap();
 
     let (avg_time, avg_freq) = (1, 1);
+
+    // Save metrics
+    let metrics_path = uvfits_path.with_extension("metrics.fits");
+    if metrics_path.exists() {
+        std::fs::remove_file(&metrics_path).unwrap();
+    }
+    let mut fptr = FitsFile::create(&metrics_path).open().unwrap();
+
+    let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+    auto_metrics.save_to_fits(&mut fptr).unwrap();
+
+    let ssins = SSINS::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+    ssins.save_to_fits(&mut fptr).unwrap();
+
+    let eavils = EAVILS::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+    eavils.save_to_fits(&mut fptr).unwrap();
+
+    #[cfg(feature = "aoflagger")]
+    {
+        let baseline_cutoff_m = 100.0;
+        let cross_metrics = CrossMetrics::new(
+            jones_array.view(),
+            &corr_ctx,
+            &vis_sel,
+            &flag_ctx,
+            baseline_cutoff_m,
+        );
+        cross_metrics.save_to_fits(&mut fptr).unwrap();
+    }
+    println!("Saved metrics to {:?}", metrics_path);
 
     write_uvfits(
         &uvfits_path,

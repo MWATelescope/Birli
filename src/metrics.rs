@@ -19,11 +19,96 @@ use crate::{
             FitsFile,
         },
         mwalib::CorrelatorContext,
-        ndarray::{s, Array2, Array3, Array4, ArrayView3},
+        ndarray::{s, Array1, Array2, Array3, Array4, ArrayView3, Axis},
+        num_complex::Complex,
         Jones, VisSelection,
     },
     FlagContext,
 };
+
+/// Minimal metadata required for metrics calculation
+/// This allows metrics to work with any data source, not just mwalib CorrelatorContext
+#[derive(Debug, Clone)]
+pub struct MetricsContext {
+    /// Antenna information for selected antennas
+    pub antennas: Vec<AntennaMetadata>,
+    /// Fine channel frequencies in Hz
+    pub fine_chan_freqs_hz: Vec<f64>,
+    /// GPS timestamps in seconds
+    pub timestamps_s: Vec<f64>,
+    /// Antenna pairs (indices into the antennas vec) - corresponds to baseline dimension
+    pub antenna_pairs: Vec<(usize, usize)>,
+}
+
+/// Antenna metadata needed for metrics
+#[derive(Debug, Clone)]
+pub struct AntennaMetadata {
+    pub tile_name: String,
+    pub tile_id: u32,
+    pub ant_id: u32,
+    /// ENU position in metres
+    pub east_m: f64,
+    pub north_m: f64,
+    pub height_m: f64,
+    /// Receiver information
+    pub rec_number: u32,
+    pub rec_slot_number: u32,
+    pub rec_type: String,
+    pub cable_flavour: String,
+    pub has_whitening_filter: bool,
+}
+
+impl MetricsContext {
+    /// Create MetricsContext from mwalib CorrelatorContext and VisSelection
+    /// This is a convenience function for backward compatibility
+    pub fn from_mwalib(corr_ctx: &CorrelatorContext, vis_sel: &VisSelection) -> Self {
+        let fine_chan_freqs_hz = corr_ctx
+            .get_fine_chan_freqs_hz_array(&vis_sel.coarse_chan_range.clone().collect::<Vec<_>>());
+
+        let timestamps_s: Vec<f64> = corr_ctx.timesteps[vis_sel.timestep_range.clone()]
+            .iter()
+            .map(|ts| ts.gps_time_ms as f64 / 1000.0)
+            .collect();
+
+        let antenna_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+
+        // Get unique antennas from antenna_pairs
+        let mut unique_ant_indices = std::collections::HashSet::new();
+        for &(a, b) in &antenna_pairs {
+            unique_ant_indices.insert(a);
+            unique_ant_indices.insert(b);
+        }
+        let mut sorted_ant_indices: Vec<usize> = unique_ant_indices.into_iter().collect();
+        sorted_ant_indices.sort_unstable();
+
+        let antennas: Vec<AntennaMetadata> = sorted_ant_indices
+            .iter()
+            .map(|&idx| {
+                let ant = &corr_ctx.metafits_context.antennas[idx];
+                AntennaMetadata {
+                    tile_name: ant.tile_name.clone(),
+                    tile_id: ant.tile_id,
+                    ant_id: ant.ant,
+                    east_m: ant.east_m,
+                    north_m: ant.north_m,
+                    height_m: ant.height_m,
+                    rec_number: ant.rfinput_x.rec_number,
+                    rec_slot_number: ant.rfinput_x.rec_slot_number,
+                    rec_type: ant.rfinput_x.rec_type.to_string(),
+                    cable_flavour: ant.rfinput_x.flavour.clone(),
+                    has_whitening_filter: ant.rfinput_x.has_whitening_filter,
+                }
+            })
+            .collect();
+
+        Self {
+            antennas,
+            fine_chan_freqs_hz,
+            timestamps_s,
+            antenna_pairs,
+        }
+    }
+}
 
 /// when you want to convert hyperdrive stokes order to standard stokes order.
 /// fits standard:
@@ -43,13 +128,12 @@ pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
 }
 
 // Autocorrelation metrics
-pub(crate) struct AutoMetrics {
+pub struct AutoMetrics {
     pub auto_sub_aptf: Array4<f32>, // auto with mean(time) subtracted (antenna, times, frequencies, polarizations)
     pub auto_spectrum_afp: Array3<f32>, // auto mean(time) (antenna, frequencies, polarizations)
     pub auto_coeffs_apo: Array3<f32>, // polynomial coeffs (antenna, pol, order) - raw frequency basis
     pub auto_delay_afp: Array3<f32>, // delay transform of auto mean(time) (antenna, delays, polarizations)
     pub antenna_names: Vec<String>,
-    pub antenna_positions: Vec<XyzGeocentric>,
     pub antenna_ids: Vec<u32>,
     pub antenna_nums: Vec<u32>,
     pub rx_numbers: Vec<u32>,
@@ -57,6 +141,7 @@ pub(crate) struct AutoMetrics {
     pub rx_types: Vec<String>,
     pub cable_flavours: Vec<String>,
     pub whitening_filters: Vec<bool>,
+    pub antenna_positions: Vec<XyzGeocentric>,
 
     pub start_freq_hz: f64,
     pub channel_width_hz: f64,
@@ -66,23 +151,54 @@ pub(crate) struct AutoMetrics {
 
 impl AutoMetrics {
     // RUST_LOG=birli=debug cargo run --release -- --sel-ants 5 4 20 19 --provided-chan-ranges --flag-init 0 --metrics-out metrics_1119683928.fits -m tests/data/1119683928_picket/1119683928.metafits tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits 2>&1 | tee birli.log
-    pub(crate) fn new(
+
+    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
     ) -> Self {
+        let metadata = MetricsContext::from_mwalib(corr_ctx, chunk_vis_sel);
         let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
         let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
-        assert_eq!(chunk_vis_sel.baseline_idxs.len(), jones_array_tfb.dim().2);
-        let sel_ant_pairs = chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
-        // map from baseline index to auto-correlation antenna index
-        let sel_auto_pairs: HashMap<_, _> = sel_ant_pairs
+
+        Self::new_from_metadata(jones_array_tfb, &metadata, &timestep_flags, &chan_flags)
+    }
+
+    /// Create AutoMetrics from visibility data and metadata
+    pub fn new_from_metadata(
+        jones_array_tfb: ArrayView3<Jones<f32>>,
+        metadata: &MetricsContext,
+        timestep_flags: &[bool],
+        chan_flags: &[bool],
+    ) -> Self {
+        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+
+        // Map from baseline index to auto-correlation antenna index in metadata.antennas
+        let mut ant_idx_to_metadata_pos: HashMap<usize, usize> = HashMap::new();
+        for (pos, ant_meta) in metadata.antennas.iter().enumerate() {
+            // Find this antenna in antenna_pairs to get its original index
+            for &(a_idx, b_idx) in &metadata.antenna_pairs {
+                if a_idx == b_idx {
+                    // This is an auto, check if it matches
+                    // We need to map back - assume antenna_pairs uses indices that match position in original antenna list
+                    // For now, we'll use a different approach
+                    ant_idx_to_metadata_pos.insert(pos, pos);
+                    break;
+                }
+            }
+        }
+
+        // Find auto-correlations in the baseline list
+        let sel_auto_pairs: HashMap<usize, usize> = metadata
+            .antenna_pairs
             .iter()
             .enumerate()
-            .filter(|&(_, (a, b))| a == b)
-            .map(|(i, &(a, _))| (a, i))
+            .filter(|&(_, &(a, b))| a == b)
+            .map(|(bl_idx, &(a, _))| (a, bl_idx))
             .collect();
+
         let num_sel_ants = sel_auto_pairs.len();
         let sel_auto_idxs = {
             let mut sel_auto_idxs = sel_auto_pairs.keys().copied().collect::<Vec<_>>();
@@ -90,14 +206,12 @@ impl AutoMetrics {
             sel_auto_idxs
         };
 
-        // Create a mapping from antenna numbers to their positions in the selected antennas list
+        // Create a mapping from antenna indices to their positions in the selected antennas list
         let mut ant_to_pos: HashMap<usize, usize> = HashMap::new();
         for (pos, &ant_num) in sel_auto_idxs.iter().enumerate() {
             ant_to_pos.insert(ant_num, pos);
         }
 
-        let num_freqs = jones_array_tfb.dim().1;
-        let num_timesteps = jones_array_tfb.dim().0;
         let num_pols = 4;
         let mut auto_power_aptf = Array4::<f32>::zeros((num_sel_ants, 4, num_timesteps, num_freqs));
         let mut auto_spectrum_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, 4));
@@ -108,10 +222,11 @@ impl AutoMetrics {
         if (chan_flags.iter().filter(|&c| !c).count()) == 0 {
             panic!("all channels are flagged");
         }
+
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
                 for (&a, &i) in &sel_auto_pairs {
-                    let a_pos = ant_to_pos[&a]; // Get the position of antenna a in the selected antennas list
+                    let a_pos = ant_to_pos[&a];
                     for p in 0..4 {
                         if chan_flags[f] {
                             auto_power_aptf[[a_pos, hyperdrive_to_fits_stokes(p), t, f]] = f32::NAN;
@@ -129,12 +244,9 @@ impl AutoMetrics {
                 }
             }
         }
-
         // fit polynomials (in frequency, Hz) to auto_spectrum_afp for each antenna and polarization
         let poly_order = 2;
-        let freqs = corr_ctx.get_fine_chan_freqs_hz_array(
-            &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
-        );
+        let freqs = &metadata.fine_chan_freqs_hz;
         let mut auto_coeffs_apo = Array3::<f32>::zeros((num_sel_ants, num_pols, poly_order + 1));
 
         for a in 0..num_sel_ants {
@@ -152,7 +264,7 @@ impl AutoMetrics {
             }
         }
 
-        // take auto_power_aptf and subtract its mean(time), auto_spectrum_afp
+        // Subtract mean
         let mut auto_sub_aptf = auto_power_aptf;
         for a in 0..num_sel_ants {
             for p in 0..num_pols {
@@ -165,18 +277,6 @@ impl AutoMetrics {
             }
         }
 
-        // variance over frequency for each antenna, time, and polarization
-        // let mut auto_var_atp = Array3::<f32>::zeros((num_sel_ants, num_timesteps, num_pols));
-        // for a in 0..num_sel_ants {
-        //     for t in 0..num_timesteps {
-        //         for p in 0..num_pols {
-        //             auto_var_atp[[a, t, p]] = auto_sub_aptf
-        //                 .slice(s![a, hyperdrive_to_fits_stokes(p), t, ..])
-        //                 .var(0.0);
-        //         }
-        //     }
-        // }
-
         let mut antenna_ids = Vec::<u32>::with_capacity(num_sel_ants);
         let mut antenna_names = Vec::<String>::with_capacity(num_sel_ants);
         let mut antenna_positions = Vec::<XyzGeocentric>::with_capacity(num_sel_ants);
@@ -187,25 +287,23 @@ impl AutoMetrics {
         let mut cable_flavours = Vec::<String>::with_capacity(num_sel_ants);
         let mut whitening_filters = Vec::<bool>::with_capacity(num_sel_ants);
 
-        // use delay_transform to get the delay spectrum of each antenna in auto_spectrum_afp
+        // Delay transform
         let delay_transform_config = DelayTransformConfig {
             min_delay_ns: 100.0,
             max_delay_ns: 3000.0,
             target_delay_res_ns: 1.0,
         };
-        let freqs_arr = marlu::ndarray::Array1::from(freqs.clone());
+        let freqs_arr = marlu::ndarray::Array1::from(metadata.fine_chan_freqs_hz.clone());
         let delay_info = calculate_delay_channels(num_freqs, &freqs_arr, &delay_transform_config);
         let num_delays = delay_info.n_delay_channels;
         let mut auto_delay_afp = Array3::<f32>::zeros((num_sel_ants, num_delays, num_pols));
+
         for pol in 0..num_pols {
-            // Convert spectrum to f64 and shape (ants, freqs)
             let spectrum_f64 = auto_spectrum_afp
                 .slice(s![.., .., pol])
                 .mapv(|x| x as f64)
                 .to_owned();
 
-            // Convert freqs to ndarray of f64
-            let freqs_arr = marlu::ndarray::Array1::from(freqs.clone());
             let delay_spectrum =
                 delay_transform(&spectrum_f64, &freqs_arr, &delay_transform_config)
                     .expect("delay_transform failed");
@@ -214,33 +312,23 @@ impl AutoMetrics {
                 .assign(&delay_spectrum.delay_spectrum.mapv(|x| x as f32));
         }
 
-        corr_ctx
-            .metafits_context
-            .antennas
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| sel_auto_idxs.contains(i))
-            .for_each(|(_, a)| {
-                antenna_ids.push(a.ant);
-                antenna_names.push(a.tile_name.clone());
-                antenna_positions.push(XyzGeocentric {
-                    x: a.north_m,
-                    y: a.east_m,
-                    z: a.height_m,
-                });
-                antenna_nums.push(a.tile_id);
-                let rfinput_x = a.rfinput_x.clone();
-                rx_numbers.push(rfinput_x.rec_number);
-                rx_slots.push(rfinput_x.rec_slot_number);
-                rx_types.push(rfinput_x.rec_type.to_string());
-                cable_flavours.push(rfinput_x.flavour.clone());
-                whitening_filters.push(rfinput_x.has_whitening_filter);
+        // Collect antenna metadata for selected autos (sel_auto_idxs are metafits indices; metadata.antennas is 0..n by same order)
+        for (pos, _) in sel_auto_idxs.iter().enumerate() {
+            let ant = &metadata.antennas[pos];
+            antenna_ids.push(ant.ant_id);
+            antenna_names.push(ant.tile_name.clone());
+            antenna_positions.push(XyzGeocentric {
+                x: ant.north_m,
+                y: ant.east_m,
+                z: ant.height_m,
             });
-
-        let timesteps = &corr_ctx.timesteps[chunk_vis_sel.timestep_range.clone()]
-            .iter()
-            .map(|ts| ts.gps_time_ms as f64 / 1000.0)
-            .collect::<Vec<_>>();
+            antenna_nums.push(ant.tile_id);
+            rx_numbers.push(ant.rec_number);
+            rx_slots.push(ant.rec_slot_number);
+            rx_types.push(ant.rec_type.clone());
+            cable_flavours.push(ant.cable_flavour.clone());
+            whitening_filters.push(ant.has_whitening_filter);
+        }
 
         Self {
             auto_sub_aptf,
@@ -256,17 +344,22 @@ impl AutoMetrics {
             rx_types,
             cable_flavours,
             whitening_filters,
-            start_freq_hz: freqs[0],
-            channel_width_hz: freqs[1] - freqs[0],
-            start_time_gps_s: timesteps[0],
-            integration_time_s: timesteps[1] - timesteps[0],
+            start_freq_hz: metadata.fine_chan_freqs_hz[0],
+            channel_width_hz: if metadata.fine_chan_freqs_hz.len() > 1 {
+                metadata.fine_chan_freqs_hz[1] - metadata.fine_chan_freqs_hz[0]
+            } else {
+                0.0
+            },
+            start_time_gps_s: metadata.timestamps_s[0],
+            integration_time_s: if metadata.timestamps_s.len() > 1 {
+                metadata.timestamps_s[1] - metadata.timestamps_s[0]
+            } else {
+                1.0 // Default to 1 second if only one timestep
+            },
         }
     }
 
-    pub(crate) fn save_to_fits(
-        &self,
-        fptr: &mut FitsFile,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         let (num_ants, num_pols, _num_times, num_freqs) = self.auto_sub_aptf.dim();
 
         for a in 0..self.auto_sub_aptf.dim().0 {
@@ -577,9 +670,14 @@ impl AutoMetrics {
     }
 }
 
-// SSINS (Sky-Subtract Incoherent Noise Spectra)
+/// SSINS (Sky-Subtract Incoherent Noise Spectra)
+///
+/// incoherently averaged (along baseline) difference between the visibilities in time.
+/// product is a 3D zscore array of shape (num_timesteps - 1, num_freqs, num_pols=4)
+/// C = (4/pi - 1)
+/// zscore = (N_bl / C).sqrt() * (mean_amp_tfp - mean_amp_fp) / mean_amp_fp
 #[allow(clippy::upper_case_acronyms)]
-pub(crate) struct SSINS {
+pub struct SSINS {
     pub zscore: Array3<f32>,           // (times-1, frequencies, polarizations)
     pub diff_mean_amp_fp: Array2<f32>, // (frequencies, polarizations)
     pub flag_array: Array2<bool>,      // (times-1, frequencies)
@@ -591,17 +689,27 @@ pub(crate) struct SSINS {
 }
 
 impl SSINS {
-    pub(crate) fn new(
+    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
     ) -> Self {
-        // incoherently averaged (along baseline) difference between the visibilities in time.
-        // product is a 3D zscore array of shape (num_timesteps - 1, num_freqs, num_pols=4)
-        // C = (4/pi - 1)
-        // zscore = (N_bl / C).sqrt() * (mean_amp_tfp - mean_amp_fp) / mean_amp_fp
+        let metadata = MetricsContext::from_mwalib(corr_ctx, chunk_vis_sel);
+        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
+        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
 
+        Self::new_from_metadata(jones_array_tfb, &metadata, &timestep_flags, &chan_flags)
+    }
+
+    /// Create SSINS from visibility data and metadata
+    pub fn new_from_metadata(
+        jones_array_tfb: ArrayView3<Jones<f32>>,
+        metadata: &MetricsContext,
+        timestep_flags: &[bool],
+        chan_flags: &[bool],
+    ) -> Self {
         let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
 
         if num_timesteps < 2 {
@@ -611,13 +719,11 @@ impl SSINS {
         let mut diff_mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
 
         let flag_array = Array2::<bool>::default((num_timesteps - 1, num_freqs));
-        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
         let num_unflagged_diff_timesteps = timestep_flags
             .iter()
             .zip(timestep_flags[1..].iter())
             .filter(|&(a, b)| !a && !b)
             .count();
-        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
 
         for t in 0..num_timesteps - 1 {
             for f in 0..num_freqs {
@@ -660,22 +766,24 @@ impl SSINS {
                 }
             }
         }
-        let timesteps_nodiff = &corr_ctx.timesteps[chunk_vis_sel.timestep_range.clone()]
-            .iter()
-            .map(|ts| ts.gps_time_ms as f64 / 1000.0)
-            .collect::<Vec<_>>();
-        let integration_time_s = timesteps_nodiff[1] - timesteps_nodiff[0];
-        // Compute the average time between adjacent timesteps
-        let timesteps_diff: Vec<f64> = timesteps_nodiff[1..]
-            .iter()
-            .zip(&timesteps_nodiff[..num_timesteps - 1])
-            .map(|(a, b)| (a + b) / 2.0)
-            .collect();
 
-        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(
-            &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
-        );
-        let freq_width_hz = all_freqs_hz[1] - all_freqs_hz[0];
+        let integration_time_s = if metadata.timestamps_s.len() > 1 {
+            metadata.timestamps_s[1] - metadata.timestamps_s[0]
+        } else {
+            1.0 // Default to 1 second if only one timestep
+        };
+        // Compute the average time between adjacent timesteps
+        let timesteps_diff: Vec<f64> = if num_timesteps > 1 {
+            metadata.timestamps_s[1..]
+                .iter()
+                .zip(&metadata.timestamps_s[..num_timesteps - 1])
+                .map(|(a, b)| (a + b) / 2.0)
+                .collect()
+        } else {
+            vec![metadata.timestamps_s[0]]
+        };
+
+        let freq_width_hz = metadata.fine_chan_freqs_hz[1] - metadata.fine_chan_freqs_hz[0];
 
         Self {
             zscore,
@@ -684,13 +792,13 @@ impl SSINS {
             num_baselines,
             start_time_gps_s: timesteps_diff[0],
             integration_time_s,
-            start_freq_hz: all_freqs_hz[0],
+            start_freq_hz: metadata.fine_chan_freqs_hz[0],
             channel_width_hz: freq_width_hz,
         }
     }
 
     #[cfg(feature = "aoflagger")]
-    pub(crate) fn flag(&mut self, strategy_filename: Option<String>) {
+    pub fn flag(&mut self, strategy_filename: Option<String>) {
         use aoflagger_sys::cxx_aoflagger_new;
 
         use crate::flags::{amps_tfp_to_imageset, flag_baseline_view_to_flagmask};
@@ -717,10 +825,7 @@ impl SSINS {
         }
     }
 
-    pub(crate) fn save_to_fits(
-        &self,
-        fptr: &mut FitsFile,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         // Write one image per polarization
         let pol_names = ["XX", "XY", "YX", "YY"];
         let (num_times, num_freqs, num_pols) = self.zscore.dim();
@@ -853,7 +958,7 @@ impl SSINS {
 }
 
 #[allow(clippy::upper_case_acronyms)]
-pub(crate) struct EAVILS {
+pub struct EAVILS {
     // Ntimes,Nbls,Nfreqs,Npols = uvd_or_data.shape
     // blmean_data = np.mean(np.abs(uvd_or_data),axis=1)
     // blmean_data_sub = blmean_data - np.mean(blmean_data,axis=0)
@@ -872,25 +977,33 @@ pub(crate) struct EAVILS {
 }
 
 impl EAVILS {
-    pub(crate) fn new(
+    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
     ) -> Self {
+        let metadata = MetricsContext::from_mwalib(corr_ctx, chunk_vis_sel);
+        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
+        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
+
+        Self::new_from_metadata(jones_array_tfb, &metadata, &timestep_flags, &chan_flags)
+    }
+
+    /// Create EAVILS from visibility data and metadata
+    pub fn new_from_metadata(
+        jones_array_tfb: ArrayView3<Jones<f32>>,
+        metadata: &MetricsContext,
+        timestep_flags: &[bool],
+        chan_flags: &[bool],
+    ) -> Self {
         let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
-        // mean_amp_fbp = jones_nodiff.sum(TIME) / num_timesteps
-        // var_amp_fbp = (jones_nodiff.norm() - mean_amp_fbp).pow(2)
-        // sqrt_mean_var_amp_fp = var_amp_fbp.mean(BL).sqrt()
-        // zscore = (mean_amp_tfp - mean_amp_fp) / sqrt_mean_var_amp_fp
 
         let mut mean_amp_tfp = Array3::<f32>::zeros((num_timesteps, num_freqs, 4));
-        // EAVILS_MEAN_AMP_FP
         let mut mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
         let mut mean_amp_fbp = Array3::<f32>::zeros((num_freqs, num_baselines, 4));
-        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
         let num_unflagged_timesteps = timestep_flags.iter().filter(|&t| !t).count();
-        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
 
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
@@ -933,7 +1046,6 @@ impl EAVILS {
         mean_amp_fp /= num_unflagged_timesteps as f32;
 
         // calculate the time-variance of amplitude for each freq, bl, pol
-        // variance is mean of the squared deviations from the mean
         let mut var_amp_fbp = Array3::<f32>::zeros((num_freqs, num_baselines, 4));
         for t in 0..num_timesteps {
             if timestep_flags[t] {
@@ -958,7 +1070,7 @@ impl EAVILS {
             var_amp_fbp /= num_unflagged_timesteps as f32;
         }
 
-        // calculate mean_var_amp_fp, EAVILS_SQRT_MEAN_VAR_AMP_FP
+        // calculate mean_var_amp_fp
         let mut sqrt_mean_var_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
         for f in 0..num_freqs {
             for b in 0..num_baselines {
@@ -970,7 +1082,7 @@ impl EAVILS {
         sqrt_mean_var_amp_fp /= num_baselines as f32;
         sqrt_mean_var_amp_fp = sqrt_mean_var_amp_fp.sqrt();
 
-        // calculate zscore (EAVILS_POL)
+        // calculate zscore
         let mut zscore = mean_amp_tfp;
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
@@ -980,40 +1092,34 @@ impl EAVILS {
                 }
             }
         }
-        // multiply zscore by sqrt_num_unflagged_baselines
         zscore *= (num_baselines as f32).sqrt();
 
         let flag_array = Array2::<bool>::default((num_timesteps, num_freqs));
 
-        let timesteps_nodiff = &corr_ctx.timesteps[chunk_vis_sel.timestep_range.clone()]
-            .iter()
-            .map(|ts| ts.gps_time_ms as f64 / 1000.0)
-            .collect::<Vec<_>>();
-        let integration_time_s = timesteps_nodiff[1] - timesteps_nodiff[0];
-
-        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(
-            &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
-        );
-        let freq_width_hz = all_freqs_hz[1] - all_freqs_hz[0];
+        let integration_time_s = if metadata.timestamps_s.len() > 1 {
+            metadata.timestamps_s[1] - metadata.timestamps_s[0]
+        } else {
+            1.0 // Default to 1 second if only one timestep
+        };
+        let freq_width_hz = if metadata.fine_chan_freqs_hz.len() > 1 {
+            metadata.fine_chan_freqs_hz[1] - metadata.fine_chan_freqs_hz[0]
+        } else {
+            1.0 // Default to 1 Hz if only one frequency
+        };
 
         Self {
             zscore,
             mean_amp_fp,
-            // mean_amp_fbp,
-            // var_amp_fbp,
             sqrt_mean_var_amp_fp,
             flag_array,
-            start_time_gps_s: timesteps_nodiff[0],
+            start_time_gps_s: metadata.timestamps_s[0],
             integration_time_s,
-            start_freq_hz: all_freqs_hz[0],
+            start_freq_hz: metadata.fine_chan_freqs_hz[0],
             channel_width_hz: freq_width_hz,
         }
     }
 
-    pub(crate) fn save_to_fits(
-        &self,
-        fptr: &mut FitsFile,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         // Write one image per polarization
         let pol_names = ["XX", "XY", "YX", "YY"];
         let (num_times, num_freqs, num_pols) = self.zscore.dim();
@@ -1166,7 +1272,7 @@ impl EAVILS {
 }
 
 #[cfg(feature = "aoflagger")]
-pub(crate) struct AOFlagMetrics {
+pub struct AOFlagMetrics {
     pub occupancy_tf: Array2<f64>, // (times, frequencies)
     pub start_time_gps_s: f64,
     pub integration_time_s: f64,
@@ -1216,46 +1322,56 @@ impl AOFlagMetrics {
 
         occupancy_tf
     }
-    pub(crate) fn new(
+
+    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    pub fn new(
         flag_array_tfb: ArrayView3<bool>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
     ) -> Self {
+        let metadata = MetricsContext::from_mwalib(corr_ctx, chunk_vis_sel);
         let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
         let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
-        let sel_ant_pairs = chunk_vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+
+        Self::new_from_metadata(flag_array_tfb, &metadata, &timestep_flags, &chan_flags)
+    }
+
+    /// Create AOFlagMetrics from flag data and metadata
+    pub fn new_from_metadata(
+        flag_array_tfb: ArrayView3<bool>,
+        metadata: &MetricsContext,
+        timestep_flags: &[bool],
+        chan_flags: &[bool],
+    ) -> Self {
         let occupancy_tf = Self::compute_cross_occupancy(
             flag_array_tfb,
-            &timestep_flags,
-            &chan_flags,
-            &sel_ant_pairs,
+            timestep_flags,
+            chan_flags,
+            &metadata.antenna_pairs,
         );
 
-        let timesteps_nodiff = &corr_ctx.timesteps[chunk_vis_sel.timestep_range.clone()]
-            .iter()
-            .map(|ts| ts.gps_time_ms as f64 / 1000.0)
-            .collect::<Vec<_>>();
-        let integration_time_s = timesteps_nodiff[1] - timesteps_nodiff[0];
-
-        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(
-            &chunk_vis_sel.coarse_chan_range.clone().collect::<Vec<_>>(),
-        );
-        let freq_width_hz = all_freqs_hz[1] - all_freqs_hz[0];
+        let integration_time_s = if metadata.timestamps_s.len() > 1 {
+            metadata.timestamps_s[1] - metadata.timestamps_s[0]
+        } else {
+            1.0 // Default to 1 second if only one timestep
+        };
+        let freq_width_hz = if metadata.fine_chan_freqs_hz.len() > 1 {
+            metadata.fine_chan_freqs_hz[1] - metadata.fine_chan_freqs_hz[0]
+        } else {
+            1.0 // Default to 1 Hz if only one frequency
+        };
 
         Self {
             occupancy_tf,
-            start_time_gps_s: timesteps_nodiff[0],
+            start_time_gps_s: metadata.timestamps_s[0],
             integration_time_s,
-            start_freq_hz: all_freqs_hz[0],
+            start_freq_hz: metadata.fine_chan_freqs_hz[0],
             channel_width_hz: freq_width_hz,
         }
     }
 
-    pub(crate) fn save_to_fits(
-        &self,
-        fptr: &mut FitsFile,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         let flag_dim: (usize, usize) = self.occupancy_tf.dim();
         let flag_image_description = ImageDescription {
             data_type: ImageType::Double,
@@ -1281,6 +1397,259 @@ impl AOFlagMetrics {
         hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
         hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
         hdu.write_key(fptr, "CUNIT2", "s")?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "aoflagger")]
+pub struct CrossMetrics {
+    pub short_ant_delay_pol_adp: Array3<f32>, // (antennas, delay bin, polarizations)
+    pub antenna_names: Vec<String>,
+    pub antenna_ids: Vec<u32>,
+    pub antenna_nums: Vec<u32>,
+    pub start_freq_hz: f64,
+    pub channel_width_hz: f64,
+    pub start_time_gps_s: f64,
+    pub integration_time_s: f64,
+}
+
+#[cfg(feature = "aoflagger")]
+impl CrossMetrics {
+    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    pub fn new(
+        jones_array_tfb: ArrayView3<Jones<f32>>,
+        corr_ctx: &CorrelatorContext,
+        chunk_vis_sel: &VisSelection,
+        flag_ctx: &FlagContext,
+        baseline_cutoff_m: f32,
+    ) -> Self {
+        let metadata = MetricsContext::from_mwalib(corr_ctx, chunk_vis_sel);
+        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
+        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
+
+        Self::new_from_metadata(
+            jones_array_tfb,
+            &metadata,
+            &timestep_flags,
+            &chan_flags,
+            baseline_cutoff_m,
+        )
+    }
+
+    /// Create CrossMetrics from visibility data and metadata
+    pub fn new_from_metadata(
+        jones_array_tfb: ArrayView3<Jones<f32>>,
+        metadata: &MetricsContext,
+        timestep_flags: &[bool],
+        chan_flags: &[bool],
+        baseline_cutoff_m: f32,
+    ) -> Self {
+        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+
+        // Identify selected antennas
+        let mut sel_ants_set = std::collections::HashSet::new();
+        for &(a, b) in &metadata.antenna_pairs {
+            sel_ants_set.insert(a);
+            sel_ants_set.insert(b);
+        }
+        let mut sel_ants_sorted: Vec<usize> = sel_ants_set.into_iter().collect();
+        sel_ants_sorted.sort_unstable();
+
+        let num_sel_ants = sel_ants_sorted.len();
+        let mut ant_to_pos = HashMap::new();
+        for (i, &ant_idx) in sel_ants_sorted.iter().enumerate() {
+            ant_to_pos.insert(ant_idx, i);
+        }
+
+        let mut antenna_names = Vec::with_capacity(num_sel_ants);
+        let mut antenna_ids = Vec::with_capacity(num_sel_ants);
+        let mut antenna_nums = Vec::with_capacity(num_sel_ants);
+
+        for (pos, _) in sel_ants_sorted.iter().enumerate() {
+            let ant = &metadata.antennas[pos];
+            antenna_names.push(ant.tile_name.clone());
+            antenna_ids.push(ant.ant_id);
+            antenna_nums.push(ant.tile_id);
+        }
+
+        // Setup delay transform
+        let freqs = &metadata.fine_chan_freqs_hz;
+        let delay_transform_config = DelayTransformConfig {
+            min_delay_ns: 100.0,
+            max_delay_ns: 3000.0,
+            target_delay_res_ns: 1.0,
+        };
+        let freqs_arr = marlu::ndarray::Array1::from(freqs.clone());
+        let delay_info = calculate_delay_channels(num_freqs, &freqs_arr, &delay_transform_config);
+        let num_delays = delay_info.n_delay_channels;
+
+        let mut short_ant_delay_pol_adp = Array3::<f32>::zeros((num_sel_ants, num_delays, 4));
+        let mut ant_baseline_counts = Array2::<u32>::zeros((num_sel_ants, 4));
+
+        // Iterate over baselines
+        for (b_idx, &(a_idx, b_idx_ant)) in metadata.antenna_pairs.iter().enumerate() {
+            if a_idx == b_idx_ant {
+                continue; // Skip autos
+            }
+
+            let pos_a = ant_to_pos[&a_idx];
+            let pos_b = ant_to_pos[&b_idx_ant];
+            let ant_a = &metadata.antennas[pos_a];
+            let ant_b = &metadata.antennas[pos_b];
+
+            let dx = ant_a.north_m - ant_b.north_m;
+            let dy = ant_a.east_m - ant_b.east_m;
+            let dz = ant_a.height_m - ant_b.height_m;
+            let len_sq = dx * dx + dy * dy + dz * dz;
+
+            if len_sq > (baseline_cutoff_m * baseline_cutoff_m) as f64 {
+                continue;
+            }
+
+            // Calculate complex spectrum for this baseline
+            // Mean over time of complex V
+            let mut complex_spectrum = Array2::<Complex<f64>>::zeros((num_freqs, 4));
+            let mut counts = Array2::<u32>::zeros((num_freqs, 4));
+
+            for t in 0..num_timesteps {
+                if timestep_flags[t] {
+                    continue;
+                }
+                for f in 0..num_freqs {
+                    if chan_flags[f] {
+                        continue;
+                    }
+
+                    for p in 0..4 {
+                        let val = jones_array_tfb[[t, f, b_idx]][p];
+                        if val.re.is_finite() && val.im.is_finite() {
+                            complex_spectrum[[f, p]] += Complex::new(val.re as f64, val.im as f64);
+                            counts[[f, p]] += 1;
+                        }
+                    }
+                }
+            }
+
+            // Normalize complex_spectrum
+            for f in 0..num_freqs {
+                for p in 0..4 {
+                    if counts[[f, p]] > 0 {
+                        complex_spectrum[[f, p]] /= counts[[f, p]] as f64;
+                    }
+                }
+            }
+
+            // Perform delay transform for each pol
+            for p in 0..4 {
+                // Create spectrum array for this pol (magnitude for delay transform)
+                let spec_col: Array1<f64> = complex_spectrum
+                    .column(p)
+                    .iter()
+                    .map(|c| c.norm())
+                    .collect();
+
+                // If we have valid data
+                if spec_col.iter().any(|x| *x > 0.0) {
+                    if let Ok(delay_res) = delay_transform(
+                        &spec_col.insert_axis(Axis(0)),
+                        &freqs_arr,
+                        &delay_transform_config,
+                    ) {
+                        let delay_spec = delay_res.delay_spectrum.row(0);
+
+                        // Accumulate to antennas
+                        if let Some(&idx_a) = ant_to_pos.get(&a_idx) {
+                            let mut slice = short_ant_delay_pol_adp.slice_mut(s![idx_a, .., p]);
+                            for d in 0..num_delays {
+                                slice[d] += delay_spec[d] as f32;
+                            }
+                            ant_baseline_counts[[idx_a, p]] += 1;
+                        }
+                        if let Some(&idx_b) = ant_to_pos.get(&b_idx_ant) {
+                            let mut slice = short_ant_delay_pol_adp.slice_mut(s![idx_b, .., p]);
+                            for d in 0..num_delays {
+                                slice[d] += delay_spec[d] as f32;
+                            }
+                            ant_baseline_counts[[idx_b, p]] += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Normalize by number of baselines per antenna
+        for a in 0..num_sel_ants {
+            for p in 0..4 {
+                let count = ant_baseline_counts[[a, p]];
+                if count > 0 {
+                    let mut slice = short_ant_delay_pol_adp.slice_mut(s![a, .., p]);
+                    for d in 0..num_delays {
+                        slice[d] /= count as f32;
+                    }
+                } else {
+                    let mut slice = short_ant_delay_pol_adp.slice_mut(s![a, .., p]);
+                    slice.fill(f32::NAN);
+                }
+            }
+        }
+
+        Self {
+            short_ant_delay_pol_adp,
+            antenna_names,
+            antenna_ids,
+            antenna_nums,
+            start_freq_hz: freqs[0],
+            channel_width_hz: freqs[1] - freqs[0],
+            start_time_gps_s: metadata.timestamps_s[0],
+            integration_time_s: if metadata.timestamps_s.len() > 1 {
+                metadata.timestamps_s[1] - metadata.timestamps_s[0]
+            } else {
+                0.0
+            },
+        }
+    }
+
+    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
+        let (num_ants, num_delays, num_pols) = self.short_ant_delay_pol_adp.dim();
+
+        for pol_idx in 0..num_pols {
+            let pol_name = ["XX", "YY", "XY", "YX"][pol_idx];
+            let dim = [num_ants, num_delays];
+            let image_description = ImageDescription {
+                data_type: ImageType::Double,
+                dimensions: &dim,
+            };
+            let extname = format!("CROSS_DELAY_POL={pol_name}");
+            let hdu = fptr.create_image(&extname, &image_description)?;
+
+            hdu.write_image(
+                fptr,
+                &self
+                    .short_ant_delay_pol_adp
+                    .slice(s![.., .., pol_idx])
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>(),
+            )?;
+
+            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+            hdu.write_key(fptr, "BZERO", 0.0f64)?;
+            hdu.write_key(fptr, "CTYPE1", "DELAY")?;
+            hdu.write_key(fptr, "CRVAL1", 0.0f64)?;
+            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+            hdu.write_key(fptr, "CUNIT1", "ns")?;
+            hdu.write_key(fptr, "CTYPE2", "ANTENNA")?;
+            hdu.write_key(fptr, "POL", pol_name)?;
+            hdu.write_key(fptr, "N_ANTS", num_ants as u32)?;
+            hdu.write_key(fptr, "TELESCOP", "MWA")?;
+            hdu.write_key(fptr, "INSTRUME", "CROSS_METRICS")?;
+            hdu.write_key(fptr, "ORIGIN", "Birli")?;
+
+            // Write antenna names/IDs if possible as table or keywords?
+            // AutoMetrics writes separate HDU per antenna for "AUTO_SUB_ANT", but "AUTO_POL" is (ants, freqs).
+            // Here we have (ants, delays).
+            // It is simpler to write one image per pol.
+        }
         Ok(())
     }
 }
@@ -1484,5 +1853,58 @@ mod autometrics_tests {
         // Verify file was created
         assert!(fits_path.exists());
         assert!(fits_path.metadata().unwrap().len() > 0);
+    }
+}
+#[cfg(all(test, feature = "aoflagger"))]
+mod crossmetrics_tests {
+    use super::CrossMetrics;
+    use crate::{
+        marlu::{mwalib::CorrelatorContext, ndarray::Array3, Jones, VisSelection},
+        FlagContext,
+    };
+    #[test]
+    fn test_crossmetrics_new() {
+        let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
+        let gpufits_paths =
+            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
+
+        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
+
+        // Use sequential antenna selection for simplicity (0, 1)
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.retain_antennas(&corr_ctx.metafits_context, &[0, 1]);
+
+        let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+        // Should have (0,0), (0,1), (1,1) if both are in input
+
+        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+        // Create dummy jones array (times, freqs, baselines)
+        // 3 baselines: 0-0, 0-1, 1-1. We need to match vis_sel structure.
+        let num_baselines = ant_pairs.len();
+        let (num_timesteps, num_freqs) = (2, 4);
+        let mut jones_array =
+            Array3::<Jones<f32>>::zeros((num_timesteps, num_freqs, num_baselines));
+
+        // Populate cross baseline (index 1) with some value
+        // Assuming 0-1 is at index 1
+        for t in 0..num_timesteps {
+            for f in 0..num_freqs {
+                jones_array[[t, f, 1]] = Jones::identity();
+            }
+        }
+
+        let baseline_cutoff_m = 10000.0; // Large enough to include baselines
+
+        let cross_metrics = CrossMetrics::new(
+            jones_array.view(),
+            &corr_ctx,
+            &vis_sel,
+            &flag_ctx,
+            baseline_cutoff_m,
+        );
+
+        assert_eq!(cross_metrics.short_ant_delay_pol_adp.dim().0, 2); // 2 antennas
+                                                                      // Check values are not NaN (at least for valid pols)
+                                                                      // Since we put constant value, delay transform should have peak at 0 delay (DC component).
     }
 }

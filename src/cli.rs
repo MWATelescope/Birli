@@ -39,6 +39,8 @@ use crate::marlu::{
     precession::{precess_time, PrecessionInfo},
     History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
 };
+#[cfg(feature = "aoflagger")]
+use crate::metrics::CrossMetrics;
 use crate::metrics::{AutoMetrics, EAVILS, SSINS};
 use crate::passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ};
 use crate::{with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection};
@@ -69,6 +71,8 @@ pub struct BirliContext<'a> {
     pub num_timesteps_per_chunk: Option<usize>,
     /// channel selections for picket-fencing
     pub channel_range_sel: ChannelRanges,
+    /// Baseline cutoff for cross metrics (metres)
+    pub cross_metrics_cutoff_m: f32,
 }
 
 // Add build-time information from the "built" crate.
@@ -813,6 +817,10 @@ impl<'a> BirliContext<'a> {
                 arg!(--"metrics-out" <PATH> "Path for csv metrics output")
                     .help_heading("OUTPUT")
                     .required(false),
+                arg!(--"cross-metrics-cutoff" <METRES> "Baseline length cutoff for cross metrics")
+                    .help_heading("METRICS")
+                    .default_value("30.0")
+                    .required(false),
             ]);
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
@@ -1529,6 +1537,17 @@ impl<'a> BirliContext<'a> {
         let num_timesteps_per_chunk =
             Self::parse_chunk_matches(&corr_ctx, &matches, avg_time, &vis_sel)?;
         let channel_range_sel = Self::parse_sel_chan_ranges(&corr_ctx, &matches)?;
+        let cross_metrics_cutoff_m = matches
+            .value_of("cross-metrics-cutoff")
+            .unwrap_or("100.0")
+            .parse::<f32>()
+            .map_err(|e| {
+                BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "--cross-metrics-cutoff".into(),
+                    expected: "float".into(),
+                    received: format!("{e}"),
+                })
+            })?;
         let result = Self {
             corr_ctx,
             prep_ctx,
@@ -1539,6 +1558,7 @@ impl<'a> BirliContext<'a> {
             avg_freq,
             num_timesteps_per_chunk,
             channel_range_sel,
+            cross_metrics_cutoff_m,
         };
 
         info!("{}", &result);
@@ -1568,6 +1588,7 @@ impl<'a> BirliContext<'a> {
             avg_freq: self.avg_freq,
             num_timesteps_per_chunk: self.num_timesteps_per_chunk,
             channel_range_sel: self.channel_range_sel,
+            cross_metrics_cutoff_m: self.cross_metrics_cutoff_m,
         };
         for &(range_start, range_end) in &ranges {
             ranged_context.vis_sel.coarse_chan_range = range_start..range_end + 1;
@@ -1645,6 +1666,20 @@ impl<'a> BirliContext<'a> {
                 "write",
                 if let Err(e) = aoflagger_metrics.save_to_fits(&mut fptr) {
                     log::warn!("Failed to save AOFlagger metrics to FITS: {e}");
+                }
+            );
+
+            let cross_metrics = CrossMetrics::new(
+                jones_array,
+                corr_ctx,
+                chunk_vis_sel,
+                flag_ctx,
+                self.cross_metrics_cutoff_m,
+            );
+            with_increment_duration!(
+                "write",
+                if let Err(e) = cross_metrics.save_to_fits(&mut fptr) {
+                    log::warn!("Failed to save CrossMetrics to FITS: {e}");
                 }
             );
 

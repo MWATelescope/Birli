@@ -20,3 +20,4 @@ tags
 /.history/
 tests/data/__pycache__/common.cpython-38.pyc
 .vscode/*
+.DS_Store

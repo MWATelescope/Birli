@@ -196,6 +196,9 @@ pub use error::BirliError;
 pub mod preprocessing;
 pub use preprocessing::PreprocessContext;
 
+/// Metrics for data quality assessment
+pub use metrics::{AntennaMetadata, MetricsContext};
+
 pub mod delay_transform;
 pub mod van_vleck;
 pub use delay_transform::{delay_transform, DelayTransformConfig, DelayTransformResult};
