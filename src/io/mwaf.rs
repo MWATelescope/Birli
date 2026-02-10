@@ -21,8 +21,7 @@ use marlu::{
     fitsio_sys, mwalib, ndarray, rayon, VisSelection,
 };
 use mwalib::{
-    CorrelatorContext, MWAVersion, _get_required_fits_key, _open_hdu, fits_open_hdu,
-    get_required_fits_key,
+    CorrelatorContext, MWAVersion, _get_required_fits_key, fits_open_hdu, get_required_fits_key,
 };
 use ndarray::prelude::*;
 use rayon::prelude::*;
