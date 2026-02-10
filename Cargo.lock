@@ -149,6 +149,7 @@ dependencies = [
  "marlu",
  "ndarray",
  "prettytable-rs",
+ "rayon",
  "regex",
  "rustfft",
  "serde-pickle",

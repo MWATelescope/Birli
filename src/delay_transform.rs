@@ -6,6 +6,7 @@
 use marlu::ndarray::{Array1, Array2};
 use rustfft::{num_complex::Complex64, FftPlanner};
 use std::f64::consts::PI;
+use log::debug;
 
 /// Configuration for the delay transform.
 #[derive(Debug, Clone, Copy)]
@@ -132,7 +133,7 @@ pub fn delay_transform(
     let nants = rdx_ant_freq.nrows();
     let nfreqs = rdx_ant_freq.ncols();
 
-    eprintln!(
+    debug!(
         "Computing delay transform: {}-{} ns",
         config.min_delay_ns, config.max_delay_ns
     );
@@ -141,7 +142,7 @@ pub fn delay_transform(
     let delay_info = calculate_delay_channels(nfreqs, freq_hz, config);
     let nfreqs_padded = delay_info.nfreqs_padded;
 
-    eprintln!(
+    debug!(
         "Zero-padding: {} -> {} for {:.1} ns resolution",
         nfreqs, nfreqs_padded, delay_info.actual_delay_res_ns
     );
@@ -187,11 +188,11 @@ pub fn delay_transform(
         delays_ns[i] = i as f64 * delay_info.actual_delay_res_ns;
     }
 
-    eprintln!(
+    debug!(
         "Actual delay range: 0 to {:.1} ns, res={:.2} ns",
         delay_info.max_computable_delay_ns, delay_info.actual_delay_res_ns
     );
-    eprintln!(
+    debug!(
         "Channel BW = {:.3} MHz -> delay period = {:.1} ns",
         (freq_hz[1] - freq_hz[0]) / 1e6,
         1e9 / (freq_hz[1] - freq_hz[0])
@@ -199,7 +200,7 @@ pub fn delay_transform(
 
     // Check if we have finite data
     let has_finite = rdx_ant_delay.iter().any(|&x| x.is_finite());
-    eprintln!(
+    debug!(
         "Delay data shape: {:?}, has finite data: {}",
         rdx_ant_delay.dim(),
         has_finite
@@ -214,7 +215,7 @@ pub fn delay_transform(
             .iter()
             .filter(|&&x| x.is_finite())
             .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-        eprintln!("Data range: {:.2e} to {:.2e}", min_val, max_val);
+        debug!("Data range: {:.2e} to {:.2e}", min_val, max_val);
     }
 
     // Filter to requested delay range (same logic as in calculate_delay_channels)
@@ -224,7 +225,7 @@ pub fn delay_transform(
         .collect();
     let mask_count = delay_mask.iter().filter(|&&x| x).count();
 
-    eprintln!(
+    debug!(
         "Requested range {}-{} ns has {} points",
         config.min_delay_ns, config.max_delay_ns, mask_count
     );
@@ -246,7 +247,7 @@ pub fn delay_transform(
             filtered_delays_array[new_idx] = delays_ns[old_idx];
         }
 
-        eprintln!(
+        debug!(
             "Using filtered range: {:.1} to {:.1} ns",
             filtered_delays_array[0],
             filtered_delays_array[filtered_delays_array.len() - 1]
@@ -256,7 +257,7 @@ pub fn delay_transform(
     } else {
         // Show broader range if requested range is too narrow
         if delay_info.max_computable_delay_ns < config.max_delay_ns {
-            eprintln!(
+            debug!(
                 "Showing full computed range: 0 to {:.1} ns",
                 delay_info.max_computable_delay_ns
             );
@@ -280,19 +281,19 @@ pub fn delay_transform(
                     subset_delays[i] = delays_ns[i];
                 }
 
-                eprintln!(
+                debug!(
                     "Showing subset: 0 to {:.1} ns",
                     subset_delays[subset_end - 1]
                 );
                 (subset_spectrum, subset_delays)
             } else {
-                eprintln!("No delays <= {} ns found!", config.max_delay_ns);
+                debug!("No delays <= {} ns found!", config.max_delay_ns);
                 return Err("No valid delays in requested range".into());
             }
         }
     };
 
-    eprintln!(
+    debug!(
         "Final result: {:.1} to {:.1} ns, {} points",
         filtered_delays[0],
         filtered_delays[filtered_delays.len() - 1],

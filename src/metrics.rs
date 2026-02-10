@@ -9,6 +9,8 @@
 
 use std::collections::HashMap;
 
+use rayon::prelude::*;
+
 use marlu::XyzGeocentric;
 
 use crate::{
@@ -1483,99 +1485,122 @@ impl CrossMetrics {
         let delay_info = calculate_delay_channels(num_freqs, &freqs_arr, &delay_transform_config);
         let num_delays = delay_info.n_delay_channels;
 
-        let mut short_ant_delay_pol_adp = Array3::<f32>::zeros((num_sel_ants, num_delays, 4));
-        let mut ant_baseline_counts = Array2::<u32>::zeros((num_sel_ants, 4));
-
-        // Iterate over baselines
-        for (b_idx, &(a_idx, b_idx_ant)) in metadata.antenna_pairs.iter().enumerate() {
-            if a_idx == b_idx_ant {
-                continue; // Skip autos
-            }
-
-            let pos_a = ant_to_pos[&a_idx];
-            let pos_b = ant_to_pos[&b_idx_ant];
-            let ant_a = &metadata.antennas[pos_a];
-            let ant_b = &metadata.antennas[pos_b];
-
-            let dx = ant_a.north_m - ant_b.north_m;
-            let dy = ant_a.east_m - ant_b.east_m;
-            let dz = ant_a.height_m - ant_b.height_m;
-            let len_sq = dx * dx + dy * dy + dz * dz;
-
-            if len_sq > (baseline_cutoff_m * baseline_cutoff_m) as f64 {
-                continue;
-            }
-
-            // Calculate complex spectrum for this baseline
-            // Mean over time of complex V
-            let mut complex_spectrum = Array2::<Complex<f64>>::zeros((num_freqs, 4));
-            let mut counts = Array2::<u32>::zeros((num_freqs, 4));
-
-            for t in 0..num_timesteps {
-                if timestep_flags[t] {
-                    continue;
-                }
-                for f in 0..num_freqs {
-                    if chan_flags[f] {
-                        continue;
+        // Use rayon for parallel processing of baselines
+        let (mut short_ant_delay_pol_adp, ant_baseline_counts) = metadata
+            .antenna_pairs
+            .par_iter()
+            .enumerate()
+            .fold(
+                || {
+                    (
+                        Array3::<f32>::zeros((num_sel_ants, num_delays, 4)),
+                        Array2::<u32>::zeros((num_sel_ants, 4)),
+                    )
+                },
+                |(mut acc_delay, mut acc_counts), (b_idx, &(a_idx, b_idx_ant))| {
+                    if a_idx == b_idx_ant {
+                        return (acc_delay, acc_counts); // Skip autos
                     }
 
+                    let pos_a = ant_to_pos[&a_idx];
+                    let pos_b = ant_to_pos[&b_idx_ant];
+                    let ant_a = &metadata.antennas[pos_a];
+                    let ant_b = &metadata.antennas[pos_b];
+
+                    let dx = ant_a.north_m - ant_b.north_m;
+                    let dy = ant_a.east_m - ant_b.east_m;
+                    let dz = ant_a.height_m - ant_b.height_m;
+                    let len_sq = dx * dx + dy * dy + dz * dz;
+
+                    if len_sq > (baseline_cutoff_m * baseline_cutoff_m) as f64 {
+                        return (acc_delay, acc_counts);
+                    }
+
+                    // Calculate complex spectrum for this baseline
+                    // Mean over time of complex V
+                    let mut complex_spectrum = Array2::<Complex<f64>>::zeros((num_freqs, 4));
+                    let mut counts = Array2::<u32>::zeros((num_freqs, 4));
+
+                    for t in 0..num_timesteps {
+                        if timestep_flags[t] {
+                            continue;
+                        }
+                        for f in 0..num_freqs {
+                            if chan_flags[f] {
+                                continue;
+                            }
+
+                            for p in 0..4 {
+                                let val = jones_array_tfb[[t, f, b_idx]][p];
+                                if val.re.is_finite() && val.im.is_finite() {
+                                    complex_spectrum[[f, p]] += Complex::new(val.re as f64, val.im as f64);
+                                    counts[[f, p]] += 1;
+                                }
+                            }
+                        }
+                    }
+
+                    // Normalize complex_spectrum
+                    for f in 0..num_freqs {
+                        for p in 0..4 {
+                            if counts[[f, p]] > 0 {
+                                complex_spectrum[[f, p]] /= counts[[f, p]] as f64;
+                            }
+                        }
+                    }
+
+                    // Perform delay transform for each pol
                     for p in 0..4 {
-                        let val = jones_array_tfb[[t, f, b_idx]][p];
-                        if val.re.is_finite() && val.im.is_finite() {
-                            complex_spectrum[[f, p]] += Complex::new(val.re as f64, val.im as f64);
-                            counts[[f, p]] += 1;
-                        }
-                    }
-                }
-            }
+                        // Create spectrum array for this pol (magnitude for delay transform)
+                        let spec_col: Array1<f64> = complex_spectrum
+                            .column(p)
+                            .iter()
+                            .map(|c| c.norm())
+                            .collect();
 
-            // Normalize complex_spectrum
-            for f in 0..num_freqs {
-                for p in 0..4 {
-                    if counts[[f, p]] > 0 {
-                        complex_spectrum[[f, p]] /= counts[[f, p]] as f64;
-                    }
-                }
-            }
+                        // If we have valid data
+                        if spec_col.iter().any(|x| *x > 0.0) {
+                            if let Ok(delay_res) = delay_transform(
+                                &spec_col.insert_axis(Axis(0)),
+                                &freqs_arr,
+                                &delay_transform_config,
+                            ) {
+                                let delay_spec = delay_res.delay_spectrum.row(0);
 
-            // Perform delay transform for each pol
-            for p in 0..4 {
-                // Create spectrum array for this pol (magnitude for delay transform)
-                let spec_col: Array1<f64> = complex_spectrum
-                    .column(p)
-                    .iter()
-                    .map(|c| c.norm())
-                    .collect();
-
-                // If we have valid data
-                if spec_col.iter().any(|x| *x > 0.0) {
-                    if let Ok(delay_res) = delay_transform(
-                        &spec_col.insert_axis(Axis(0)),
-                        &freqs_arr,
-                        &delay_transform_config,
-                    ) {
-                        let delay_spec = delay_res.delay_spectrum.row(0);
-
-                        // Accumulate to antennas
-                        if let Some(&idx_a) = ant_to_pos.get(&a_idx) {
-                            let mut slice = short_ant_delay_pol_adp.slice_mut(s![idx_a, .., p]);
-                            for d in 0..num_delays {
-                                slice[d] += delay_spec[d] as f32;
+                                // Accumulate to antennas (using local accumulator)
+                                if let Some(&idx_a) = ant_to_pos.get(&a_idx) {
+                                    let mut slice = acc_delay.slice_mut(s![idx_a, .., p]);
+                                    for d in 0..num_delays {
+                                        slice[d] += delay_spec[d] as f32;
+                                    }
+                                    acc_counts[[idx_a, p]] += 1;
+                                }
+                                if let Some(&idx_b) = ant_to_pos.get(&b_idx_ant) {
+                                    let mut slice = acc_delay.slice_mut(s![idx_b, .., p]);
+                                    for d in 0..num_delays {
+                                        slice[d] += delay_spec[d] as f32;
+                                    }
+                                    acc_counts[[idx_b, p]] += 1;
+                                }
                             }
-                            ant_baseline_counts[[idx_a, p]] += 1;
-                        }
-                        if let Some(&idx_b) = ant_to_pos.get(&b_idx_ant) {
-                            let mut slice = short_ant_delay_pol_adp.slice_mut(s![idx_b, .., p]);
-                            for d in 0..num_delays {
-                                slice[d] += delay_spec[d] as f32;
-                            }
-                            ant_baseline_counts[[idx_b, p]] += 1;
                         }
                     }
-                }
-            }
-        }
+                    (acc_delay, acc_counts)
+                },
+            )
+            .reduce(
+                || {
+                    (
+                        Array3::<f32>::zeros((num_sel_ants, num_delays, 4)),
+                        Array2::<u32>::zeros((num_sel_ants, 4)),
+                    )
+                },
+                |(mut d1, mut c1), (d2, c2)| {
+                    d1 += &d2;
+                    c1 += &c2;
+                    (d1, c1)
+                },
+            );
 
         // Normalize by number of baselines per antenna
         for a in 0..num_sel_ants {
