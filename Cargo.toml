@@ -49,7 +49,7 @@ log = "0.4.0"
 #marlu = "0.16.1"
 marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "mwalib2" }
 regex = "1.12"
-thiserror = "1.0.0"
+thiserror = "2.0"
 errorfunctions = "0.2.0"
 serde-pickle = "1.1.1"
 
@@ -103,11 +103,11 @@ opt-level = 3
 # mwalib = { path = "../mwalib" }
 # mwalib = { git = "https://github.com/MWATelescope/mwalib", branch = "pyo3_stub_chrono_fix" }
 # aoflagger_sys = { git = "https://github.com/MWATelescope/rust-aoflagger", branch = "sonoma-fix" }
-console = { git = "https://github.com/console-rs/console", tag = "0.15.8" }
-flate2 = { git = "https://github.com/rust-lang/flate2-rs", tag = "1.0.35" }
-unicode-width = { git = "https://github.com/unicode-rs/unicode-width", tag = "v0.1.13" }
+#console = { git = "https://github.com/console-rs/console", tag = "0.15.8" }
+#flate2 = { git = "https://github.com/rust-lang/flate2-rs", tag = "1.0.35" }
+#unicode-width = { git = "https://github.com/unicode-rs/unicode-width", tag = "v0.1.13" }
 #cxx-build = { git = "https://github.com/dtolnay/cxx", tag = "1.0.124" }
 #cxx = { git = "https://github.com/dtolnay/cxx", tag = "1.0.124" }
-half = { git = "https://github.com/VoidStarKat/half-rs", tag = "v2.2.1" }
+#half = { git = "https://github.com/VoidStarKat/half-rs", tag = "v2.2.1" }
 # TODO: update to cxx 1.0.129 when MSRV >= 1.67
 #url = { git = "https://github.com/servo/rust-url", tag = "v2.5.2" }

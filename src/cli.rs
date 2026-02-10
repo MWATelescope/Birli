@@ -3193,7 +3193,7 @@ mod channel_range_tests {
 mod tests_aoflagger {
     use std::path::PathBuf;
 
-    use float_cmp::F32Margin;
+    use float_cmp::{F32Margin, FloatMargin};
     use marlu::{
         rubbl_casatables::{Table, TableOpenMode},
         RADec,
