@@ -1,7 +1,7 @@
 //! Delay transform utilities for Birli
 //!
 //! This module provides a delay transform for per-antenna spectra, using
-//! a Blackman window and zero-padding to achieve the requested delay resolution.
+//! a Hamming window and zero-padding to achieve the requested delay resolution.
 
 use marlu::ndarray::{Array1, Array2};
 use rustfft::{num_complex::Complex64, FftPlanner};
@@ -109,6 +109,7 @@ pub fn calculate_delay_channels(
 }
 
 /// Blackman window (same as numpy.blackman)
+#[allow(dead_code)]
 fn blackman_window(n: usize) -> Array1<f64> {
     let mut window = Array1::zeros(n);
     if n == 1 {
@@ -118,6 +119,20 @@ fn blackman_window(n: usize) -> Array1<f64> {
     for i in 0..n {
         let a = 2.0 * PI * i as f64 / (n as f64 - 1.0);
         window[i] = 0.42 - 0.5 * a.cos() + 0.08 * (2.0 * a).cos();
+    }
+    window
+}
+
+/// Hamming window (same as numpy.hamming)
+fn hamming_window(n: usize) -> Array1<f64> {
+    let mut window = Array1::zeros(n);
+    if n == 1 {
+        window[0] = 1.0;
+        return window;
+    }
+    for i in 0..n {
+        let a = 2.0 * PI * i as f64 / (n as f64 - 1.0);
+        window[i] = 0.54 - 0.46 * a.cos();
     }
     window
 }
@@ -153,8 +168,8 @@ pub fn delay_transform(
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(nfreqs_padded);
 
-    // Blackman window
-    let window = blackman_window(nfreqs);
+    // Hamming window
+    let window = hamming_window(nfreqs);
 
     // Process each antenna
     for ant in 0..nants {
@@ -321,6 +336,19 @@ mod tests {
         // And peak in the middle
         assert!(window[4] > 0.3);
         assert!(window[5] > 0.3);
+    }
+
+    #[test]
+    fn test_hamming_window() {
+        let window = hamming_window(10);
+        assert_eq!(window.len(), 10);
+        // Hamming window does not go to zero at edges (approx 0.08)
+        assert!(window[0] < 0.1);
+        assert!(window[9] < 0.1);
+        assert!(window[0] > 0.05);
+        // Peak in middle
+        assert!(window[4] > 0.9);
+        assert!(window[5] > 0.9);
     }
 
     #[test]
