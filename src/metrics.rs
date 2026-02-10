@@ -45,7 +45,7 @@ pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
 // Autocorrelation metrics
 pub(crate) struct AutoMetrics {
     pub auto_sub_aptf: Array4<f32>, // auto with mean(time) subtracted (antenna, times, frequencies, polarizations)
-    pub auto_spectrum_afp: Array3<f32>, // auto mean(time) (antenna, frequencies, polarizations)
+    pub auto_residual_afp: Array3<f32>, // auto mean(time) - polynomial fit (antenna, frequencies, polarizations)
     pub auto_coeffs_apo: Array3<f32>, // polynomial coeffs (antenna, pol, order) - raw frequency basis
     pub auto_delay_afp: Array3<f32>, // delay transform of auto mean(time) (antenna, delays, polarizations)
     pub antenna_names: Vec<String>,
@@ -152,30 +152,42 @@ impl AutoMetrics {
             }
         }
 
-        // take auto_power_aptf and subtract its mean(time), auto_spectrum_afp
+        // evaluate the polynomial fit at each frequency for each antenna and polarization
+        let mut auto_fit_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, num_pols));
+        for a in 0..num_sel_ants {
+            for p in 0..num_pols {
+                for f in 0..num_freqs {
+                    let mut fit = 0.0;
+                    for k in 0..poly_order + 1 {
+                        fit += auto_coeffs_apo[[a, p, k]] as f64 * freqs[f].powi(k as i32);
+                    }
+                    auto_fit_afp[[a, f, p]] = fit as f32;
+                }
+            }
+        }
+
+        // take auto_power_aptf and subtract it's polynomial fit
         let mut auto_sub_aptf = auto_power_aptf;
         for a in 0..num_sel_ants {
             for p in 0..num_pols {
                 for t in 0..num_timesteps {
                     for f in 0..num_freqs {
                         auto_sub_aptf[[a, hyperdrive_to_fits_stokes(p), t, f]] -=
-                            auto_spectrum_afp[[a, f, hyperdrive_to_fits_stokes(p)]];
+                            auto_fit_afp[[a, f, hyperdrive_to_fits_stokes(p)]];
                     }
                 }
             }
         }
 
-        // variance over frequency for each antenna, time, and polarization
-        // let mut auto_var_atp = Array3::<f32>::zeros((num_sel_ants, num_timesteps, num_pols));
-        // for a in 0..num_sel_ants {
-        //     for t in 0..num_timesteps {
-        //         for p in 0..num_pols {
-        //             auto_var_atp[[a, t, p]] = auto_sub_aptf
-        //                 .slice(s![a, hyperdrive_to_fits_stokes(p), t, ..])
-        //                 .var(0.0);
-        //         }
-        //     }
-        // }
+        // take auto_spectrum_afp and subtract it's polynomial fit
+        let mut auto_residual_afp = auto_spectrum_afp;
+        for a in 0..num_sel_ants {
+            for p in 0..num_pols {
+                for f in 0..num_freqs {
+                    auto_residual_afp[[a, f, p]] -= auto_fit_afp[[a, f, p]];
+                }
+            }
+        }
 
         let mut antenna_ids = Vec::<u32>::with_capacity(num_sel_ants);
         let mut antenna_names = Vec::<String>::with_capacity(num_sel_ants);
@@ -187,7 +199,7 @@ impl AutoMetrics {
         let mut cable_flavours = Vec::<String>::with_capacity(num_sel_ants);
         let mut whitening_filters = Vec::<bool>::with_capacity(num_sel_ants);
 
-        // use delay_transform to get the delay spectrum of each antenna in auto_spectrum_afp
+        // use delay_transform to get the delay spectrum of each antenna in auto_residual_afp
         let delay_transform_config = DelayTransformConfig {
             min_delay_ns: 100.0,
             max_delay_ns: 3000.0,
@@ -199,7 +211,7 @@ impl AutoMetrics {
         let mut auto_delay_afp = Array3::<f32>::zeros((num_sel_ants, num_delays, num_pols));
         for pol in 0..num_pols {
             // Convert spectrum to f64 and shape (ants, freqs)
-            let spectrum_f64 = auto_spectrum_afp
+            let spectrum_f64 = auto_residual_afp
                 .slice(s![.., .., pol])
                 .mapv(|x| x as f64)
                 .to_owned();
@@ -244,7 +256,7 @@ impl AutoMetrics {
 
         Self {
             auto_sub_aptf,
-            auto_spectrum_afp,
+            auto_residual_afp,
             auto_coeffs_apo,
             auto_delay_afp,
             antenna_names,
@@ -337,7 +349,7 @@ impl AutoMetrics {
             hdu.write_image(
                 fptr,
                 &self
-                    .auto_spectrum_afp
+                    .auto_residual_afp
                     .slice(s![.., .., pol_idx])
                     .iter()
                     .copied()
@@ -1381,7 +1393,7 @@ mod autometrics_tests {
 
         // Verify that the metrics were created successfully
         assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 2); // 2 selected antennas
-        assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 2); // 2 selected antennas
+        assert_eq!(auto_metrics.auto_residual_afp.dim().0, 2); // 2 selected antennas
                                                                // auto_coeffs_apo is (ants, pols, coeffs).
                                                                // 2 ants, 4 pols, 4 coeffs (order 3)
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 2);
@@ -1418,7 +1430,7 @@ mod autometrics_tests {
         let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
 
         assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 2);
-        assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 2);
+        assert_eq!(auto_metrics.auto_residual_afp.dim().0, 2);
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 2);
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().1, 4);
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 3);
@@ -1447,7 +1459,7 @@ mod autometrics_tests {
         let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
 
         assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 1);
-        assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 1);
+        assert_eq!(auto_metrics.auto_residual_afp.dim().0, 1);
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 1);
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().1, 4);
         assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 3);
