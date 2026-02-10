@@ -4,6 +4,7 @@
 
 * Bump to MSRV 1.85
 * Update mwalib to v2.0
+* Migrate macos CI to use macos-15 (arm64) and macos-15-intel (x64)
 
 # Version 0.18.2 (2025-09-11)
 

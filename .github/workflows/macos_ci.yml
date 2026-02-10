@@ -3,9 +3,9 @@ name: MacOS Tests
 on:
   push:
     tags-ignore:
-      - '**'
+      - "**"
     branches:
-      - '**'
+      - "**"
   pull_request: null
 jobs:
   test:
@@ -13,10 +13,10 @@ jobs:
     strategy:
       matrix:
         os:
-          - macos-13
-          - macos-14
+          - macos-15-intel
+          - macos-15
     continue-on-error: true
-    runs-on: '${{ matrix.os }}'
+    runs-on: "${{ matrix.os }}"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -28,7 +28,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-          components: 'rustfmt, clippy'
+          components: "rustfmt, clippy"
       - name: Install Cargo Make
         uses: davidB/rust-cargo-make@v1
       - name: Install Dependencies
@@ -42,7 +42,7 @@ jobs:
             (readlink $f | grep -q -s "/Library") && echo Removing "$f" && rm -f "$f"; \
           done
           INSTALL="brew install"
-          [ "${{ matrix.os }}" == "macos-14" ] && INSTALL="arch -arm64 brew install"
+          [ "${{ matrix.os }}" == "macos-15" ] && INSTALL="arch -arm64 brew install"
           $INSTALL mwatelescope/tap/aoflagger
           echo "DYLD_FALLBACK_LIBRARY_PATH=$(brew --prefix)/lib/" >> $GITHUB_ENV
           echo "AOFLAGGER_LIB=$(brew --prefix)/lib/" >> $GITHUB_ENV
