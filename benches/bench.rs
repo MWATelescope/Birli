@@ -80,6 +80,7 @@ fn bench_uvfits_output_1196175296_none(crt: &mut Criterion) {
                     black_box(&vis_sel.baseline_idxs),
                     None,
                     None,
+                    true,
                     1,
                     1,
                 )
@@ -128,6 +129,7 @@ fn bench_ms_output_1196175296_none(crt: &mut Criterion) {
                     black_box(&vis_sel.baseline_idxs),
                     None,
                     None,
+                    true,
                     1,
                     1,
                 )

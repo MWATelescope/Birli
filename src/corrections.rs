@@ -202,8 +202,10 @@ pub fn correct_cable_lengths(
 ///     None,
 ///     None,
 ///     false,
+///     true,  // apply_precession
 /// );
 /// ```
+#[allow(clippy::too_many_arguments)]
 pub fn correct_geometry(
     corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
@@ -211,6 +213,7 @@ pub fn correct_geometry(
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
     draw_progress: bool,
+    apply_precession: bool,
 ) {
     trace!("start correct_geometry");
 
@@ -247,6 +250,7 @@ pub fn correct_geometry(
         phase_centre,
         array_pos,
         &tiles_xyz_geod,
+        apply_precession,
     );
 
     // Create a progress bar to show the status of the correction
@@ -655,6 +659,7 @@ fn calc_part_uvws(
     phase_centre: RADec,
     array_pos: LatLngHeight,
     tile_xyzs: &[XyzGeodetic],
+    apply_precession: bool,
 ) -> Array2<UVW> {
     let nants = tile_xyzs.len();
     let mut part_uvws = Array2::from_elem((centroid_timestamps.len(), nants), UVW::default());
@@ -666,7 +671,11 @@ fn calc_part_uvws(
             epoch,
             dut1,
         );
-        let tiles_xyz_prec = prec.precess_xyz(tile_xyzs);
+        let tiles_xyz_prec = if apply_precession {
+            prec.precess_xyz(tile_xyzs)
+        } else {
+            tile_xyzs.to_vec()
+        };
         for (a, &xyz) in tiles_xyz_prec.iter().enumerate() {
             let uvw = UVW::from_xyz(xyz, prec.hadec_j2000);
             part_uvws[[t, a]] = uvw;
@@ -1149,6 +1158,7 @@ mod tests {
             None,
             None,
             false,
+            true,
         );
 
         // there should be no difference in baseline 0
@@ -1298,6 +1308,7 @@ mod tests {
             None,
             None,
             false,
+            true,
         );
         // there should be no difference in baseline 0
         // ts 0 (batch 0, scan 0), chan 0 (cc 0, fc 0), baseline 0

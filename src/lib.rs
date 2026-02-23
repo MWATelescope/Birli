@@ -78,6 +78,7 @@
 //!     &vis_sel.baseline_idxs,
 //!     None,
 //!     None,
+//!     true,  // precess_uvws
 //!     1,
 //!     1,
 //! ).unwrap();

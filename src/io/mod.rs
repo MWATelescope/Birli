@@ -378,6 +378,7 @@ pub fn read_mwalib(
 ///     &vis_sel.baseline_idxs,
 ///     None,
 ///     None,
+///     true,  // precess_uvws
 ///     1,
 ///     1,
 /// )
@@ -399,6 +400,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
     baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
+    precess_uvws: bool,
     avg_time: usize,
     avg_freq: usize,
 ) -> Result<(), IOError> {
@@ -453,7 +455,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
         obs_ctx.name.as_deref(),
         antenna_names,
         antenna_positions,
-        true,
+        precess_uvws,
         None,
     )?;
 
@@ -528,6 +530,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
 ///     &vis_sel.baseline_idxs,
 ///     None,
 ///     None,
+///     true,  // precess_uvws
 ///     avg_time,
 ///     avg_freq,
 /// )
@@ -549,6 +552,7 @@ pub fn write_ms<T: AsRef<Path>>(
     baseline_idxs: &[usize],
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
+    precess_uvws: bool,
     avg_time: usize,
     avg_freq: usize,
 ) -> Result<(), IOError> {
@@ -578,7 +582,7 @@ pub fn write_ms<T: AsRef<Path>>(
         obs_ctx.array_pos,
         obs_ctx.ant_positions_geodetic().collect(),
         Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or(0.0)),
-        true,
+        precess_uvws,
     );
 
     ms_writer

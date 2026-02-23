@@ -52,6 +52,10 @@ pub struct PreprocessContext<'a> {
     #[builder(default = "true")]
     pub correct_geometry: bool,
 
+    /// Whether precession is applied during geometric corrections
+    #[builder(default = "true")]
+    pub apply_precession: bool,
+
     /// `AOFlagger` strategy path for flagging
     #[builder(default)]
     #[cfg(feature = "aoflagger")]
@@ -118,6 +122,15 @@ impl Display for PreprocessContext<'_> {
                 "Will not"
             }
         )?;
+        writeln!(
+            f,
+            "{} apply precession.",
+            if self.apply_precession {
+                "Will"
+            } else {
+                "Will not"
+            }
+        )?;
         Ok(())
     }
 }
@@ -151,7 +164,11 @@ impl PreprocessContext<'_> {
                 .as_ref()
                 .map(|strategy| format!("aoflagging with {strategy}")),
             if self.correct_geometry {
-                Some("geometric corrections".to_string())
+                Some(if self.apply_precession {
+                    "geometric corrections".to_string()
+                } else {
+                    "geometric corrections (no precession)".to_string()
+                })
             } else {
                 None
             },
@@ -339,6 +356,7 @@ impl PreprocessContext<'_> {
                     Some(self.array_pos),
                     Some(self.phase_centre),
                     self.draw_progress,
+                    self.apply_precession,
                 )
             );
         }
@@ -461,6 +479,7 @@ mod tests {
             &vis_sel.baseline_idxs,
             Some(prep_ctx.array_pos),
             Some(prep_ctx.phase_centre),
+            prep_ctx.apply_precession,
             avg_time,
             avg_freq,
         )

@@ -179,6 +179,7 @@ fn bench_correct_geometry_mwax_half_1247842824(crt: &mut Criterion) {
                 None,
                 None,
                 false,
+                true,
             );
         })
     });
@@ -208,6 +209,7 @@ fn bench_correct_geometry_ord_half_1196175296(crt: &mut Criterion) {
                 None,
                 None,
                 false,
+                true,
             );
         })
     });
@@ -247,6 +249,7 @@ fn bench_uvfits_output_ord_half_1196175296_none(crt: &mut Criterion) {
                 black_box(&vis_sel.baseline_idxs),
                 None,
                 None,
+                true,
                 1,
                 1,
             )
@@ -289,6 +292,7 @@ fn bench_uvfits_output_mwax_half_1247842824_none(crt: &mut Criterion) {
                 black_box(&vis_sel.baseline_idxs),
                 None,
                 None,
+                true,
                 1,
                 1,
             )

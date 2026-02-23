@@ -749,6 +749,8 @@ impl<'a> BirliContext<'a> {
                     .conflicts_with("phase-centre"),
                 arg!(--"no-digital-gains" "Do not perform digital gains corrections")
                     .help_heading("CORRECTION"),
+                arg!(--"no-precession" "Do not apply precession during geometric corrections")
+                    .help_heading("CORRECTION"),
                 arg!(--"passband-gains" <TYPE> "Type of PFB passband filter gains correction to apply")
                     .required(false)
                     .possible_values([
@@ -1398,6 +1400,7 @@ impl<'a> BirliContext<'a> {
             ) && !cable_delays_disabled
         };
         prep_ctx.correct_digital_gains = !matches.is_present("no-digital-gains");
+        prep_ctx.apply_precession = !matches.is_present("no-precession");
         prep_ctx.passband_gains = match matches.value_of("passband-gains") {
             None | Some("none") => None,
             Some(g) if g == "jake" => {
@@ -1707,7 +1710,7 @@ impl<'a> BirliContext<'a> {
                     obs_ctx.name.as_deref(),
                     antenna_names,
                     antenna_positions.clone(),
-                    true,
+                    prep_ctx.apply_precession,
                     Some(&history),
                 )
                 .expect("unable to initialize uvfits writer")
@@ -1720,7 +1723,7 @@ impl<'a> BirliContext<'a> {
                 obs_ctx.array_pos,
                 antenna_positions,
                 dut1,
-                true,
+                prep_ctx.apply_precession,
             );
             println!(
                 "Writing to MS: {} with {} chans selected",
@@ -2270,6 +2273,45 @@ mod argparse_tests {
         let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
 
         assert!(!flag_ctx.flag_dc);
+    }
+
+    /// Precession is enabled by default.
+    #[test]
+    fn test_precession_enabled_by_default() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(prep_ctx.apply_precession);
+    }
+
+    /// Precession is disabled when `--no-precession` is passed.
+    #[test]
+    fn test_no_precession_flag() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--no-precession",
+            gpufits_paths[0],
+            gpufits_paths[1],
+        ];
+
+        let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(!prep_ctx.apply_precession);
     }
 
     /// Flag 3 fine channels on the edge of a coarse channel with `flag-edge-chans`

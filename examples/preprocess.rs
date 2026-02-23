@@ -74,6 +74,7 @@ fn main() {
         correct_cable_lengths: false,
         correct_digital_gains: false,
         correct_geometry: false,
+        apply_precession: true,
         draw_progress: false,
         passband_gains: None,
         calsols: None,
@@ -103,6 +104,7 @@ fn main() {
         &vis_sel.baseline_idxs,
         Some(prep_ctx.array_pos),
         Some(prep_ctx.phase_centre),
+        prep_ctx.apply_precession,
         avg_time,
         avg_freq,
     )
