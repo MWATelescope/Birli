@@ -3,7 +3,7 @@ use birli::{
     get_durations,
     BirliError::{ClapError, DryRun},
 };
-use clap::ErrorKind::{DisplayHelp, DisplayVersion};
+use clap::error::ErrorKind::{DisplayHelp, DisplayVersion};
 use log::{info, trace};
 use marlu::{Complex, Jones};
 use std::{env, ffi::OsString, fmt::Debug, time::Duration};

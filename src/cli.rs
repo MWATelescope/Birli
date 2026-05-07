@@ -6,11 +6,17 @@ use std::{
     convert::Into,
     ffi::OsString,
     fmt::{Debug, Display},
+    path::PathBuf,
     time::Duration,
 };
 
 use cfg_if::cfg_if;
-use clap::{arg, command, ErrorKind::ArgumentNotFound, PossibleValue, ValueHint::FilePath};
+use clap::{
+    arg,
+    builder::{PossibleValue, PossibleValuesParser},
+    command, Arg,
+    ValueHint::FilePath,
+};
 use indicatif::{ProgressDrawTarget, ProgressStyle};
 use itertools::{izip, Itertools};
 use log::{debug, info, trace};
@@ -625,185 +631,219 @@ impl<'a> BirliContext<'a> {
         T: Into<OsString> + Clone,
     {
         #[allow(unused_mut)]
-        let mut app = command!()
-            .subcommand_precedence_over_arg(true)
-            .arg_required_else_help(true)
-            .next_line_help(false)
-            .about("Preprocess Murchison Widefield Array MetaFITS and GPUFITS data \
-                    into usable astronomy formats.")
-            .args(&[
-                // input options
-                arg!(-m --metafits <PATH> "Metadata file for the observation")
-                    .required(true)
-                    .value_hint(FilePath)
-                    .help_heading("INPUT"),
-                arg!(fits_paths: <PATHS>... "GPUBox files to process")
-                    .help_heading("INPUT")
-                    .value_hint(FilePath)
-                    .required(true),
+    let mut app = command!()
+        .subcommand_precedence_over_arg(true)
+        .arg_required_else_help(true)
+        .next_line_help(false)
+        .about("Preprocess Murchison Widefield Array MetaFITS and GPUFITS data \
+                into usable astronomy formats.")
+        .args(&[
+            // input options
+            arg!(-m --metafits <PATH> "Metadata file for the observation")
+                .required(true)
+                .value_hint(FilePath)
+                .value_parser(clap::value_parser!(PathBuf))
+                .help_heading("INPUT"),
+            arg!(fits_paths: <PATHS>... "GPUBox files to process")
+                .help_heading("INPUT")
+                .value_hint(FilePath)
+                .value_parser(clap::value_parser!(PathBuf))
+                .num_args(1..)
+                .required(true),
 
-                // processing options
-                arg!(--"phase-centre" "Override Phase centre from metafits (degrees)")
-                    .value_names(&["RA", "DEC"])
-                    .allow_hyphen_values(true)
-                    .required(false),
-                arg!(--"pointing-centre" "Use pointing instead phase centre")
-                    .conflicts_with("phase-centre"),
-                arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's"),
-                arg!(--"dry-run" "Just print the summary and exit"),
-                arg!(--"no-draw-progress" "do not show progress bars"),
+            // processing options
+            Arg::new("phase-centre")
+                .long("phase-centre")
+                .help("Override Phase centre from metafits (degrees)")
+                .value_names(["RA", "DEC"])
+                .num_args(2)
+                .value_parser(clap::value_parser!(f64))
+                .allow_hyphen_values(true)
+                .required(false),
+            arg!(--"pointing-centre" "Use pointing instead phase centre")
+                .conflicts_with("phase-centre"),
+            arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's"),
+            arg!(--"dry-run" "Just print the summary and exit"),
+            arg!(--"no-draw-progress" "do not show progress bars"),
 
-                // selection options
-                arg!(--"sel-time" "Timestep index range (inclusive) to select")
-                    .help_heading("SELECTION")
-                    .value_names(&["MIN", "MAX"])
-                    .required(false),
-                arg!(--"sel-ants" <ANTS>... "Antenna indices to select")
-                    .help_heading("SELECTION")
-                    .multiple_values(true)
-                    .required(false),
-                arg!(--"no-sel-flagged-ants" "Deselect flagged antennas")
-                    .help_heading("SELECTION"),
-                arg!(--"no-sel-autos" "Deselect autocorrelations")
-                    .help_heading("SELECTION"),
+            // selection options
+            Arg::new("sel-time")
+                .long("sel-time")
+                .help("Timestep index range (inclusive) to select")
+                .help_heading("SELECTION")
+                .value_names(["MIN", "MAX"])
+                .num_args(2)
+                .value_parser(clap::value_parser!(usize))
+                .required(false),
+            Arg::new("sel-ants")
+                .long("sel-ants")
+                .help("Antenna indices to select")
+                .help_heading("SELECTION")
+                .value_name("ANTS")
+                .num_args(1..)
+                .value_parser(clap::value_parser!(usize))
+                .required(false),
+            arg!(--"no-sel-flagged-ants" "Deselect flagged antennas")
+                .help_heading("SELECTION"),
+            arg!(--"no-sel-autos" "Deselect autocorrelations")
+                .help_heading("SELECTION"),
 
-                arg!(--"sel-chan-ranges" <RANGES> "Select separate channel ranges")
-                    .help_heading("SELECTION")
-                    .required(false),
-                arg!(--"provided-chan-ranges" "Only consider provided channels")
-                    .help_heading("SELECTION")
-                    .required(false),
+            arg!(--"sel-chan-ranges" <RANGES> "Select separate channel ranges")
+                .help_heading("SELECTION")
+                .required(false),
+            arg!(--"provided-chan-ranges" "Only consider provided channels")
+                .help_heading("SELECTION")
+                .required(false),
 
-                // resource limit options
-                arg!(--"time-chunk" <STEPS> "Process observation in chunks of <STEPS> timesteps.")
-                    .help_heading("RESOURCE LIMITS")
-                    .required(false)
-                    .conflicts_with("max-memory"),
-                arg!(--"max-memory" <GIBIBYTES> "Estimate --time-chunk with <GIBIBYTES> GiB each chunk.")
-                    .help_heading("RESOURCE LIMITS")
-                    .required(false),
+            // resource limit options
+            arg!(--"time-chunk" <STEPS> "Process observation in chunks of <STEPS> timesteps.")
+                .help_heading("RESOURCE LIMITS")
+                .required(false)
+                .value_parser(clap::value_parser!(usize))
+                .conflicts_with("max-memory"),
+            arg!(--"max-memory" <GIBIBYTES> "Estimate --time-chunk with <GIBIBYTES> GiB each chunk.")
+                .help_heading("RESOURCE LIMITS")
+                .required(false)
+                .value_parser(clap::value_parser!(f64)),
 
-                // flagging options
-                // -> timesteps
-                arg!(--"flag-init" <SECONDS> "Flag <SECONDS> after first common time (quack time)")
-                    .alias("--quack-time")
-                    .help_heading("FLAGGING")
-                    .required(false),
-                arg!(--"flag-init-steps" <COUNT> "Flag <COUNT> steps after first common time")
-                    .help_heading("FLAGGING")
-                    .required(false)
-                    .conflicts_with("flag-init"),
-                arg!(--"flag-end" <SECONDS> "Flag seconds before the last provided time")
-                    .help_heading("FLAGGING")
-                    .required(false),
-                arg!(--"flag-end-steps" <COUNT> "Flag <COUNT> steps before the last provided")
-                    .help_heading("FLAGGING")
-                    .required(false)
-                    .conflicts_with("flag-end"),
-                arg!(--"flag-times" <STEPS>... "Flag additional time steps")
-                    .help_heading("FLAGGING")
-                    .multiple_values(true)
-                    .required(false),
-                // -> channels
-                arg!(--"flag-coarse-chans" <CHANS> ... "Flag additional coarse chan indices")
-                    .help_heading("FLAGGING")
-                    .multiple_values(true)
-                    .required(false),
-                arg!(--"flag-edge-width" <KHZ> "Flag bandwidth [kHz] at the ends of each coarse chan")
-                    .help_heading("FLAGGING")
-                    .required(false),
-                arg!(--"flag-edge-chans" <COUNT> "Flag <COUNT> fine chans on the ends of each coarse")
-                    .help_heading("FLAGGING")
-                    .conflicts_with("flag-edge-width")
-                    .required(false),
-                arg!(--"flag-fine-chans" <CHANS>... "Flag fine chan indices in each coarse chan")
-                    .help_heading("FLAGGING")
-                    .multiple_values(true)
-                    .required(false),
-                arg!(--"flag-dc" "Force flagging of DC centre chans")
-                    .help_heading("FLAGGING")
-                    .conflicts_with("no-flag-dc"),
-                arg!(--"no-flag-dc" "Do not flag DC centre chans")
-                    .help_heading("FLAGGING")
-                    .conflicts_with("flag-dc"),
-                // -> antennas
-                arg!(--"no-flag-metafits" "Ignore antenna flags in metafits")
-                    .help_heading("FLAGGING"),
-                arg!(--"flag-antennas" <ANTS>... "Flag antenna indices")
-                    .help_heading("FLAGGING")
-                    .multiple_values(true)
-                    .required(false),
-                // -> baselines
-                arg!(--"flag-autos" "Flag auto correlations")
-                    .help_heading("FLAGGING"),
+            // flagging options
+            // -> timesteps
+            arg!(--"flag-init" <SECONDS> "Flag <SECONDS> after first common time (quack time)")
+                .alias("--quack-time")
+                .help_heading("FLAGGING")
+                .required(false)
+                .value_parser(clap::value_parser!(f32)),
+            arg!(--"flag-init-steps" <COUNT> "Flag <COUNT> steps after first common time")
+                .help_heading("FLAGGING")
+                .required(false)
+                .value_parser(clap::value_parser!(u32))
+                .conflicts_with("flag-init"),
+            arg!(--"flag-end" <SECONDS> "Flag seconds before the last provided time")
+                .help_heading("FLAGGING")
+                .required(false)
+                .value_parser(clap::value_parser!(f32)),
+            arg!(--"flag-end-steps" <COUNT> "Flag <COUNT> steps before the last provided")
+                .help_heading("FLAGGING")
+                .required(false)
+                .value_parser(clap::value_parser!(u32))
+                .conflicts_with("flag-end"),
+            arg!(--"flag-times" <STEPS> "Flag additional time steps")
+                .help_heading("FLAGGING")
+                .num_args(1..)
+                .value_parser(clap::value_parser!(usize))
+                .required(false),
+            // -> channels
+            arg!(--"flag-coarse-chans" <CHANS> "Flag additional coarse chan indices")
+                .help_heading("FLAGGING")
+                .num_args(1..)
+                .value_parser(clap::value_parser!(usize))
+                .required(false),
+            arg!(--"flag-edge-width" <KHZ> "Flag bandwidth [kHz] at the ends of each coarse chan")
+                .help_heading("FLAGGING")
+                .required(false)
+                .value_parser(clap::value_parser!(usize)),
+            arg!(--"flag-edge-chans" <COUNT> "Flag <COUNT> fine chans on the ends of each coarse")
+                .help_heading("FLAGGING")
+                .conflicts_with("flag-edge-width")
+                .required(false)
+                .value_parser(clap::value_parser!(usize)),
+            arg!(--"flag-fine-chans" <CHANS> "Flag fine chan indices in each coarse chan")
+                .help_heading("FLAGGING")
+                .num_args(1..)
+                .value_parser(clap::value_parser!(usize))
+                .required(false),
+            arg!(--"flag-dc" "Force flagging of DC centre chans")
+                .help_heading("FLAGGING")
+                .conflicts_with("no-flag-dc"),
+            arg!(--"no-flag-dc" "Do not flag DC centre chans")
+                .help_heading("FLAGGING")
+                .conflicts_with("flag-dc"),
+            // -> antennas
+            arg!(--"no-flag-metafits" "Ignore antenna flags in metafits")
+                .help_heading("FLAGGING"),
+            arg!(--"flag-antennas" <ANTS> "Flag antenna indices")
+                .help_heading("FLAGGING")
+                .num_args(1..)
+                .value_parser(clap::value_parser!(usize))
+                .required(false),
+            // -> baselines
+            arg!(--"flag-autos" "Flag auto correlations")
+                .help_heading("FLAGGING"),
 
-                // corrections
-                arg!(--"van-vleck" "Apply Van Vleck corrections")
-                    .help_heading("CORRECTION"),
-                arg!(--"no-cable-delay" "Do not perform cable length corrections")
-                    .help_heading("CORRECTION"),
-                arg!(--"no-geometric-delay" "Do not perform geometric corrections")
-                    .help_heading("CORRECTION")
-                    .alias("no-geom")
-                    .conflicts_with("pointing-centre")
-                    .conflicts_with("phase-centre"),
-                arg!(--"no-digital-gains" "Do not perform digital gains corrections")
-                    .help_heading("CORRECTION"),
-                arg!(--"passband-gains" <TYPE> "Type of PFB passband filter gains correction to apply")
-                    .required(false)
-                    .possible_values([
-                        PossibleValue::new("none").help("No passband gains correction (unitary)"),
-                        PossibleValue::new("cotter")
-                            .help(
-                                "_sb128ChannelSubbandValue2014FromMemo from
-                                    subbandpassband.cpp in Cotter. Can only be used with resolutions of
-                                    n * 10kHz"
-                            ),
-                        PossibleValue::new("jake")
-                            .help("see: PFB_JAKE_2022_200HZ in src/passband_gains.rs"),
-                        PossibleValue::new("jake_oversampled")
-                            .help("see: OSPFB_JAKE_2025_200HZ in src/passband_gains.rs"),
-                        PossibleValue::new("auto")
-                            .help("MWAX => jake or jake_oversampled, legacy => cotter"),
-                    ])
-                    .default_value("auto")
-                    .alias("pfb-gains")
-                    .help_heading("CORRECTION"),
+            // corrections
+            arg!(--"van-vleck" "Apply Van Vleck corrections")
+                .help_heading("CORRECTION"),
+            arg!(--"no-cable-delay" "Do not perform cable length corrections")
+                .help_heading("CORRECTION"),
+            arg!(--"no-geometric-delay" "Do not perform geometric corrections")
+                .help_heading("CORRECTION")
+                .alias("no-geom")
+                .conflicts_with("pointing-centre")
+                .conflicts_with("phase-centre"),
+            arg!(--"no-digital-gains" "Do not perform digital gains corrections")
+                .help_heading("CORRECTION"),
+            arg!(--"passband-gains" <TYPE> "Type of PFB passband filter gains correction to apply")
+                .required(false)
+                .value_parser(PossibleValuesParser::new([
+                    PossibleValue::new("none").help("No passband gains correction (unitary)"),
+                    PossibleValue::new("cotter")
+                        .help(
+                            "_sb128ChannelSubbandValue2014FromMemo from \
+                                subbandpassband.cpp in Cotter. Can only be used with resolutions of \
+                                n * 10kHz"
+                        ),
+                    PossibleValue::new("jake")
+                        .help("see: PFB_JAKE_2022_200HZ in src/passband_gains.rs"),
+                    PossibleValue::new("jake_oversampled")
+                        .help("see: OSPFB_JAKE_2025_200HZ in src/passband_gains.rs"),
+                    PossibleValue::new("auto")
+                        .help("MWAX => jake or jake_oversampled, legacy => cotter"),
+                ]))
+                .default_value("auto")
+                .alias("pfb-gains")
+                .help_heading("CORRECTION"),
 
-                // calibration
-                arg!(--"apply-di-cal" <PATH> "Apply DI calibration solutions before averaging")
-                    .required(false)
-                    .value_hint(FilePath),
+            // calibration
+            arg!(--"apply-di-cal" <PATH> "Apply DI calibration solutions before averaging")
+                .required(false)
+                .value_hint(FilePath)
+                .value_parser(clap::value_parser!(PathBuf)),
 
-                // averaging
-                arg!(--"avg-time-res" <SECONDS> "Time resolution of averaged data")
-                    .help_heading("AVERAGING")
-                    .required(false),
-                arg!(--"avg-time-factor" <FACTOR> "Average <FACTOR> timesteps per averaged timestep")
-                    .help_heading("AVERAGING")
-                    .required(false)
-                    .conflicts_with("avg-time-res"),
-                arg!(--"avg-freq-res" <KHZ> "Frequency resolution of averaged data")
-                    .help_heading("AVERAGING")
-                    .required(false),
-                arg!(--"avg-freq-factor" <FACTOR> "Average <FACTOR> channels per averaged channel")
-                    .help_heading("AVERAGING")
-                    .required(false)
-                    .conflicts_with("avg-freq-res"),
+            // averaging
+            arg!(--"avg-time-res" <SECONDS> "Time resolution of averaged data")
+                .help_heading("AVERAGING")
+                .required(false)
+                .value_parser(clap::value_parser!(f64)),
+            arg!(--"avg-time-factor" <FACTOR> "Average <FACTOR> timesteps per averaged timestep")
+                .help_heading("AVERAGING")
+                .required(false)
+                .value_parser(clap::value_parser!(usize))
+                .conflicts_with("avg-time-res"),
+            arg!(--"avg-freq-res" <KHZ> "Frequency resolution of averaged data")
+                .help_heading("AVERAGING")
+                .required(false)
+                .value_parser(clap::value_parser!(f64)),
+            arg!(--"avg-freq-factor" <FACTOR> "Average <FACTOR> channels per averaged channel")
+                .help_heading("AVERAGING")
+                .required(false)
+                .value_parser(clap::value_parser!(usize))
+                .conflicts_with("avg-freq-res"),
 
-                // output options
-                arg!(-f --"flag-template" <TEMPLATE> "The template used to name flag files. \
-                        Percents are substituted for the zero-prefixed GPUBox ID, which can be up to \
-                        3 characters long. Example: FlagFile%%%.mwaf")
-                    .help_heading("OUTPUT")
-                    .required(false),
-                arg!(-u --"uvfits-out" <PATH> "Path for uvfits output")
-                    .help_heading("OUTPUT")
-                    .required(false),
-                arg!(-M --"ms-out" <PATH> "Path for measurement set output")
-                    .help_heading("OUTPUT")
-                    .required(false),
-            ]);
+            // output options
+            arg!(-f --"flag-template" <TEMPLATE> "The template used to name flag files. \
+                    Percents are substituted for the zero-prefixed GPUBox ID, which can be up to \
+                    3 characters long. Example: FlagFile%%%.mwaf")
+                .help_heading("OUTPUT")
+                .required(false),
+            arg!(-u --"uvfits-out" <PATH> "Path for uvfits output")
+                .help_heading("OUTPUT")
+                .required(false)
+                .value_parser(clap::value_parser!(PathBuf)),
+            arg!(-M --"ms-out" <PATH> "Path for measurement set output")
+                .help_heading("OUTPUT")
+                .required(false)
+                .value_parser(clap::value_parser!(PathBuf)),
+        ]);
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
                 app = app.args(&[
@@ -812,7 +852,7 @@ impl<'a> BirliContext<'a> {
                     arg!(--"aoflagger-strategy" <PATH> "Strategy to use for RFI Flagging")
                         .value_hint(FilePath)
                         .help_heading("AOFLAGGER")
-                        .required(false)
+                        .required(false),
                 ]);
             }
         };
@@ -823,15 +863,17 @@ impl<'a> BirliContext<'a> {
     fn parse_io_matches(matches: &clap::ArgMatches) -> IOContext {
         IOContext {
             metafits_in: matches
-                .value_of_t("metafits")
-                .unwrap_or_else(|_| panic!("--metafits <PATH> is required, enforced by clap")),
+                .get_one::<PathBuf>("metafits")
+                .cloned()
+                .unwrap_or_else(|| panic!("--metafits <PATH> is required, enforced by clap")),
             gpufits_in: matches
-                .values_of_t("fits_paths")
-                .unwrap_or_else(|_| panic!("<PATHS> is required, enforced by clap")),
-            aocalsols_in: matches.value_of("apply-di-cal").map(Into::into),
-            uvfits_out: matches.value_of("uvfits-out").map(Into::into),
-            ms_out: matches.value_of("ms-out").map(Into::into),
-            flag_template: matches.value_of("flag-template").map(Into::into),
+                .get_many::<PathBuf>("fits_paths")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_else(|| panic!("<PATHS> is required, enforced by clap")),
+            aocalsols_in: matches.get_one::<PathBuf>("apply-di-cal").cloned(),
+            uvfits_out: matches.get_one::<PathBuf>("uvfits-out").cloned(),
+            ms_out: matches.get_one::<PathBuf>("ms-out").cloned(),
+            flag_template: matches.get_one::<String>("flag-template").cloned(),
         }
     }
 
@@ -847,55 +889,44 @@ impl<'a> BirliContext<'a> {
             ..
         } = corr_ctx;
         let MetafitsContext { num_ants, .. } = meta_ctx;
-        match matches
-            .values_of_t::<usize>("sel-time")
-            .map(|v| (v[0], v[1]))
-        {
-            Ok((from, to)) => {
-                if from > to || to >= *num_timesteps {
-                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                        option: "--sel-time <FROM> <TO>".into(),
-                        expected: format!("from <= to < num_timesteps={}", num_timesteps),
-                        received: format!("from={from} to={to}"),
-                    }));
-                }
-                vis_sel.timestep_range = from..(to + 1);
+
+        if let Some(vals) = matches.get_many::<usize>("sel-time") {
+            let v: Vec<usize> = vals.copied().collect();
+            let (from, to) = (v[0], v[1]);
+            if from > to || to >= *num_timesteps {
+                return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "--sel-time <FROM> <TO>".into(),
+                    expected: format!("from <= to < num_timesteps={}", num_timesteps),
+                    received: format!("from={from} to={to}"),
+                }));
             }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
+            vis_sel.timestep_range = from..(to + 1);
         }
-        match matches.values_of_t::<usize>("sel-ants") {
-            Ok(antenna_idxs) => {
-                for (value_idx, &antenna_idx) in antenna_idxs.iter().enumerate() {
-                    if antenna_idx >= *num_ants {
-                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                            option: "--sel-ants <ANTS>...".into(),
-                            expected: format!("antenna_idx < num_ants={}", num_ants),
-                            received: format!(
-                                "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
-                            ),
-                        }));
-                    }
-                }
-                // filter vis_sel.baseline_idxs that correspond with antennas not in antenna_idxs
-                vis_sel.retain_antennas(meta_ctx, &antenna_idxs);
-                // if no baselines are selected, return an error
-                if vis_sel.baseline_idxs.is_empty() {
+
+        if let Some(vals) = matches.get_many::<usize>("sel-ants") {
+            let antenna_idxs: Vec<usize> = vals.copied().collect();
+            for (value_idx, &antenna_idx) in antenna_idxs.iter().enumerate() {
+                if antenna_idx >= *num_ants {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--sel-ants <ANTS>...".into(),
-                        expected: "at least one baseline matched".into(),
-                        received: format!("antenna_idxs={antenna_idxs:?}"),
+                        expected: format!("antenna_idx < num_ants={}", num_ants),
+                        received: format!(
+                            "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
+                        ),
                     }));
                 }
             }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
+            vis_sel.retain_antennas(meta_ctx, &antenna_idxs);
+            if vis_sel.baseline_idxs.is_empty() {
+                return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "--sel-ants <ANTS>...".into(),
+                    expected: "at least one baseline matched".into(),
+                    received: format!("antenna_idxs={antenna_idxs:?}"),
+                }));
+            }
         }
-        if matches.is_present("no-sel-flagged-ants") {
+
+        if matches.get_flag("no-sel-flagged-ants") {
             let flagged_antenna_idxs = flag_ctx.get_flagged_antenna_idxs();
             vis_sel.filter_antennas(meta_ctx, &flagged_antenna_idxs);
             if vis_sel.baseline_idxs.is_empty() {
@@ -906,7 +937,8 @@ impl<'a> BirliContext<'a> {
                 }));
             }
         }
-        if matches.is_present("no-sel-autos") {
+
+        if matches.get_flag("no-sel-autos") {
             vis_sel.filter_autos(meta_ctx);
             if vis_sel.baseline_idxs.is_empty() {
                 return Err(BirliError::CLIError(InvalidCommandLineArgument {
@@ -916,6 +948,7 @@ impl<'a> BirliContext<'a> {
                 }));
             }
         }
+
         Ok(vis_sel)
     }
 
@@ -925,21 +958,18 @@ impl<'a> BirliContext<'a> {
     ) -> Result<ChannelRanges, BirliError> {
         let all_chan_ranges = ChannelRanges::all(corr_ctx);
         let provided_chan_ranges = ChannelRanges::provided(corr_ctx);
-        match (matches.is_present("sel-chan-ranges"), matches.is_present("provided-chan-ranges")) {
-            (true, true) => panic!("can't use both --provided-chan-ranges and --sel-chan-ranges"),
-            (true, _) => {
-                #[allow(clippy::option_if_let_else)]
-                match matches.value_of("sel-chan-ranges") {
-                    Some(range_str) => ChannelRanges::new(range_str),
-                    None => Err(BirliError::CLIError(InvalidCommandLineArgument {
-                        option: "--sel-chan-ranges <RANGES>".into(),
-                        expected: "comma-separated ranges indexing the metafits coarse channels, e.g. 0-10,20-30".into(),
-                        received: "no value".into(),
-                    })),
-                }
-            },
+        match (
+            matches
+                .get_one::<String>("sel-chan-ranges")
+                .map(std::string::String::as_str),
+            matches.get_flag("provided-chan-ranges"),
+        ) {
+            (Some(_), true) => {
+                panic!("can't use both --provided-chan-ranges and --sel-chan-ranges")
+            }
+            (Some(range_str), _) => ChannelRanges::new(range_str),
             (_, true) => Ok(provided_chan_ranges),
-            (_, _) => Ok(all_chan_ranges),
+            _ => Ok(all_chan_ranges),
         }
     }
 
@@ -961,200 +991,154 @@ impl<'a> BirliContext<'a> {
             num_ants,
             ..
         } = meta_ctx;
-        match matches.values_of_t::<usize>("flag-times") {
-            Ok(timestep_idxs) => {
-                for (value_idx, &timestep_idx) in timestep_idxs.iter().enumerate() {
-                    if timestep_idx >= *num_timesteps {
-                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                            option: "--flag-times <TIMESTEPS>...".into(),
-                            expected: format!("timestep_idx < num_timesteps={}", *num_timesteps),
-                            received: format!(
-                                "timestep_idxs[{value_idx}]={timestep_idx}. all:{timestep_idxs:?}"
-                            ),
-                        }));
-                    }
-                    flag_ctx.timestep_flags[timestep_idx] = true;
+
+        if let Some(vals) = matches.get_many::<usize>("flag-times") {
+            let timestep_idxs: Vec<usize> = vals.copied().collect();
+            for (value_idx, &timestep_idx) in timestep_idxs.iter().enumerate() {
+                if timestep_idx >= *num_timesteps {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--flag-times <TIMESTEPS>...".into(),
+                        expected: format!("timestep_idx < num_timesteps={}", *num_timesteps),
+                        received: format!(
+                            "timestep_idxs[{value_idx}]={timestep_idx}. all:{timestep_idxs:?}"
+                        ),
+                    }));
                 }
+                flag_ctx.timestep_flags[timestep_idx] = true;
             }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
-        };
-        match matches.values_of_t::<usize>("flag-coarse-chans") {
-            Ok(coarse_chan_idxs) => {
-                for (value_idx, &coarse_chan_idx) in coarse_chan_idxs.iter().enumerate() {
-                    if coarse_chan_idx >= *num_coarse_chans {
-                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                            option: "--flag-coarse-chans <CHANS>...".into(),
-                            expected: format!(
-                                "coarse_chan_idx < num_coarse_chans={}",
-                                num_coarse_chans
-                            ),
-                            received: format!(
-                                "coarse_chan_idxs[{value_idx}]={coarse_chan_idx}. all:{coarse_chan_idxs:?}"
-                            ),
-                        }));
-                    }
-                    flag_ctx.coarse_chan_flags[coarse_chan_idx] = true;
+        }
+
+        if let Some(vals) = matches.get_many::<usize>("flag-coarse-chans") {
+            let coarse_chan_idxs: Vec<usize> = vals.copied().collect();
+            for (value_idx, &coarse_chan_idx) in coarse_chan_idxs.iter().enumerate() {
+                if coarse_chan_idx >= *num_coarse_chans {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--flag-coarse-chans <CHANS>...".into(),
+                        expected: format!(
+                            "coarse_chan_idx < num_coarse_chans={}",
+                            num_coarse_chans
+                        ),
+                        received: format!(
+                        "coarse_chan_idxs[{value_idx}]={coarse_chan_idx}. all:{coarse_chan_idxs:?}"
+                    ),
+                    }));
                 }
+                flag_ctx.coarse_chan_flags[coarse_chan_idx] = true;
             }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
-        };
-        match matches.values_of_t::<usize>("flag-fine-chans") {
-            Ok(fine_chan_idxs) => {
-                for (value_idx, &fine_chan_idx) in fine_chan_idxs.iter().enumerate() {
-                    if fine_chan_idx >= *fine_chans_per_coarse {
-                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                            option: "--flag-fine-chans <CHANS>...".into(),
-                            expected: format!(
-                                "fine_chan_idx < num_fine_chans={fine_chans_per_coarse}"
-                            ),
-                            received: format!(
-                                "fine_chan_idxs[{value_idx}]={fine_chan_idx}. all:{fine_chan_idxs:?}"
-                            ),
-                        }));
-                    }
-                    flag_ctx.fine_chan_flags[fine_chan_idx] = true;
+        }
+
+        if let Some(vals) = matches.get_many::<usize>("flag-fine-chans") {
+            let fine_chan_idxs: Vec<usize> = vals.copied().collect();
+            for (value_idx, &fine_chan_idx) in fine_chan_idxs.iter().enumerate() {
+                if fine_chan_idx >= *fine_chans_per_coarse {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--flag-fine-chans <CHANS>...".into(),
+                        expected: format!("fine_chan_idx < num_fine_chans={fine_chans_per_coarse}"),
+                        received: format!(
+                            "fine_chan_idxs[{value_idx}]={fine_chan_idx}. all:{fine_chan_idxs:?}"
+                        ),
+                    }));
                 }
+                flag_ctx.fine_chan_flags[fine_chan_idx] = true;
             }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
-        };
-        if matches.is_present("no-flag-metafits") {
+        }
+
+        if matches.get_flag("no-flag-metafits") {
             info!("Ignoring antenna flags from metafits.");
-            // set antenna flags to all false
             flag_ctx.antenna_flags = vec![false; flag_ctx.antenna_flags.len()];
         }
-        match matches.values_of_t::<usize>("flag-antennas") {
-            Ok(antenna_idxs) => {
-                for (value_idx, &antenna_idx) in antenna_idxs.iter().enumerate() {
-                    if antenna_idx >= *num_ants {
-                        return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                            option: "--flag-antennas <ANTS>...".into(),
-                            expected: format!("antenna_idx < num_ants={}", *num_ants),
-                            received: format!(
-                                "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
-                            ),
-                        }));
-                    }
-                    flag_ctx.antenna_flags[antenna_idx] = true;
+
+        if let Some(vals) = matches.get_many::<usize>("flag-antennas") {
+            let antenna_idxs: Vec<usize> = vals.copied().collect();
+            for (value_idx, &antenna_idx) in antenna_idxs.iter().enumerate() {
+                if antenna_idx >= *num_ants {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--flag-antennas <ANTS>...".into(),
+                        expected: format!("antenna_idx < num_ants={}", *num_ants),
+                        received: format!(
+                            "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
+                        ),
+                    }));
                 }
+                flag_ctx.antenna_flags[antenna_idx] = true;
             }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
-        };
-        if matches.is_present("flag-autos") {
+        }
+
+        if matches.get_flag("flag-autos") {
             flag_ctx.autos = true;
         }
-        if matches.is_present("flag-dc") {
+        if matches.get_flag("flag-dc") {
             flag_ctx.flag_dc = true;
         }
-        if matches.is_present("no-flag-dc") {
+        if matches.get_flag("no-flag-dc") {
             flag_ctx.flag_dc = false;
         }
-        match matches.value_of_t::<usize>("flag-edge-chans") {
-            Ok(n) => {
-                if n >= flag_ctx.fine_chan_flags.len() / 2 {
-                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                        option: "--flag-edge-chans <COUNT>".into(),
-                        expected: "fewer than N/2-1 fine channels".into(),
-                        received: format!("{n}"),
-                    }));
-                }
-                Self::flag_edge_channels(n, &mut flag_ctx.fine_chan_flags);
+
+        if let Some(&n) = matches.get_one::<usize>("flag-edge-chans") {
+            if n >= flag_ctx.fine_chan_flags.len() / 2 {
+                return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "--flag-edge-chans <COUNT>".into(),
+                    expected: "fewer than N/2-1 fine channels".into(),
+                    received: format!("{n}"),
+                }));
             }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
-        };
-        match matches.value_of_t::<usize>("flag-edge-width") {
-            Ok(width) => {
-                let fine_chan_width = *corr_fine_chan_width_hz / 1000;
-                let n = width as f32 / fine_chan_width as f32;
-                if (n - n.floor()).abs() > 0.00001 {
-                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                        option: "--flag-edge-width <COUNT>".into(),
-                        expected: format!("multiple of fine channel width ({fine_chan_width})"),
-                        received: format!("{width}"),
-                    }));
-                }
-                if n as usize >= flag_ctx.fine_chan_flags.len() / 2 {
-                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                        option: "--flag-edge-width <COUNT>".into(),
-                        expected: "width equal to fewer than N/2-1 fine channels".into(),
-                        received: format!("{n}"),
-                    }));
-                }
-                Self::flag_edge_channels(n as usize, &mut flag_ctx.fine_chan_flags);
+            Self::flag_edge_channels(n, &mut flag_ctx.fine_chan_flags);
+        }
+
+        if let Some(&width) = matches.get_one::<usize>("flag-edge-width") {
+            let fine_chan_width = *corr_fine_chan_width_hz / 1000;
+            let n = width as f32 / fine_chan_width as f32;
+            if (n - n.floor()).abs() > 0.00001 {
+                return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "--flag-edge-width <COUNT>".into(),
+                    expected: format!("multiple of fine channel width ({fine_chan_width})"),
+                    received: format!("{width}"),
+                }));
             }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
-        };
-        match matches.value_of_t::<f32>("flag-init") {
-            Ok(init_time) => {
-                let d = *corr_int_time_ms as f32 / 1000.0;
-                if init_time % d < 0.000001 {
-                    flag_ctx.flag_init = init_time;
-                } else {
-                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                        option: "flag-init".into(),
-                        expected: format!("A multiple of the timestep length ({d})"),
-                        received: format!("{init_time}"),
-                    }));
-                }
+            if n as usize >= flag_ctx.fine_chan_flags.len() / 2 {
+                return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "--flag-edge-width <COUNT>".into(),
+                    expected: "width equal to fewer than N/2-1 fine channels".into(),
+                    received: format!("{n}"),
+                }));
             }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
-        };
-        match matches.value_of_t::<f32>("flag-end") {
-            Ok(end_time) => {
-                let d = *corr_int_time_ms as f32 / 1000.0;
-                if end_time % d < 0.000001 {
-                    flag_ctx.flag_end = end_time;
-                } else {
-                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                        option: "flag-end".into(),
-                        expected: format!("A multiple of the timestep length ({d})"),
-                        received: format!("{end_time}"),
-                    }));
-                }
+            Self::flag_edge_channels(n as usize, &mut flag_ctx.fine_chan_flags);
+        }
+
+        if let Some(&init_time) = matches.get_one::<f32>("flag-init") {
+            let d = *corr_int_time_ms as f32 / 1000.0;
+            if init_time % d < 0.000001 {
+                flag_ctx.flag_init = init_time;
+            } else {
+                return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "flag-init".into(),
+                    expected: format!("A multiple of the timestep length ({d})"),
+                    received: format!("{init_time}"),
+                }));
             }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
-        };
-        match matches.value_of_t::<u32>("flag-init-steps") {
-            Ok(init_steps) => {
-                flag_ctx.flag_init = init_steps as f32 * *corr_int_time_ms as f32 / 1000.0;
+        }
+
+        if let Some(&end_time) = matches.get_one::<f32>("flag-end") {
+            let d = *corr_int_time_ms as f32 / 1000.0;
+            if end_time % d < 0.000001 {
+                flag_ctx.flag_end = end_time;
+            } else {
+                return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                    option: "flag-end".into(),
+                    expected: format!("A multiple of the timestep length ({d})"),
+                    received: format!("{end_time}"),
+                }));
             }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
-        };
-        match matches.value_of_t::<u32>("flag-end-steps") {
-            Ok(end_steps) => {
-                flag_ctx.flag_end = end_steps as f32 * *corr_int_time_ms as f32 / 1000.0;
-            }
-            Err(err) => match err.kind() {
-                ArgumentNotFound => {}
-                _ => return Err(err.into()),
-            },
-        };
+        }
+
+        if let Some(&init_steps) = matches.get_one::<u32>("flag-init-steps") {
+            flag_ctx.flag_init = init_steps as f32 * *corr_int_time_ms as f32 / 1000.0;
+        }
+
+        if let Some(&end_steps) = matches.get_one::<u32>("flag-end-steps") {
+            flag_ctx.flag_end = end_steps as f32 * *corr_int_time_ms as f32 / 1000.0;
+        }
+
         flag_ctx.finalise_flag_settings(corr_ctx);
         Ok(flag_ctx)
     }
@@ -1183,17 +1167,13 @@ impl<'a> BirliContext<'a> {
         } = meta_ctx;
 
         let avg_time: usize = match (
-            matches.value_of_t::<usize>("avg-time-factor"),
-            matches.value_of_t::<f64>("avg-time-res"),
+            matches.get_one::<usize>("avg-time-factor").copied(),
+            matches.get_one::<f64>("avg-time-res").copied(),
         ) {
-            // filter any errors other than ArgumentNotFound
-            (Err(err), _) | (_, Err(err)) if err.kind() != ArgumentNotFound => {
-                return Err(err.into())
-            }
-            (Ok(_), Ok(_)) => {
+            (Some(_), Some(_)) => {
                 unreachable!("--avg-time-res conflicts with --avg-time-factor, enforced by clap")
             }
-            (Ok(factor), _) => {
+            (Some(factor), _) => {
                 if factor == 0 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--avg-time-factor <FACTOR>".into(),
@@ -1203,7 +1183,7 @@ impl<'a> BirliContext<'a> {
                 }
                 factor
             }
-            (_, Ok(res)) => {
+            (_, Some(res)) => {
                 let int_time_s = *corr_int_time_ms as f64 / 1e3;
                 let ratio = res / int_time_s;
                 if ratio.is_infinite() || ratio.fract() > 1e-6 || ratio < 1.0 {
@@ -1217,18 +1197,15 @@ impl<'a> BirliContext<'a> {
             }
             _ => 1,
         };
+
         let avg_freq: usize = match (
-            matches.value_of_t::<usize>("avg-freq-factor"),
-            matches.value_of_t::<f64>("avg-freq-res"),
+            matches.get_one::<usize>("avg-freq-factor").copied(),
+            matches.get_one::<f64>("avg-freq-res").copied(),
         ) {
-            // filter any errors other than ArgumentNotFound
-            (Err(err), _) | (_, Err(err)) if err.kind() != ArgumentNotFound => {
-                return Err(err.into())
-            }
-            (Ok(_), Ok(_)) => {
+            (Some(_), Some(_)) => {
                 unreachable!("--avg-freq-res conflicts with --avg-freq-factor, enforced by clap")
             }
-            (Ok(factor), _) => {
+            (Some(factor), _) => {
                 if factor == 0 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--avg-freq-factor <FACTOR>".into(),
@@ -1238,7 +1215,7 @@ impl<'a> BirliContext<'a> {
                 }
                 factor
             }
-            (_, Ok(res)) => {
+            (_, Some(res)) => {
                 let fine_chan_width_khz = *corr_fine_chan_width_hz as f64 / 1e3;
                 let ratio = res / fine_chan_width_khz;
                 if ratio.is_infinite() || ratio.fract() > 1e-6 || ratio < 1.0 {
@@ -1254,6 +1231,7 @@ impl<'a> BirliContext<'a> {
             }
             _ => 1,
         };
+
         Ok((avg_time, avg_freq))
     }
 
@@ -1271,18 +1249,15 @@ impl<'a> BirliContext<'a> {
             num_corr_fine_chans_per_coarse: fine_chans_per_coarse,
             ..
         } = meta_ctx;
+
         let num_timesteps_per_chunk: Option<usize> = match (
-            matches.value_of_t::<usize>("time-chunk"),
-            matches.value_of_t::<f64>("max-memory"),
+            matches.get_one::<usize>("time-chunk").copied(),
+            matches.get_one::<f64>("max-memory").copied(),
         ) {
-            // filter any errors other than ArgumentNotFound
-            (Err(err), _) | (_, Err(err)) if err.kind() != ArgumentNotFound => {
-                return Err(err.into())
-            }
-            (Ok(_), Ok(_)) => {
+            (Some(_), Some(_)) => {
                 unreachable!("--time-chunk conflicts with --max-memory, enforced by clap")
             }
-            (Ok(steps), _) => {
+            (Some(steps), _) => {
                 if steps % avg_time != 0 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--time-chunk <STEPS>".into(),
@@ -1294,7 +1269,7 @@ impl<'a> BirliContext<'a> {
                 }
                 Some(steps)
             }
-            (_, Ok(mem_gib)) => {
+            (_, Some(mem_gib)) => {
                 let max_mem_bytes = mem_gib * 1024.0_f64.powi(3);
                 if max_mem_bytes < 1.0 {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
@@ -1309,10 +1284,15 @@ impl<'a> BirliContext<'a> {
                 if max_mem_bytes < bytes_selected as f64 {
                     if max_mem_bytes < bytes_per_avg_time as f64 {
                         return Err(BirliError::CLIError(InvalidCommandLineArgument {
-                            option: "--max-memory <GIBIBYTES>".into(),
-                            expected: format!("at least enough memory for an averaged timestep ({} * {:.02} = {:.02} GiB)", avg_time, bytes_per_timestep as f64 / 1024.0_f64.powi(3), bytes_per_avg_time as f64 / 1024.0_f64.powi(3)),
-                            received: format!("{}GiB", max_mem_bytes / 1024.0_f64.powi(3)),
-                        }));
+                        option: "--max-memory <GIBIBYTES>".into(),
+                        expected: format!(
+                            "at least enough memory for an averaged timestep ({} * {:.02} = {:.02} GiB)",
+                            avg_time,
+                            bytes_per_timestep as f64 / 1024.0_f64.powi(3),
+                            bytes_per_avg_time as f64 / 1024.0_f64.powi(3)
+                        ),
+                        received: format!("{}GiB", max_mem_bytes / 1024.0_f64.powi(3)),
+                    }));
                     }
                     Some((max_mem_bytes / bytes_per_avg_time as f64).floor() as usize * avg_time)
                 } else {
@@ -1322,7 +1302,6 @@ impl<'a> BirliContext<'a> {
             _ => None,
         };
 
-        // validate chunk size
         if let Some(chunk_size) = num_timesteps_per_chunk {
             info!("chunking output to {} timesteps per chunk", chunk_size);
         }
@@ -1335,7 +1314,7 @@ impl<'a> BirliContext<'a> {
         corr_ctx: &CorrelatorContext,
     ) -> Result<PreprocessContext<'a>, BirliError> {
         let mut prep_ctx = PreprocessContext {
-            draw_progress: !matches.is_present("no-draw-progress"),
+            draw_progress: !matches.get_flag("no-draw-progress"),
             ..PreprocessContext::default()
         };
         let CorrelatorContext {
@@ -1350,7 +1329,8 @@ impl<'a> BirliContext<'a> {
             deripple_applied,
             ..
         } = meta_ctx;
-        prep_ctx.array_pos = if matches.is_present("emulate-cotter") {
+
+        prep_ctx.array_pos = if matches.get_flag("emulate-cotter") {
             info!("Using array position from Cotter.");
             LatLngHeight {
                 longitude_rad: COTTER_MWA_LONGITUDE_RADIANS,
@@ -1361,21 +1341,23 @@ impl<'a> BirliContext<'a> {
             info!("Using default MWA array position.");
             LatLngHeight::mwa()
         };
+
         prep_ctx.phase_centre = match (
-            matches
-                .values_of_t::<f64>("phase-centre")
-                .map(|v| (v[0], v[1])),
-            matches.is_present("pointing-centre"),
+            matches.get_many::<f64>("phase-centre").map(|v| {
+                let v: Vec<f64> = v.copied().collect();
+                (v[0], v[1])
+            }),
+            matches.get_flag("pointing-centre"),
         ) {
-            (Err(err), _) if err.kind() != ArgumentNotFound => return Err(err.into()),
-            (Ok(_), true) => {
+            (Some(_), true) => {
                 unreachable!("--phase-centre conflicts with --pointing-centre, enforced by clap");
             }
-            (Ok((ra, dec)), _) => RADec::from_degrees(ra, dec),
+            (Some((ra, dec)), _) => RADec::from_degrees(ra, dec),
             (_, true) => RADec::from_mwalib_tile_pointing(meta_ctx),
             _ => RADec::from_mwalib_phase_or_pointing(meta_ctx),
         };
-        prep_ctx.correct_van_vleck = match (matches.is_present("van-vleck"), mwa_version) {
+
+        prep_ctx.correct_van_vleck = match (matches.get_flag("van-vleck"), mwa_version) {
             (true, MWAVersion::CorrLegacy) => true,
             (true, _) => {
                 return Err(BirliError::CLIError(InvalidCommandLineArgument {
@@ -1386,8 +1368,9 @@ impl<'a> BirliContext<'a> {
             }
             _ => false,
         };
+
         prep_ctx.correct_cable_lengths = {
-            let cable_delays_disabled = matches.is_present("no-cable-delay");
+            let cable_delays_disabled = matches.get_flag("no-cable-delay");
             info!(
                 "cable corrections: applied={:?}, disabled={}",
                 cable_delays_applied, cable_delays_disabled
@@ -1397,8 +1380,13 @@ impl<'a> BirliContext<'a> {
                 CableDelaysApplied::NoCableDelaysApplied
             ) && !cable_delays_disabled
         };
-        prep_ctx.correct_digital_gains = !matches.is_present("no-digital-gains");
-        prep_ctx.passband_gains = match matches.value_of("passband-gains") {
+
+        prep_ctx.correct_digital_gains = !matches.get_flag("no-digital-gains");
+
+        prep_ctx.passband_gains = match matches
+            .get_one::<String>("passband-gains")
+            .map(std::string::String::as_str)
+        {
             None | Some("none") => None,
             Some(g) if g == "jake" => {
                 info!("passband gains: {} (mwax, not oversampled)", g);
@@ -1441,8 +1429,9 @@ impl<'a> BirliContext<'a> {
             }
             Some(option) => panic!("unknown option for --passband-gains: {option}"),
         };
+
         prep_ctx.correct_geometry = {
-            let geometric_delays_disabled = matches.is_present("no-geometric-delay");
+            let geometric_delays_disabled = matches.get_flag("no-geometric-delay");
             info!(
                 "geometric corrections: applied={:?}, disabled={}",
                 geometric_delays_applied, geometric_delays_disabled
@@ -1450,21 +1439,19 @@ impl<'a> BirliContext<'a> {
             matches!(geometric_delays_applied, GeometricDelaysApplied::No)
                 && !geometric_delays_disabled
         };
+
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
-                prep_ctx.aoflagger_strategy = if matches.is_present("no-rfi") {
+                prep_ctx.aoflagger_strategy = if matches.get_flag("no-rfi") {
                     None
                 } else {
-                    match matches.value_of_t("aoflagger-strategy") {
-                        Err(err) if err.kind() != ArgumentNotFound => return Err(err.into()),
-                        Ok(strategy) => Some(strategy),
-                        Err(_) => Some(unsafe {
+                    matches.get_one::<String>("aoflagger-strategy").cloned().map_or_else(|| Some(unsafe {
                             cxx_aoflagger_new().FindStrategyFileMWA()
-                        }),
-                    }
+                        }), Some)
                 };
             }
         }
+
         Ok(prep_ctx)
     }
 
@@ -1510,7 +1497,7 @@ impl<'a> BirliContext<'a> {
 
         info!("{}", &result);
 
-        if matches.is_present("dry-run") {
+        if matches.get_flag("dry-run") {
             return Err(DryRun {});
         }
 
