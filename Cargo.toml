@@ -76,7 +76,7 @@ ndarray = { version = "0.16.1", features = ["approx"] }
 tempfile = "3.3"
 
 [build-dependencies]
-built = { version = "0.7", default-features = false, features = [
+built = { version = "0.8", default-features = false, features = [
     "chrono",
     "git2",
 ] }
