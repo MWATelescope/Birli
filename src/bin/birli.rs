@@ -134,7 +134,7 @@ fn main() {
 mod tests {
     use approx::assert_abs_diff_eq;
     use birli::mwalib::{
-        fits_open, fits_open_hdu, get_required_fits_key, CorrelatorContext, _get_required_fits_key,
+        _get_required_fits_key, fits_open, fits_open_hdu, get_required_fits_key, CorrelatorContext,
     };
     use tempfile::tempdir;
 
