@@ -16,27 +16,25 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
           components: rustfmt, clippy
 
       - name: Install Cargo Make
-        uses: davidB/rust-cargo-make@v1
+        run: |
+          cargo install cargo-make
 
       - name: Install Birli Dependencies
         run: |
           cargo make install_deps
 
       - name: Check semver
-        uses: obi1kenobi/cargo-semver-checks-action@v1
+        uses: obi1kenobi/cargo-semver-checks-action@v2
 
       - run: cargo package
       - uses: taiki-e/create-gh-release-action@v1

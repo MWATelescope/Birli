@@ -19,18 +19,18 @@ jobs:
     runs-on: "${{ matrix.os }}"
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
           components: "rustfmt, clippy"
+
       - name: Install Cargo Make
-        uses: davidB/rust-cargo-make@v1
+        run: |
+          cargo install cargo-make
+
       - name: Install Dependencies
         run: |
           # cargo make install_deps

@@ -3,9 +3,9 @@
 on:
   push:
     tags-ignore:
-      - '**'
+      - "**"
     branches:
-    - '**'
+      - "**"
   pull_request:
 
 name: Linux Tests
@@ -24,27 +24,21 @@ jobs:
     runs-on: "${{ matrix.os }}"
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Install cargo-make
-        uses: actions-rs/cargo@v1
-        with:
-          command: install
-          args: --debug cargo-make
+        run: |
+          cargo install --debug cargo-make
 
       - name: Install deps
-        uses: actions-rs/cargo@v1
-        with:
-          command: make
-          # if aoflagger not enabled, you only need cfitsio
-          args: install_deps${{ matrix.feature_set }}
+        # if aoflagger not enabled, you only need cfitsio
+        run: |
+          cargo make install_deps${{ matrix.feature_set }}
 
       - name: Run tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: make
-          args: test${{ matrix.feature_set }}
+        run: |
+          cargo make test${{ matrix.feature_set }}
         env:
           LD_LIBRARY_PATH: /usr/local/lib/:/usr/lib/x86_64-linux-gnu/
