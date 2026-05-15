@@ -45,8 +45,7 @@ indicatif = { version = "0.18", features = ["rayon"] }
 itertools = "0.14.0"
 lazy_static = "1.4.0"
 log = "0.4.0"
-#marlu = "0.17.0"
-marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "mwalib2" }
+marlu = "0.17.0"
 regex = "1.12"
 thiserror = "2.0"
 errorfunctions = "0.2.0"
@@ -68,10 +67,7 @@ csv = "1.1"
 float-cmp = "0.10"
 glob = "0.3"
 lexical = "7.0"
-#marlu = { path = "../Marlu", features = ["approx"] }
-marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "mwalib2", features = [
-    "approx",
-] }
+marlu = { version = "0.17.0", features = ["approx"] }
 ndarray = { version = "0.16.1", features = ["approx"] }
 tempfile = "3.3"
 
@@ -97,3 +93,7 @@ opt-level = 3
 [package.metadata.cargo-udeps.ignore]
 
 [patch.crates-io]
+#marlu = { path = "../Marlu", features = ["approx"] }
+#marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "mwalib2", features = [
+#    "approx",
+#] }

@@ -1,6 +1,6 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.19.0 (2026-05-11)
+# Version 0.19.0 (2026-05-15)
 
 * Bump to MSRV 1.85.
 * Update marlu to v0.17.0.
