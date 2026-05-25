@@ -1,6 +1,6 @@
 //! Calibrating visibilities.
 
-use crate::ndarray::{ArrayView2, ArrayViewMut3, Axis};
+use crate::ndarray::{ArrayView1, ArrayView2, ArrayViewMut3, Axis};
 use itertools::izip;
 use marlu::Jones;
 use thiserror::Error;
@@ -31,8 +31,39 @@ pub enum CalibrationError {
     },
 }
 
+/// Returns whether every channel in a tile's calibration solution contains NaN.
+fn tile_calsol_is_nan_flagged(tile_row: ArrayView1<Jones<f64>>) -> bool {
+    !tile_row.is_empty() && tile_row.iter().all(|j| j.any_nan())
+}
+
+/// Get a per-tile mask for tiles whose calibration solutions are entirely NaN.
+pub fn get_calsol_nan_flagged_tiles(calsols: ArrayView2<Jones<f64>>) -> Vec<bool> {
+    calsols
+        .axis_iter(Axis(0))
+        .map(tile_calsol_is_nan_flagged)
+        .collect()
+}
+
+/// Flag antennas whose calibration solutions are entirely NaN.
+pub fn flag_antennas_with_nan_calsols(
+    antenna_flags: &mut [bool],
+    calsols: ArrayView2<Jones<f64>>,
+) {
+    for (tile_idx, tile_row) in calsols.axis_iter(Axis(0)).enumerate() {
+        if tile_idx >= antenna_flags.len() {
+            break;
+        }
+        if tile_calsol_is_nan_flagged(tile_row) {
+            antenna_flags[tile_idx] = true;
+        }
+    }
+}
+
 /// apply a direction independent calibration solution for a single timeblock to the given
 /// visibility data
+///
+/// Baselines involving a tile marked in `flagged_tiles`, or a calibration solution containing
+/// NaN, are flagged and calibration is not applied.
 ///
 /// # Errors
 ///
@@ -51,6 +82,8 @@ pub fn apply_di_calsol(
     mut flag_array: ArrayViewMut3<bool>,
     // The tile index pairs for each selected baseline
     sel_baselines: &[(usize, usize)],
+    // Per-tile flag mask indexed by antenna/tile number (e.g. from [`FlagContext::antenna_flags`])
+    flagged_tiles: &[bool],
 ) -> Result<(), CalibrationError> {
     let di_dims = calsols.dim();
     let vis_dims = vis_array.dim();
@@ -94,6 +127,12 @@ pub fn apply_di_calsol(
             weight_array.axis_iter_mut(Axis(1)),
             flag_array.axis_iter_mut(Axis(1)),
         ) {
+            let baseline_tile_flagged = flagged_tiles
+                .get(ant1_idx)
+                .copied()
+                .unwrap_or(false)
+                || flagged_tiles.get(ant2_idx).copied().unwrap_or(false);
+
             // channel axis (chunked by channel_ratio)
             for (&sol1, &sol2, mut vis_chunk, mut weight_chunk, mut flag_chunk) in izip!(
                 calsols.index_axis(Axis(0), ant1_idx),
@@ -108,6 +147,14 @@ pub fn apply_di_calsol(
                     weight_chunk.iter_mut(),
                     flag_chunk.iter_mut()
                 ) {
+                    if baseline_tile_flagged || sol1.any_nan() || sol2.any_nan() {
+                        *flag = true;
+                        if *weight > 0. {
+                            *weight = -*weight;
+                        }
+                        continue;
+                    }
+
                     // promote
                     let vis_f64 = Jones::<f64>::from(*vis);
 
@@ -159,6 +206,7 @@ mod tests {
             weight_array.view_mut(),
             flag_array.view_mut(),
             &sel_baselines,
+            &[],
         )
         .unwrap();
 
@@ -196,6 +244,7 @@ mod tests {
             weight_array.view_mut(),
             flag_array.view_mut(),
             &sel_baselines,
+            &[],
         )
         .unwrap();
 
@@ -229,6 +278,7 @@ mod tests {
             weight_array.view_mut(),
             flag_array.view_mut(),
             &sel_baselines,
+            &[],
         )
         .unwrap();
 
@@ -269,6 +319,7 @@ mod tests {
             weight_array.view_mut(),
             flag_array.view_mut(),
             &sel_baselines,
+            &[],
         )
         .unwrap();
 
@@ -359,10 +410,144 @@ mod tests {
             weight_array.view_mut(),
             flag_array.view_mut(),
             &sel_baselines,
+            &[],
         )
         .unwrap();
 
         compare_jones!(vis_array[(0, 0, 0)], exp_vis_array[(0, 0, 0)]);
         compare_jones!(vis_array[(0, 1, 0)], exp_vis_array[(0, 1, 0)]);
+    }
+
+    /// Tiles with all-NaN calibration solutions flag all baselines involving that tile.
+    #[test]
+    fn test_apply_calsols_nan_flagged_tile() {
+        let sel_baselines = vec![(0, 0), (0, 1), (1, 1)];
+        let num_times = 1;
+        let num_chans = 2;
+
+        let mut calsols = Array2::from_shape_fn((2, num_chans), |(_, _)| Jones::identity());
+        for chan in 0..num_chans {
+            calsols[(1, chan)] = Jones::nan();
+        }
+
+        let shape = (num_times, num_chans, sel_baselines.len());
+        let mut vis_array = Array3::from_shape_fn(shape, |(_, _, bl)| {
+            Jones::<f32>::identity() * (bl + 1) as f32
+        });
+        let orig_vis_array = vis_array.clone();
+        let mut flag_array = Array3::from_shape_fn(shape, |_| false);
+        let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+
+        apply_di_calsol(
+            calsols.view(),
+            vis_array.view_mut(),
+            weight_array.view_mut(),
+            flag_array.view_mut(),
+            &sel_baselines,
+            &[false, true],
+        )
+        .unwrap();
+
+        // auto on unflagged tile 0 is calibrated
+        compare_jones!(
+            vis_array[(0, 0, 0)],
+            calsols[(0, 0)] * (Jones::<f64>::identity() * 1.) * calsols[(0, 0)].h()
+        );
+        assert!(!flag_array[(0, 0, 0)]);
+
+        // baselines involving all-NaN tile 1 are flagged without modifying visibilities
+        for chan in 0..num_chans {
+            assert!(flag_array[(0, chan, 1)]);
+            assert!(flag_array[(0, chan, 2)]);
+            assert_eq!(weight_array[(0, chan, 1)], -1.);
+            assert_eq!(weight_array[(0, chan, 2)], -1.);
+            compare_jones!(vis_array[(0, chan, 1)], orig_vis_array[(0, chan, 1)]);
+            compare_jones!(vis_array[(0, chan, 2)], orig_vis_array[(0, chan, 2)]);
+        }
+    }
+
+    /// Partially NaN calibration solutions flag only affected channels.
+    #[test]
+    fn test_apply_calsols_partial_nan_channel() {
+        let sel_baselines = vec![(0, 1)];
+        let num_times = 1;
+        let num_chans = 2;
+
+        let mut calsols =
+            Array2::from_shape_fn((2, num_chans), |(_, _)| Jones::identity() * 2.);
+        calsols[(1, 1)] = Jones::nan();
+
+        let shape = (num_times, num_chans, sel_baselines.len());
+        let mut vis_array = Array3::from_shape_fn(shape, |_| Jones::<f32>::identity());
+        let orig_vis_array = vis_array.clone();
+        let mut flag_array = Array3::from_shape_fn(shape, |_| false);
+        let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+
+        apply_di_calsol(
+            calsols.view(),
+            vis_array.view_mut(),
+            weight_array.view_mut(),
+            flag_array.view_mut(),
+            &sel_baselines,
+            &[],
+        )
+        .unwrap();
+
+        assert!(!flag_array[(0, 0, 0)]);
+        assert!(flag_array[(0, 1, 0)]);
+        compare_jones!(vis_array[(0, 0, 0)], orig_vis_array[(0, 0, 0)] * 4.);
+        compare_jones!(vis_array[(0, 1, 0)], orig_vis_array[(0, 1, 0)]);
+    }
+
+    /// User-flagged tiles skip calibration even when solutions are valid.
+    #[test]
+    fn test_apply_calsols_user_flagged_tile() {
+        let sel_baselines = vec![(0, 0), (0, 1)];
+        let num_times = 1;
+
+        let calsols = Array2::from_shape_fn((2, 1), |(_, _)| Jones::identity() * 2.);
+        let shape = (num_times, calsols.dim().1, sel_baselines.len());
+        let mut vis_array = Array3::from_shape_fn(shape, |(_, _, bl)| {
+            Jones::<f32>::identity() * (bl + 1) as f32
+        });
+        let orig_vis_array = vis_array.clone();
+        let mut flag_array = Array3::from_shape_fn(shape, |_| false);
+        let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+
+        apply_di_calsol(
+            calsols.view(),
+            vis_array.view_mut(),
+            weight_array.view_mut(),
+            flag_array.view_mut(),
+            &sel_baselines,
+            &[false, true],
+        )
+        .unwrap();
+
+        compare_jones!(
+            vis_array[(0, 0, 0)],
+            calsols[(0, 0)] * (Jones::<f64>::identity() * 1.) * calsols[(0, 0)].h()
+        );
+        assert!(!flag_array[(0, 0, 0)]);
+
+        assert!(flag_array[(0, 0, 1)]);
+        assert_eq!(weight_array[(0, 0, 1)], -1.);
+        compare_jones!(vis_array[(0, 0, 1)], orig_vis_array[(0, 0, 1)]);
+    }
+
+    #[test]
+    fn test_get_calsol_nan_flagged_tiles() {
+        let mut calsols = Array2::from_shape_fn((3, 2), |(_, _)| Jones::identity());
+        calsols[(1, 0)] = Jones::nan();
+        calsols[(1, 1)] = Jones::nan();
+        calsols[(2, 0)] = Jones::from([
+            Complex::new(f64::NAN, 0.),
+            Complex::new(0., 0.),
+            Complex::new(0., 0.),
+            Complex::new(0., 0.),
+        ]);
+
+        let flagged = get_calsol_nan_flagged_tiles(calsols.view());
+        assert_eq!(flagged, vec![false, true, false]);
     }
 }

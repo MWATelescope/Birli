@@ -182,6 +182,7 @@ impl PreprocessContext<'_> {
         mut weight_array: ArrayViewMut3<f32>,
         mut flag_array: ArrayViewMut3<bool>,
         vis_sel: &VisSelection,
+        flagged_tiles: &[bool],
     ) -> Result<(), BirliError> {
         let sel_ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
@@ -353,6 +354,7 @@ impl PreprocessContext<'_> {
                     weight_array.view_mut(),
                     flag_array.view_mut(),
                     &sel_ant_pairs,
+                    flagged_tiles,
                 )?
             );
         }
@@ -445,6 +447,7 @@ mod tests {
                 weight_array.view_mut(),
                 flag_array.view_mut(),
                 &vis_sel,
+                &[],
             )
             .unwrap();
 
@@ -522,6 +525,7 @@ mod tests {
                 weight_array.view_mut(),
                 flag_array.view_mut(),
                 &vis_sel,
+                &[],
             )
             .is_ok());
 
@@ -533,6 +537,7 @@ mod tests {
             weight_array.view_mut(),
             flag_array.view_mut(),
             &vis_sel,
+            &[],
         );
 
         assert!(matches!(result, Err(BirliError::BadMWAVersion { .. })));
@@ -635,6 +640,7 @@ mod tests {
                 weight_array.view_mut(),
                 flag_array.view_mut(),
                 &vis_sel,
+                &[],
             )
             .unwrap();
 

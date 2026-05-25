@@ -28,6 +28,7 @@ use mwalib::{
 use prettytable::{format as prettyformat, row, table};
 
 use crate::{
+    calibration::flag_antennas_with_nan_calsols,
     error::{
         BirliError::{self, BadMWAVersion, DryRun},
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
@@ -1572,7 +1573,6 @@ impl<'a> BirliContext<'a> {
         let Self {
             corr_ctx,
             vis_sel,
-            flag_ctx,
             io_ctx,
             avg_time,
             avg_freq,
@@ -1580,6 +1580,7 @@ impl<'a> BirliContext<'a> {
             ..
         } = self;
         let mut prep_ctx = self.prep_ctx.clone();
+        let mut flag_ctx = self.flag_ctx.clone();
 
         // ////////// //
         // Prepare IO //
@@ -1657,6 +1658,9 @@ impl<'a> BirliContext<'a> {
         } else {
             None
         };
+        if let Some(ref calsols) = prep_ctx.calsols {
+            flag_antennas_with_nan_calsols(&mut flag_ctx.antenna_flags, calsols.view());
+        }
 
         let args_strings = std::env::args().collect_vec();
         let cmd_line = shlex::try_join(args_strings.iter().map(String::as_str)).unwrap();
@@ -1845,6 +1849,7 @@ impl<'a> BirliContext<'a> {
                 weight_array.view_mut(),
                 flag_array.view_mut(),
                 &chunk_vis_sel,
+                &flag_ctx.antenna_flags,
             )?;
 
             // output flags (before averaging)

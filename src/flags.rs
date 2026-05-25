@@ -26,7 +26,7 @@ cfg_if! {
 }
 
 /// Which timesteps, channels and baselines are flagged in a given observation
-#[derive(Builder, Debug, Default)]
+#[derive(Builder, Clone, Debug, Default)]
 pub struct FlagContext {
     // TODO: remove _flags suffix
     /// Which mwalib timestep indices are flagged

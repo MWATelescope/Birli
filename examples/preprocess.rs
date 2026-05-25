@@ -88,6 +88,7 @@ fn main() {
             weight_array.view_mut(),
             flag_array.view_mut(),
             &vis_sel,
+            &[],
         )
         .unwrap();
 
