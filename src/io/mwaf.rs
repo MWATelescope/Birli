@@ -21,8 +21,7 @@ use marlu::{
     fitsio_sys, mwalib, ndarray, rayon, VisSelection,
 };
 use mwalib::{
-    CorrelatorContext, MWAVersion, _get_required_fits_key, _open_hdu, fits_open_hdu,
-    get_required_fits_key,
+    _get_required_fits_key, fits_open_hdu, get_required_fits_key, CorrelatorContext, MWAVersion,
 };
 use ndarray::prelude::*;
 use rayon::prelude::*;
@@ -627,7 +626,7 @@ impl FlagFileSet {
 
     #[cfg(test)]
     fn read_header(fptr: &mut FitsFile) -> Result<(FlagFileHeader, Option<u32>), ReadMwafError> {
-        use mwalib::{_get_optional_fits_key, get_optional_fits_key};
+        use mwalib::get_optional_fits_key;
 
         let hdu0 = fits_open_hdu!(fptr, 0)?;
         let version = get_required_fits_key!(fptr, &hdu0, "VERSION")?;
@@ -957,10 +956,7 @@ mod tests {
     use itertools::izip;
     use marlu::{
         fitsio,
-        mwalib::{
-            _get_optional_fits_key, _get_required_fits_key, fits_open_hdu, get_optional_fits_key,
-            get_required_fits_key,
-        },
+        mwalib::{fits_open_hdu, get_optional_fits_key, get_required_fits_key},
     };
     use std::fs::File;
     use std::path::Path;
