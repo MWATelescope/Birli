@@ -4,6 +4,7 @@
 
 - 🐛 bug fixes:
   - Fix `--flag-edge-width` to be f32 instead of usize. Fixes #192
+  - Fix NaN handling for calibration solutions. Fixes #190
 - ➕ Bump to MSRV 1.85.
 - ➕ Update marlu to v0.17.0.
 - ➕ Upgrade clap v3 -> v4.
