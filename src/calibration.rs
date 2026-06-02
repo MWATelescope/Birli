@@ -31,12 +31,12 @@ pub enum CalibrationError {
     },
 }
 
-/// Returns whether every channel in a tile's calibration solution contains NaN.
+/// Returns whether every channel in a tile's calibration solution contains at least one NaN.
 fn tile_calsol_is_nan_flagged(tile_row: ArrayView1<Jones<f64>>) -> bool {
     !tile_row.is_empty() && tile_row.iter().all(|j| j.any_nan())
 }
 
-/// Get a per-tile mask for tiles whose calibration solutions are entirely NaN.
+/// Get a per-tile mask for tiles whose calibration solutions contain NaN in every channel.
 pub fn get_calsol_nan_flagged_tiles(calsols: ArrayView2<Jones<f64>>) -> Vec<bool> {
     calsols
         .axis_iter(Axis(0))
@@ -44,7 +44,7 @@ pub fn get_calsol_nan_flagged_tiles(calsols: ArrayView2<Jones<f64>>) -> Vec<bool
         .collect()
 }
 
-/// Flag antennas whose calibration solutions are entirely NaN.
+/// Flag antennas whose calibration solutions contain NaN in every channel.
 pub fn flag_antennas_with_nan_calsols(
     antenna_flags: &mut [bool],
     calsols: ArrayView2<Jones<f64>>,
