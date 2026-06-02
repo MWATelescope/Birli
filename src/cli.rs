@@ -741,7 +741,7 @@ impl<'a> BirliContext<'a> {
             arg!(--"flag-edge-width" <KHZ> "Flag bandwidth [kHz] at the ends of each coarse chan")
                 .help_heading("FLAGGING")
                 .required(false)
-                .value_parser(clap::value_parser!(usize)),
+                .value_parser(clap::value_parser!(f32)),
             arg!(--"flag-edge-chans" <COUNT> "Flag <COUNT> fine chans on the ends of each coarse")
                 .help_heading("FLAGGING")
                 .conflicts_with("flag-edge-width")
