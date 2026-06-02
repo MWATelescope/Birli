@@ -3,7 +3,7 @@ use birli::{
     get_durations,
     BirliError::{ClapError, DryRun},
 };
-use clap::ErrorKind::{DisplayHelp, DisplayVersion};
+use clap::error::ErrorKind::{DisplayHelp, DisplayVersion};
 use log::{info, trace};
 use marlu::{Complex, Jones};
 use std::{env, ffi::OsString, fmt::Debug, time::Duration};
@@ -134,8 +134,7 @@ fn main() {
 mod tests {
     use approx::assert_abs_diff_eq;
     use birli::mwalib::{
-        _open_fits, _open_hdu, fits_open, fits_open_hdu, get_required_fits_key, CorrelatorContext,
-        _get_required_fits_key,
+        _get_required_fits_key, fits_open, fits_open_hdu, get_required_fits_key, CorrelatorContext,
     };
     use tempfile::tempdir;
 
