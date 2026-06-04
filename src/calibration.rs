@@ -45,10 +45,7 @@ pub fn get_calsol_nan_flagged_tiles(calsols: ArrayView2<Jones<f64>>) -> Vec<bool
 }
 
 /// Flag antennas whose calibration solutions contain NaN in every channel.
-pub fn flag_antennas_with_nan_calsols(
-    antenna_flags: &mut [bool],
-    calsols: ArrayView2<Jones<f64>>,
-) {
+pub fn flag_antennas_with_nan_calsols(antenna_flags: &mut [bool], calsols: ArrayView2<Jones<f64>>) {
     for (tile_idx, tile_row) in calsols.axis_iter(Axis(0)).enumerate() {
         if tile_idx >= antenna_flags.len() {
             break;
@@ -84,6 +81,8 @@ pub fn apply_di_calsol(
     sel_baselines: &[(usize, usize)],
     // Per-tile flag mask indexed by antenna/tile number (e.g. from [`FlagContext::antenna_flags`])
     flagged_tiles: &[bool],
+    // If we are emulating cotter we don't flag NaNs
+    emulate_cotter: bool,
 ) -> Result<(), CalibrationError> {
     let di_dims = calsols.dim();
     let vis_dims = vis_array.dim();
@@ -127,10 +126,7 @@ pub fn apply_di_calsol(
             weight_array.axis_iter_mut(Axis(1)),
             flag_array.axis_iter_mut(Axis(1)),
         ) {
-            let baseline_tile_flagged = flagged_tiles
-                .get(ant1_idx)
-                .copied()
-                .unwrap_or(false)
+            let baseline_tile_flagged = flagged_tiles.get(ant1_idx).copied().unwrap_or(false)
                 || flagged_tiles.get(ant2_idx).copied().unwrap_or(false);
 
             // channel axis (chunked by channel_ratio)
@@ -147,7 +143,10 @@ pub fn apply_di_calsol(
                     weight_chunk.iter_mut(),
                     flag_chunk.iter_mut()
                 ) {
-                    if baseline_tile_flagged || sol1.any_nan() || sol2.any_nan() {
+                    // ignore nans if we are emulating cotter
+                    if baseline_tile_flagged
+                        || (!emulate_cotter && (sol1.any_nan() || sol2.any_nan()))
+                    {
                         *flag = true;
                         if *weight > 0. {
                             *weight = -*weight;
@@ -162,8 +161,8 @@ pub fn apply_di_calsol(
                     *vis = Jones::<f32>::from(sol1 * vis_f64 * sol2.h());
 
                     // if the data now contains a NaN, flag it
-                    // todo: not sure about this because Cotter doesn't do it.
-                    if vis.any_nan() {
+                    // Cotter doesn't do this, so skip when emulating it.
+                    if !emulate_cotter && vis.any_nan() {
                         *flag = true;
                         if *weight > 0. {
                             *weight = -*weight;
@@ -200,6 +199,7 @@ mod tests {
         });
         let mut flag_array = Array3::from_shape_fn(shape, |_| false);
         let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+        let emulate_cotter = false;
         apply_di_calsol(
             calsols.view(),
             vis_array.view_mut(),
@@ -207,6 +207,7 @@ mod tests {
             flag_array.view_mut(),
             &sel_baselines,
             &[],
+            emulate_cotter,
         )
         .unwrap();
 
@@ -238,6 +239,7 @@ mod tests {
         });
         let mut flag_array = Array3::from_shape_fn(shape, |_| false);
         let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+        let emulate_cotter = false;
         apply_di_calsol(
             calsols.view(),
             vis_array.view_mut(),
@@ -245,6 +247,7 @@ mod tests {
             flag_array.view_mut(),
             &sel_baselines,
             &[],
+            emulate_cotter,
         )
         .unwrap();
 
@@ -272,6 +275,7 @@ mod tests {
         });
         let mut flag_array = Array3::from_shape_fn(shape, |_| false);
         let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+        let emulate_cotter = false;
         apply_di_calsol(
             calsols.view(),
             vis_array.view_mut(),
@@ -279,6 +283,7 @@ mod tests {
             flag_array.view_mut(),
             &sel_baselines,
             &[],
+            emulate_cotter,
         )
         .unwrap();
 
@@ -313,6 +318,7 @@ mod tests {
         });
         let mut flag_array = Array3::from_shape_fn(shape, |_| false);
         let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+        let emulate_cotter = false;
         apply_di_calsol(
             calsols.view(),
             vis_array.view_mut(),
@@ -320,6 +326,7 @@ mod tests {
             flag_array.view_mut(),
             &sel_baselines,
             &[],
+            emulate_cotter,
         )
         .unwrap();
 
@@ -404,6 +411,7 @@ mod tests {
         ]];
         let mut flag_array = Array3::from_shape_fn(shape, |_| false);
         let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+        let emulate_cotter = false;
         apply_di_calsol(
             calsols.view(),
             vis_array.view_mut(),
@@ -411,6 +419,7 @@ mod tests {
             flag_array.view_mut(),
             &sel_baselines,
             &[],
+            emulate_cotter,
         )
         .unwrap();
 
@@ -437,6 +446,7 @@ mod tests {
         let orig_vis_array = vis_array.clone();
         let mut flag_array = Array3::from_shape_fn(shape, |_| false);
         let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+        let emulate_cotter = false;
 
         apply_di_calsol(
             calsols.view(),
@@ -445,6 +455,7 @@ mod tests {
             flag_array.view_mut(),
             &sel_baselines,
             &[false, true],
+            emulate_cotter,
         )
         .unwrap();
 
@@ -473,8 +484,7 @@ mod tests {
         let num_times = 1;
         let num_chans = 2;
 
-        let mut calsols =
-            Array2::from_shape_fn((2, num_chans), |(_, _)| Jones::identity() * 2.);
+        let mut calsols = Array2::from_shape_fn((2, num_chans), |(_, _)| Jones::identity() * 2.);
         calsols[(1, 1)] = Jones::nan();
 
         let shape = (num_times, num_chans, sel_baselines.len());
@@ -482,6 +492,7 @@ mod tests {
         let orig_vis_array = vis_array.clone();
         let mut flag_array = Array3::from_shape_fn(shape, |_| false);
         let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+        let emulate_cotter = false;
 
         apply_di_calsol(
             calsols.view(),
@@ -490,6 +501,7 @@ mod tests {
             flag_array.view_mut(),
             &sel_baselines,
             &[],
+            emulate_cotter,
         )
         .unwrap();
 
@@ -513,6 +525,7 @@ mod tests {
         let orig_vis_array = vis_array.clone();
         let mut flag_array = Array3::from_shape_fn(shape, |_| false);
         let mut weight_array = Array3::from_shape_fn(shape, |_| 1_f32);
+        let emulate_cotter = false;
 
         apply_di_calsol(
             calsols.view(),
@@ -521,6 +534,7 @@ mod tests {
             flag_array.view_mut(),
             &sel_baselines,
             &[false, true],
+            emulate_cotter,
         )
         .unwrap();
 

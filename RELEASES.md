@@ -1,10 +1,11 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.19.0 (2026-06-02)
+# Version 0.19.0 (2026-06-05)
 
 - 🐛 bug fixes:
   - Fix `--flag-edge-width` to be f32 instead of usize. Fixes #192
   - Fix NaN handling for calibration solutions. Fixes #190
+    - `--emulate-cotter` will, in addition to using cotter's array positions, will also NOT flag NaN calibration solutions when passing `--apply-di-cal`.
 - ➕ Bump to MSRV 1.85.
 - ➕ Update marlu to v0.17.0.
 - ➕ Upgrade clap v3 -> v4.

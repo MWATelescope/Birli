@@ -79,6 +79,7 @@ fn main() {
         calsols: None,
         #[cfg(feature = "aoflagger")]
         aoflagger_strategy: None,
+        emulate_cotter: args.contains(&"--emulate-cotter".to_string()),
     };
 
     prep_ctx

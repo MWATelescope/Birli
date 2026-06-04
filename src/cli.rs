@@ -663,7 +663,7 @@ impl<'a> BirliContext<'a> {
                 .required(false),
             arg!(--"pointing-centre" "Use pointing instead phase centre")
                 .conflicts_with("phase-centre"),
-            arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's"),
+            arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's. Also, Birli will not flag NaNs when applying calibration solutions."),
             arg!(--"dry-run" "Just print the summary and exit"),
             arg!(--"no-draw-progress" "do not show progress bars"),
 
@@ -1316,6 +1316,7 @@ impl<'a> BirliContext<'a> {
     ) -> Result<PreprocessContext<'a>, BirliError> {
         let mut prep_ctx = PreprocessContext {
             draw_progress: !matches.get_flag("no-draw-progress"),
+            emulate_cotter: matches.get_flag("emulate-cotter"),
             ..PreprocessContext::default()
         };
         let CorrelatorContext {

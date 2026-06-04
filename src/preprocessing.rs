@@ -60,6 +60,10 @@ pub struct PreprocessContext<'a> {
     /// Whether to draw progress bars
     #[builder(default = "true")]
     pub draw_progress: bool,
+
+    /// Should we emulate cotter OR flag NaNs when applying cal solutions
+    #[builder(default = "false")]
+    pub emulate_cotter: bool,
 }
 
 impl Display for PreprocessContext<'_> {
@@ -355,6 +359,7 @@ impl PreprocessContext<'_> {
                     flag_array.view_mut(),
                     &sel_ant_pairs,
                     flagged_tiles,
+                    self.emulate_cotter
                 )?
             );
         }
