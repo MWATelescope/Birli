@@ -66,6 +66,7 @@ pub fn flag_antennas_with_nan_calsols(antenna_flags: &mut [bool], calsols: Array
 ///
 /// calsols should have the same number of channels as `vis_array`, `flag_array`, `weight_array` etc.
 ///
+#[allow(clippy::too_many_arguments)]
 pub fn apply_di_calsol(
     // a two dimensional array of jones matrix calibration solutions with
     // dimensions `[tile][channel]`
