@@ -34,7 +34,7 @@ descriptor for the speed which this library intends to deliver.
 
 ### Prerequisites
 
-- A Rust compiler with a version >= 1.65.0 - <https://www.rust-lang.org/tools/install>
+- A Rust compiler with a version >= 1.85.0 - <https://www.rust-lang.org/tools/install>
 - [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0
   (Ubuntu > 21.04: apt install aoflagger-dev)
 - [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49
@@ -428,7 +428,7 @@ USAGE:
 OPTIONS:
         --apply-di-cal <PATH>        Apply DI calibration solutions before averaging
         --dry-run                    Just print the summary and exit
-        --emulate-cotter             Use Cotter's array position, not MWAlib's
+        --emulate-cotter             Use Cotter's array position, not MWAlib's. Also, Birli will not flag NaNs when applying calibration solutions.
     -h, --help                       Print help information
         --no-draw-progress           do not show progress bars
         --phase-centre <RA> <DEC>    Override Phase centre from metafits (degrees)

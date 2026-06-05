@@ -6,10 +6,10 @@
   - Fix `--flag-edge-width` to be f32 instead of usize. Fixes #192
   - Fix NaN handling for calibration solutions. Fixes #190
     - `--emulate-cotter` will, in addition to using cotter's array positions, will also NOT flag NaN calibration solutions when passing `--apply-di-cal`.
-- ➕ Bump to MSRV 1.85.
-- ➕ Update marlu to v0.17.0.
+- ➕ Bump to MSRV 1.85.0.
+- ➕ Update marlu to v0.17.1.
 - ➕ Upgrade clap v3 -> v4.
-- ➕ Migrate macos CI to use macos-15 (arm64) and macos-15-intel (x64) and updated action versions.
+- ➕ Migrate macos CI to use macos-15 and macos-26 (arm64) and macos-15-intel / macos-26-intel (x64) and updated action versions.
 
 # Version 0.18.2 (2025-09-11)
 

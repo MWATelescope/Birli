@@ -13,7 +13,7 @@ authors = [
 ]
 edition = "2021"
 # before updating me, grep for other instances of this version number
-rust-version = "1.85"
+rust-version = "1.85.0"
 license = "MPL-2.0"
 keywords = ["radioastronomy", "mwa", "astronomy", "aoflagger", "cotter"]
 categories = ["science", "parsing"]
@@ -45,7 +45,7 @@ indicatif = { version = "0.18", features = ["rayon"] }
 itertools = "0.14.0"
 lazy_static = "1.4.0"
 log = "0.4.0"
-marlu = "0.17.0"
+marlu = "0.17.1"
 regex = "1.12"
 thiserror = "2.0"
 errorfunctions = "0.2.0"
@@ -67,7 +67,7 @@ csv = "1.1"
 float-cmp = "0.10"
 glob = "0.3"
 lexical = "7.0"
-marlu = { version = "0.17.0", features = ["approx"] }
+marlu = { version = "0.17.1", features = ["approx"] }
 ndarray = { version = "0.16.1", features = ["approx"] }
 tempfile = "3.3"
 
