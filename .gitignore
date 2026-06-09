@@ -20,3 +20,6 @@ tags
 /.history/
 tests/data/__pycache__/common.cpython-38.pyc
 .vscode/*
+
+# This prevents the release CI failing due to left over files from the semver check
+semver-checks/target/
