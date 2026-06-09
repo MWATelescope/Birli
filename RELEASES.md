@@ -1,6 +1,6 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.19.0 (2026-06-05)
+# Version 0.19.0 (2026-06-09)
 
 - 🐛 bug fixes:
   - Fix `--flag-edge-width` to be f32 instead of usize. Fixes #192
