@@ -37,7 +37,7 @@ RUN apt-get update \
 
 ARG CFITSIO_VERSION=3.49
 RUN cd / && \
-    wget https://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz && \
+    wget https://ftp.eso.org/pub/dfs/pipelines/libraries/cfitsio/cfitsio-3.49.tar.gz && \
     tar -zxvf cfitsio-3.49.tar.gz && \
     cd cfitsio-3.49/ && \
     CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2 && \
