@@ -9,7 +9,7 @@
 - ➕ Bump to MSRV 1.85.0.
 - ➕ Update marlu to v0.17.1.
 - ➕ Upgrade clap v3 -> v4.
-- ➕ Migrate macos CI to use macos-15 and macos-26 (arm64) and macos-15-intel / macos-26-intel (x64) and updated action versions.
+- ➕ Migrate macos CI to use macos-15 (arm64) and macos-15-intel (x64) and updated action versions.
 
 # Version 0.18.2 (2025-09-11)
 
