@@ -1,5 +1,9 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Version 0.19.1 (2026-07-15)
+
+- ➕ Update marlu to v0.18.0.
+
 # Version 0.19.0 (2026-06-09)
 
 - 🐛 bug fixes:
