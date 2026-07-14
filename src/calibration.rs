@@ -471,8 +471,8 @@ mod tests {
         for chan in 0..num_chans {
             assert!(flag_array[(0, chan, 1)]);
             assert!(flag_array[(0, chan, 2)]);
-            assert_eq!(weight_array[(0, chan, 1)], -1.);
-            assert_eq!(weight_array[(0, chan, 2)], -1.);
+            assert_abs_diff_eq!(weight_array[(0, chan, 1)], -1.);
+            assert_abs_diff_eq!(weight_array[(0, chan, 2)], -1.);
             compare_jones!(vis_array[(0, chan, 1)], orig_vis_array[(0, chan, 1)]);
             compare_jones!(vis_array[(0, chan, 2)], orig_vis_array[(0, chan, 2)]);
         }
@@ -546,7 +546,7 @@ mod tests {
         assert!(!flag_array[(0, 0, 0)]);
 
         assert!(flag_array[(0, 0, 1)]);
-        assert_eq!(weight_array[(0, 0, 1)], -1.);
+        assert_abs_diff_eq!(weight_array[(0, 0, 1)], -1.);
         compare_jones!(vis_array[(0, 0, 1)], orig_vis_array[(0, 0, 1)]);
     }
 

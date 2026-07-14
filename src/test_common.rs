@@ -404,8 +404,8 @@ pub fn compare_uvfits_with_csv(
                                 pol,
                                 pol_idx,
                                 vis_idx,
-                                &obs_pol_vis,
-                                &exp_pol_vis
+                                obs_pol_vis,
+                                exp_pol_vis
                             );
                         }
                     }
@@ -448,8 +448,8 @@ pub fn compare_uvfits_with_csv(
                                 pol,
                                 pol_idx,
                                 weight_idx,
-                                &obs_pol_weight,
-                                &exp_pol_weight
+                                obs_pol_weight,
+                                exp_pol_weight
                             );
                         }
                     }
@@ -615,8 +615,8 @@ pub fn compare_ms_with_csv(
                                   pol,
                                   pol_idx,
                                   vis_idx,
-                                  &obs_pol_vis,
-                                  &exp_pol_vis
+                                  obs_pol_vis,
+                                  exp_pol_vis
                               );
                         }
                     }
@@ -658,8 +658,8 @@ pub fn compare_ms_with_csv(
                                   pol,
                                   pol_idx,
                                   weight_idx,
-                                  &obs_pol_weight,
-                                  &exp_pol_weight
+                                  obs_pol_weight,
+                                  exp_pol_weight
                               );
                         }
                     }
@@ -699,8 +699,8 @@ pub fn compare_ms_with_csv(
                                   pol,
                                   pol_idx,
                                   flag_idx,
-                                  &obs_pol_flag,
-                                  &exp_pol_flag
+                                  obs_pol_flag,
+                                  exp_pol_flag
                               );
                         }
                     }
