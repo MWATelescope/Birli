@@ -5,7 +5,7 @@ on:
     tags-ignore:
       - "**"
     branches:
-      - "**"
+      - main
   pull_request: null
 jobs:
   test:
@@ -41,13 +41,14 @@ jobs:
           for f in $(find /usr/local/bin -type l -print); do \
             (readlink $f | grep -q -s "/Library") && echo Removing "$f" && rm -f "$f"; \
           done
-          INSTALL="brew install"
-          [ "${{ matrix.os }}" == "macos-15" ] && INSTALL="arch -arm64 brew install"
-          $INSTALL mwatelescope/tap/aoflagger
-          echo "DYLD_FALLBACK_LIBRARY_PATH=$(brew --prefix)/lib/" >> $GITHUB_ENV
-          echo "AOFLAGGER_LIB=$(brew --prefix)/lib/" >> $GITHUB_ENV
-          echo "AOFLAGGER_INCLUDE_DIR=$(brew --prefix)/include/" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig/" >> $GITHUB_ENV
+          BREW="brew"
+          [ "${{ matrix.os }}" == "macos-15" ] && BREW="arch -arm64 brew"
+          $BREW trust mwatelescope/tap
+          $BREW install mwatelescope/tap/aoflagger
+          echo "DYLD_FALLBACK_LIBRARY_PATH=$($BREW --prefix)/lib/" >> $GITHUB_ENV
+          echo "AOFLAGGER_LIB=$($BREW --prefix)/lib/" >> $GITHUB_ENV
+          echo "AOFLAGGER_INCLUDE_DIR=$($BREW --prefix)/include/" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$($BREW --prefix)/lib/pkgconfig/" >> $GITHUB_ENV
       - name: Run tests
         run: |
           cargo make test_no_default

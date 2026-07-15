@@ -258,11 +258,11 @@ impl Display for BirliContext<'_> {
             self.corr_ctx.metafits_context.obs_name
         )?;
 
-        writeln!(f, "Array position:       {}", &self.prep_ctx.array_pos)?;
-        writeln!(f, "Phase centre:         {}", &self.prep_ctx.phase_centre)?;
+        writeln!(f, "Array position:       {}", self.prep_ctx.array_pos)?;
+        writeln!(f, "Phase centre:         {}", self.prep_ctx.phase_centre)?;
         let pointing_centre = RADec::from_mwalib_tile_pointing(&self.corr_ctx.metafits_context);
         if pointing_centre != self.prep_ctx.phase_centre {
-            writeln!(f, "Pointing centre:      {}", &pointing_centre)?;
+            writeln!(f, "Pointing centre:      {}", pointing_centre)?;
         }
 
         let coarse_chan_flag_idxs: Vec<usize> = self
@@ -617,7 +617,7 @@ impl Display for BirliContext<'_> {
             avg_mem_per_timestep_gib * num_avg_timesteps as f64,
         )?;
 
-        writeln!(f, "Preprocessing Context: \n{}", &self.prep_ctx)?;
+        writeln!(f, "Preprocessing Context: \n{}", self.prep_ctx)?;
 
         Ok(())
     }
@@ -1470,14 +1470,14 @@ impl<'a> BirliContext<'a> {
         I: IntoIterator<Item = T> + Debug,
         T: Into<OsString> + Clone,
     {
-        debug!("args:\n{:?}", &args);
+        debug!("args:\n{:?}", args);
 
         let matches = Self::get_matches(args)?;
-        trace!("arg matches:\n{:?}", &matches);
+        trace!("arg matches:\n{:?}", matches);
 
         let io_ctx = Self::parse_io_matches(&matches);
         let corr_ctx = io_ctx.get_corr_ctx()?;
-        debug!("mwalib correlator context:\n{}", &corr_ctx);
+        debug!("mwalib correlator context:\n{}", corr_ctx);
         let flag_ctx = Self::parse_flag_matches(&corr_ctx, &matches)?;
         let vis_sel = Self::parse_vis_sel_matches(&corr_ctx, &flag_ctx, &matches)?;
         let prep_ctx = Self::parse_prep_matches(&matches, &corr_ctx)?;
@@ -1497,7 +1497,7 @@ impl<'a> BirliContext<'a> {
             channel_range_sel,
         };
 
-        info!("{}", &result);
+        info!("{}", result);
 
         if matches.get_flag("dry-run") {
             return Err(DryRun {});
@@ -3277,7 +3277,7 @@ mod tests_aoflagger {
             metafits_path
         );
 
-        let display = format!("{}", &birli_ctx);
+        let display = format!("{}", birli_ctx);
         assert!(display.contains("high_2019B_2458765_EOR0"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
@@ -3839,7 +3839,7 @@ mod tests_aoflagger {
             Some(ms_path.to_str().unwrap().into())
         );
 
-        let display = format!("{}", &birli_ctx);
+        let display = format!("{}", birli_ctx);
         assert!(display.contains("Will correct digital gains"));
         assert!(display.contains("Will not flag with aoflagger"));
 
@@ -3931,7 +3931,7 @@ mod tests_aoflagger {
             Some(ms_path.to_str().unwrap().into())
         );
 
-        let display = format!("{}", &birli_ctx);
+        let display = format!("{}", birli_ctx);
         assert!(display.contains("Will correct coarse pfb passband gains"));
 
         let comment = birli_ctx.prep_ctx.as_comment();
@@ -4013,7 +4013,7 @@ mod tests_aoflagger {
             Some(ms_path.to_str().unwrap().into())
         );
 
-        let display = format!("{}", &birli_ctx);
+        let display = format!("{}", birli_ctx);
         assert!(display.contains("Will correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
         assert!(display.contains("Will not correct coarse pfb passband gains"));
@@ -4284,7 +4284,7 @@ mod tests_aoflagger {
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
             "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
         ];
-        println!("{:?}", &args);
+        println!("{:?}", args);
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -4298,7 +4298,7 @@ mod tests_aoflagger {
             metafits_path.display().to_string()
         );
 
-        let display = format!("{}", &birli_ctx);
+        let display = format!("{}", birli_ctx);
         assert!(display.contains("Will not correct Van Vleck"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
@@ -4357,7 +4357,7 @@ mod tests_aoflagger {
             "--flag-init", "0",
             "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
         ];
-        println!("{:?}", &args);
+        println!("{:?}", args);
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -4371,7 +4371,7 @@ mod tests_aoflagger {
             metafits_path.display().to_string()
         );
 
-        let display = format!("{}", &birli_ctx);
+        let display = format!("{}", birli_ctx);
         assert!(display.contains("Will not correct Van Vleck"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
@@ -4431,7 +4431,7 @@ mod tests_aoflagger {
             "--flag-init", "0",
             "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
         ];
-        println!("{:?}", &args);
+        println!("{:?}", args);
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -4445,7 +4445,7 @@ mod tests_aoflagger {
             metafits_path
         );
 
-        let display = format!("{}", &birli_ctx);
+        let display = format!("{}", birli_ctx);
         assert!(display.contains("Will correct Van Vleck"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));

@@ -903,8 +903,8 @@ mod tests_aoflagger {
                     "cells don't match in row {}, vis index {}. observed: {:?} != expected: {:?}",
                     row_idx,
                     vis_idx,
-                    &obs_vis,
-                    &exp_vis
+                    obs_vis,
+                    exp_vis
                 );
             }
         }

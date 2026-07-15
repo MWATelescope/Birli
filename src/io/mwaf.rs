@@ -1154,7 +1154,7 @@ mod tests {
                 .unwrap()
                 .read_key(&mut fptr, "GPSTIME")
                 .unwrap();
-            assert!((gpstime - 1247842824.0).abs() < f64::EPSILON);
+            assert_abs_diff_eq!(gpstime, 1247842824.0);
 
             let cotver: String = fptr
                 .primary_hdu()
