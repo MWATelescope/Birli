@@ -48,6 +48,9 @@ pub struct PreprocessContext<'a> {
     pub passband_gains: Option<&'a [f64]>,
     /// The calibration solutions to apply
     pub calsols: Option<Array2<Jones<f64>>>,
+    /// When applying DI cal, rewrite Jones amplitudes to 1 (phase-only)
+    #[builder(default = "false")]
+    pub no_apply_amps: bool,
     /// Whether geometric corrections are enabled
     #[builder(default = "true")]
     pub correct_geometry: bool,
@@ -122,6 +125,11 @@ impl Display for PreprocessContext<'_> {
                 "Will not"
             }
         )?;
+        if self.no_apply_amps {
+            writeln!(f, "Will apply DI calibration phases only (no amps).")?;
+        } else if self.calsols.is_some() {
+            writeln!(f, "Will apply DI calibration.")?;
+        }
         Ok(())
     }
 }
@@ -156,6 +164,13 @@ impl PreprocessContext<'_> {
                 .map(|strategy| format!("aoflagging with {strategy}")),
             if self.correct_geometry {
                 Some("geometric corrections".to_string())
+            } else {
+                None
+            },
+            if self.no_apply_amps {
+                Some("phase-only DI calibration".to_string())
+            } else if self.calsols.is_some() {
+                Some("DI calibration".to_string())
             } else {
                 None
             },
