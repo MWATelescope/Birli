@@ -125,10 +125,12 @@ impl Display for PreprocessContext<'_> {
                 "Will not"
             }
         )?;
-        if self.no_apply_amps {
-            writeln!(f, "Will apply DI calibration phases only (no amps).")?;
-        } else if self.calsols.is_some() {
-            writeln!(f, "Will apply DI calibration.")?;
+        if self.calsols.is_some() {
+            if self.no_apply_amps {
+                writeln!(f, "Will apply DI calibration phases only (no amps).")?;
+            } else {
+                writeln!(f, "Will apply DI calibration.")?;
+            }
         }
         Ok(())
     }
