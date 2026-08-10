@@ -28,7 +28,7 @@ use mwalib::{
 use prettytable::{format as prettyformat, row, table};
 
 use crate::{
-    calibration::flag_antennas_with_nan_calsols,
+    calibration::{calsols_phase_only, flag_antennas_with_nan_calsols},
     error::{
         BirliError::{self, BadMWAVersion, DryRun},
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
@@ -808,7 +808,11 @@ impl<'a> BirliContext<'a> {
             arg!(--"apply-di-cal" <PATH> "Apply DI calibration solutions before averaging")
                 .required(false)
                 .value_hint(FilePath)
-                .value_parser(clap::value_parser!(PathBuf)),
+                .value_parser(clap::value_parser!(PathBuf))
+                .help_heading("CALIBRATION"),
+            arg!(--"no-apply-amps" "Apply DI cal phases only (unit amplitude Jones)")
+                .requires("apply-di-cal")
+                .help_heading("CALIBRATION"),
 
             // averaging
             arg!(--"avg-time-res" <SECONDS> "Time resolution of averaged data")
@@ -1317,6 +1321,7 @@ impl<'a> BirliContext<'a> {
         let mut prep_ctx = PreprocessContext {
             draw_progress: !matches.get_flag("no-draw-progress"),
             emulate_cotter: matches.get_flag("emulate-cotter"),
+            no_apply_amps: matches.get_flag("no-apply-amps"),
             ..PreprocessContext::default()
         };
         let CorrelatorContext {
@@ -1645,17 +1650,19 @@ impl<'a> BirliContext<'a> {
                 }));
             }
             let num_calsol_fine_chans_per_coarse = calsol_chans / corr_ctx.num_coarse_chans;
-            Some(
-                calsols
-                    .di_jones
-                    .index_axis(Axis(0), 0)
-                    .slice(s![
-                        ..,
-                        (vis_sel.coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
-                            ..(vis_sel.coarse_chan_range.end * num_calsol_fine_chans_per_coarse)
-                    ])
-                    .to_owned(),
-            )
+            let mut di_calsols = calsols
+                .di_jones
+                .index_axis(Axis(0), 0)
+                .slice(s![
+                    ..,
+                    (vis_sel.coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
+                        ..(vis_sel.coarse_chan_range.end * num_calsol_fine_chans_per_coarse)
+                ])
+                .to_owned();
+            if prep_ctx.no_apply_amps {
+                di_calsols = calsols_phase_only(di_calsols.view());
+            }
+            Some(di_calsols)
         } else {
             None
         };
@@ -2574,6 +2581,52 @@ mod argparse_tests {
             Err(e) => panic!("expected missing required argument error, not {e}"),
             Ok(_) => panic!("expected error, but got Ok(_)"),
         }
+    }
+
+    #[test]
+    fn test_no_apply_amps_requires_apply_di_cal() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--no-apply-amps",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        match BirliContext::from_args(&args) {
+            Err(BirliError::ClapError(inner)) => assert!(matches!(
+                inner.kind(),
+                clap::error::ErrorKind::MissingRequiredArgument
+            )),
+            Err(e) => panic!("expected missing required argument error, not {e}"),
+            Ok(_) => panic!("expected error, but got Ok(_)"),
+        }
+    }
+
+    #[test]
+    fn test_no_apply_amps_parses_with_apply_di_cal() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--no-draw-progress",
+            "--apply-di-cal", "tests/data/1254670392_avg/1254690096.bin",
+            "--no-apply-amps",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+        assert!(birli_ctx.prep_ctx.no_apply_amps);
+        assert!(birli_ctx.io_ctx.aocalsols_in.is_some());
+        assert!(birli_ctx
+            .prep_ctx
+            .as_comment()
+            .contains("phase-only DI calibration"));
     }
 
     #[test]

@@ -77,6 +77,7 @@ fn main() {
         draw_progress: false,
         passband_gains: None,
         calsols: None,
+        no_apply_amps: false,
         #[cfg(feature = "aoflagger")]
         aoflagger_strategy: None,
         emulate_cotter: args.contains(&"--emulate-cotter".to_string()),

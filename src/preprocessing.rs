@@ -1,6 +1,6 @@
 //! Crate for preprocessing visibilities
 use crate::{
-    calibration::apply_di_calsol,
+    calibration::{apply_di_calsol, calsols_phase_only},
     correct_cable_lengths, correct_geometry,
     corrections::{correct_coarse_passband_gains, correct_digital_gains, ScrunchType},
     flags::get_unflagged_timestep_ranges,
@@ -48,6 +48,9 @@ pub struct PreprocessContext<'a> {
     pub passband_gains: Option<&'a [f64]>,
     /// The calibration solutions to apply
     pub calsols: Option<Array2<Jones<f64>>>,
+    /// When applying DI cal, rewrite Jones amplitudes to 1 (phase-only)
+    #[builder(default = "false")]
+    pub no_apply_amps: bool,
     /// Whether geometric corrections are enabled
     #[builder(default = "true")]
     pub correct_geometry: bool,
@@ -122,6 +125,13 @@ impl Display for PreprocessContext<'_> {
                 "Will not"
             }
         )?;
+        if self.calsols.is_some() {
+            if self.no_apply_amps {
+                writeln!(f, "Will apply DI calibration phases only (no amps).")?;
+            } else {
+                writeln!(f, "Will apply DI calibration.")?;
+            }
+        }
         Ok(())
     }
 }
@@ -156,6 +166,13 @@ impl PreprocessContext<'_> {
                 .map(|strategy| format!("aoflagging with {strategy}")),
             if self.correct_geometry {
                 Some("geometric corrections".to_string())
+            } else {
+                None
+            },
+            if self.no_apply_amps {
+                Some("phase-only DI calibration".to_string())
+            } else if self.calsols.is_some() {
+                Some("DI calibration".to_string())
             } else {
                 None
             },
@@ -350,10 +367,16 @@ impl PreprocessContext<'_> {
 
         if let Some(ref calsols) = self.calsols {
             trace!("applying calibration solutions");
+            let phase_only_calsols = self
+                .no_apply_amps
+                .then(|| calsols_phase_only(calsols.view()));
+            let calsols_to_apply = phase_only_calsols
+                .as_ref()
+                .map_or_else(|| calsols.view(), marlu::ndarray::ArrayBase::view);
             with_increment_duration!(
                 "calibrate",
                 apply_di_calsol(
-                    calsols.view(),
+                    calsols_to_apply,
                     jones_array.view_mut(),
                     weight_array.view_mut(),
                     flag_array.view_mut(),

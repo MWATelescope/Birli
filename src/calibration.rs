@@ -1,6 +1,9 @@
 //! Calibrating visibilities.
 
-use crate::ndarray::{ArrayView1, ArrayView2, ArrayViewMut3, Axis};
+use crate::{
+    ndarray::{Array2, ArrayView1, ArrayView2, ArrayViewMut3, Axis},
+    Complex,
+};
 use itertools::izip;
 use marlu::Jones;
 use thiserror::Error;
@@ -54,6 +57,34 @@ pub fn flag_antennas_with_nan_calsols(antenna_flags: &mut [bool], calsols: Array
             antenna_flags[tile_idx] = true;
         }
     }
+}
+
+/// Unit-amplitude Jones: `z → z/|z|` for `|z|>0`; XX/YY with `|z|==0` → `1`;
+/// XY/YX with `|z|==0` → `0`; NaN unchanged.
+pub fn jones_phase_only(j: Jones<f64>) -> Jones<f64> {
+    let mut out = [Complex::new(0., 0.); 4];
+    for (i, z) in j.iter().enumerate() {
+        if z.re.is_nan() || z.im.is_nan() {
+            out[i] = *z;
+            continue;
+        }
+        let amp = z.norm();
+        if amp > 0. {
+            out[i] = *z / amp;
+        } else if i == 0 || i == 3 {
+            // Diagonal zero amplitude has undefined phase → identity.
+            out[i] = Complex::new(1., 0.);
+        } else {
+            // Off-diagonal zeros stay zero (do not invent a phase).
+            out[i] = Complex::new(0., 0.);
+        }
+    }
+    Jones::from(out)
+}
+
+/// Rewrite each Jones in a cal-sol array to unit amplitude, preserving phase.
+pub fn calsols_phase_only(calsols: ArrayView2<Jones<f64>>) -> Array2<Jones<f64>> {
+    calsols.mapv(jones_phase_only)
 }
 
 /// apply a direction independent calibration solution for a single timeblock to the given
@@ -564,5 +595,150 @@ mod tests {
 
         let flagged = get_calsol_nan_flagged_tiles(calsols.view());
         assert_eq!(flagged, vec![false, true, false]);
+    }
+
+    #[test]
+    fn test_jones_phase_only_diagonal_preserves_phase() {
+        let phase = std::f64::consts::FRAC_PI_4;
+        let amp = 3.5;
+        let xx = Complex::from_polar(amp, phase);
+        let yy = Complex::from_polar(amp * 2., -phase);
+        let j = Jones::from([xx, Complex::new(0., 0.), Complex::new(0., 0.), yy]);
+        let po = jones_phase_only(j);
+
+        assert_abs_diff_eq!(po[0].norm(), 1.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(po[3].norm(), 1.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(po[0].arg(), phase, epsilon = 1e-12);
+        assert_abs_diff_eq!(po[3].arg(), -phase, epsilon = 1e-12);
+        assert_eq!(po[1], Complex::new(0., 0.));
+        assert_eq!(po[2], Complex::new(0., 0.));
+
+        // Apply to identity vis: amplitude matches uncalibrated; only phase rotates.
+        let vis = Jones::<f64>::identity();
+        let mut vis_full = Array3::from_elem((1, 1, 1), Jones::<f32>::from(vis));
+        let mut vis_po = vis_full.clone();
+        let mut weight = Array3::from_elem((1, 1, 1), 1_f32);
+        let mut flag = Array3::from_elem((1, 1, 1), false);
+        let calsols = Array2::from_elem((1, 1), j);
+        let calsols_po = calsols_phase_only(calsols.view());
+        apply_di_calsol(
+            calsols.view(),
+            vis_full.view_mut(),
+            weight.view_mut(),
+            flag.view_mut(),
+            &[(0, 0)],
+            &[],
+            false,
+        )
+        .unwrap();
+        apply_di_calsol(
+            calsols_po.view(),
+            vis_po.view_mut(),
+            weight.view_mut(),
+            flag.view_mut(),
+            &[(0, 0)],
+            &[],
+            false,
+        )
+        .unwrap();
+
+        assert_abs_diff_eq!(vis_po[(0, 0, 0)][0].norm() as f64, 1.0, epsilon = 1e-5);
+        assert_abs_diff_eq!(vis_po[(0, 0, 0)][3].norm() as f64, 1.0, epsilon = 1e-5);
+        // Full apply scales XX by |Jxx|^2 for auto.
+        assert_abs_diff_eq!(
+            vis_full[(0, 0, 0)][0].norm() as f64,
+            amp * amp,
+            epsilon = 1e-5
+        );
+    }
+
+    #[test]
+    fn test_phase_only_vs_full_apply_amplitudes_differ() {
+        let j = Jones::from([
+            Complex::from_polar(2.0, 0.3),
+            Complex::new(0., 0.),
+            Complex::new(0., 0.),
+            Complex::from_polar(1.5, -0.2),
+        ]);
+        let vis0 = Jones::from([
+            Complex::new(4., 1.),
+            Complex::new(0.5, 0.25),
+            Complex::new(0.25, -0.5),
+            Complex::new(3., -1.),
+        ]);
+        let calsols = Array2::from_elem((1, 1), j);
+        let calsols_po = calsols_phase_only(calsols.view());
+
+        let mut vis_full = Array3::from_elem((1, 1, 1), Jones::<f32>::from(vis0));
+        let mut vis_po = vis_full.clone();
+        let mut weight = Array3::from_elem((1, 1, 1), 1_f32);
+        let mut flag = Array3::from_elem((1, 1, 1), false);
+
+        apply_di_calsol(
+            calsols.view(),
+            vis_full.view_mut(),
+            weight.view_mut(),
+            flag.view_mut(),
+            &[(0, 0)],
+            &[],
+            false,
+        )
+        .unwrap();
+        apply_di_calsol(
+            calsols_po.view(),
+            vis_po.view_mut(),
+            weight.view_mut(),
+            flag.view_mut(),
+            &[(0, 0)],
+            &[],
+            false,
+        )
+        .unwrap();
+
+        // Amplitudes differ when |J| ≠ 1.
+        assert!(
+            (vis_full[(0, 0, 0)][0].norm() - vis_po[(0, 0, 0)][0].norm()).abs() > 0.1,
+            "full vs phase-only XX amplitudes should differ"
+        );
+        // Phase-only keeps visibility amplitude (auto: |J|=1 ⇒ |vis'| = |vis|).
+        assert_abs_diff_eq!(
+            vis_po[(0, 0, 0)][0].norm() as f64,
+            vis0[0].norm(),
+            epsilon = 1e-5
+        );
+        assert_abs_diff_eq!(
+            vis_po[(0, 0, 0)][3].norm() as f64,
+            vis0[3].norm(),
+            epsilon = 1e-5
+        );
+    }
+
+    #[test]
+    fn test_jones_phase_only_zeros_and_nans() {
+        let j = Jones::from([
+            Complex::new(0., 0.),
+            Complex::new(0., 0.),
+            Complex::new(0., 0.),
+            Complex::new(0., 0.),
+        ]);
+        let po = jones_phase_only(j);
+        assert_eq!(po[0], Complex::new(1., 0.));
+        assert_eq!(po[1], Complex::new(0., 0.));
+        assert_eq!(po[2], Complex::new(0., 0.));
+        assert_eq!(po[3], Complex::new(1., 0.));
+        assert!(!po.any_nan());
+
+        let nan_j = Jones::from([
+            Complex::new(f64::NAN, 1.),
+            Complex::new(0., 0.),
+            Complex::new(0., 0.),
+            Complex::new(2., 0.),
+        ]);
+        let nan_po = jones_phase_only(nan_j);
+        assert!(nan_po[0].re.is_nan());
+        assert_eq!(nan_po[1], Complex::new(0., 0.));
+        assert_eq!(nan_po[2], Complex::new(0., 0.));
+        assert_abs_diff_eq!(nan_po[3].norm(), 1.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(nan_po[3].arg(), 0.0, epsilon = 1e-12);
     }
 }
