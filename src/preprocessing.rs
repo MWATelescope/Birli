@@ -1,6 +1,6 @@
 //! Crate for preprocessing visibilities
 use crate::{
-    calibration::apply_di_calsol,
+    calibration::{apply_di_calsol, calsols_phase_only},
     correct_cable_lengths, correct_geometry,
     corrections::{correct_coarse_passband_gains, correct_digital_gains, ScrunchType},
     flags::get_unflagged_timestep_ranges,
@@ -367,18 +367,34 @@ impl PreprocessContext<'_> {
 
         if let Some(ref calsols) = self.calsols {
             trace!("applying calibration solutions");
-            with_increment_duration!(
-                "calibrate",
-                apply_di_calsol(
-                    calsols.view(),
-                    jones_array.view_mut(),
-                    weight_array.view_mut(),
-                    flag_array.view_mut(),
-                    &sel_ant_pairs,
-                    flagged_tiles,
-                    self.emulate_cotter
-                )?
-            );
+            if self.no_apply_amps {
+                let phase_only_calsols = calsols_phase_only(calsols.view());
+                with_increment_duration!(
+                    "calibrate",
+                    apply_di_calsol(
+                        phase_only_calsols.view(),
+                        jones_array.view_mut(),
+                        weight_array.view_mut(),
+                        flag_array.view_mut(),
+                        &sel_ant_pairs,
+                        flagged_tiles,
+                        self.emulate_cotter
+                    )?
+                );
+            } else {
+                with_increment_duration!(
+                    "calibrate",
+                    apply_di_calsol(
+                        calsols.view(),
+                        jones_array.view_mut(),
+                        weight_array.view_mut(),
+                        flag_array.view_mut(),
+                        &sel_ant_pairs,
+                        flagged_tiles,
+                        self.emulate_cotter
+                    )?
+                );
+            }
         }
 
         Ok(())
