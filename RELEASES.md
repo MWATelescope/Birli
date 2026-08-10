@@ -2,6 +2,8 @@
 
 # Unreleased
 
+# Version 0.19.2 (2026-08-10)
+
 - ✨ new features:
   - `--no-apply-amps` with `--apply-di-cal` for phase-only DI calibration (unit-amplitude Jones)
 
