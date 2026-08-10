@@ -367,34 +367,24 @@ impl PreprocessContext<'_> {
 
         if let Some(ref calsols) = self.calsols {
             trace!("applying calibration solutions");
-            if self.no_apply_amps {
-                let phase_only_calsols = calsols_phase_only(calsols.view());
-                with_increment_duration!(
-                    "calibrate",
-                    apply_di_calsol(
-                        phase_only_calsols.view(),
-                        jones_array.view_mut(),
-                        weight_array.view_mut(),
-                        flag_array.view_mut(),
-                        &sel_ant_pairs,
-                        flagged_tiles,
-                        self.emulate_cotter
-                    )?
-                );
-            } else {
-                with_increment_duration!(
-                    "calibrate",
-                    apply_di_calsol(
-                        calsols.view(),
-                        jones_array.view_mut(),
-                        weight_array.view_mut(),
-                        flag_array.view_mut(),
-                        &sel_ant_pairs,
-                        flagged_tiles,
-                        self.emulate_cotter
-                    )?
-                );
-            }
+            let phase_only_calsols = self
+                .no_apply_amps
+                .then(|| calsols_phase_only(calsols.view()));
+            let calsols_to_apply = phase_only_calsols
+                .as_ref()
+                .map_or_else(|| calsols.view(), |phase_only| phase_only.view());
+            with_increment_duration!(
+                "calibrate",
+                apply_di_calsol(
+                    calsols_to_apply,
+                    jones_array.view_mut(),
+                    weight_array.view_mut(),
+                    flag_array.view_mut(),
+                    &sel_ant_pairs,
+                    flagged_tiles,
+                    self.emulate_cotter
+                )?
+            );
         }
 
         Ok(())
