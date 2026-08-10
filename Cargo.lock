@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "birli"
-version = "0.19.2"
+version = "0.20.0"
 dependencies = [
  "aoflagger_sys",
  "approx",
