@@ -1650,7 +1650,7 @@ impl<'a> BirliContext<'a> {
                 }));
             }
             let num_calsol_fine_chans_per_coarse = calsol_chans / corr_ctx.num_coarse_chans;
-            let mut calsols = calsols
+            let mut di_calsols = calsols
                 .di_jones
                 .index_axis(Axis(0), 0)
                 .slice(s![
@@ -1660,9 +1660,9 @@ impl<'a> BirliContext<'a> {
                 ])
                 .to_owned();
             if prep_ctx.no_apply_amps {
-                calsols = calsols_phase_only(calsols.view());
+                di_calsols = calsols_phase_only(di_calsols.view());
             }
-            Some(calsols)
+            Some(di_calsols)
         } else {
             None
         };
