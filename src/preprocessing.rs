@@ -372,7 +372,7 @@ impl PreprocessContext<'_> {
                 .then(|| calsols_phase_only(calsols.view()));
             let calsols_to_apply = phase_only_calsols
                 .as_ref()
-                .map_or_else(|| calsols.view(), |phase_only| phase_only.view());
+                .map_or_else(|| calsols.view(), marlu::ndarray::ArrayBase::view);
             with_increment_duration!(
                 "calibrate",
                 apply_di_calsol(
