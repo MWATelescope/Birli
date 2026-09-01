@@ -1384,7 +1384,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "marlu"
 version = "0.18.1"
-source = "git+https://github.com/MWATelescope/Marlu?branch=20261001_deps#ce5318d736f44066e338ebe003d116f199b6dd5c"
+source = "git+https://github.com/MWATelescope/Marlu?branch=20260901_deps#ce5318d736f44066e338ebe003d116f199b6dd5c"
 dependencies = [
  "approx",
  "built",
