@@ -2,6 +2,10 @@
 
 # Unreleased
 
+# Version 0.20.1 (2026-09-01)
+
+- ➕ Updated Marlu to 0.18.1
+
 # Version 0.20.0 (2026-08-11)
 
 - ✨ new features:
