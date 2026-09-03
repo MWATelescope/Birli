@@ -352,10 +352,7 @@ fn van_vleck_auto(s: f64) -> Option<f64> {
 pub fn van_vleck_autos(hat: &[f64]) -> Vec<f64> {
     hat.par_iter()
         .map(|&sighat| {
-            van_vleck_auto(sighat).map_or(sighat, |sigma| {
-                // println!("sigma={sigma} <- sighat={sighat}");
-                sigma
-            })
+            van_vleck_auto(sighat).unwrap_or(sighat)
         })
         .collect()
 }
@@ -662,7 +659,7 @@ fn simpsons_rule<F>(f: F, a: f64, b: f64, n: usize, x_: &[f64], y_: &[f64]) -> f
 where
     F: Fn(&[f64], &[f64], &[f64], &mut [f64]),
 {
-    debug_assert!(n % 2 == 0, "n must be even: {n:?}");
+    debug_assert!(n.is_multiple_of(2), "n must be even: {n:?}");
     debug_assert!(b < 1.0, "b (which is ρ) must be < 1: {b:?}");
     debug_assert!(b > -1.0, "b (which is ρ) must be > -1: {b:?}");
     let h = (b - a) / n as f64;

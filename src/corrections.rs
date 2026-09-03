@@ -486,7 +486,7 @@ pub fn correct_coarse_passband_gains(
         }));
     };
 
-    let fscrunch = if passband_gains.len() % num_fine_chans_per_coarse == 0 {
+    let fscrunch = if passband_gains.len().is_multiple_of(num_fine_chans_per_coarse) {
         passband_gains.len() / num_fine_chans_per_coarse
     } else {
         return Err(PassbandCorrection::BadArrayShape(BadArrayShape {
