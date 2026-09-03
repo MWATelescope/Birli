@@ -1388,7 +1388,7 @@ impl<'a> BirliContext<'a> {
                 CableDelaysApplied::NoCableDelaysApplied
             ) && !cable_delays_disabled
         };
-        
+
         prep_ctx.correct_digital_gains = {
             let digital_gains_disabled = matches.get_flag("no-digital-gains");
             info!(
