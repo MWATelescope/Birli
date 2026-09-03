@@ -351,9 +351,7 @@ fn van_vleck_auto(s: f64) -> Option<f64> {
 /// Apply `van_vleck_auto` over `sighats` in parallel.
 pub fn van_vleck_autos(hat: &[f64]) -> Vec<f64> {
     hat.par_iter()
-        .map(|&sighat| {
-            van_vleck_auto(sighat).unwrap_or(sighat)
-        })
+        .map(|&sighat| van_vleck_auto(sighat).unwrap_or(sighat))
         .collect()
 }
 
