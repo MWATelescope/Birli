@@ -2,9 +2,12 @@
 
 # Unreleased
 
-# Version 0.20.1 (2026-09-01)
+# Version 0.20.1 (2026-09-03)
 
+- ➕ Updated MSRV to 1.88.0
 - ➕ Updated Marlu to 0.18.1
+- ✨ new features:
+  - Birli will not correct the digital gains, if it has already been done by the correlator. NOTE: as of writing the correction of digital gains features is not yet implemented in the MWAX correlator so this is a pre-emptive feature updates to ensure Birli is ready for it when is released.
 
 # Version 0.20.0 (2026-08-11)
 
