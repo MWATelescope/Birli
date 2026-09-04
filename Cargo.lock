@@ -1278,7 +1278,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "marlu"
 version = "0.18.1"
-source = "git+https://github.com/MWATelescope/Marlu?branch=20260901_deps#67e46714f05da7c4446c3902320e190126d7499b"
+source = "git+https://github.com/MWATelescope/Marlu?branch=20260901_deps#ab05e9f4c09979c50d62a1039e10cd16b197bda1"
 dependencies = [
  "approx",
  "built",
@@ -1339,7 +1339,7 @@ dependencies = [
 [[package]]
 name = "mwalib"
 version = "3.0.0"
-source = "git+https://github.com/MWATelescope/mwalib?branch=hifitime#31f22865280abcbf0b7d4170a5c38ace05689b01"
+source = "git+https://github.com/MWATelescope/mwalib?branch=hifitime#7f8b586210f59a1aa4484596ef33c4fa8331e147"
 dependencies = [
  "built",
  "bytemuck",
