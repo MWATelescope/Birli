@@ -93,5 +93,6 @@ opt-level = 3
 [package.metadata.cargo-udeps.ignore]
 
 [patch.crates-io]
-# marlu = { path = "../Marlu" }
+marlu = { git = "https://github.com/MWATelescope/Marlu.git", branch = "mswrite-bulk" }
+rubbl_casatables = { git = "https://github.com/d3v-null/rubbl.git", branch = "mswrite-bulk" }
 # marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "main" }
