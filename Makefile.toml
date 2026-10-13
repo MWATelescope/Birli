@@ -57,7 +57,7 @@ $(source /etc/os-release && dpkg --compare-versions "$VERSION_ID" gt "21.04" &> 
 
 # otherwise build from source
 cd /tmp
-wget http://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz
+wget https://heasarc.gsfc.nasa.gov/FTP/software/fitsio/c/cfitsio-3.49.tar.gz
 tar -zxvf cfitsio-3.49.tar.gz
 cd cfitsio-3.49/
 CFLAGS="-O3" ./configure --prefix=/usr/local --enable-reentrant --enable-ssse3 --enable-sse2

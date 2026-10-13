@@ -4,7 +4,7 @@ on:
   push:
     tags-ignore:
       - "**"
-    pull_request:
+  pull_request:
     branches:
       - "**"
 
@@ -12,12 +12,12 @@ name: Benchmarks
 
 jobs:
   test:
-    if: false  # <--- This disables the job
+    if: false # <--- This disables the job
     name: Benchmarks
     runs-on: self-hosted
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -27,11 +27,7 @@ jobs:
           ls -al /home/runner/data/*/*.metafits
 
       - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cargo Bench
         run: |
@@ -43,7 +39,7 @@ jobs:
       - name: Zip benchmark results
         run: zip -r criterion.zip target/criterion/*
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v7
         with:
-          name: criterion.zip
+          name: criterion
           path: criterion.zip

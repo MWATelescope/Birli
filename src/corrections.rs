@@ -314,7 +314,7 @@ pub enum DigitalGainCorrection {
 /// - `ant_pairs` - a slice of tuples of antenna indices for each baseline in the visibilities.
 ///
 /// # Assumptions
-/// - the digital gains are provided in [`marlu::mwalib::Rfinput.digital_gains`] in the same order as the
+/// - the digital gains are provided in [`marlu::mwalib::Rfinput::digital_gains`] in the same order as the
 ///   coarse channel indices (increasing sky frequency)
 ///
 /// # Errors

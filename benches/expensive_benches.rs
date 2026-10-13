@@ -4,10 +4,11 @@ use birli::{
     io::{read_mwalib, write_uvfits},
     VisSelection,
 };
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use glob::glob;
 use marlu::mwalib::CorrelatorContext;
 use std::env;
+use std::hint::black_box;
 use std::path::Path;
 use tempfile::tempdir;
 

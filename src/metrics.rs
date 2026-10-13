@@ -1533,7 +1533,8 @@ impl CrossMetrics {
                             for p in 0..4 {
                                 let val = jones_array_tfb[[t, f, b_idx]][p];
                                 if val.re.is_finite() && val.im.is_finite() {
-                                    complex_spectrum[[f, p]] += Complex::new(val.re as f64, val.im as f64);
+                                    complex_spectrum[[f, p]] +=
+                                        Complex::new(val.re as f64, val.im as f64);
                                     counts[[f, p]] += 1;
                                 }
                             }

@@ -1,6 +1,6 @@
 //! Crate for preprocessing visibilities
 use crate::{
-    calibration::apply_di_calsol,
+    calibration::{apply_di_calsol, calsols_phase_only},
     correct_cable_lengths, correct_geometry,
     corrections::{correct_coarse_passband_gains, correct_digital_gains, ScrunchType},
     flags::get_unflagged_timestep_ranges,
@@ -48,6 +48,9 @@ pub struct PreprocessContext<'a> {
     pub passband_gains: Option<&'a [f64]>,
     /// The calibration solutions to apply
     pub calsols: Option<Array2<Jones<f64>>>,
+    /// When applying DI cal, rewrite Jones amplitudes to 1 (phase-only)
+    #[builder(default = "false")]
+    pub no_apply_amps: bool,
     /// Whether geometric corrections are enabled
     #[builder(default = "true")]
     pub correct_geometry: bool,
@@ -60,6 +63,10 @@ pub struct PreprocessContext<'a> {
     /// Whether to draw progress bars
     #[builder(default = "true")]
     pub draw_progress: bool,
+
+    /// Should we emulate cotter OR flag NaNs when applying cal solutions
+    #[builder(default = "false")]
+    pub emulate_cotter: bool,
 }
 
 impl Display for PreprocessContext<'_> {
@@ -118,6 +125,13 @@ impl Display for PreprocessContext<'_> {
                 "Will not"
             }
         )?;
+        if self.calsols.is_some() {
+            if self.no_apply_amps {
+                writeln!(f, "Will apply DI calibration phases only (no amps).")?;
+            } else {
+                writeln!(f, "Will apply DI calibration.")?;
+            }
+        }
         Ok(())
     }
 }
@@ -155,6 +169,13 @@ impl PreprocessContext<'_> {
             } else {
                 None
             },
+            if self.no_apply_amps {
+                Some("phase-only DI calibration".to_string())
+            } else if self.calsols.is_some() {
+                Some("DI calibration".to_string())
+            } else {
+                None
+            },
         ]
         .into_iter()
         .flatten()
@@ -182,6 +203,7 @@ impl PreprocessContext<'_> {
         mut weight_array: ArrayViewMut3<f32>,
         mut flag_array: ArrayViewMut3<bool>,
         vis_sel: &VisSelection,
+        flagged_tiles: &[bool],
     ) -> Result<(), BirliError> {
         let sel_ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
         let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
@@ -345,14 +367,22 @@ impl PreprocessContext<'_> {
 
         if let Some(ref calsols) = self.calsols {
             trace!("applying calibration solutions");
+            let phase_only_calsols = self
+                .no_apply_amps
+                .then(|| calsols_phase_only(calsols.view()));
+            let calsols_to_apply = phase_only_calsols
+                .as_ref()
+                .map_or_else(|| calsols.view(), marlu::ndarray::ArrayBase::view);
             with_increment_duration!(
                 "calibrate",
                 apply_di_calsol(
-                    calsols.view(),
+                    calsols_to_apply,
                     jones_array.view_mut(),
                     weight_array.view_mut(),
                     flag_array.view_mut(),
                     &sel_ant_pairs,
+                    flagged_tiles,
+                    self.emulate_cotter
                 )?
             );
         }
@@ -445,6 +475,7 @@ mod tests {
                 weight_array.view_mut(),
                 flag_array.view_mut(),
                 &vis_sel,
+                &[],
             )
             .unwrap();
 
@@ -522,6 +553,7 @@ mod tests {
                 weight_array.view_mut(),
                 flag_array.view_mut(),
                 &vis_sel,
+                &[],
             )
             .is_ok());
 
@@ -533,6 +565,7 @@ mod tests {
             weight_array.view_mut(),
             flag_array.view_mut(),
             &vis_sel,
+            &[],
         );
 
         assert!(matches!(result, Err(BirliError::BadMWAVersion { .. })));
@@ -635,6 +668,7 @@ mod tests {
                 weight_array.view_mut(),
                 flag_array.view_mut(),
                 &vis_sel,
+                &[],
             )
             .unwrap();
 

@@ -82,8 +82,10 @@ fn main() {
         draw_progress: false,
         passband_gains: None,
         calsols: None,
+        no_apply_amps: false,
         #[cfg(feature = "aoflagger")]
         aoflagger_strategy: None,
+        emulate_cotter: args.contains(&"--emulate-cotter".to_string()),
     };
 
     prep_ctx
@@ -93,6 +95,7 @@ fn main() {
             weight_array.view_mut(),
             flag_array.view_mut(),
             &vis_sel,
+            &[],
         )
         .unwrap();
 

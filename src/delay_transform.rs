@@ -3,10 +3,10 @@
 //! This module provides a delay transform for per-antenna spectra, using
 //! a Blackman window and zero-padding to achieve the requested delay resolution.
 
+use log::debug;
 use marlu::ndarray::{Array1, Array2};
 use rustfft::{num_complex::Complex64, FftPlanner};
 use std::f64::consts::PI;
-use log::debug;
 
 /// Configuration for the delay transform.
 #[derive(Debug, Clone, Copy)]

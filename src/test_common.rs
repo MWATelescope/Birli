@@ -6,8 +6,8 @@ use crate::{
     marlu::{
         fitsio, fitsio_sys,
         mwalib::{
-            _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
-            get_required_fits_key, CorrelatorContext,
+            _get_required_fits_key, fits_open, fits_open_hdu, get_required_fits_key,
+            CorrelatorContext,
         },
         rubbl_casatables::{Table, TableOpenMode},
     },
@@ -16,7 +16,7 @@ use crate::{
 use approx::abs_diff_eq;
 use csv::StringRecord;
 use fitsio::errors::check_status as fits_check_status;
-use float_cmp::{approx_eq, F32Margin, F64Margin};
+use float_cmp::{approx_eq, F32Margin, F64Margin, FloatMargin};
 use itertools::izip;
 use lazy_static::lazy_static;
 use lexical::parse;
@@ -404,8 +404,8 @@ pub fn compare_uvfits_with_csv(
                                 pol,
                                 pol_idx,
                                 vis_idx,
-                                &obs_pol_vis,
-                                &exp_pol_vis
+                                obs_pol_vis,
+                                exp_pol_vis
                             );
                         }
                     }
@@ -448,8 +448,8 @@ pub fn compare_uvfits_with_csv(
                                 pol,
                                 pol_idx,
                                 weight_idx,
-                                &obs_pol_weight,
-                                &exp_pol_weight
+                                obs_pol_weight,
+                                exp_pol_weight
                             );
                         }
                     }
@@ -615,8 +615,8 @@ pub fn compare_ms_with_csv(
                                   pol,
                                   pol_idx,
                                   vis_idx,
-                                  &obs_pol_vis,
-                                  &exp_pol_vis
+                                  obs_pol_vis,
+                                  exp_pol_vis
                               );
                         }
                     }
@@ -658,8 +658,8 @@ pub fn compare_ms_with_csv(
                                   pol,
                                   pol_idx,
                                   weight_idx,
-                                  &obs_pol_weight,
-                                  &exp_pol_weight
+                                  obs_pol_weight,
+                                  exp_pol_weight
                               );
                         }
                     }
@@ -699,8 +699,8 @@ pub fn compare_ms_with_csv(
                                   pol,
                                   pol_idx,
                                   flag_idx,
-                                  &obs_pol_flag,
-                                  &exp_pol_flag
+                                  obs_pol_flag,
+                                  exp_pol_flag
                               );
                         }
                     }

@@ -1,5 +1,31 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Unreleased
+
+# Version 0.20.0 (2026-08-11)
+
+- ✨ new features:
+  - `--no-apply-amps` with `--apply-di-cal` for phase-only DI calibration (unit-amplitude Jones)
+
+# Version 0.19.1 (2026-07-15)
+
+- ➕ Update marlu to v0.18.0.
+
+# Version 0.19.0 (2026-06-09)
+
+- 🐛 bug fixes:
+  - Fix `--flag-edge-width` to be f32 instead of usize. Fixes #192
+  - Fix NaN handling for calibration solutions. Fixes #190
+    - `--emulate-cotter` will, in addition to using cotter's array positions, will also NOT flag NaN calibration solutions when passing `--apply-di-cal`.
+- ➕ Bump to MSRV 1.85.0.
+- ➕ Update marlu to v0.17.1.
+- ➕ Upgrade clap v3 -> v4.
+- ➕ Migrate macos CI to use macos-15 (arm64) and macos-15-intel (x64) and updated action versions.
+
+# Version 0.18.2 (2025-09-11)
+
+- clean up aoflagger tests
+
 # Version 0.18.1 (2025-09-02)
 
 - 🐛 bug fixes:

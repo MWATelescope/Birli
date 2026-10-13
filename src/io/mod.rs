@@ -689,8 +689,8 @@ mod tests_aoflagger {
     use marlu::{
         fitsio, fitsio_sys,
         mwalib::{
-            _get_required_fits_key, _open_fits, _open_hdu, fits_open, fits_open_hdu,
-            get_required_fits_key, CorrelatorContext,
+            _get_required_fits_key, fits_open, fits_open_hdu, get_required_fits_key,
+            CorrelatorContext,
         },
     };
     use tempfile::tempdir;
@@ -902,8 +902,8 @@ mod tests_aoflagger {
                     "cells don't match in row {}, vis index {}. observed: {:?} != expected: {:?}",
                     row_idx,
                     vis_idx,
-                    &obs_vis,
-                    &exp_vis
+                    obs_vis,
+                    exp_vis
                 );
             }
         }

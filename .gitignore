@@ -21,3 +21,6 @@ tags
 tests/data/__pycache__/common.cpython-38.pyc
 .vscode/*
 .DS_Store
+
+# This prevents the release CI failing due to left over files from the semver check
+semver-checks/target/
