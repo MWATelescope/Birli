@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "birli"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "aoflagger_sys",
  "approx",
@@ -1421,8 +1421,8 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "marlu"
-version = "0.18.0"
-source = "git+https://github.com/MWATelescope/Marlu.git?branch=mswrite-bulk#55db7f6e8e8c041b940f20e63f638b427725a399"
+version = "0.19.0"
+source = "git+https://github.com/MWATelescope/Marlu.git?branch=mswrite-bulk#f6d2874c1888c5b324f41fc1bd8abd66680c3274"
 dependencies = [
  "approx",
  "built",
@@ -1822,8 +1822,9 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "rubbl_casatables"
-version = "0.9.0"
-source = "git+https://github.com/d3v-null/rubbl.git?branch=mswrite-bulk#492846a439f2756b10bbc53a88acf3aa8ede2fd4"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80746dfbb91b76a698dd782152ba256edb9b261cabfdd17f8fa2a0cfe26682eb"
 dependencies = [
  "cc",
  "ndarray",
@@ -1835,16 +1836,18 @@ dependencies = [
 
 [[package]]
 name = "rubbl_casatables_impl"
-version = "0.4.35001"
-source = "git+https://github.com/d3v-null/rubbl.git?branch=mswrite-bulk#492846a439f2756b10bbc53a88acf3aa8ede2fd4"
+version = "0.4.35002"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c072f3195c2b13fbd09d2e4bf2806696c8a3cdd91b8beb2ab79070f7cd944169"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "rubbl_core"
-version = "0.5.1"
-source = "git+https://github.com/d3v-null/rubbl.git?branch=mswrite-bulk#492846a439f2756b10bbc53a88acf3aa8ede2fd4"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0960ddf1992cb118c36138711c8544e46b7347c2ed9522e5ff453eb7e512030"
 dependencies = [
  "byteorder",
  "ndarray",

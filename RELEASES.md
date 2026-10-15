@@ -2,6 +2,11 @@
 
 # Unreleased
 
+# Version 0.21.0 (2026-10-15)
+
+- ⚡ much faster Measurement Set output (bulk column writes and tiled storage managers in Marlu): one coarse channel goes from 694 s to 55 s
+- ➕ Update marlu to v0.19.0 (rubbl_casatables 0.10.0)
+
 # Version 0.20.0 (2026-08-11)
 
 - ✨ new features:
