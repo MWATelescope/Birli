@@ -93,6 +93,5 @@ opt-level = 3
 [package.metadata.cargo-udeps.ignore]
 
 [patch.crates-io]
-# TODO: drop once marlu 0.19.0 is on crates.io
-marlu = { git = "https://github.com/MWATelescope/Marlu.git", branch = "mswrite-bulk" }
+# marlu = { path = "../Marlu" }
 # marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "main" }
