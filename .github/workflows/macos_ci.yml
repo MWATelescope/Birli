@@ -43,6 +43,8 @@ jobs:
           done
           BREW="brew"
           [ "${{ matrix.os }}" == "macos-15" ] && BREW="arch -arm64 brew"
+          # runner images disable auto-update, so refresh formulae before installing
+          $BREW update
           $BREW trust mwatelescope/tap
           $BREW install mwatelescope/tap/aoflagger
           echo "DYLD_FALLBACK_LIBRARY_PATH=$($BREW --prefix)/lib/" >> $GITHUB_ENV
