@@ -19,7 +19,7 @@ use clap::{
 };
 use indicatif::{ProgressDrawTarget, ProgressStyle};
 use itertools::{izip, Itertools};
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 use marlu::mwalib::MetafitsContext;
 use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, CableDelaysApplied, CorrelatorContext,
@@ -1079,6 +1079,7 @@ impl<'a> BirliContext<'a> {
             flag_ctx.flag_dc = false;
         }
 
+        let mut num_edge_flags = 0;
         if let Some(&n) = matches.get_one::<usize>("flag-edge-chans") {
             if n >= flag_ctx.fine_chan_flags.len() / 2 {
                 return Err(BirliError::CLIError(InvalidCommandLineArgument {
@@ -1088,6 +1089,7 @@ impl<'a> BirliContext<'a> {
                 }));
             }
             Self::flag_edge_channels(n, &mut flag_ctx.fine_chan_flags);
+            num_edge_flags = n;
         }
 
         if let Some(&width) = matches.get_one::<f32>("flag-edge-width") {
@@ -1108,6 +1110,15 @@ impl<'a> BirliContext<'a> {
                 }));
             }
             Self::flag_edge_channels(n as usize, &mut flag_ctx.fine_chan_flags);
+            num_edge_flags = n as usize;
+        }
+
+        // Oversampled coarse channels have a flat passband right to their
+        // edges, so flagging the edges only throws good data away.
+        if meta_ctx.oversampled && num_edge_flags > 0 {
+            warn!(
+                "Flagging {num_edge_flags} fine channels at each edge of every coarse channel, but this observation is oversampled, so its coarse-channel edges don't need flagging. Drop --flag-edge-width / --flag-edge-chans to keep them."
+            );
         }
 
         if let Some(&init_time) = matches.get_one::<f32>("flag-init") {
@@ -2166,6 +2177,32 @@ mod argparse_tests {
         let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args_no_dry_run).unwrap();
 
         assert!(prep_ctx.passband_gains.is_none());
+    }
+
+    /// Oversampled observations get no edge flags by default; asking for them
+    /// still flags them (with a warning).
+    #[test]
+    fn test_oversampled_edge_flags() {
+        let metafits = "tests/data/1439922144_deripple/1439922144.metafits";
+        let gpufits = "tests/data/1439922144_deripple/1439922144_20250822182206_ch137_000.fits";
+
+        #[rustfmt::skip]
+        let args = vec!["birli", "-m", metafits, "--no-draw-progress", gpufits];
+        let BirliContext {
+            flag_ctx, corr_ctx, ..
+        } = BirliContext::from_args(&args).unwrap();
+        assert!(corr_ctx.metafits_context.oversampled);
+        assert!(!flag_ctx.fine_chan_flags.iter().any(|&f| f));
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli", "-m", metafits, "--no-draw-progress", "--flag-edge-chans", "2", gpufits,
+        ];
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+        let n = flag_ctx.fine_chan_flags.len();
+        assert!(flag_ctx.fine_chan_flags[..2].iter().all(|&f| f));
+        assert!(flag_ctx.fine_chan_flags[n - 2..].iter().all(|&f| f));
+        assert!(!flag_ctx.fine_chan_flags[2..n - 2].iter().any(|&f| f));
     }
 
     /// DC flagging is off by default for MWAX inputs.
