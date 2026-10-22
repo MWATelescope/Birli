@@ -1,0 +1,20 @@
+[project]
+name = "crosstalk"
+version = "0.1.0"
+description = "Per-baseline receiver-crosstalk (coherent delay line) QA for MWA visibilities"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "pyuvdata>=3.1", "astropy"]
+
+[project.optional-dependencies]
+ms = ["python-casacore"]
+test = ["pytest"]
+
+[project.scripts]
+crosstalk-qa = "crosstalk.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["crosstalk"]
