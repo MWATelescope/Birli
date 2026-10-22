@@ -2,6 +2,10 @@
 
 # Unreleased
 
+- 🙏 quality of life:
+  - warn when `--flag-edge-width` or `--flag-edge-chans` flags the coarse-channel edges of an oversampled observation, which don't need flagging
+  - README: Birli flags no edge channels by default (the 80 kHz in the Cotter comparison table is Cotter's default), and DC flagging is only the default for legacy correlator observations
+
 # Version 0.21.0 (2026-10-15)
 
 - 🙏 quality of life:
