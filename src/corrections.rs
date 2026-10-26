@@ -8,10 +8,11 @@ use itertools::{izip, Itertools};
 use log::trace;
 use marlu::{
     constants::VEL_C,
+    convention::UvwFrame,
     hifitime::{Duration, Epoch},
     io::error::BadArrayShape,
     mwalib::{CorrelatorContext, MWAVersion},
-    precession::precess_time,
+    precession::precess_time_in_frame,
     Complex, LatLngHeight, RADec, VisSelection, XyzGeodetic, UVW,
 };
 use std::{f64::consts::TAU, ops::Range};
@@ -206,10 +207,35 @@ pub fn correct_cable_lengths(
 /// ```
 pub fn correct_geometry(
     corr_ctx: &CorrelatorContext,
+    jones_array: ArrayViewMut3<Jones<f32>>,
+    vis_sel: &VisSelection,
+    array_pos: Option<LatLngHeight>,
+    phase_centre: Option<RADec>,
+    draw_progress: bool,
+) {
+    correct_geometry_in_frame(
+        corr_ctx,
+        jones_array,
+        vis_sel,
+        array_pos,
+        phase_centre,
+        UvwFrame::Hyperdrive,
+        draw_progress,
+    );
+}
+
+/// [`correct_geometry`], with the `w` terms computed in the given
+/// [`UvwFrame`]. `--emulate-cotter` uses [`UvwFrame::Cotter`], which
+/// reproduces `cotter`'s precession (mean sidereal time, projection onto the
+/// aberrated phase centre).
+#[allow(clippy::too_many_arguments)]
+pub fn correct_geometry_in_frame(
+    corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
     vis_sel: &VisSelection,
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
+    uvw_frame: UvwFrame,
     draw_progress: bool,
 ) {
     trace!("start correct_geometry");
@@ -247,6 +273,7 @@ pub fn correct_geometry(
         phase_centre,
         array_pos,
         &tiles_xyz_geod,
+        uvw_frame,
     );
 
     // Create a progress bar to show the status of the correction
@@ -655,11 +682,13 @@ fn calc_part_uvws(
     phase_centre: RADec,
     array_pos: LatLngHeight,
     tile_xyzs: &[XyzGeodetic],
+    uvw_frame: UvwFrame,
 ) -> Array2<UVW> {
     let nants = tile_xyzs.len();
     let mut part_uvws = Array2::from_elem((centroid_timestamps.len(), nants), UVW::default());
     for (t, &epoch) in centroid_timestamps.iter().enumerate() {
-        let prec = precess_time(
+        let prec = precess_time_in_frame(
+            uvw_frame,
             array_pos.longitude_rad,
             array_pos.latitude_rad,
             phase_centre,

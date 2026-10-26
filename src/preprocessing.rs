@@ -1,10 +1,10 @@
 //! Crate for preprocessing visibilities
 use crate::{
     calibration::{apply_di_calsol, calsols_phase_only},
-    correct_cable_lengths, correct_geometry,
+    correct_cable_lengths, correct_geometry_in_frame,
     corrections::{correct_coarse_passband_gains, correct_digital_gains, ScrunchType},
     flags::get_unflagged_timestep_ranges,
-    marlu::{mwalib::CorrelatorContext, ndarray::prelude::*, Jones, LatLngHeight, RADec},
+    marlu::{mwalib::CorrelatorContext, ndarray::prelude::*, Jones, LatLngHeight, RADec, UvwFrame},
     van_vleck::{correct_van_vleck, get_vv_sample_scale},
     with_increment_duration, BirliError, VisSelection,
 };
@@ -137,6 +137,16 @@ impl Display for PreprocessContext<'_> {
 }
 
 impl PreprocessContext<'_> {
+    /// The frame `UVWs` are computed in: `cotter`'s when emulating `cotter`,
+    /// otherwise Marlu's default.
+    pub fn uvw_frame(&self) -> UvwFrame {
+        if self.emulate_cotter {
+            UvwFrame::Cotter
+        } else {
+            UvwFrame::default()
+        }
+    }
+
     /// A one line description of the tasks preprocessing will do.
     pub fn as_comment(&self) -> String {
         [
@@ -354,12 +364,13 @@ impl PreprocessContext<'_> {
             trace!("correcting geometric delays");
             with_increment_duration!(
                 "correct_geom",
-                correct_geometry(
+                correct_geometry_in_frame(
                     corr_ctx,
                     jones_array.view_mut(),
                     vis_sel,
                     Some(self.array_pos),
                     Some(self.phase_centre),
+                    self.uvw_frame(),
                     self.draw_progress,
                 )
             );

@@ -45,7 +45,8 @@ use crate::{
         mwalib,
         ndarray::s,
         precession::{precess_time, PrecessionInfo},
-        History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
+        History, Jones, LatLngHeight, MwaObsContext, ObsContext, PolConvention, RADec, VisContext,
+        ENH,
     },
     passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
     with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection,
@@ -1717,6 +1718,8 @@ impl<'a> BirliContext<'a> {
                     Some(&history),
                 )
                 .expect("unable to initialize uvfits writer")
+                .with_conventions(PolConvention::MWA, prep_ctx.uvw_frame())
+                .expect("unable to write uvfits conventions")
             })
         });
         let mut ms_writer = io_ctx.ms_out.as_ref().map(|ms_out| {
@@ -1727,7 +1730,8 @@ impl<'a> BirliContext<'a> {
                 antenna_positions,
                 dut1,
                 true,
-            );
+            )
+            .with_conventions(PolConvention::MWA, prep_ctx.uvw_frame());
             println!(
                 "Writing to MS: {} with {} chans selected",
                 ms_out.display(),
