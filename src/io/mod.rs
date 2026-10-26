@@ -433,11 +433,7 @@ pub fn write_uvfits<T: AsRef<Path>>(
         .antennas
         .iter()
         .map(|a| {
-            let enh = ENH {
-                e: a.east_m,
-                n: a.north_m,
-                h: a.height_m,
-            };
+            let enh = ENH::from_mwalib_antenna(a);
             let (s_lat, c_lat) = array_latitude.sin_cos();
             let xyz = enh.to_xyz_inner(s_lat, c_lat);
             (a.tile_name.clone(), xyz)
@@ -670,6 +666,100 @@ mod tests {
                 Complex::new(0x41071c as f32, 0x41071d as f32),
                 Complex::new(0x41071e as f32, 0x41071f as f32),
             ])
+        );
+    }
+}
+
+#[cfg(test)]
+mod tile_position_tests {
+    use approx::assert_abs_diff_eq;
+    use marlu::{fitsio::FitsFile, fitsio_sys, ENH};
+    use tempfile::tempdir;
+
+    use super::write_uvfits;
+    use crate::{test_common::get_mwa_ord_context, VisSelection};
+
+    /// Tile positions in the uvfits antenna table come from
+    /// `ENH::from_mwalib_antenna`: heights are relative to the array centre,
+    /// and long-baseline tiles' (raw surveyed) ellipsoidal heights are
+    /// converted to the array centre's vertical.
+    #[test]
+    fn test_write_uvfits_tile_positions() {
+        let corr_ctx = get_mwa_ord_context();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        let weight_array = vis_sel.allocate_weights(fine_chans_per_coarse).unwrap();
+
+        let tmp_dir = tempdir().unwrap();
+        let uvfits_out = tmp_dir.path().join("tiles.uvfits");
+        write_uvfits(
+            uvfits_out.as_path(),
+            &corr_ctx,
+            jones_array.view(),
+            weight_array.view(),
+            &vis_sel.timestep_range,
+            &vis_sel.coarse_chan_range,
+            &vis_sel.baseline_idxs,
+            None,
+            None,
+            1,
+            1,
+        )
+        .unwrap();
+
+        let mut fptr = FitsFile::open(&uvfits_out).unwrap();
+        let ant_hdu = fptr.hdu("AIPS AN").unwrap();
+        let names: Vec<String> = ant_hdu.read_col(&mut fptr, "ANNAME").unwrap();
+        let mut stabxyz_col = 0;
+        let mut status = 0;
+        let col_name = std::ffi::CString::new("STABXYZ").unwrap();
+        // ffgcno = fits_get_colnum
+        unsafe {
+            fitsio_sys::ffgcno(
+                fptr.as_raw(),
+                0,
+                col_name.as_ptr() as *mut _,
+                &mut stabxyz_col,
+                &mut status,
+            );
+        }
+        assert_eq!(status, 0);
+        let antennas = &corr_ctx.metafits_context.antennas;
+        assert_eq!(names.len(), antennas.len());
+        for (row, antenna) in antennas.iter().enumerate() {
+            assert_eq!(names[row].trim(), antenna.tile_name);
+            let mut xyz = [0.0f64; 3];
+            let mut status = 0;
+            // ffgcvd = fits_read_col_dbl
+            unsafe {
+                fitsio_sys::ffgcvd(
+                    fptr.as_raw(),
+                    stabxyz_col,
+                    row as i64 + 1,
+                    1,
+                    3,
+                    0.0,
+                    xyz.as_mut_ptr(),
+                    std::ptr::null_mut(),
+                    &mut status,
+                );
+            }
+            assert_eq!(status, 0);
+            let expected = ENH::from_mwalib_antenna(antenna).to_xyz_mwa();
+            assert_abs_diff_eq!(xyz[0], expected.x, epsilon = 1e-6);
+            assert_abs_diff_eq!(xyz[1], expected.y, epsilon = 1e-6);
+            assert_abs_diff_eq!(xyz[2], expected.z, epsilon = 1e-6);
+        }
+
+        // LBD7 is 3.5 km out; its local "up" (from the MWA wiki's survey
+        // reprocessing) is 375.828 m - 377.8269 m, ~1 m lower than its
+        // metafits height minus the array height.
+        let lbd7 = antennas.iter().find(|a| a.tile_name == "LBD7").unwrap();
+        assert_abs_diff_eq!(
+            ENH::from_mwalib_antenna(lbd7).h,
+            375.828 - 377.8269,
+            epsilon = 1e-2
         );
     }
 }

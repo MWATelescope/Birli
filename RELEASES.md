@@ -2,6 +2,9 @@
 
 # Unreleased
 
+- 🐛 bug fixes:
+  - tile positions in uvfits `AIPS AN` and MS `ANTENNA` tables are now relative to the array centre, not ~378 m too high as in cotter's files, and long-baseline tiles' heights include the Earth's curvature (up to ~1 m at 3.5 km). This uses Marlu's `ENH::from_mwalib_antenna` (Marlu `feat/conventions`, MWATelescope/Marlu#43, #48, #49 and #51)
+  - `--emulate-cotter` computes UVWs (and the geometric correction) in cotter's frame, Marlu's `UvwFrame::Cotter` (mean sidereal time, projection onto the aberrated phase centre). Otherwise Birli uses Marlu's default frame, which differs from cotter's by up to ~8 cm per km in `w`
 - 🙏 quality of life:
   - warn when `--flag-edge-width` or `--flag-edge-chans` flags the coarse-channel edges of an oversampled observation, which don't need flagging
   - README: Birli flags no edge channels by default (the 80 kHz in the Cotter comparison table is Cotter's default), and DC flagging is only the default for legacy correlator observations
