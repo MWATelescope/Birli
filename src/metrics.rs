@@ -674,15 +674,25 @@ impl AutoMetrics {
 
 /// SSINS (Sky-Subtract Incoherent Noise Spectra)
 ///
-/// incoherently averaged (along baseline) difference between the visibilities in time.
+/// incoherently averaged (along baseline) difference between the visibilities in time,
+/// computed like `SSINS.INS(SS.read(..., diff=True), spectrum_type="cross", order=0)`:
+/// - only cross-correlations are averaged;
+/// - a baseline contributes to (t, f) only if neither of the visibilities being
+///   differenced is flagged, so `N_bl` is counted per (t, f);
+/// - the time mean is weighted by `N_bl`.
+///
 /// product is a 3D zscore array of shape (num_timesteps - 1, num_freqs, num_pols=4)
 /// C = (4/pi - 1)
-/// zscore = (N_bl / C).sqrt() * (mean_amp_tfp - mean_amp_fp) / mean_amp_fp
+/// zscore = (N_bl(t, f) / C).sqrt() * (mean_amp_tfp / mean_amp_fp - 1)
+/// cells with no unflagged baselines are NaN.
 #[allow(clippy::upper_case_acronyms)]
 pub struct SSINS {
     pub zscore: Array3<f32>,           // (times-1, frequencies, polarizations)
     pub diff_mean_amp_fp: Array2<f32>, // (frequencies, polarizations)
     pub flag_array: Array2<bool>,      // (times-1, frequencies)
+    /// number of unflagged cross-correlation baselines averaged in each (time-1, frequency)
+    pub num_baselines_tf: Array2<u32>,
+    /// number of cross-correlation baselines selected
     pub num_baselines: usize,
     pub start_time_gps_s: f64,
     pub integration_time_s: f64,
@@ -694,6 +704,7 @@ impl SSINS {
     /// Legacy constructor using CorrelatorContext (for backward compatibility)
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
+        flag_array_tfb: ArrayView3<bool>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
@@ -702,69 +713,98 @@ impl SSINS {
         let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
         let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
 
-        Self::new_from_metadata(jones_array_tfb, &metadata, &timestep_flags, &chan_flags)
+        Self::new_from_metadata(
+            jones_array_tfb,
+            flag_array_tfb,
+            &metadata,
+            &timestep_flags,
+            &chan_flags,
+        )
     }
 
-    /// Create SSINS from visibility data and metadata
+    /// Create SSINS from visibility data, per-visibility flags and metadata
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
+        flag_array_tfb: ArrayView3<bool>,
         metadata: &MetricsContext,
         timestep_flags: &[bool],
         chan_flags: &[bool],
     ) -> Self {
-        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+        let (num_timesteps, num_freqs, _) = jones_array_tfb.dim();
+        assert_eq!(jones_array_tfb.dim(), flag_array_tfb.dim());
 
         if num_timesteps < 2 {
             panic!("SSINS requires at least 2 timesteps");
         }
-        let mut diff_mean_amp_tfp = Array3::<f32>::zeros((num_timesteps - 1, num_freqs, 4));
-        let mut diff_mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
 
-        let flag_array = Array2::<bool>::default((num_timesteps - 1, num_freqs));
-        let num_unflagged_diff_timesteps = timestep_flags
+        // SSINS's spectrum_type="cross" leaves out the autos.
+        let cross_bl_idxs: Vec<usize> = metadata
+            .antenna_pairs
             .iter()
-            .zip(timestep_flags[1..].iter())
-            .filter(|&(a, b)| !a && !b)
-            .count();
+            .enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .map(|(i, _)| i)
+            .collect();
 
-        for t in 0..num_timesteps - 1 {
-            for f in 0..num_freqs {
-                for b in 0..num_baselines {
-                    for p in 0..4 {
-                        if chan_flags[f] {
-                            diff_mean_amp_tfp[[t, f, p]] = f32::NAN;
-                            diff_mean_amp_fp[[f, p]] = f32::NAN;
-                        } else if timestep_flags[t] || timestep_flags[t + 1] {
-                            diff_mean_amp_tfp[[t, f, p]] = f32::NAN;
-                        } else {
-                            let jones_diff_p_norm = (jones_array_tfb[[t, f, b]]
-                                - jones_array_tfb[[t + 1, f, b]])[p]
-                                .norm();
-                            diff_mean_amp_tfp[[t, f, p]] += jones_diff_p_norm;
-                            diff_mean_amp_fp[[f, p]] += jones_diff_p_norm;
-                        }
+        // sum over unflagged cross baselines of |V(t+1) - V(t)|, and how many there are.
+        let mut diff_sum_amp_tfp = Array3::<f64>::zeros((num_timesteps - 1, num_freqs, 4));
+        let mut num_baselines_tf = Array2::<u32>::zeros((num_timesteps - 1, num_freqs));
+        diff_sum_amp_tfp
+            .outer_iter_mut()
+            .into_par_iter()
+            .zip(num_baselines_tf.outer_iter_mut())
+            .enumerate()
+            .for_each(|(t, (mut sum_fp, mut count_f))| {
+                if timestep_flags[t] || timestep_flags[t + 1] {
+                    return;
+                }
+                for f in 0..num_freqs {
+                    if chan_flags[f] {
+                        continue;
                     }
+                    for &b in &cross_bl_idxs {
+                        if flag_array_tfb[[t, f, b]] || flag_array_tfb[[t + 1, f, b]] {
+                            continue;
+                        }
+                        let diff = jones_array_tfb[[t + 1, f, b]] - jones_array_tfb[[t, f, b]];
+                        for p in 0..4 {
+                            sum_fp[[f, p]] += f64::from(diff[p].norm());
+                        }
+                        count_f[f] += 1;
+                    }
+                }
+            });
+
+        // time mean weighted by the number of baselines, like SSINS's np.ma.average.
+        let mut diff_mean_amp_fp = Array2::<f32>::from_elem((num_freqs, 4), f32::NAN);
+        for f in 0..num_freqs {
+            let count: f64 = num_baselines_tf
+                .column(f)
+                .iter()
+                .map(|&n| f64::from(n))
+                .sum();
+            if count > 0.0 {
+                for p in 0..4 {
+                    diff_mean_amp_fp[[f, p]] =
+                        (diff_sum_amp_tfp.slice(s![.., f, p]).sum() / count) as f32;
                 }
             }
         }
 
-        if num_baselines > 0 {
-            diff_mean_amp_tfp /= num_baselines as f32;
-            diff_mean_amp_fp /= num_baselines as f32;
-        }
-        if num_unflagged_diff_timesteps > 0 {
-            diff_mean_amp_fp /= num_unflagged_diff_timesteps as f32;
-        }
-
-        // subtract mean_amp_fp from mean_amp_tfp, divide by mean_amp_fp and multiply by mean_stdev_ratio
-        let mut zscore = diff_mean_amp_tfp;
-        let mean_stdev_ratio = (num_baselines as f32 / (4.0 / std::f32::consts::PI - 1.0)).sqrt();
+        let c = 4.0 / std::f64::consts::PI - 1.0;
+        let mut zscore = Array3::<f32>::from_elem((num_timesteps - 1, num_freqs, 4), f32::NAN);
         for t in 0..num_timesteps - 1 {
             for f in 0..num_freqs {
+                let n = num_baselines_tf[[t, f]];
+                if n == 0 {
+                    continue;
+                }
+                let n = f64::from(n);
                 for p in 0..4 {
-                    zscore[[t, f, p]] = mean_stdev_ratio
-                        * (zscore[[t, f, p]] - diff_mean_amp_fp[[f, p]])
-                        / diff_mean_amp_fp[[f, p]];
+                    let mean_amp = diff_sum_amp_tfp[[t, f, p]] / n;
+                    zscore[[t, f, p]] = ((n / c).sqrt()
+                        * (mean_amp / f64::from(diff_mean_amp_fp[[f, p]]) - 1.0))
+                        as f32;
                 }
             }
         }
@@ -775,23 +815,20 @@ impl SSINS {
             1.0 // Default to 1 second if only one timestep
         };
         // Compute the average time between adjacent timesteps
-        let timesteps_diff: Vec<f64> = if num_timesteps > 1 {
-            metadata.timestamps_s[1..]
-                .iter()
-                .zip(&metadata.timestamps_s[..num_timesteps - 1])
-                .map(|(a, b)| (a + b) / 2.0)
-                .collect()
-        } else {
-            vec![metadata.timestamps_s[0]]
-        };
+        let timesteps_diff: Vec<f64> = metadata.timestamps_s[1..]
+            .iter()
+            .zip(&metadata.timestamps_s[..num_timesteps - 1])
+            .map(|(a, b)| (a + b) / 2.0)
+            .collect();
 
         let freq_width_hz = metadata.fine_chan_freqs_hz[1] - metadata.fine_chan_freqs_hz[0];
 
         Self {
             zscore,
             diff_mean_amp_fp,
-            flag_array,
-            num_baselines,
+            flag_array: Array2::<bool>::default((num_timesteps - 1, num_freqs)),
+            num_baselines_tf,
+            num_baselines: cross_bl_idxs.len(),
             start_time_gps_s: timesteps_diff[0],
             integration_time_s,
             start_freq_hz: metadata.fine_chan_freqs_hz[0],
@@ -933,6 +970,38 @@ impl SSINS {
         // SSINS-specific metadata
         hdu.write_key(fptr, "TELESCOP", "MWA")?;
         hdu.write_key(fptr, "INSTRUME", "SSINS")?;
+        hdu.write_key(fptr, "ORIGIN", "Birli")?;
+
+        // write the number of unflagged cross baselines in each cell, which
+        // SSINS keeps as its weights_array.
+        let (nbl_times, nbl_freqs) = self.num_baselines_tf.dim();
+        let hdu = fptr.create_image(
+            "SSINS_N_BL",
+            &ImageDescription {
+                data_type: ImageType::Double,
+                dimensions: &[nbl_times, nbl_freqs],
+            },
+        )?;
+        hdu.write_image(
+            fptr,
+            &self
+                .num_baselines_tf
+                .iter()
+                .map(|&n| f64::from(n))
+                .collect::<Vec<_>>(),
+        )?;
+        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+        hdu.write_key(fptr, "BZERO", 0.0f64)?;
+        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
+        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
+        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT1", "Hz")?;
+        hdu.write_key(fptr, "CTYPE2", "TIME")?;
+        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
+        hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
+        hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT2", "s")?;
         hdu.write_key(fptr, "ORIGIN", "Birli")?;
 
         // write diff_mean_amp_fp
@@ -1932,5 +2001,98 @@ mod crossmetrics_tests {
         assert_eq!(cross_metrics.short_ant_delay_pol_adp.dim().0, 2); // 2 antennas
                                                                       // Check values are not NaN (at least for valid pols)
                                                                       // Since we put constant value, delay transform should have peak at 0 delay (DC component).
+    }
+}
+
+#[cfg(test)]
+mod ssins_tests {
+    use super::{MetricsContext, SSINS};
+    use crate::marlu::{
+        ndarray::{s, Array3},
+        num_complex::Complex,
+        Jones,
+    };
+
+    /// 4 tiles with autos, in upper-triangle order.
+    fn setup(num_times: usize, num_freqs: usize) -> (Array3<Jones<f32>>, MetricsContext) {
+        let mut antenna_pairs = vec![];
+        for i in 0..4 {
+            for j in i..4 {
+                antenna_pairs.push((i, j));
+            }
+        }
+        let vis =
+            Array3::from_shape_fn((num_times, num_freqs, antenna_pairs.len()), |(t, f, b)| {
+                let r = ((t * 31 + f * 17 + b * 7) % 11) as f32;
+                Jones::from([Complex::new(r, 1.0 - r); 4])
+            });
+        let ctx = MetricsContext {
+            antennas: vec![],
+            fine_chan_freqs_hz: (0..num_freqs).map(|f| 150e6 + 40e3 * f as f64).collect(),
+            timestamps_s: (0..num_times).map(|t| 2.0 * t as f64).collect(),
+            antenna_pairs,
+        };
+        (vis, ctx)
+    }
+
+    #[test]
+    fn test_ssins_matches_reference_and_skips_autos_and_flags() {
+        let (num_times, num_freqs) = (5, 3);
+        let (mut vis, ctx) = setup(num_times, num_freqs);
+        let mut flags = Array3::from_elem(vis.dim(), false);
+        let cross: Vec<usize> = (0..ctx.antenna_pairs.len())
+            .filter(|&b| ctx.antenna_pairs[b].0 != ctx.antenna_pairs[b].1)
+            .collect();
+        // one flagged cross visibility, and a whole flagged channel.
+        flags[[2, 0, cross[0]]] = true;
+        flags.slice_mut(s![.., 2, ..]).fill(true);
+        let no_ts_flags = vec![false; num_times];
+        let no_chan_flags = vec![false; num_freqs];
+        let ssins =
+            SSINS::new_from_metadata(vis.view(), flags.view(), &ctx, &no_ts_flags, &no_chan_flags);
+
+        // reference: SSINS's INS(spectrum_type="cross", order=0).metric_ms
+        let c = 4.0 / std::f64::consts::PI - 1.0;
+        for f in 0..2 {
+            for p in 0..4 {
+                let mut metric = vec![];
+                for t in 0..num_times - 1 {
+                    let amps: Vec<f64> = cross
+                        .iter()
+                        .filter(|&&b| !flags[[t, f, b]] && !flags[[t + 1, f, b]])
+                        .map(|&b| f64::from((vis[[t + 1, f, b]] - vis[[t, f, b]])[p].norm()))
+                        .collect();
+                    metric.push((amps.iter().sum::<f64>() / amps.len() as f64, amps.len()));
+                }
+                let weight: f64 = metric.iter().map(|&(_, n)| n as f64).sum();
+                let mean = metric.iter().map(|&(m, n)| m * n as f64).sum::<f64>() / weight;
+                for (t, &(m, n)) in metric.iter().enumerate() {
+                    assert_eq!(ssins.num_baselines_tf[[t, f]] as usize, n);
+                    let z = (m / mean - 1.0) * (n as f64 / c).sqrt();
+                    assert!((f64::from(ssins.zscore[[t, f, p]]) - z).abs() < 1e-4);
+                }
+            }
+        }
+        // 6 cross baselines, minus the flagged one for the two differences that use it.
+        assert_eq!(ssins.num_baselines, 6);
+        assert_eq!(ssins.num_baselines_tf[[1, 0]], 5);
+        assert_eq!(ssins.num_baselines_tf[[2, 0]], 5);
+        assert_eq!(ssins.num_baselines_tf[[0, 0]], 6);
+        assert!(ssins.zscore.slice(s![.., 2, ..]).iter().all(|z| z.is_nan()));
+        assert!(ssins.diff_mean_amp_fp.row(2).iter().all(|z| z.is_nan()));
+
+        // Neither the autos nor flagged visibilities change anything.
+        let autos: Vec<usize> = (0..ctx.antenna_pairs.len())
+            .filter(|b| !cross.contains(b))
+            .collect();
+        for &b in &autos {
+            vis[[3, 1, b]] *= 1000.0;
+        }
+        vis[[2, 0, cross[0]]] *= 1000.0;
+        let ssins2 =
+            SSINS::new_from_metadata(vis.view(), flags.view(), &ctx, &no_ts_flags, &no_chan_flags);
+        for (a, b) in ssins.zscore.iter().zip(ssins2.zscore.iter()) {
+            assert!(a == b || (a.is_nan() && b.is_nan()));
+        }
     }
 }

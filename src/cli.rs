@@ -1625,7 +1625,7 @@ impl<'a> BirliContext<'a> {
         chunk_vis_sel: &VisSelection,
         metrics_path: &Path,
     ) {
-        let mut ssins = SSINS::new(jones_array, corr_ctx, chunk_vis_sel, flag_ctx);
+        let mut ssins = SSINS::new(jones_array, flag_array, corr_ctx, chunk_vis_sel, flag_ctx);
         let eavils = EAVILS::new(jones_array, corr_ctx, chunk_vis_sel, flag_ctx);
         let auto_metrics = AutoMetrics::new(jones_array, corr_ctx, chunk_vis_sel, flag_ctx);
 

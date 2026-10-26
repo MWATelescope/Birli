@@ -111,7 +111,13 @@ fn main() {
     let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
     auto_metrics.save_to_fits(&mut fptr).unwrap();
 
-    let ssins = SSINS::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+    let ssins = SSINS::new(
+        jones_array.view(),
+        flag_array.view(),
+        &corr_ctx,
+        &vis_sel,
+        &flag_ctx,
+    );
     ssins.save_to_fits(&mut fptr).unwrap();
 
     let eavils = EAVILS::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
