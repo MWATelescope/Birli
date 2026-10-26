@@ -1696,11 +1696,7 @@ impl<'a> BirliContext<'a> {
             .antennas
             .iter()
             .map(|a| {
-                let enh = ENH {
-                    e: a.east_m,
-                    n: a.north_m,
-                    h: a.height_m,
-                };
+                let enh = ENH::from_mwalib_antenna(a);
                 let xyz = enh.to_xyz_inner(s_lat, c_lat);
                 (a.tile_name.clone(), xyz)
             })
