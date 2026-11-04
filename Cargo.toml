@@ -34,6 +34,9 @@ cli = ["clap", "env_logger", "prettytable-rs", "shlex"]
 # Compile cfitsio statically and link it
 cfitsio-static = ["marlu/cfitsio-static"]
 
+# Write Dysco-compressed measurement sets (--ms-dysco). Needs GSL.
+dysco = ["marlu/dysco"]
+
 # Compile all C dependencies statically and link them
 all-static = ["cfitsio-static"]
 
@@ -95,3 +98,5 @@ opt-level = 3
 [patch.crates-io]
 # marlu = { path = "../Marlu" }
 # marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "main" }
+# Dysco writing: Marlu `dysco` branch, which uses rubbl from d3v-null/rubbl `dysco-writing`
+marlu = { git = "https://github.com/MWATelescope/Marlu", branch = "dysco" }

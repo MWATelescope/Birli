@@ -45,6 +45,7 @@ use crate::{
         mwalib,
         ndarray::s,
         precession::{precess_time, PrecessionInfo},
+        rubbl_casatables::DyscoSpec,
         History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
     },
     passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
@@ -849,6 +850,33 @@ impl<'a> BirliContext<'a> {
                 .required(false)
                 .value_parser(clap::value_parser!(PathBuf)),
         ]);
+        #[cfg(feature = "dysco")]
+        {
+            app = app.args(&[
+                arg!(--"ms-dysco" "Compress the measurement set's DATA and WEIGHT_SPECTRUM with Dysco")
+                    .help_heading("OUTPUT"),
+                arg!(--"ms-dysco-data-bits" <BITS> "Dysco bits per DATA value [default: 10]")
+                    .help_heading("OUTPUT")
+                    .requires("ms-dysco")
+                    .value_parser(clap::value_parser!(u32).range(1..=16))
+                    .required(false),
+                arg!(--"ms-dysco-weight-bits" <BITS> "Dysco bits per WEIGHT_SPECTRUM value [default: 12]")
+                    .help_heading("OUTPUT")
+                    .requires("ms-dysco")
+                    .value_parser(clap::value_parser!(u32).range(1..=16))
+                    .required(false),
+                arg!(--"ms-dysco-distribution" <DIST> "Dysco distribution [default: TruncatedGaussian]")
+                    .help_heading("OUTPUT")
+                    .requires("ms-dysco")
+                    .value_parser(["Uniform", "Gaussian", "TruncatedGaussian", "StudentsT"])
+                    .required(false),
+                arg!(--"ms-dysco-normalization" <NORM> "Dysco normalization [default: Row; AF mangles autocorrelations]")
+                    .help_heading("OUTPUT")
+                    .requires("ms-dysco")
+                    .value_parser(["AF", "RF", "Row"])
+                    .required(false),
+            ]);
+        }
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
                 app = app.args(&[
@@ -878,8 +906,40 @@ impl<'a> BirliContext<'a> {
             aocalsols_in: matches.get_one::<PathBuf>("apply-di-cal").cloned(),
             uvfits_out: matches.get_one::<PathBuf>("uvfits-out").cloned(),
             ms_out: matches.get_one::<PathBuf>("ms-out").cloned(),
+            ms_dysco: Self::parse_dysco_matches(matches),
             flag_template: matches.get_one::<String>("flag-template").cloned(),
         }
+    }
+
+    #[cfg(feature = "dysco")]
+    fn parse_dysco_matches(matches: &clap::ArgMatches) -> Option<DyscoSpec> {
+        if !matches.get_flag("ms-dysco") {
+            return None;
+        }
+        let mut spec = DyscoSpec {
+            // Dysco's (and DP3's) default "AF" normalization mangles the
+            // autocorrelations (~99% error); "Row" keeps them to <1%.
+            normalization: "Row".to_owned(),
+            ..DyscoSpec::default()
+        };
+        if let Some(&bits) = matches.get_one::<u32>("ms-dysco-data-bits") {
+            spec.data_bit_count = bits;
+        }
+        if let Some(&bits) = matches.get_one::<u32>("ms-dysco-weight-bits") {
+            spec.weight_bit_count = bits;
+        }
+        if let Some(dist) = matches.get_one::<String>("ms-dysco-distribution") {
+            spec.distribution.clone_from(dist);
+        }
+        if let Some(norm) = matches.get_one::<String>("ms-dysco-normalization") {
+            spec.normalization.clone_from(norm);
+        }
+        Some(spec)
+    }
+
+    #[cfg(not(feature = "dysco"))]
+    const fn parse_dysco_matches(_matches: &clap::ArgMatches) -> Option<DyscoSpec> {
+        None
     }
 
     fn parse_vis_sel_matches(
@@ -1731,7 +1791,8 @@ impl<'a> BirliContext<'a> {
                 antenna_positions,
                 dut1,
                 true,
-            );
+            )
+            .with_dysco(io_ctx.ms_dysco.clone());
             println!(
                 "Writing to MS: {} with {} chans selected",
                 ms_out.display(),
@@ -2371,6 +2432,62 @@ mod argparse_tests {
         assert!(obs_flags[116]); // pol 0, chan 29 (29*4 = 116)
         assert!(obs_flags[120]); // pol 0, chan 30
         assert!(obs_flags[124]); // pol 0, chan 31
+    }
+
+    /// `--ms-dysco` writes DATA and WEIGHT_SPECTRUM with Dysco, close to the
+    /// uncompressed output.
+    #[cfg(feature = "dysco")]
+    #[test]
+    fn test_ms_dysco() {
+        use marlu::{
+            rubbl_casatables::{Table, TableOpenMode},
+            Complex,
+        };
+        let tmp_dir = tempdir().unwrap();
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut tables = vec![];
+        for (name, dysco) in [("plain.ms", false), ("dysco.ms", true)] {
+            let ms_path = tmp_dir.path().join(name);
+            #[rustfmt::skip]
+            let mut args = vec![
+                "birli",
+                "-m", metafits_path,
+                "-M", ms_path.to_str().unwrap(),
+                "--no-draw-progress",
+                gpufits_paths[0],
+                gpufits_paths[1],
+            ];
+            if dysco {
+                args.extend(["--ms-dysco", "--ms-dysco-data-bits", "10"]);
+            }
+            let birli_ctx = BirliContext::from_args(&args).unwrap();
+            assert_eq!(birli_ctx.io_ctx.ms_dysco.is_some(), dysco);
+            birli_ctx.run().unwrap();
+            tables.push(Table::open(&ms_path, TableOpenMode::Read).unwrap());
+        }
+        let (plain, dysco) = tables.split_at_mut(1);
+        let (plain, dysco) = (&mut plain[0], &mut dysco[0]);
+        assert_eq!(plain.n_rows(), dysco.n_rows());
+
+        let (mut err2, mut sum2) = (0.0f64, 0.0f64);
+        for row in 0..plain.n_rows() {
+            let plain_data = plain.get_cell_as_vec::<Complex<f32>>("DATA", row).unwrap();
+            let dysco_data = dysco.get_cell_as_vec::<Complex<f32>>("DATA", row).unwrap();
+            let f = plain.get_cell_as_vec::<bool>("FLAG", row).unwrap();
+            assert_eq!(f, dysco.get_cell_as_vec::<bool>("FLAG", row).unwrap());
+            // All of this test obs is flagged (quack time), so compare
+            // everything, autocorrelations included.
+            for (a, b) in plain_data.iter().zip(dysco_data.iter()) {
+                err2 += f64::from((a - b).norm_sqr());
+                sum2 += f64::from(a.norm_sqr());
+            }
+        }
+        let rel_rms = (err2 / sum2).sqrt();
+        assert!(
+            rel_rms > 0.0 && rel_rms < 0.01,
+            "relative RMS error {rel_rms}"
+        );
     }
 
     /// Flag 120kHz on the edges of a coarse channel with `flag-edge-width`

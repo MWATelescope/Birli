@@ -23,6 +23,7 @@ use crate::{
         mwalib,
         mwalib::{CorrelatorContext, MwalibError},
         rayon::prelude::*,
+        rubbl_casatables::DyscoSpec,
         Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, SelectionError, VisContext,
         VisSelection, ENH,
     },
@@ -47,6 +48,9 @@ pub struct IOContext {
     pub uvfits_out: Option<PathBuf>,
     /// Optional .ms measurement set output path
     pub ms_out: Option<PathBuf>,
+    /// If set, compress the measurement set's `DATA` and `WEIGHT_SPECTRUM`
+    /// with Dysco using these parameters (needs the `dysco` feature)
+    pub ms_dysco: Option<DyscoSpec>,
     /// Optional .mwaf flag file path template (see `io::mwaf::FlagFileSet`)
     pub flag_template: Option<String>,
 }
