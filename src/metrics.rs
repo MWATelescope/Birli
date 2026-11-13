@@ -13,6 +13,11 @@ use rayon::prelude::*;
 
 use marlu::XyzGeocentric;
 
+#[cfg(feature = "aoflagger")]
+use crate::marlu::{
+    ndarray::{Array1, Axis},
+    num_complex::Complex,
+};
 use crate::{
     delay_transform::{calculate_delay_channels, delay_transform, DelayTransformConfig},
     marlu::{
