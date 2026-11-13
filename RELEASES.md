@@ -2,7 +2,10 @@
 
 # Unreleased
 
+- 🐛 bug fixes:
+  - flagged antennas are now flagged in the `ANTENNA` table of Measurement Sets (`FLAG_ROW`). Previously this was always false, so readers could only find flagged antennas from the visibility flags.
 - 🙏 quality of life:
+  - the "Antenna details" log lists the flagged antennas by name and index, and why each is flagged: already flagged in the metafits, or newly flagged on request (`--flag-antennas`) or because it has no calibration solutions (`--apply-di-cal`). It also says which metafits flags `--no-flag-metafits` ignores.
   - warn when `--flag-edge-width` or `--flag-edge-chans` flags the coarse-channel edges of an oversampled observation, which don't need flagging
   - README: Birli flags no edge channels by default (the 80 kHz in the Cotter comparison table is Cotter's default), and DC flagging is only the default for legacy correlator observations
 

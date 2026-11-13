@@ -20,7 +20,10 @@ use clap::{
 use indicatif::{ProgressDrawTarget, ProgressStyle};
 use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
-use marlu::mwalib::MetafitsContext;
+use marlu::{
+    mwalib::MetafitsContext,
+    rubbl_casatables::{Table, TableOpenMode},
+};
 use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, CableDelaysApplied, CorrelatorContext,
     GeometricDelaysApplied, MWAVersion,
@@ -244,6 +247,21 @@ impl ChannelRanges {
     pub fn provided(context: &CorrelatorContext) -> Self {
         Self::from_idxs(context, &context.provided_coarse_chan_indices)
     }
+}
+
+/// The names of all antennas in the metafits (in mwalib antenna order), and whether the metafits
+/// flags each of them.
+fn antenna_names_and_flags(meta_ctx: &MetafitsContext) -> (Vec<String>, Vec<bool>) {
+    meta_ctx
+        .antennas
+        .iter()
+        .map(|a| {
+            (
+                a.tile_name.clone(),
+                a.rfinput_x.flagged || a.rfinput_y.flagged,
+            )
+        })
+        .unzip()
 }
 
 impl Display for BirliContext<'_> {
@@ -531,14 +549,17 @@ impl Display for BirliContext<'_> {
             f,
             "Antenna details (all={}, flag={})",
             self.corr_ctx.metafits_context.num_ants,
-            self.flag_ctx
-                .antenna_flags
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, &flag)| if flag { Some(idx) } else { None })
-                .count(),
-            // format!("\n{}", ant_table)
+            self.flag_ctx.get_flagged_antenna_idxs().len(),
         )?;
+        let (antenna_names, metafits_antenna_flags) =
+            antenna_names_and_flags(&self.corr_ctx.metafits_context);
+        for line in self.flag_ctx.describe_antenna_flags(
+            &antenna_names,
+            &metafits_antenna_flags,
+            &self.flag_ctx.antenna_flags,
+        ) {
+            writeln!(f, "  {line}")?;
+        }
 
         writeln!(
             f,
@@ -1679,6 +1700,23 @@ impl<'a> BirliContext<'a> {
         };
         if let Some(ref calsols) = prep_ctx.calsols {
             flag_antennas_with_nan_calsols(&mut flag_ctx.antenna_flags, calsols.view());
+            // these antennas were not flagged when the context was displayed, so say so now.
+            if flag_ctx.antenna_flags != self.flag_ctx.antenna_flags {
+                let (antenna_names, metafits_antenna_flags) =
+                    antenna_names_and_flags(&corr_ctx.metafits_context);
+                info!(
+                    "Antenna flags after reading calibration solutions (all={}, flag={})",
+                    corr_ctx.metafits_context.num_ants,
+                    flag_ctx.get_flagged_antenna_idxs().len(),
+                );
+                for line in flag_ctx.describe_antenna_flags(
+                    &antenna_names,
+                    &metafits_antenna_flags,
+                    &self.flag_ctx.antenna_flags,
+                ) {
+                    info!("  {line}");
+                }
+            }
         }
 
         let args_strings = std::env::args().collect_vec();
@@ -1747,6 +1785,19 @@ impl<'a> BirliContext<'a> {
                         &vis_sel.coarse_chan_range,
                     )
                     .expect("unable to initialize ms writer");
+                // Marlu doesn't know which antennas are flagged; say so in the antenna table, so
+                // that readers don't have to work it out from the visibility flags.
+                let flagged_antenna_idxs = flag_ctx.get_flagged_antenna_idxs();
+                if !flagged_antenna_idxs.is_empty() {
+                    let mut ant_table =
+                        Table::open(ms_out.join("ANTENNA"), TableOpenMode::ReadWrite)
+                            .expect("unable to open ms antenna table");
+                    for &antenna_idx in &flagged_antenna_idxs {
+                        ant_table
+                            .put_cell("FLAG_ROW", antenna_idx as u64, &true)
+                            .expect("unable to flag antenna in ms antenna table");
+                    }
+                }
             });
             writer
         });
@@ -2307,6 +2358,111 @@ mod argparse_tests {
         let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
 
         assert!(!flag_ctx.flag_dc);
+    }
+
+    /// Flagged antennas are flagged in the measurement set's antenna table, and the context
+    /// display says which antennas are flagged and why.
+    #[test]
+    fn test_flag_antennas_ms_output() {
+        use marlu::rubbl_casatables::{Table, TableOpenMode};
+
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("test_ant_flags.ms");
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "-m", metafits_path,
+            "-M", ms_path.to_str().unwrap(),
+            "--flag-antennas", "1", "3",
+            "--no-draw-progress",
+            gpufits_paths[0],
+        ];
+
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+        let num_ants = birli_ctx.corr_ctx.metafits_context.num_ants;
+        let names: Vec<String> = birli_ctx
+            .corr_ctx
+            .metafits_context
+            .antennas
+            .iter()
+            .map(|a| a.tile_name.clone())
+            .collect();
+
+        let display = format!("{birli_ctx}");
+        assert!(
+            display.contains(&format!("Antenna details (all={num_ants}, flag=2)")),
+            "{display}"
+        );
+        assert!(
+            display.contains(&format!(
+                "newly flagged on request (2):\n    [({:?}, 1), ({:?}, 3)]",
+                names[1], names[3]
+            )),
+            "{display}"
+        );
+        assert!(!display.contains("already flagged in the metafits"));
+
+        birli_ctx.run().unwrap();
+
+        let mut ant_table = Table::open(ms_path.join("ANTENNA"), TableOpenMode::Read).unwrap();
+        let flag_rows: Vec<bool> = ant_table.get_col_as_vec("FLAG_ROW").unwrap();
+        let expected: Vec<bool> = (0..num_ants).map(|i| i == 1 || i == 3).collect();
+        assert_eq!(flag_rows, expected);
+    }
+
+    /// The context display lists the antennas flagged in the metafits, and says when metafits
+    /// flags are being ignored.
+    #[test]
+    fn test_display_antenna_flag_reasons() {
+        let (_, gpufits_paths) = get_1254670392_avg_paths();
+
+        // in this metafits file, all ants are flagged.
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", "tests/data/1254670392_avg/1254670392.metafits",
+            "--flag-antennas", "2",
+            "--",
+        ];
+        args.extend_from_slice(&gpufits_paths);
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+        let num_ants = birli_ctx.corr_ctx.metafits_context.num_ants;
+        let display = format!("{birli_ctx}");
+        assert!(
+            display.contains(&format!(
+                "Antenna details (all={num_ants}, flag={num_ants})"
+            )),
+            "{display}"
+        );
+        assert!(
+            display.contains(&format!("already flagged in the metafits ({num_ants}):\n")),
+            "{display}"
+        );
+        assert!(!display.contains("newly flagged"), "{display}");
+
+        args.insert(3, "--no-flag-metafits");
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+        let name = &birli_ctx.corr_ctx.metafits_context.antennas[2].tile_name;
+        let display = format!("{birli_ctx}");
+        assert!(
+            display.contains(&format!("Antenna details (all={num_ants}, flag=1)")),
+            "{display}"
+        );
+        assert!(
+            display.contains(&format!(
+                "already flagged in the metafits (1):\n    [({name:?}, 2)]"
+            )),
+            "{display}"
+        );
+        assert!(
+            display.contains(&format!(
+                "not flagged, ignoring metafits flags ({}):\n",
+                num_ants - 1
+            )),
+            "{display}"
+        );
     }
 
     /// Flag 3 fine channels on the edge of a coarse channel with `flag-edge-chans`

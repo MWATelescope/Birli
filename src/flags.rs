@@ -134,6 +134,85 @@ impl FlagContext {
         result
     }
 
+    /// Describe which antennas are flagged and why, one line per reason, so that what was already
+    /// flagged in the metafits can be told apart from what is being flagged now.
+    ///
+    /// - `antenna_names` are the names of all antennas, in mwalib antenna order.
+    /// - `metafits_flags` are the antenna flags from the metafits.
+    /// - `requested_flags` are the antenna flags before anything was flagged because of its
+    ///   calibration solutions.
+    ///
+    /// Each flagged antenna is listed once, as `(name, index)`, under a line giving the reason. An
+    /// antenna that is flagged in the metafits is listed as such, even if it was also requested.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use birli::FlagContext;
+    ///
+    /// let names: Vec<String> = ["Tile011", "Tile012", "Tile013", "Tile014"]
+    ///     .iter()
+    ///     .map(|s| s.to_string())
+    ///     .collect();
+    /// let flag_ctx = FlagContext {
+    ///     antenna_flags: vec![false, true, true, true],
+    ///     ..Default::default()
+    /// };
+    /// let report = flag_ctx.describe_antenna_flags(
+    ///     &names,
+    ///     &[false, true, false, false],
+    ///     &[false, true, true, false],
+    /// );
+    /// assert_eq!(
+    ///     report,
+    ///     vec![
+    ///         r#"already flagged in the metafits (1):"#,
+    ///         r#"  [("Tile012", 1)]"#,
+    ///         r#"newly flagged on request (1):"#,
+    ///         r#"  [("Tile013", 2)]"#,
+    ///         r#"newly flagged, no calibration solutions (1):"#,
+    ///         r#"  [("Tile014", 3)]"#,
+    ///     ]
+    /// );
+    /// ```
+    pub fn describe_antenna_flags(
+        &self,
+        antenna_names: &[String],
+        metafits_flags: &[bool],
+        requested_flags: &[bool],
+    ) -> Vec<String> {
+        let mut metafits = vec![];
+        let mut requested = vec![];
+        let mut calsols = vec![];
+        let mut ignored = vec![];
+        for (idx, &flag) in self.antenna_flags.iter().enumerate() {
+            let name = antenna_names.get(idx).map_or("?", String::as_str);
+            let in_metafits = metafits_flags.get(idx).copied().unwrap_or(false);
+            let in_requested = requested_flags.get(idx).copied().unwrap_or(false);
+            match (flag, in_metafits, in_requested) {
+                (true, true, _) => metafits.push((name, idx)),
+                (true, false, true) => requested.push((name, idx)),
+                (true, false, false) => calsols.push((name, idx)),
+                (false, true, _) => ignored.push((name, idx)),
+                (false, false, _) => {}
+            }
+        }
+        [
+            ("already flagged in the metafits", metafits),
+            ("newly flagged on request", requested),
+            ("newly flagged, no calibration solutions", calsols),
+            ("not flagged, ignoring metafits flags", ignored),
+        ]
+        .into_iter()
+        .filter(|(_, ants)| !ants.is_empty())
+        .flat_map(|(reason, ants)| {
+            std::iter::once(format!("{reason} ({}):", ants.len()))
+                .chain(ants.chunks(8).map(|chunk| format!("  {chunk:?}")))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+    }
+
     /// Get the mwalib antenna indices which are flagged
     pub fn get_flagged_antenna_idxs(&self) -> Vec<usize> {
         self.antenna_flags
