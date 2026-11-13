@@ -204,7 +204,9 @@ pub mod van_vleck;
 pub use delay_transform::{delay_transform, DelayTransformConfig, DelayTransformResult};
 pub use van_vleck::{correct_van_vleck, get_vv_sample_scale};
 
+/// Small numerical helpers (polynomial fitting)
 pub mod math;
+/// Quality-assurance metrics (autos, SSINS, EAVILS)
 pub mod metrics;
 
 cfg_if! {

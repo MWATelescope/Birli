@@ -13,6 +13,11 @@ use rayon::prelude::*;
 
 use marlu::XyzGeocentric;
 
+#[cfg(feature = "aoflagger")]
+use crate::marlu::{
+    ndarray::{Array1, Axis},
+    num_complex::Complex,
+};
 use crate::{
     delay_transform::{calculate_delay_channels, delay_transform, DelayTransformConfig},
     marlu::{
@@ -21,15 +26,14 @@ use crate::{
             FitsFile,
         },
         mwalib::CorrelatorContext,
-        ndarray::{s, Array1, Array2, Array3, Array4, ArrayView3, Axis},
-        num_complex::Complex,
+        ndarray::{s, Array2, Array3, Array4, ArrayView3},
         Jones, VisSelection,
     },
     FlagContext,
 };
 
 /// Minimal metadata required for metrics calculation
-/// This allows metrics to work with any data source, not just mwalib CorrelatorContext
+/// This allows metrics to work with any data source, not just mwalib `CorrelatorContext`
 #[derive(Debug, Clone)]
 pub struct MetricsContext {
     /// Antenna information for selected antennas
@@ -45,23 +49,32 @@ pub struct MetricsContext {
 /// Antenna metadata needed for metrics
 #[derive(Debug, Clone)]
 pub struct AntennaMetadata {
+    /// Tile name from the metafits
     pub tile_name: String,
+    /// Tile ID from the metafits
     pub tile_id: u32,
+    /// Antenna index
     pub ant_id: u32,
-    /// ENU position in metres
+    /// East position in metres (ENU)
     pub east_m: f64,
+    /// North position in metres (ENU)
     pub north_m: f64,
+    /// Height in metres (ENU)
     pub height_m: f64,
-    /// Receiver information
+    /// Receiver number
     pub rec_number: u32,
+    /// Slot number of this tile in its receiver
     pub rec_slot_number: u32,
+    /// Receiver type
     pub rec_type: String,
+    /// Cable flavour
     pub cable_flavour: String,
+    /// Whether the cable has a whitening filter
     pub has_whitening_filter: bool,
 }
 
 impl MetricsContext {
-    /// Create MetricsContext from mwalib CorrelatorContext and VisSelection
+    /// Create `MetricsContext` from mwalib `CorrelatorContext` and `VisSelection`
     /// This is a convenience function for backward compatibility
     pub fn from_mwalib(corr_ctx: &CorrelatorContext, vis_sel: &VisSelection) -> Self {
         let fine_chan_freqs_hz = corr_ctx
@@ -129,32 +142,49 @@ pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
     }
 }
 
-// Autocorrelation metrics
+/// Autocorrelation metrics
 pub struct AutoMetrics {
-    pub auto_sub_aptf: Array4<f32>, // auto with mean(time) subtracted (antenna, times, frequencies, polarizations)
-    pub auto_spectrum_afp: Array3<f32>, // auto mean(time) (antenna, frequencies, polarizations)
-    pub auto_coeffs_apo: Array3<f32>, // polynomial coeffs (antenna, pol, order) - raw frequency basis
-    pub auto_delay_afp: Array3<f32>, // delay transform of auto mean(time) (antenna, delays, polarizations)
+    /// auto with mean(time) subtracted (antenna, times, frequencies, polarizations)
+    pub auto_sub_aptf: Array4<f32>,
+    /// auto mean(time) (antenna, frequencies, polarizations)
+    pub auto_spectrum_afp: Array3<f32>,
+    /// polynomial coeffs (antenna, pol, order) - raw frequency basis
+    pub auto_coeffs_apo: Array3<f32>,
+    /// delay transform of auto mean(time) (antenna, delays, polarizations)
+    pub auto_delay_afp: Array3<f32>,
+    /// Tile names of the selected antennas
     pub antenna_names: Vec<String>,
+    /// Tile IDs of the selected antennas
     pub antenna_ids: Vec<u32>,
+    /// Antenna indices of the selected antennas
     pub antenna_nums: Vec<u32>,
+    /// Receiver number of each antenna
     pub rx_numbers: Vec<u32>,
+    /// Receiver slot number of each antenna
     pub rx_slots: Vec<u32>,
+    /// Receiver type of each antenna
     pub rx_types: Vec<String>,
+    /// Cable flavour of each antenna
     pub cable_flavours: Vec<String>,
+    /// Whether each antenna has a whitening filter
     pub whitening_filters: Vec<bool>,
+    /// Geocentric position of each antenna
     pub antenna_positions: Vec<XyzGeocentric>,
 
+    /// Centre frequency of the first channel [Hz]
     pub start_freq_hz: f64,
+    /// Fine channel width [Hz]
     pub channel_width_hz: f64,
+    /// GPS time of the first timestep [s]
     pub start_time_gps_s: f64,
+    /// Integration time of each timestep [s]
     pub integration_time_s: f64,
 }
 
 impl AutoMetrics {
     // RUST_LOG=birli=debug cargo run --release -- --sel-ants 5 4 20 19 --provided-chan-ranges --flag-init 0 --metrics-out metrics_1119683928.fits -m tests/data/1119683928_picket/1119683928.metafits tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits 2>&1 | tee birli.log
 
-    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
@@ -168,18 +198,18 @@ impl AutoMetrics {
         Self::new_from_metadata(jones_array_tfb, &metadata, &timestep_flags, &chan_flags)
     }
 
-    /// Create AutoMetrics from visibility data and metadata
+    /// Create `AutoMetrics` from visibility data and metadata
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         metadata: &MetricsContext,
         timestep_flags: &[bool],
         chan_flags: &[bool],
     ) -> Self {
-        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+        let (num_timesteps, num_freqs, _num_baselines) = jones_array_tfb.dim();
 
         // Map from baseline index to auto-correlation antenna index in metadata.antennas
         let mut ant_idx_to_metadata_pos: HashMap<usize, usize> = HashMap::new();
-        for (pos, ant_meta) in metadata.antennas.iter().enumerate() {
+        for (pos, _ant_meta) in metadata.antennas.iter().enumerate() {
             // Find this antenna in antenna_pairs to get its original index
             for &(a_idx, b_idx) in &metadata.antenna_pairs {
                 if a_idx == b_idx {
@@ -218,12 +248,14 @@ impl AutoMetrics {
         let mut auto_power_aptf = Array4::<f32>::zeros((num_sel_ants, 4, num_timesteps, num_freqs));
         let mut auto_spectrum_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, 4));
         let num_unflagged_times_f32: f32 = timestep_flags.iter().filter(|&t| !t).count() as f32;
-        if (num_unflagged_times_f32 - 0.0).abs() < 0.00001 {
-            panic!("all timesteps are flagged");
-        }
-        if (chan_flags.iter().filter(|&c| !c).count()) == 0 {
-            panic!("all channels are flagged");
-        }
+        assert!(
+            (num_unflagged_times_f32 - 0.0).abs() >= 0.00001,
+            "all timesteps are flagged"
+        );
+        assert!(
+            (chan_flags.iter().filter(|&c| !c).count()) != 0,
+            "all channels are flagged"
+        );
 
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
@@ -256,7 +288,7 @@ impl AutoMetrics {
                 let spectrum = auto_spectrum_afp.slice(s![a, .., p]);
                 let y: Vec<f32> = spectrum.iter().copied().collect();
 
-                if let Some(coeffs) = crate::math::fit_polynomial(&freqs, &y, poly_order) {
+                if let Some(coeffs) = crate::math::fit_polynomial(freqs, &y, poly_order) {
                     for (k, &c) in coeffs.iter().enumerate() {
                         auto_coeffs_apo[[a, p, k]] = c;
                     }
@@ -361,6 +393,11 @@ impl AutoMetrics {
         }
     }
 
+    /// Write these metrics to HDUs in an open FITS file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the FITS file fails.
     pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         let (num_ants, num_pols, _num_times, num_freqs) = self.auto_sub_aptf.dim();
 
@@ -583,7 +620,7 @@ impl AutoMetrics {
                 .create()?,
         ];
 
-        let mut table_hdu = fptr.create_table(extname, &columns)?;
+        let table_hdu = fptr.create_table(extname, &columns)?;
 
         table_hdu.write_col(fptr, "ANT_NAME", &ant_names_col)?;
         table_hdu.write_col(fptr, "ANT_ID", &ant_ids_col)?;
@@ -674,26 +711,44 @@ impl AutoMetrics {
 
 /// SSINS (Sky-Subtract Incoherent Noise Spectra)
 ///
-/// incoherently averaged (along baseline) difference between the visibilities in time.
-/// product is a 3D zscore array of shape (num_timesteps - 1, num_freqs, num_pols=4)
-/// C = (4/pi - 1)
-/// zscore = (N_bl / C).sqrt() * (mean_amp_tfp - mean_amp_fp) / mean_amp_fp
+/// incoherently averaged (along baseline) difference between the visibilities in time,
+/// computed like `SSINS.INS(SS.read(..., diff=True), spectrum_type="cross", order=0)`:
+/// - only cross-correlations are averaged;
+/// - a baseline contributes to (t, f) only if neither of the visibilities being
+///   differenced is flagged, so `N_bl` is counted per (t, f);
+/// - the time mean is weighted by `N_bl`.
+///
+/// product is a 3D zscore array of shape `(num_timesteps - 1, num_freqs, num_pols=4)`
+/// `C = (4/pi - 1)`
+/// `zscore = (N_bl(t, f) / C).sqrt() * (mean_amp_tfp / mean_amp_fp - 1)`
+/// cells with no unflagged baselines are NaN.
 #[allow(clippy::upper_case_acronyms)]
 pub struct SSINS {
-    pub zscore: Array3<f32>,           // (times-1, frequencies, polarizations)
-    pub diff_mean_amp_fp: Array2<f32>, // (frequencies, polarizations)
-    pub flag_array: Array2<bool>,      // (times-1, frequencies)
+    /// (times-1, frequencies, polarizations)
+    pub zscore: Array3<f32>,
+    /// (frequencies, polarizations)
+    pub diff_mean_amp_fp: Array2<f32>,
+    /// (times-1, frequencies)
+    pub flag_array: Array2<bool>,
+    /// number of unflagged cross-correlation baselines averaged in each (time-1, frequency)
+    pub num_baselines_tf: Array2<u32>,
+    /// number of cross-correlation baselines selected
     pub num_baselines: usize,
+    /// GPS time of the first timestep [s]
     pub start_time_gps_s: f64,
+    /// Integration time of each timestep [s]
     pub integration_time_s: f64,
+    /// Centre frequency of the first channel [Hz]
     pub start_freq_hz: f64,
+    /// Fine channel width [Hz]
     pub channel_width_hz: f64,
 }
 
 impl SSINS {
-    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
+        flag_array_tfb: ArrayView3<bool>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
@@ -702,69 +757,96 @@ impl SSINS {
         let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
         let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
 
-        Self::new_from_metadata(jones_array_tfb, &metadata, &timestep_flags, &chan_flags)
+        Self::new_from_metadata(
+            jones_array_tfb,
+            flag_array_tfb,
+            &metadata,
+            &timestep_flags,
+            &chan_flags,
+        )
     }
 
-    /// Create SSINS from visibility data and metadata
+    /// Create SSINS from visibility data, per-visibility flags and metadata
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
+        flag_array_tfb: ArrayView3<bool>,
         metadata: &MetricsContext,
         timestep_flags: &[bool],
         chan_flags: &[bool],
     ) -> Self {
-        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+        let (num_timesteps, num_freqs, _) = jones_array_tfb.dim();
+        assert_eq!(jones_array_tfb.dim(), flag_array_tfb.dim());
 
-        if num_timesteps < 2 {
-            panic!("SSINS requires at least 2 timesteps");
-        }
-        let mut diff_mean_amp_tfp = Array3::<f32>::zeros((num_timesteps - 1, num_freqs, 4));
-        let mut diff_mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
+        assert!(num_timesteps >= 2, "SSINS requires at least 2 timesteps");
 
-        let flag_array = Array2::<bool>::default((num_timesteps - 1, num_freqs));
-        let num_unflagged_diff_timesteps = timestep_flags
+        // SSINS's spectrum_type="cross" leaves out the autos.
+        let cross_bl_idxs: Vec<usize> = metadata
+            .antenna_pairs
             .iter()
-            .zip(timestep_flags[1..].iter())
-            .filter(|&(a, b)| !a && !b)
-            .count();
+            .enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .map(|(i, _)| i)
+            .collect();
 
-        for t in 0..num_timesteps - 1 {
-            for f in 0..num_freqs {
-                for b in 0..num_baselines {
-                    for p in 0..4 {
-                        if chan_flags[f] {
-                            diff_mean_amp_tfp[[t, f, p]] = f32::NAN;
-                            diff_mean_amp_fp[[f, p]] = f32::NAN;
-                        } else if timestep_flags[t] || timestep_flags[t + 1] {
-                            diff_mean_amp_tfp[[t, f, p]] = f32::NAN;
-                        } else {
-                            let jones_diff_p_norm = (jones_array_tfb[[t, f, b]]
-                                - jones_array_tfb[[t + 1, f, b]])[p]
-                                .norm();
-                            diff_mean_amp_tfp[[t, f, p]] += jones_diff_p_norm;
-                            diff_mean_amp_fp[[f, p]] += jones_diff_p_norm;
-                        }
+        // sum over unflagged cross baselines of |V(t+1) - V(t)|, and how many there are.
+        let mut diff_sum_amp_tfp = Array3::<f64>::zeros((num_timesteps - 1, num_freqs, 4));
+        let mut num_baselines_tf = Array2::<u32>::zeros((num_timesteps - 1, num_freqs));
+        diff_sum_amp_tfp
+            .outer_iter_mut()
+            .into_par_iter()
+            .zip(num_baselines_tf.outer_iter_mut())
+            .enumerate()
+            .for_each(|(t, (mut sum_fp, mut count_f))| {
+                if timestep_flags[t] || timestep_flags[t + 1] {
+                    return;
+                }
+                for f in 0..num_freqs {
+                    if chan_flags[f] {
+                        continue;
                     }
+                    for &b in &cross_bl_idxs {
+                        if flag_array_tfb[[t, f, b]] || flag_array_tfb[[t + 1, f, b]] {
+                            continue;
+                        }
+                        let diff = jones_array_tfb[[t + 1, f, b]] - jones_array_tfb[[t, f, b]];
+                        for p in 0..4 {
+                            sum_fp[[f, p]] += f64::from(diff[p].norm());
+                        }
+                        count_f[f] += 1;
+                    }
+                }
+            });
+
+        // time mean weighted by the number of baselines, like SSINS's np.ma.average.
+        let mut diff_mean_amp_fp = Array2::<f32>::from_elem((num_freqs, 4), f32::NAN);
+        for f in 0..num_freqs {
+            let count: f64 = num_baselines_tf
+                .column(f)
+                .iter()
+                .map(|&n| f64::from(n))
+                .sum();
+            if count > 0.0 {
+                for p in 0..4 {
+                    diff_mean_amp_fp[[f, p]] =
+                        (diff_sum_amp_tfp.slice(s![.., f, p]).sum() / count) as f32;
                 }
             }
         }
 
-        if num_baselines > 0 {
-            diff_mean_amp_tfp /= num_baselines as f32;
-            diff_mean_amp_fp /= num_baselines as f32;
-        }
-        if num_unflagged_diff_timesteps > 0 {
-            diff_mean_amp_fp /= num_unflagged_diff_timesteps as f32;
-        }
-
-        // subtract mean_amp_fp from mean_amp_tfp, divide by mean_amp_fp and multiply by mean_stdev_ratio
-        let mut zscore = diff_mean_amp_tfp;
-        let mean_stdev_ratio = (num_baselines as f32 / (4.0 / std::f32::consts::PI - 1.0)).sqrt();
+        let c = 4.0 / std::f64::consts::PI - 1.0;
+        let mut zscore = Array3::<f32>::from_elem((num_timesteps - 1, num_freqs, 4), f32::NAN);
         for t in 0..num_timesteps - 1 {
             for f in 0..num_freqs {
+                let n = num_baselines_tf[[t, f]];
+                if n == 0 {
+                    continue;
+                }
+                let n = f64::from(n);
                 for p in 0..4 {
-                    zscore[[t, f, p]] = mean_stdev_ratio
-                        * (zscore[[t, f, p]] - diff_mean_amp_fp[[f, p]])
-                        / diff_mean_amp_fp[[f, p]];
+                    let mean_amp = diff_sum_amp_tfp[[t, f, p]] / n;
+                    zscore[[t, f, p]] = ((n / c).sqrt()
+                        * (mean_amp / f64::from(diff_mean_amp_fp[[f, p]]) - 1.0))
+                        as f32;
                 }
             }
         }
@@ -775,23 +857,20 @@ impl SSINS {
             1.0 // Default to 1 second if only one timestep
         };
         // Compute the average time between adjacent timesteps
-        let timesteps_diff: Vec<f64> = if num_timesteps > 1 {
-            metadata.timestamps_s[1..]
-                .iter()
-                .zip(&metadata.timestamps_s[..num_timesteps - 1])
-                .map(|(a, b)| (a + b) / 2.0)
-                .collect()
-        } else {
-            vec![metadata.timestamps_s[0]]
-        };
+        let timesteps_diff: Vec<f64> = metadata.timestamps_s[1..]
+            .iter()
+            .zip(&metadata.timestamps_s[..num_timesteps - 1])
+            .map(|(a, b)| (a + b) / 2.0)
+            .collect();
 
         let freq_width_hz = metadata.fine_chan_freqs_hz[1] - metadata.fine_chan_freqs_hz[0];
 
         Self {
             zscore,
             diff_mean_amp_fp,
-            flag_array,
-            num_baselines,
+            flag_array: Array2::<bool>::default((num_timesteps - 1, num_freqs)),
+            num_baselines_tf,
+            num_baselines: cross_bl_idxs.len(),
             start_time_gps_s: timesteps_diff[0],
             integration_time_s,
             start_freq_hz: metadata.fine_chan_freqs_hz[0],
@@ -827,6 +906,11 @@ impl SSINS {
         }
     }
 
+    /// Write these metrics to HDUs in an open FITS file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the FITS file fails.
     pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         // Write one image per polarization
         let pol_names = ["XX", "XY", "YX", "YY"];
@@ -935,6 +1019,38 @@ impl SSINS {
         hdu.write_key(fptr, "INSTRUME", "SSINS")?;
         hdu.write_key(fptr, "ORIGIN", "Birli")?;
 
+        // write the number of unflagged cross baselines in each cell, which
+        // SSINS keeps as its weights_array.
+        let (nbl_times, nbl_freqs) = self.num_baselines_tf.dim();
+        let hdu = fptr.create_image(
+            "SSINS_N_BL",
+            &ImageDescription {
+                data_type: ImageType::Double,
+                dimensions: &[nbl_times, nbl_freqs],
+            },
+        )?;
+        hdu.write_image(
+            fptr,
+            &self
+                .num_baselines_tf
+                .iter()
+                .map(|&n| f64::from(n))
+                .collect::<Vec<_>>(),
+        )?;
+        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+        hdu.write_key(fptr, "BZERO", 0.0f64)?;
+        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
+        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
+        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT1", "Hz")?;
+        hdu.write_key(fptr, "CTYPE2", "TIME")?;
+        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
+        hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
+        hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
+        hdu.write_key(fptr, "CUNIT2", "s")?;
+        hdu.write_key(fptr, "ORIGIN", "Birli")?;
+
         // write diff_mean_amp_fp
         let diff_mean_amp_fp_dim = self.diff_mean_amp_fp.dim();
         let diff_mean_amp_fp_image_description = ImageDescription {
@@ -959,6 +1075,8 @@ impl SSINS {
     }
 }
 
+/// EAVILS metrics: per-timestep z-scores of the baseline-averaged amplitude relative to
+/// its time mean, normalised by the mean variance over baselines.
 #[allow(clippy::upper_case_acronyms)]
 pub struct EAVILS {
     // Ntimes,Nbls,Nfreqs,Npols = uvd_or_data.shape
@@ -966,20 +1084,28 @@ pub struct EAVILS {
     // blmean_data_sub = blmean_data - np.mean(blmean_data,axis=0)
     // stdv_array = np.sqrt(np.mean(np.var(np.abs(uvd_or_data),axis=0,ddof=1),axis=0))
     // stdv_array =  stdv_array * np.full((Ntimes,Nfreqs,Npols),1) #giving it same shape as other arrays
-    pub zscore: Array3<f32>, // (mean_amp_tfp - mean_amp_fp)/sqrt_mean_var_amp_fp (times, frequencies, polarizations)
-    pub mean_amp_fp: Array2<f32>, // np.mean(blmean_data,axis=0) (frequencies, polarizations)
+    /// `(mean_amp_tfp - mean_amp_fp) / sqrt_mean_var_amp_fp` (times, frequencies, polarizations)
+    pub zscore: Array3<f32>,
+    /// `np.mean(blmean_data, axis=0)` (frequencies, polarizations)
+    pub mean_amp_fp: Array2<f32>,
     // pub mean_amp_fbp: Array3<f32>, // np.mean(np.abs(uvd_or_data),axis=0) (frequencies, baselines, polarizations)
     // pub var_amp_fbp: Array3<f32>, // np.var(np.abs(uvd_or_data),axis=0,ddof=1) (frequencies, baselines, polarizations)
-    pub sqrt_mean_var_amp_fp: Array2<f32>, // np.sqrt(np.mean(np.var(np.abs(uvd_or_data),axis=0,ddof=1),axis=0)) (frequencies, polarizations)
-    pub flag_array: Array2<bool>,          // (times, frequencies)
+    /// `np.sqrt(np.mean(np.var(np.abs(uvd_or_data), axis=0, ddof=1), axis=0))` (frequencies, polarizations)
+    pub sqrt_mean_var_amp_fp: Array2<f32>,
+    /// (times, frequencies)
+    pub flag_array: Array2<bool>,
+    /// GPS time of the first timestep [s]
     pub start_time_gps_s: f64,
+    /// Integration time of each timestep [s]
     pub integration_time_s: f64,
+    /// Centre frequency of the first channel [Hz]
     pub start_freq_hz: f64,
+    /// Fine channel width [Hz]
     pub channel_width_hz: f64,
 }
 
 impl EAVILS {
-    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
@@ -994,6 +1120,7 @@ impl EAVILS {
     }
 
     /// Create EAVILS from visibility data and metadata
+    #[allow(clippy::cognitive_complexity)]
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         metadata: &MetricsContext,
@@ -1121,6 +1248,11 @@ impl EAVILS {
         }
     }
 
+    /// Write these metrics to HDUs in an open FITS file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the FITS file fails.
     pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         // Write one image per polarization
         let pol_names = ["XX", "XY", "YX", "YY"];
@@ -1273,12 +1405,18 @@ impl EAVILS {
     }
 }
 
+/// AOFlagger flag occupancy metrics
 #[cfg(feature = "aoflagger")]
 pub struct AOFlagMetrics {
-    pub occupancy_tf: Array2<f64>, // (times, frequencies)
+    /// (times, frequencies)
+    pub occupancy_tf: Array2<f64>,
+    /// GPS time of the first timestep [s]
     pub start_time_gps_s: f64,
+    /// Integration time of each timestep [s]
     pub integration_time_s: f64,
+    /// Centre frequency of the first channel [Hz]
     pub start_freq_hz: f64,
+    /// Fine channel width [Hz]
     pub channel_width_hz: f64,
 }
 
@@ -1373,6 +1511,11 @@ impl AOFlagMetrics {
         }
     }
 
+    /// Write these metrics to HDUs in an open FITS file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the FITS file fails.
     pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         let flag_dim: (usize, usize) = self.occupancy_tf.dim();
         let flag_image_description = ImageDescription {
@@ -1403,15 +1546,24 @@ impl AOFlagMetrics {
     }
 }
 
+/// Cross-correlation delay metrics for short baselines
 #[cfg(feature = "aoflagger")]
 pub struct CrossMetrics {
-    pub short_ant_delay_pol_adp: Array3<f32>, // (antennas, delay bin, polarizations)
+    /// (antennas, delay bin, polarizations)
+    pub short_ant_delay_pol_adp: Array3<f32>,
+    /// Tile names of the selected antennas
     pub antenna_names: Vec<String>,
+    /// Tile IDs of the selected antennas
     pub antenna_ids: Vec<u32>,
+    /// Antenna indices of the selected antennas
     pub antenna_nums: Vec<u32>,
+    /// Centre frequency of the first channel [Hz]
     pub start_freq_hz: f64,
+    /// Fine channel width [Hz]
     pub channel_width_hz: f64,
+    /// GPS time of the first timestep [s]
     pub start_time_gps_s: f64,
+    /// Integration time of each timestep [s]
     pub integration_time_s: f64,
 }
 
@@ -1635,6 +1787,11 @@ impl CrossMetrics {
         }
     }
 
+    /// Write these metrics to HDUs in an open FITS file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the FITS file fails.
     pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         let (num_ants, num_delays, num_pols) = self.short_ant_delay_pol_adp.dim();
 
@@ -1932,5 +2089,98 @@ mod crossmetrics_tests {
         assert_eq!(cross_metrics.short_ant_delay_pol_adp.dim().0, 2); // 2 antennas
                                                                       // Check values are not NaN (at least for valid pols)
                                                                       // Since we put constant value, delay transform should have peak at 0 delay (DC component).
+    }
+}
+
+#[cfg(test)]
+mod ssins_tests {
+    use super::{MetricsContext, SSINS};
+    use crate::marlu::{
+        ndarray::{s, Array3},
+        num_complex::Complex,
+        Jones,
+    };
+
+    /// 4 tiles with autos, in upper-triangle order.
+    fn setup(num_times: usize, num_freqs: usize) -> (Array3<Jones<f32>>, MetricsContext) {
+        let mut antenna_pairs = vec![];
+        for i in 0..4 {
+            for j in i..4 {
+                antenna_pairs.push((i, j));
+            }
+        }
+        let vis =
+            Array3::from_shape_fn((num_times, num_freqs, antenna_pairs.len()), |(t, f, b)| {
+                let r = ((t * 31 + f * 17 + b * 7) % 11) as f32;
+                Jones::from([Complex::new(r, 1.0 - r); 4])
+            });
+        let ctx = MetricsContext {
+            antennas: vec![],
+            fine_chan_freqs_hz: (0..num_freqs).map(|f| 150e6 + 40e3 * f as f64).collect(),
+            timestamps_s: (0..num_times).map(|t| 2.0 * t as f64).collect(),
+            antenna_pairs,
+        };
+        (vis, ctx)
+    }
+
+    #[test]
+    fn test_ssins_matches_reference_and_skips_autos_and_flags() {
+        let (num_times, num_freqs) = (5, 3);
+        let (mut vis, ctx) = setup(num_times, num_freqs);
+        let mut flags = Array3::from_elem(vis.dim(), false);
+        let cross: Vec<usize> = (0..ctx.antenna_pairs.len())
+            .filter(|&b| ctx.antenna_pairs[b].0 != ctx.antenna_pairs[b].1)
+            .collect();
+        // one flagged cross visibility, and a whole flagged channel.
+        flags[[2, 0, cross[0]]] = true;
+        flags.slice_mut(s![.., 2, ..]).fill(true);
+        let no_ts_flags = vec![false; num_times];
+        let no_chan_flags = vec![false; num_freqs];
+        let ssins =
+            SSINS::new_from_metadata(vis.view(), flags.view(), &ctx, &no_ts_flags, &no_chan_flags);
+
+        // reference: SSINS's INS(spectrum_type="cross", order=0).metric_ms
+        let c = 4.0 / std::f64::consts::PI - 1.0;
+        for f in 0..2 {
+            for p in 0..4 {
+                let mut metric = vec![];
+                for t in 0..num_times - 1 {
+                    let amps: Vec<f64> = cross
+                        .iter()
+                        .filter(|&&b| !flags[[t, f, b]] && !flags[[t + 1, f, b]])
+                        .map(|&b| f64::from((vis[[t + 1, f, b]] - vis[[t, f, b]])[p].norm()))
+                        .collect();
+                    metric.push((amps.iter().sum::<f64>() / amps.len() as f64, amps.len()));
+                }
+                let weight: f64 = metric.iter().map(|&(_, n)| n as f64).sum();
+                let mean = metric.iter().map(|&(m, n)| m * n as f64).sum::<f64>() / weight;
+                for (t, &(m, n)) in metric.iter().enumerate() {
+                    assert_eq!(ssins.num_baselines_tf[[t, f]] as usize, n);
+                    let z = (m / mean - 1.0) * (n as f64 / c).sqrt();
+                    assert!((f64::from(ssins.zscore[[t, f, p]]) - z).abs() < 1e-4);
+                }
+            }
+        }
+        // 6 cross baselines, minus the flagged one for the two differences that use it.
+        assert_eq!(ssins.num_baselines, 6);
+        assert_eq!(ssins.num_baselines_tf[[1, 0]], 5);
+        assert_eq!(ssins.num_baselines_tf[[2, 0]], 5);
+        assert_eq!(ssins.num_baselines_tf[[0, 0]], 6);
+        assert!(ssins.zscore.slice(s![.., 2, ..]).iter().all(|z| z.is_nan()));
+        assert!(ssins.diff_mean_amp_fp.row(2).iter().all(|z| z.is_nan()));
+
+        // Neither the autos nor flagged visibilities change anything.
+        let autos: Vec<usize> = (0..ctx.antenna_pairs.len())
+            .filter(|b| !cross.contains(b))
+            .collect();
+        for &b in &autos {
+            vis[[3, 1, b]] *= 1000.0;
+        }
+        vis[[2, 0, cross[0]]] *= 1000.0;
+        let ssins2 =
+            SSINS::new_from_metadata(vis.view(), flags.view(), &ctx, &no_ts_flags, &no_chan_flags);
+        for (a, b) in ssins.zscore.iter().zip(ssins2.zscore.iter()) {
+            assert!(a == b || (a.is_nan() && b.is_nan()));
+        }
     }
 }
