@@ -1346,6 +1346,7 @@ impl<'a> BirliContext<'a> {
             cable_delays_applied,
             geometric_delays_applied,
             deripple_applied,
+            digital_gains_applied,
             ..
         } = meta_ctx;
 
@@ -1400,7 +1401,14 @@ impl<'a> BirliContext<'a> {
             ) && !cable_delays_disabled
         };
 
-        prep_ctx.correct_digital_gains = !matches.get_flag("no-digital-gains");
+        prep_ctx.correct_digital_gains = {
+            let digital_gains_disabled = matches.get_flag("no-digital-gains");
+            info!(
+                "digital gain corrections: applied={:?}, disabled={}",
+                digital_gains_applied, digital_gains_disabled
+            );
+            !digital_gains_applied && !digital_gains_disabled
+        };
 
         prep_ctx.passband_gains = match matches
             .get_one::<String>("passband-gains")

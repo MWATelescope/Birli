@@ -2,6 +2,8 @@
 
 # Version 0.22.0 (2026-11-16)
 
+- ✨ new feature:
+  - Birli will not correct the digital gains, if it has already been done by the correlator (NOTE: as of writing the correction of digital gains features is not yet implemented in the MWAX correlator so this is a pre-emptive feature updates to ensure Birli is ready for it when is released)
 - 🐛 bug fixes:
   - tile positions in uvfits `AIPS AN` and MS `ANTENNA` tables are now relative to the array centre, not ~378 m too high as in cotter's files, and long-baseline tiles' heights include the Earth's curvature (up to ~1 m at 3.5 km). This uses Marlu 0.20's `ENH::from_mwalib_antenna` (MWATelescope/Marlu#49 and #51) and mwalib 4's curvature-corrected `Antenna::height_m`
   - `--emulate-cotter` computes UVWs (and the geometric correction) in cotter's frame, Marlu's `UvwFrame::Cotter` (mean sidereal time, projection onto the aberrated phase centre). Otherwise Birli uses Marlu's default frame, which differs from cotter's by up to ~8 cm per km in `w`
