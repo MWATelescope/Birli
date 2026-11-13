@@ -2,6 +2,8 @@
 
 # Unreleased
 
+- ✨ new feature:
+  - Birli will not correct the digital gains, if it has already been done by the correlator (NOTE: as of writing the correction of digital gains features is not yet implemented in the MWAX correlator so this is a pre-emptive feature updates to ensure Birli is ready for it when is released)
 - 🙏 quality of life:
   - warn when `--flag-edge-width` or `--flag-edge-chans` flags the coarse-channel edges of an oversampled observation, which don't need flagging
   - README: Birli flags no edge channels by default (the 80 kHz in the Cotter comparison table is Cotter's default), and DC flagging is only the default for legacy correlator observations
