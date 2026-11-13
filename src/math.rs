@@ -1,7 +1,7 @@
 use marlu::ndarray::Array2;
 
 /// Fit a polynomial of order `poly_order` to the data `y` at coordinates `x`.
-/// Returns the coefficients in the original basis, such that y approx sum(c_i * x^i).
+/// Returns the coefficients in the original basis, such that `y ≈ sum(c_i * x^i)`.
 /// Returns None if the fit is singular or there are not enough valid points.
 ///
 /// The fit is performed in a normalized domain [-1, 1] for stability,
@@ -172,7 +172,7 @@ mod tests {
     fn test_fit_polynomial_with_nans() {
         // Fit y = 2x
         let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
-        let mut y = vec![0.0, 2.0, f32::NAN, 6.0, 8.0];
+        let y = vec![0.0, 2.0, f32::NAN, 6.0, 8.0];
         let order = 1;
 
         let coeffs = fit_polynomial(&x, &y, order).expect("Fit failed");

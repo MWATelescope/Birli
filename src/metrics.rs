@@ -21,15 +21,14 @@ use crate::{
             FitsFile,
         },
         mwalib::CorrelatorContext,
-        ndarray::{s, Array1, Array2, Array3, Array4, ArrayView3, Axis},
-        num_complex::Complex,
+        ndarray::{s, Array2, Array3, Array4, ArrayView3},
         Jones, VisSelection,
     },
     FlagContext,
 };
 
 /// Minimal metadata required for metrics calculation
-/// This allows metrics to work with any data source, not just mwalib CorrelatorContext
+/// This allows metrics to work with any data source, not just mwalib `CorrelatorContext`
 #[derive(Debug, Clone)]
 pub struct MetricsContext {
     /// Antenna information for selected antennas
@@ -45,23 +44,32 @@ pub struct MetricsContext {
 /// Antenna metadata needed for metrics
 #[derive(Debug, Clone)]
 pub struct AntennaMetadata {
+    /// Tile name from the metafits
     pub tile_name: String,
+    /// Tile ID from the metafits
     pub tile_id: u32,
+    /// Antenna index
     pub ant_id: u32,
-    /// ENU position in metres
+    /// East position in metres (ENU)
     pub east_m: f64,
+    /// North position in metres (ENU)
     pub north_m: f64,
+    /// Height in metres (ENU)
     pub height_m: f64,
-    /// Receiver information
+    /// Receiver number
     pub rec_number: u32,
+    /// Slot number of this tile in its receiver
     pub rec_slot_number: u32,
+    /// Receiver type
     pub rec_type: String,
+    /// Cable flavour
     pub cable_flavour: String,
+    /// Whether the cable has a whitening filter
     pub has_whitening_filter: bool,
 }
 
 impl MetricsContext {
-    /// Create MetricsContext from mwalib CorrelatorContext and VisSelection
+    /// Create `MetricsContext` from mwalib `CorrelatorContext` and `VisSelection`
     /// This is a convenience function for backward compatibility
     pub fn from_mwalib(corr_ctx: &CorrelatorContext, vis_sel: &VisSelection) -> Self {
         let fine_chan_freqs_hz = corr_ctx
@@ -129,32 +137,49 @@ pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
     }
 }
 
-// Autocorrelation metrics
+/// Autocorrelation metrics
 pub struct AutoMetrics {
-    pub auto_sub_aptf: Array4<f32>, // auto with mean(time) subtracted (antenna, times, frequencies, polarizations)
-    pub auto_spectrum_afp: Array3<f32>, // auto mean(time) (antenna, frequencies, polarizations)
-    pub auto_coeffs_apo: Array3<f32>, // polynomial coeffs (antenna, pol, order) - raw frequency basis
-    pub auto_delay_afp: Array3<f32>, // delay transform of auto mean(time) (antenna, delays, polarizations)
+    /// auto with mean(time) subtracted (antenna, times, frequencies, polarizations)
+    pub auto_sub_aptf: Array4<f32>,
+    /// auto mean(time) (antenna, frequencies, polarizations)
+    pub auto_spectrum_afp: Array3<f32>,
+    /// polynomial coeffs (antenna, pol, order) - raw frequency basis
+    pub auto_coeffs_apo: Array3<f32>,
+    /// delay transform of auto mean(time) (antenna, delays, polarizations)
+    pub auto_delay_afp: Array3<f32>,
+    /// Tile names of the selected antennas
     pub antenna_names: Vec<String>,
+    /// Tile IDs of the selected antennas
     pub antenna_ids: Vec<u32>,
+    /// Antenna indices of the selected antennas
     pub antenna_nums: Vec<u32>,
+    /// Receiver number of each antenna
     pub rx_numbers: Vec<u32>,
+    /// Receiver slot number of each antenna
     pub rx_slots: Vec<u32>,
+    /// Receiver type of each antenna
     pub rx_types: Vec<String>,
+    /// Cable flavour of each antenna
     pub cable_flavours: Vec<String>,
+    /// Whether each antenna has a whitening filter
     pub whitening_filters: Vec<bool>,
+    /// Geocentric position of each antenna
     pub antenna_positions: Vec<XyzGeocentric>,
 
+    /// Centre frequency of the first channel [Hz]
     pub start_freq_hz: f64,
+    /// Fine channel width [Hz]
     pub channel_width_hz: f64,
+    /// GPS time of the first timestep [s]
     pub start_time_gps_s: f64,
+    /// Integration time of each timestep [s]
     pub integration_time_s: f64,
 }
 
 impl AutoMetrics {
     // RUST_LOG=birli=debug cargo run --release -- --sel-ants 5 4 20 19 --provided-chan-ranges --flag-init 0 --metrics-out metrics_1119683928.fits -m tests/data/1119683928_picket/1119683928.metafits tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits 2>&1 | tee birli.log
 
-    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
@@ -168,18 +193,18 @@ impl AutoMetrics {
         Self::new_from_metadata(jones_array_tfb, &metadata, &timestep_flags, &chan_flags)
     }
 
-    /// Create AutoMetrics from visibility data and metadata
+    /// Create `AutoMetrics` from visibility data and metadata
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         metadata: &MetricsContext,
         timestep_flags: &[bool],
         chan_flags: &[bool],
     ) -> Self {
-        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+        let (num_timesteps, num_freqs, _num_baselines) = jones_array_tfb.dim();
 
         // Map from baseline index to auto-correlation antenna index in metadata.antennas
         let mut ant_idx_to_metadata_pos: HashMap<usize, usize> = HashMap::new();
-        for (pos, ant_meta) in metadata.antennas.iter().enumerate() {
+        for (pos, _ant_meta) in metadata.antennas.iter().enumerate() {
             // Find this antenna in antenna_pairs to get its original index
             for &(a_idx, b_idx) in &metadata.antenna_pairs {
                 if a_idx == b_idx {
@@ -218,12 +243,14 @@ impl AutoMetrics {
         let mut auto_power_aptf = Array4::<f32>::zeros((num_sel_ants, 4, num_timesteps, num_freqs));
         let mut auto_spectrum_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, 4));
         let num_unflagged_times_f32: f32 = timestep_flags.iter().filter(|&t| !t).count() as f32;
-        if (num_unflagged_times_f32 - 0.0).abs() < 0.00001 {
-            panic!("all timesteps are flagged");
-        }
-        if (chan_flags.iter().filter(|&c| !c).count()) == 0 {
-            panic!("all channels are flagged");
-        }
+        assert!(
+            (num_unflagged_times_f32 - 0.0).abs() >= 0.00001,
+            "all timesteps are flagged"
+        );
+        assert!(
+            (chan_flags.iter().filter(|&c| !c).count()) != 0,
+            "all channels are flagged"
+        );
 
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
@@ -256,7 +283,7 @@ impl AutoMetrics {
                 let spectrum = auto_spectrum_afp.slice(s![a, .., p]);
                 let y: Vec<f32> = spectrum.iter().copied().collect();
 
-                if let Some(coeffs) = crate::math::fit_polynomial(&freqs, &y, poly_order) {
+                if let Some(coeffs) = crate::math::fit_polynomial(freqs, &y, poly_order) {
                     for (k, &c) in coeffs.iter().enumerate() {
                         auto_coeffs_apo[[a, p, k]] = c;
                     }
@@ -361,6 +388,11 @@ impl AutoMetrics {
         }
     }
 
+    /// Write these metrics to HDUs in an open FITS file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the FITS file fails.
     pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         let (num_ants, num_pols, _num_times, num_freqs) = self.auto_sub_aptf.dim();
 
@@ -583,7 +615,7 @@ impl AutoMetrics {
                 .create()?,
         ];
 
-        let mut table_hdu = fptr.create_table(extname, &columns)?;
+        let table_hdu = fptr.create_table(extname, &columns)?;
 
         table_hdu.write_col(fptr, "ANT_NAME", &ant_names_col)?;
         table_hdu.write_col(fptr, "ANT_ID", &ant_ids_col)?;
@@ -681,27 +713,34 @@ impl AutoMetrics {
 ///   differenced is flagged, so `N_bl` is counted per (t, f);
 /// - the time mean is weighted by `N_bl`.
 ///
-/// product is a 3D zscore array of shape (num_timesteps - 1, num_freqs, num_pols=4)
-/// C = (4/pi - 1)
-/// zscore = (N_bl(t, f) / C).sqrt() * (mean_amp_tfp / mean_amp_fp - 1)
+/// product is a 3D zscore array of shape `(num_timesteps - 1, num_freqs, num_pols=4)`
+/// `C = (4/pi - 1)`
+/// `zscore = (N_bl(t, f) / C).sqrt() * (mean_amp_tfp / mean_amp_fp - 1)`
 /// cells with no unflagged baselines are NaN.
 #[allow(clippy::upper_case_acronyms)]
 pub struct SSINS {
-    pub zscore: Array3<f32>,           // (times-1, frequencies, polarizations)
-    pub diff_mean_amp_fp: Array2<f32>, // (frequencies, polarizations)
-    pub flag_array: Array2<bool>,      // (times-1, frequencies)
+    /// (times-1, frequencies, polarizations)
+    pub zscore: Array3<f32>,
+    /// (frequencies, polarizations)
+    pub diff_mean_amp_fp: Array2<f32>,
+    /// (times-1, frequencies)
+    pub flag_array: Array2<bool>,
     /// number of unflagged cross-correlation baselines averaged in each (time-1, frequency)
     pub num_baselines_tf: Array2<u32>,
     /// number of cross-correlation baselines selected
     pub num_baselines: usize,
+    /// GPS time of the first timestep [s]
     pub start_time_gps_s: f64,
+    /// Integration time of each timestep [s]
     pub integration_time_s: f64,
+    /// Centre frequency of the first channel [Hz]
     pub start_freq_hz: f64,
+    /// Fine channel width [Hz]
     pub channel_width_hz: f64,
 }
 
 impl SSINS {
-    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         flag_array_tfb: ArrayView3<bool>,
@@ -733,9 +772,7 @@ impl SSINS {
         let (num_timesteps, num_freqs, _) = jones_array_tfb.dim();
         assert_eq!(jones_array_tfb.dim(), flag_array_tfb.dim());
 
-        if num_timesteps < 2 {
-            panic!("SSINS requires at least 2 timesteps");
-        }
+        assert!(num_timesteps >= 2, "SSINS requires at least 2 timesteps");
 
         // SSINS's spectrum_type="cross" leaves out the autos.
         let cross_bl_idxs: Vec<usize> = metadata
@@ -864,6 +901,11 @@ impl SSINS {
         }
     }
 
+    /// Write these metrics to HDUs in an open FITS file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the FITS file fails.
     pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         // Write one image per polarization
         let pol_names = ["XX", "XY", "YX", "YY"];
@@ -1028,6 +1070,8 @@ impl SSINS {
     }
 }
 
+/// EAVILS metrics: per-timestep z-scores of the baseline-averaged amplitude relative to
+/// its time mean, normalised by the mean variance over baselines.
 #[allow(clippy::upper_case_acronyms)]
 pub struct EAVILS {
     // Ntimes,Nbls,Nfreqs,Npols = uvd_or_data.shape
@@ -1035,20 +1079,28 @@ pub struct EAVILS {
     // blmean_data_sub = blmean_data - np.mean(blmean_data,axis=0)
     // stdv_array = np.sqrt(np.mean(np.var(np.abs(uvd_or_data),axis=0,ddof=1),axis=0))
     // stdv_array =  stdv_array * np.full((Ntimes,Nfreqs,Npols),1) #giving it same shape as other arrays
-    pub zscore: Array3<f32>, // (mean_amp_tfp - mean_amp_fp)/sqrt_mean_var_amp_fp (times, frequencies, polarizations)
-    pub mean_amp_fp: Array2<f32>, // np.mean(blmean_data,axis=0) (frequencies, polarizations)
+    /// `(mean_amp_tfp - mean_amp_fp) / sqrt_mean_var_amp_fp` (times, frequencies, polarizations)
+    pub zscore: Array3<f32>,
+    /// `np.mean(blmean_data, axis=0)` (frequencies, polarizations)
+    pub mean_amp_fp: Array2<f32>,
     // pub mean_amp_fbp: Array3<f32>, // np.mean(np.abs(uvd_or_data),axis=0) (frequencies, baselines, polarizations)
     // pub var_amp_fbp: Array3<f32>, // np.var(np.abs(uvd_or_data),axis=0,ddof=1) (frequencies, baselines, polarizations)
-    pub sqrt_mean_var_amp_fp: Array2<f32>, // np.sqrt(np.mean(np.var(np.abs(uvd_or_data),axis=0,ddof=1),axis=0)) (frequencies, polarizations)
-    pub flag_array: Array2<bool>,          // (times, frequencies)
+    /// `np.sqrt(np.mean(np.var(np.abs(uvd_or_data), axis=0, ddof=1), axis=0))` (frequencies, polarizations)
+    pub sqrt_mean_var_amp_fp: Array2<f32>,
+    /// (times, frequencies)
+    pub flag_array: Array2<bool>,
+    /// GPS time of the first timestep [s]
     pub start_time_gps_s: f64,
+    /// Integration time of each timestep [s]
     pub integration_time_s: f64,
+    /// Centre frequency of the first channel [Hz]
     pub start_freq_hz: f64,
+    /// Fine channel width [Hz]
     pub channel_width_hz: f64,
 }
 
 impl EAVILS {
-    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
@@ -1063,6 +1115,7 @@ impl EAVILS {
     }
 
     /// Create EAVILS from visibility data and metadata
+    #[allow(clippy::cognitive_complexity)]
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         metadata: &MetricsContext,
@@ -1190,6 +1243,11 @@ impl EAVILS {
         }
     }
 
+    /// Write these metrics to HDUs in an open FITS file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the FITS file fails.
     pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         // Write one image per polarization
         let pol_names = ["XX", "XY", "YX", "YY"];
@@ -1342,12 +1400,18 @@ impl EAVILS {
     }
 }
 
+/// AOFlagger flag occupancy metrics
 #[cfg(feature = "aoflagger")]
 pub struct AOFlagMetrics {
-    pub occupancy_tf: Array2<f64>, // (times, frequencies)
+    /// (times, frequencies)
+    pub occupancy_tf: Array2<f64>,
+    /// GPS time of the first timestep [s]
     pub start_time_gps_s: f64,
+    /// Integration time of each timestep [s]
     pub integration_time_s: f64,
+    /// Centre frequency of the first channel [Hz]
     pub start_freq_hz: f64,
+    /// Fine channel width [Hz]
     pub channel_width_hz: f64,
 }
 
@@ -1442,6 +1506,11 @@ impl AOFlagMetrics {
         }
     }
 
+    /// Write these metrics to HDUs in an open FITS file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the FITS file fails.
     pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         let flag_dim: (usize, usize) = self.occupancy_tf.dim();
         let flag_image_description = ImageDescription {
@@ -1472,15 +1541,24 @@ impl AOFlagMetrics {
     }
 }
 
+/// Cross-correlation delay metrics for short baselines
 #[cfg(feature = "aoflagger")]
 pub struct CrossMetrics {
-    pub short_ant_delay_pol_adp: Array3<f32>, // (antennas, delay bin, polarizations)
+    /// (antennas, delay bin, polarizations)
+    pub short_ant_delay_pol_adp: Array3<f32>,
+    /// Tile names of the selected antennas
     pub antenna_names: Vec<String>,
+    /// Tile IDs of the selected antennas
     pub antenna_ids: Vec<u32>,
+    /// Antenna indices of the selected antennas
     pub antenna_nums: Vec<u32>,
+    /// Centre frequency of the first channel [Hz]
     pub start_freq_hz: f64,
+    /// Fine channel width [Hz]
     pub channel_width_hz: f64,
+    /// GPS time of the first timestep [s]
     pub start_time_gps_s: f64,
+    /// Integration time of each timestep [s]
     pub integration_time_s: f64,
 }
 
@@ -1704,6 +1782,11 @@ impl CrossMetrics {
         }
     }
 
+    /// Write these metrics to HDUs in an open FITS file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the FITS file fails.
     pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
         let (num_ants, num_delays, num_pols) = self.short_ant_delay_pol_adp.dim();
 
