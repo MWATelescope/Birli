@@ -1,6 +1,6 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Unreleased
+# Version 0.22.0 (2026-11-16)
 
 - 🙏 quality of life:
   - warn when `--flag-edge-width` or `--flag-edge-chans` flags the coarse-channel edges of an oversampled observation, which don't need flagging
