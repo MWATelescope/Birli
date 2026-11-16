@@ -9,7 +9,8 @@ on:
 name: clippy
 
 jobs:
-  coverage:
+  clippy:
+    name: clippy
     runs-on: ubuntu-latest
     container: mwatelescope/birli:latest
     steps:
