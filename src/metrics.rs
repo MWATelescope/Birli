@@ -257,7 +257,7 @@ impl AutoMetrics {
                 let spectrum = auto_spectrum_afp.slice(s![a, .., p]);
                 let y: Vec<f32> = spectrum.iter().copied().collect();
 
-                if let Some(coeffs) = crate::math::fit_polynomial(&freqs, &y, poly_order) {
+                if let Some(coeffs) = crate::math::fit_polynomial(freqs, &y, poly_order) {
                     for (k, &c) in coeffs.iter().enumerate() {
                         auto_coeffs_apo[[a, p, k]] = c;
                     }

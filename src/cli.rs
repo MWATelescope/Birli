@@ -1629,6 +1629,7 @@ impl<'a> BirliContext<'a> {
     }
 
     /// Save SSINS and EAVILS metrics to FITS.
+    #[allow(clippy::too_many_arguments)]
     pub fn save_metrics_to_fits(
         &self,
         jones_array: ArrayView3<Jones<f32>>,

@@ -1129,6 +1129,6 @@ mod tests_aoflagger {
 
         // Test that non-flagged channels remain unflagged
         assert!(!flag_array[[1, 0, 0]]); // Fine ch 0 in coarse ch 0
-        assert!(!flag_array[[1, 2 * num_fine_chans_per_coarse + 0, 0]]); // Fine ch 0 in coarse ch 2
+        assert!(!flag_array[[1, 2 * num_fine_chans_per_coarse, 0]]); // Fine ch 0 in coarse ch 2
     }
 }
