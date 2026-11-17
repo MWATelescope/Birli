@@ -1,6 +1,6 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.22.0 (2026-11-16)
+# Version 0.22.0 (2026-11-17)
 
 - ✨ new feature:
   - Birli will not correct the digital gains, if it has already been done by the correlator (NOTE: as of writing the correction of digital gains features is not yet implemented in the MWAX correlator so this is a pre-emptive feature updates to ensure Birli is ready for it when is released)
@@ -12,7 +12,7 @@
   - README: Birli flags no edge channels by default (the 80 kHz in the Cotter comparison table is Cotter's default), and DC flagging is only the default for legacy correlator observations
 - ➕ dependencies:
   - MSRV updated to 1.88.0
-  - marlu v0.20.0 (mwalib v4.0.0)
+  - marlu v0.20.0 (mwalib v4.0.0; `get_fine_chan_freqs_hz_array` now returns a `Result`). Fixes #207
 
 # Version 0.21.0 (2026-10-15)
 
