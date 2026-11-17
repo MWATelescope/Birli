@@ -879,6 +879,8 @@ impl SSINS {
         }
     }
 
+    /// Flag the z-scores with an `AOFlagger` strategy (the generic "minimal"
+    /// strategy if none is given), writing the result into `flag_array`.
     #[cfg(feature = "aoflagger")]
     pub fn flag(&mut self, strategy_filename: Option<String>) {
         use aoflagger_sys::cxx_aoflagger_new;
@@ -1406,7 +1408,7 @@ impl EAVILS {
     }
 }
 
-/// AOFlagger flag occupancy metrics
+/// `AOFlagger` flag occupancy metrics
 #[cfg(feature = "aoflagger")]
 pub struct AOFlagMetrics {
     /// (times, frequencies)
@@ -1439,7 +1441,7 @@ impl AOFlagMetrics {
         let cross_baseline_indices: Vec<usize> = ant_pairs
             .iter()
             .enumerate()
-            .filter_map(|(i, &(a, b))| if a != b { Some(i) } else { None })
+            .filter_map(|(i, &(a, b))| if a == b { None } else { Some(i) })
             .collect();
         let num_cross_baselines = cross_baseline_indices.len();
 
@@ -1464,7 +1466,7 @@ impl AOFlagMetrics {
         occupancy_tf
     }
 
-    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
     pub fn new(
         flag_array_tfb: ArrayView3<bool>,
         corr_ctx: &CorrelatorContext,
@@ -1478,7 +1480,7 @@ impl AOFlagMetrics {
         Self::new_from_metadata(flag_array_tfb, &metadata, &timestep_flags, &chan_flags)
     }
 
-    /// Create AOFlagMetrics from flag data and metadata
+    /// Create `AOFlagMetrics` from flag data and metadata
     pub fn new_from_metadata(
         flag_array_tfb: ArrayView3<bool>,
         metadata: &MetricsContext,
@@ -1570,7 +1572,7 @@ pub struct CrossMetrics {
 
 #[cfg(feature = "aoflagger")]
 impl CrossMetrics {
-    /// Legacy constructor using CorrelatorContext (for backward compatibility)
+    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
@@ -1591,7 +1593,7 @@ impl CrossMetrics {
         )
     }
 
-    /// Create CrossMetrics from visibility data and metadata
+    /// Create `CrossMetrics` from visibility data and metadata
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         metadata: &MetricsContext,
@@ -1599,7 +1601,7 @@ impl CrossMetrics {
         chan_flags: &[bool],
         baseline_cutoff_m: f32,
     ) -> Self {
-        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+        let (num_timesteps, num_freqs, _num_baselines) = jones_array_tfb.dim();
 
         // Identify selected antennas
         let mut sel_ants_set = std::collections::HashSet::new();
@@ -2181,7 +2183,9 @@ mod ssins_tests {
         let ssins2 =
             SSINS::new_from_metadata(vis.view(), flags.view(), &ctx, &no_ts_flags, &no_chan_flags);
         for (a, b) in ssins.zscore.iter().zip(ssins2.zscore.iter()) {
-            assert!(a == b || (a.is_nan() && b.is_nan()));
+            #[allow(clippy::float_cmp)]
+            let same = a == b || (a.is_nan() && b.is_nan());
+            assert!(same);
         }
     }
 }
