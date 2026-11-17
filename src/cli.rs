@@ -269,7 +269,7 @@ impl Display for BirliContext<'_> {
         writeln!(f, "Phase centre:         {}", self.prep_ctx.phase_centre)?;
         let pointing_centre = RADec::from_mwalib_tile_pointing(&self.corr_ctx.metafits_context);
         if pointing_centre != self.prep_ctx.phase_centre {
-            writeln!(f, "Pointing centre:      {}", pointing_centre)?;
+            writeln!(f, "Pointing centre:      {pointing_centre}")?;
         }
 
         let coarse_chan_flag_idxs: Vec<usize> = self
@@ -927,7 +927,7 @@ impl<'a> BirliContext<'a> {
             if from > to || to >= *num_timesteps {
                 return Err(BirliError::CLIError(InvalidCommandLineArgument {
                     option: "--sel-time <FROM> <TO>".into(),
-                    expected: format!("from <= to < num_timesteps={}", num_timesteps),
+                    expected: format!("from <= to < num_timesteps={num_timesteps}"),
                     received: format!("from={from} to={to}"),
                 }));
             }
@@ -940,7 +940,7 @@ impl<'a> BirliContext<'a> {
                 if antenna_idx >= *num_ants {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--sel-ants <ANTS>...".into(),
-                        expected: format!("antenna_idx < num_ants={}", num_ants),
+                        expected: format!("antenna_idx < num_ants={num_ants}"),
                         received: format!(
                             "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
                         ),
@@ -1045,10 +1045,7 @@ impl<'a> BirliContext<'a> {
                 if coarse_chan_idx >= *num_coarse_chans {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--flag-coarse-chans <CHANS>...".into(),
-                        expected: format!(
-                            "coarse_chan_idx < num_coarse_chans={}",
-                            num_coarse_chans
-                        ),
+                        expected: format!("coarse_chan_idx < num_coarse_chans={num_coarse_chans}"),
                         received: format!(
                         "coarse_chan_idxs[{value_idx}]={coarse_chan_idx}. all:{coarse_chan_idxs:?}"
                     ),
@@ -1436,8 +1433,7 @@ impl<'a> BirliContext<'a> {
         prep_ctx.correct_cable_lengths = {
             let cable_delays_disabled = matches.get_flag("no-cable-delay");
             info!(
-                "cable corrections: applied={:?}, disabled={}",
-                cable_delays_applied, cable_delays_disabled
+                "cable corrections: applied={cable_delays_applied:?}, disabled={cable_delays_disabled}"
             );
             matches!(
                 cable_delays_applied,
@@ -1448,8 +1444,7 @@ impl<'a> BirliContext<'a> {
         prep_ctx.correct_digital_gains = {
             let digital_gains_disabled = matches.get_flag("no-digital-gains");
             info!(
-                "digital gain corrections: applied={:?}, disabled={}",
-                digital_gains_applied, digital_gains_disabled
+                "digital gain corrections: applied={digital_gains_applied:?}, disabled={digital_gains_disabled}"
             );
             !digital_gains_applied && !digital_gains_disabled
         };
@@ -1473,20 +1468,20 @@ impl<'a> BirliContext<'a> {
             }
             Some(g) if g == "auto" => {
                 if *deripple_applied {
-                    info!("passband gains: {} (disabled, deripple already applied)", g);
+                    info!("passband gains: {g} (disabled, deripple already applied)");
                     None
                 } else {
                     match (mwa_version, oversampled) {
                         (MWAVersion::CorrMWAXv2, false) => {
-                            info!("passband gains: {} (mwax, not oversampled)", g);
+                            info!("passband gains: {g} (mwax, not oversampled)");
                             Some(PFB_JAKE_2022_200HZ)
                         }
                         (MWAVersion::CorrMWAXv2, true) => {
-                            info!("passband gains: {} (mwax, oversampled)", g);
+                            info!("passband gains: {g} (mwax, oversampled)");
                             Some(OSPFB_JAKE_2025_200HZ)
                         }
                         (MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy, _) => {
-                            info!("passband gains: {} (legacy)", g);
+                            info!("passband gains: {g} (legacy)");
                             Some(PFB_COTTER_2014_10KHZ)
                         }
                         (ver, _) => {
@@ -1504,8 +1499,7 @@ impl<'a> BirliContext<'a> {
         prep_ctx.correct_geometry = {
             let geometric_delays_disabled = matches.get_flag("no-geometric-delay");
             info!(
-                "geometric corrections: applied={:?}, disabled={}",
-                geometric_delays_applied, geometric_delays_disabled
+                "geometric corrections: applied={geometric_delays_applied:?}, disabled={geometric_delays_disabled}"
             );
             matches!(geometric_delays_applied, GeometricDelaysApplied::No)
                 && !geometric_delays_disabled
@@ -1539,14 +1533,14 @@ impl<'a> BirliContext<'a> {
         I: IntoIterator<Item = T> + Debug,
         T: Into<OsString> + Clone,
     {
-        debug!("args:\n{:?}", args);
+        debug!("args:\n{args:?}");
 
         let matches = Self::get_matches(args)?;
-        trace!("arg matches:\n{:?}", matches);
+        trace!("arg matches:\n{matches:?}");
 
         let io_ctx = Self::parse_io_matches(&matches);
         let corr_ctx = io_ctx.get_corr_ctx()?;
-        debug!("mwalib correlator context:\n{}", corr_ctx);
+        debug!("mwalib correlator context:\n{corr_ctx}");
         let flag_ctx = Self::parse_flag_matches(&corr_ctx, &matches)?;
         let vis_sel = Self::parse_vis_sel_matches(&corr_ctx, &flag_ctx, &matches)?;
         let prep_ctx = Self::parse_prep_matches(&matches, &corr_ctx)?;
@@ -1571,7 +1565,7 @@ impl<'a> BirliContext<'a> {
             cross_metrics_cutoff_m,
         };
 
-        info!("{}", result);
+        info!("{result}");
 
         if matches.get_flag("dry-run") {
             return Err(DryRun {});
@@ -1705,7 +1699,7 @@ impl<'a> BirliContext<'a> {
             for t in 0..flag_dims.0 {
                 for f in 0..flag_dims.1 {
                     let c = if ssins.flag_array[[t, f]] { "#" } else { " " };
-                    print!("{}", c);
+                    print!("{c}");
                 }
                 println!();
             }
@@ -3604,7 +3598,7 @@ mod tests_aoflagger {
             metafits_path
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("high_2019B_2458765_EOR0"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
@@ -4166,7 +4160,7 @@ mod tests_aoflagger {
             Some(ms_path.to_str().unwrap().into())
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will correct digital gains"));
         assert!(display.contains("Will not flag with aoflagger"));
 
@@ -4258,7 +4252,7 @@ mod tests_aoflagger {
             Some(ms_path.to_str().unwrap().into())
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will correct coarse pfb passband gains"));
 
         let comment = birli_ctx.prep_ctx.as_comment();
@@ -4340,7 +4334,7 @@ mod tests_aoflagger {
             Some(ms_path.to_str().unwrap().into())
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
         assert!(display.contains("Will not correct coarse pfb passband gains"));
@@ -4611,7 +4605,7 @@ mod tests_aoflagger {
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
             "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
         ];
-        println!("{:?}", args);
+        println!("{args:?}");
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -4625,7 +4619,7 @@ mod tests_aoflagger {
             metafits_path.display().to_string()
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will not correct Van Vleck"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
@@ -4684,7 +4678,7 @@ mod tests_aoflagger {
             "--flag-init", "0",
             "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
         ];
-        println!("{:?}", args);
+        println!("{args:?}");
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -4698,7 +4692,7 @@ mod tests_aoflagger {
             metafits_path.display().to_string()
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will not correct Van Vleck"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
@@ -4758,7 +4752,7 @@ mod tests_aoflagger {
             "--flag-init", "0",
             "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
         ];
-        println!("{:?}", args);
+        println!("{args:?}");
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -4772,7 +4766,7 @@ mod tests_aoflagger {
             metafits_path
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will correct Van Vleck"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));

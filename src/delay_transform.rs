@@ -220,7 +220,7 @@ pub fn delay_transform(
             .iter()
             .filter(|&&x| x.is_finite())
             .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-        debug!("Data range: {:.2e} to {:.2e}", min_val, max_val);
+        debug!("Data range: {min_val:.2e} to {max_val:.2e}");
     }
 
     // Filter to requested delay range (same logic as in calculate_delay_channels)
@@ -456,7 +456,7 @@ mod tests {
         // Check if input files exist
         if !Path::new(metafits_path).exists() || !Path::new(gpubox_path).exists() {
             eprintln!("Skipping test - input files not found");
-            eprintln!("Expected: {} and {}", metafits_path, gpubox_path);
+            eprintln!("Expected: {metafits_path} and {gpubox_path}");
             return;
         }
 
@@ -480,8 +480,8 @@ mod tests {
             "Output metrics file was not created"
         );
 
-        eprintln!("Successfully created {}", output_path);
-        eprintln!("You can view it with: carta {}", output_path);
+        eprintln!("Successfully created {output_path}");
+        eprintln!("You can view it with: carta {output_path}");
         eprintln!("Debug output should show spectral analysis above");
 
         // Clean up

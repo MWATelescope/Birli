@@ -139,7 +139,7 @@ pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
         1 => 2,
         2 => 3,
         3 => 1,
-        _ => panic!("Invalid pol: {}", pol),
+        _ => panic!("Invalid pol: {pol}"),
     }
 }
 

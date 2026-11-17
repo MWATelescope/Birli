@@ -131,7 +131,7 @@ pub fn fit_polynomial(x: &[f64], y: &[f32], poly_order: usize) -> Option<Vec<f32
         }
     }
 
-    for k in 0..n {
+    for (k, coeff) in coeffs.iter_mut().enumerate().take(n) {
         let mut sum = 0.0;
         for j in k..n {
             let term = beta_norm[j]
@@ -140,7 +140,7 @@ pub fn fit_polynomial(x: &[f64], y: &[f32], poly_order: usize) -> Option<Vec<f32
                 * (-f_mid).powi((j - k) as i32);
             sum += term;
         }
-        coeffs[k] = sum as f32;
+        *coeff = sum as f32;
     }
 
     Some(coeffs)

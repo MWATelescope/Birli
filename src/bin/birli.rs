@@ -74,7 +74,7 @@ where
                 get_durations().into_iter().fold(
                     Duration::ZERO,
                     |duration_sum, (name, duration)| {
-                        info!("{} duration: {:?}", name, duration);
+                        info!("{name} duration: {duration:?}");
                         duration_sum + duration
                     }
                 )

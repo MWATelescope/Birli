@@ -135,7 +135,7 @@ fn main() {
         );
         cross_metrics.save_to_fits(&mut fptr).unwrap();
     }
-    println!("Saved metrics to {:?}", metrics_path);
+    println!("Saved metrics to {metrics_path:?}");
 
     write_uvfits(
         &uvfits_path,

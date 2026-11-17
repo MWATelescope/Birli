@@ -989,11 +989,7 @@ mod tests_aoflagger {
             for (vis_idx, (obs_val, exp_val)) in izip!(&obs_vis, exp_vis).enumerate() {
                 assert!(
                     approx_eq!(f32, *obs_val, *exp_val as f32, F32Margin::default()),
-                    "cells don't match in row {}, vis index {}. observed: {:?} != expected: {:?}",
-                    row_idx,
-                    vis_idx,
-                    obs_vis,
-                    exp_vis
+                    "cells don't match in row {row_idx}, vis index {vis_idx}. observed: {obs_vis:?} != expected: {exp_vis:?}"
                 );
             }
         }
