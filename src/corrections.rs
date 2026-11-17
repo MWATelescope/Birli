@@ -8,10 +8,11 @@ use itertools::{izip, Itertools};
 use log::trace;
 use marlu::{
     constants::VEL_C,
+    convention::UvwFrame,
     hifitime::{Duration, Epoch},
     io::error::BadArrayShape,
     mwalib::{CorrelatorContext, MWAVersion},
-    precession::precess_time,
+    precession::precess_time_in_frame,
     Complex, LatLngHeight, RADec, VisSelection, XyzGeodetic, UVW,
 };
 use std::{f64::consts::TAU, ops::Range};
@@ -80,8 +81,9 @@ pub fn correct_cable_lengths(
     let meta_ctx = &corr_ctx.metafits_context;
     let num_fine_chans_per_coarse = meta_ctx.num_corr_fine_chans_per_coarse;
 
-    let all_freqs_hz =
-        corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>());
+    let all_freqs_hz = corr_ctx
+        .get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>())
+        .expect("failed to get fine channel frequencies");
 
     let vis_dims = jones_array.dim();
     if vis_dims.1 != coarse_chan_range.len() * num_fine_chans_per_coarse {
@@ -206,10 +208,35 @@ pub fn correct_cable_lengths(
 /// ```
 pub fn correct_geometry(
     corr_ctx: &CorrelatorContext,
+    jones_array: ArrayViewMut3<Jones<f32>>,
+    vis_sel: &VisSelection,
+    array_pos: Option<LatLngHeight>,
+    phase_centre: Option<RADec>,
+    draw_progress: bool,
+) {
+    correct_geometry_in_frame(
+        corr_ctx,
+        jones_array,
+        vis_sel,
+        array_pos,
+        phase_centre,
+        UvwFrame::Hyperdrive,
+        draw_progress,
+    );
+}
+
+/// [`correct_geometry`], with the `w` terms computed in the given
+/// [`UvwFrame`]. `--emulate-cotter` uses [`UvwFrame::Cotter`], which
+/// reproduces `cotter`'s precession (mean sidereal time, projection onto the
+/// aberrated phase centre).
+#[allow(clippy::too_many_arguments)]
+pub fn correct_geometry_in_frame(
+    corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
     vis_sel: &VisSelection,
     array_pos: Option<LatLngHeight>,
     phase_centre: Option<RADec>,
+    uvw_frame: UvwFrame,
     draw_progress: bool,
 ) {
     trace!("start correct_geometry");
@@ -225,7 +252,8 @@ pub fn correct_geometry(
     let timesteps = &corr_ctx.timesteps[vis_sel.timestep_range.clone()];
 
     let all_freqs_hz = corr_ctx
-        .get_fine_chan_freqs_hz_array(&vis_sel.coarse_chan_range.clone().collect::<Vec<_>>());
+        .get_fine_chan_freqs_hz_array(&vis_sel.coarse_chan_range.clone().collect::<Vec<_>>())
+        .expect("failed to get fine channel frequencies");
     let jones_dims = jones_array.dim();
 
     let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
@@ -247,6 +275,7 @@ pub fn correct_geometry(
         phase_centre,
         array_pos,
         &tiles_xyz_geod,
+        uvw_frame,
     );
 
     // Create a progress bar to show the status of the correction
@@ -486,7 +515,10 @@ pub fn correct_coarse_passband_gains(
         }));
     };
 
-    let fscrunch = if passband_gains.len() % num_fine_chans_per_coarse == 0 {
+    let fscrunch = if passband_gains
+        .len()
+        .is_multiple_of(num_fine_chans_per_coarse)
+    {
         passband_gains.len() / num_fine_chans_per_coarse
     } else {
         return Err(PassbandCorrection::BadArrayShape(BadArrayShape {
@@ -655,11 +687,13 @@ fn calc_part_uvws(
     phase_centre: RADec,
     array_pos: LatLngHeight,
     tile_xyzs: &[XyzGeodetic],
+    uvw_frame: UvwFrame,
 ) -> Array2<UVW> {
     let nants = tile_xyzs.len();
     let mut part_uvws = Array2::from_elem((centroid_timestamps.len(), nants), UVW::default());
     for (t, &epoch) in centroid_timestamps.iter().enumerate() {
-        let prec = precess_time(
+        let prec = precess_time_in_frame(
+            uvw_frame,
             array_pos.longitude_rad,
             array_pos.latitude_rad,
             phase_centre,
@@ -724,7 +758,9 @@ mod tests {
         .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
-        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
+        let all_freqs_hz = corr_ctx
+            .get_fine_chan_freqs_hz_array(&coarse_chan_indices)
+            .unwrap();
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 0
         let viz_0_0_0 = jones_array[(0, 0, 0)];
@@ -867,7 +903,9 @@ mod tests {
         .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
-        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
+        let all_freqs_hz = corr_ctx
+            .get_fine_chan_freqs_hz_array(&coarse_chan_indices)
+            .unwrap();
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 0
         let viz_0_0_0 = jones_array[(0, 0, 0)];
@@ -1033,7 +1071,9 @@ mod tests {
         let corr_ctx = get_mwa_ord_context();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
-        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
+        let all_freqs_hz = corr_ctx
+            .get_fine_chan_freqs_hz_array(&coarse_chan_indices)
+            .unwrap();
 
         let array_pos = LatLngHeight::mwa();
 
@@ -1194,7 +1234,9 @@ mod tests {
         .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
-        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
+        let all_freqs_hz = corr_ctx
+            .get_fine_chan_freqs_hz_array(&coarse_chan_indices)
+            .unwrap();
 
         let array_pos = LatLngHeight::mwa();
 

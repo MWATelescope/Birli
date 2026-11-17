@@ -170,7 +170,9 @@ use log::warn;
 pub mod io;
 pub use io::mwaf::FlagFileSet;
 pub mod corrections;
-pub use corrections::{correct_cable_lengths, correct_geometry, ScrunchType};
+pub use corrections::{
+    correct_cable_lengths, correct_geometry, correct_geometry_in_frame, ScrunchType,
+};
 pub mod calibration;
 pub mod flags;
 #[cfg(test)]
