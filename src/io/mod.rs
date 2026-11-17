@@ -49,6 +49,8 @@ pub struct IOContext {
     pub ms_out: Option<PathBuf>,
     /// Optional .mwaf flag file path template (see `io::mwaf::FlagFileSet`)
     pub flag_template: Option<String>,
+    /// Optional .csv metrics path
+    pub metrics_out: Option<PathBuf>,
 }
 
 impl IOContext {
@@ -295,10 +297,7 @@ pub fn read_mwalib(
                             }
                         }
                         Err(mwalib::GpuboxError::NoDataForTimeStepCoarseChannel { .. }) => {
-                            warn!(
-                                "Flagging missing HDU @ ts={}, cc={}",
-                                timestep_idx, coarse_chan_idx
-                            );
+                            warn!("Flagging missing HDU @ ts={timestep_idx}, cc={coarse_chan_idx}");
                             flag_array.fill(true);
                         }
                         Err(e) => return Err(e),
@@ -990,11 +989,7 @@ mod tests_aoflagger {
             for (vis_idx, (obs_val, exp_val)) in izip!(&obs_vis, exp_vis).enumerate() {
                 assert!(
                     approx_eq!(f32, *obs_val, *exp_val as f32, F32Margin::default()),
-                    "cells don't match in row {}, vis index {}. observed: {:?} != expected: {:?}",
-                    row_idx,
-                    vis_idx,
-                    obs_vis,
-                    exp_vis
+                    "cells don't match in row {row_idx}, vis index {vis_idx}. observed: {obs_vis:?} != expected: {exp_vis:?}"
                 );
             }
         }

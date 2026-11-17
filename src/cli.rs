@@ -6,7 +6,7 @@ use std::{
     convert::Into,
     ffi::OsString,
     fmt::{Debug, Display},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -27,6 +27,9 @@ use mwalib::{
 };
 use prettytable::{format as prettyformat, row, table};
 
+#[cfg(feature = "aoflagger")]
+use crate::metrics::CrossMetrics;
+use crate::metrics::{AutoMetrics, EAVILS, SSINS};
 use crate::{
     calibration::{calsols_phase_only, flag_antennas_with_nan_calsols},
     error::{
@@ -40,10 +43,11 @@ use crate::{
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
         },
+        fitsio::FitsFile,
         hifitime::{self, Epoch},
         io::{error::BadArrayShape, ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
         mwalib,
-        ndarray::s,
+        ndarray::{s, ArrayView3},
         precession::{precess_time, PrecessionInfo},
         History, Jones, LatLngHeight, MwaObsContext, ObsContext, PolConvention, RADec, VisContext,
         ENH,
@@ -78,6 +82,8 @@ pub struct BirliContext<'a> {
     pub num_timesteps_per_chunk: Option<usize>,
     /// channel selections for picket-fencing
     pub channel_range_sel: ChannelRanges,
+    /// Baseline cutoff for cross metrics (metres)
+    pub cross_metrics_cutoff_m: f32,
 }
 
 // Add build-time information from the "built" crate.
@@ -183,7 +189,7 @@ impl ChannelRanges {
                         }
                         _ => {
                             return Err(BirliError::CLIError(InvalidRangeSpecifier {
-                                reason: format!("invalid channel range: {}", range),
+                                reason: format!("invalid channel range: {range}"),
                             }));
                         }
                     }
@@ -196,14 +202,14 @@ impl ChannelRanges {
                         }
                         _ => {
                             return Err(BirliError::CLIError(InvalidRangeSpecifier {
-                                reason: format!("invalid channel range: {}", range),
+                                reason: format!("invalid channel range: {range}"),
                             }));
                         }
                     }
                 }
                 _ => {
                     return Err(BirliError::CLIError(InvalidRangeSpecifier {
-                        reason: format!("invalid channel range: {}", range),
+                        reason: format!("invalid channel range: {range}"),
                     }));
                 }
             }
@@ -263,7 +269,7 @@ impl Display for BirliContext<'_> {
         writeln!(f, "Phase centre:         {}", self.prep_ctx.phase_centre)?;
         let pointing_centre = RADec::from_mwalib_tile_pointing(&self.corr_ctx.metafits_context);
         if pointing_centre != self.prep_ctx.phase_centre {
-            writeln!(f, "Pointing centre:      {}", pointing_centre)?;
+            writeln!(f, "Pointing centre:      {pointing_centre}")?;
         }
 
         let coarse_chan_flag_idxs: Vec<usize> = self
@@ -510,7 +516,11 @@ impl Display for BirliContext<'_> {
                 if good {"g"} else {""},
                 if selected {"s"} else {""},
                 if flagged {"f"} else {""},
-                if let Some((idx, (start,end))) = range { format!("{} ({}-{})", idx, start, end) } else { "".into() }
+                if let Some((idx, (start, end))) = range {
+                    format!("{idx} ({start}-{end})")
+                } else {
+                    "".into()
+                }
             ];
             coarse_chan_table.add_row(row);
         }
@@ -754,6 +764,11 @@ impl<'a> BirliContext<'a> {
                 .num_args(1..)
                 .value_parser(clap::value_parser!(usize))
                 .required(false),
+            arg!(--"flag-raw-chans" <CHANS> "Flag specific fine chan indices across selected coarse chans")
+                .help_heading("FLAGGING")
+                .num_args(1..)
+                .value_parser(clap::value_parser!(usize))
+                .required(false),
             arg!(--"flag-dc" "Force flagging of DC centre chans")
                 .help_heading("FLAGGING")
                 .conflicts_with("no-flag-dc"),
@@ -849,6 +864,15 @@ impl<'a> BirliContext<'a> {
                 .help_heading("OUTPUT")
                 .required(false)
                 .value_parser(clap::value_parser!(PathBuf)),
+            arg!(--"metrics-out" <PATH> "Path for FITS metrics output")
+                .help_heading("OUTPUT")
+                .required(false)
+                .value_parser(clap::value_parser!(PathBuf)),
+            arg!(--"cross-metrics-cutoff" <METRES> "Baseline length cutoff for cross metrics")
+                .help_heading("METRICS")
+                .default_value("30.0")
+                .required(false)
+                .value_parser(clap::value_parser!(f32)),
         ]);
         cfg_if! {
             if #[cfg(feature = "aoflagger")] {
@@ -880,6 +904,7 @@ impl<'a> BirliContext<'a> {
             uvfits_out: matches.get_one::<PathBuf>("uvfits-out").cloned(),
             ms_out: matches.get_one::<PathBuf>("ms-out").cloned(),
             flag_template: matches.get_one::<String>("flag-template").cloned(),
+            metrics_out: matches.get_one::<PathBuf>("metrics-out").cloned(),
         }
     }
 
@@ -902,7 +927,7 @@ impl<'a> BirliContext<'a> {
             if from > to || to >= *num_timesteps {
                 return Err(BirliError::CLIError(InvalidCommandLineArgument {
                     option: "--sel-time <FROM> <TO>".into(),
-                    expected: format!("from <= to < num_timesteps={}", num_timesteps),
+                    expected: format!("from <= to < num_timesteps={num_timesteps}"),
                     received: format!("from={from} to={to}"),
                 }));
             }
@@ -915,7 +940,7 @@ impl<'a> BirliContext<'a> {
                 if antenna_idx >= *num_ants {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--sel-ants <ANTS>...".into(),
-                        expected: format!("antenna_idx < num_ants={}", num_ants),
+                        expected: format!("antenna_idx < num_ants={num_ants}"),
                         received: format!(
                             "antenna_idxs[{value_idx}]={antenna_idx}. all:{antenna_idxs:?}"
                         ),
@@ -1020,10 +1045,7 @@ impl<'a> BirliContext<'a> {
                 if coarse_chan_idx >= *num_coarse_chans {
                     return Err(BirliError::CLIError(InvalidCommandLineArgument {
                         option: "--flag-coarse-chans <CHANS>...".into(),
-                        expected: format!(
-                            "coarse_chan_idx < num_coarse_chans={}",
-                            num_coarse_chans
-                        ),
+                        expected: format!("coarse_chan_idx < num_coarse_chans={num_coarse_chans}"),
                         received: format!(
                         "coarse_chan_idxs[{value_idx}]={coarse_chan_idx}. all:{coarse_chan_idxs:?}"
                     ),
@@ -1046,6 +1068,25 @@ impl<'a> BirliContext<'a> {
                     }));
                 }
                 flag_ctx.fine_chan_flags[fine_chan_idx] = true;
+            }
+        }
+
+        if let Some(vals) = matches.get_many::<usize>("flag-raw-chans") {
+            let raw_chan_idxs: Vec<usize> = vals.copied().collect();
+            let total_fine_chans = *num_coarse_chans * *fine_chans_per_coarse;
+            for (value_idx, &raw_chan_idx) in raw_chan_idxs.iter().enumerate() {
+                if raw_chan_idx >= total_fine_chans {
+                    return Err(BirliError::CLIError(InvalidCommandLineArgument {
+                        option: "--flag-raw-chans <CHANS>...".into(),
+                        expected: format!(
+                            "raw_chan_idx < total_fine_chans={total_fine_chans} (num_coarse_chans * fine_chans_per_coarse)"
+                        ),
+                        received: format!(
+                            "raw_chan_idxs[{value_idx}]={raw_chan_idx}. all:{raw_chan_idxs:?}"
+                        ),
+                    }));
+                }
+                flag_ctx.raw_chan_flags[raw_chan_idx] = true;
             }
         }
 
@@ -1320,7 +1361,7 @@ impl<'a> BirliContext<'a> {
         };
 
         if let Some(chunk_size) = num_timesteps_per_chunk {
-            info!("chunking output to {} timesteps per chunk", chunk_size);
+            info!("chunking output to {chunk_size} timesteps per chunk");
         }
 
         Ok(num_timesteps_per_chunk)
@@ -1392,8 +1433,7 @@ impl<'a> BirliContext<'a> {
         prep_ctx.correct_cable_lengths = {
             let cable_delays_disabled = matches.get_flag("no-cable-delay");
             info!(
-                "cable corrections: applied={:?}, disabled={}",
-                cable_delays_applied, cable_delays_disabled
+                "cable corrections: applied={cable_delays_applied:?}, disabled={cable_delays_disabled}"
             );
             matches!(
                 cable_delays_applied,
@@ -1404,8 +1444,7 @@ impl<'a> BirliContext<'a> {
         prep_ctx.correct_digital_gains = {
             let digital_gains_disabled = matches.get_flag("no-digital-gains");
             info!(
-                "digital gain corrections: applied={:?}, disabled={}",
-                digital_gains_applied, digital_gains_disabled
+                "digital gain corrections: applied={digital_gains_applied:?}, disabled={digital_gains_disabled}"
             );
             !digital_gains_applied && !digital_gains_disabled
         };
@@ -1416,33 +1455,33 @@ impl<'a> BirliContext<'a> {
         {
             None | Some("none") => None,
             Some(g) if g == "jake" => {
-                info!("passband gains: {} (mwax, not oversampled)", g);
+                info!("passband gains: {g} (mwax, not oversampled)");
                 Some(PFB_JAKE_2022_200HZ)
             }
             Some(g) if g == "jake_oversampled" => {
-                info!("passband gains: {} (mwax, oversampled)", g);
+                info!("passband gains: {g} (mwax, oversampled)");
                 Some(OSPFB_JAKE_2025_200HZ)
             }
             Some(g) if g == "cotter" => {
-                info!("passband gains: {} (legacy)", g);
+                info!("passband gains: {g} (legacy)");
                 Some(PFB_COTTER_2014_10KHZ)
             }
             Some(g) if g == "auto" => {
                 if *deripple_applied {
-                    info!("passband gains: {} (disabled, deripple already applied)", g);
+                    info!("passband gains: {g} (disabled, deripple already applied)");
                     None
                 } else {
                     match (mwa_version, oversampled) {
                         (MWAVersion::CorrMWAXv2, false) => {
-                            info!("passband gains: {} (mwax, not oversampled)", g);
+                            info!("passband gains: {g} (mwax, not oversampled)");
                             Some(PFB_JAKE_2022_200HZ)
                         }
                         (MWAVersion::CorrMWAXv2, true) => {
-                            info!("passband gains: {} (mwax, oversampled)", g);
+                            info!("passband gains: {g} (mwax, oversampled)");
                             Some(OSPFB_JAKE_2025_200HZ)
                         }
                         (MWAVersion::CorrLegacy | MWAVersion::CorrOldLegacy, _) => {
-                            info!("passband gains: {} (legacy)", g);
+                            info!("passband gains: {g} (legacy)");
                             Some(PFB_COTTER_2014_10KHZ)
                         }
                         (ver, _) => {
@@ -1460,8 +1499,7 @@ impl<'a> BirliContext<'a> {
         prep_ctx.correct_geometry = {
             let geometric_delays_disabled = matches.get_flag("no-geometric-delay");
             info!(
-                "geometric corrections: applied={:?}, disabled={}",
-                geometric_delays_applied, geometric_delays_disabled
+                "geometric corrections: applied={geometric_delays_applied:?}, disabled={geometric_delays_disabled}"
             );
             matches!(geometric_delays_applied, GeometricDelaysApplied::No)
                 && !geometric_delays_disabled
@@ -1495,14 +1533,14 @@ impl<'a> BirliContext<'a> {
         I: IntoIterator<Item = T> + Debug,
         T: Into<OsString> + Clone,
     {
-        debug!("args:\n{:?}", args);
+        debug!("args:\n{args:?}");
 
         let matches = Self::get_matches(args)?;
-        trace!("arg matches:\n{:?}", matches);
+        trace!("arg matches:\n{matches:?}");
 
         let io_ctx = Self::parse_io_matches(&matches);
         let corr_ctx = io_ctx.get_corr_ctx()?;
-        debug!("mwalib correlator context:\n{}", corr_ctx);
+        debug!("mwalib correlator context:\n{corr_ctx}");
         let flag_ctx = Self::parse_flag_matches(&corr_ctx, &matches)?;
         let vis_sel = Self::parse_vis_sel_matches(&corr_ctx, &flag_ctx, &matches)?;
         let prep_ctx = Self::parse_prep_matches(&matches, &corr_ctx)?;
@@ -1510,6 +1548,10 @@ impl<'a> BirliContext<'a> {
         let num_timesteps_per_chunk =
             Self::parse_chunk_matches(&corr_ctx, &matches, avg_time, &vis_sel)?;
         let channel_range_sel = Self::parse_sel_chan_ranges(&corr_ctx, &matches)?;
+        let cross_metrics_cutoff_m = matches
+            .get_one::<f32>("cross-metrics-cutoff")
+            .copied()
+            .unwrap_or(30.0);
         let result = Self {
             corr_ctx,
             prep_ctx,
@@ -1520,9 +1562,10 @@ impl<'a> BirliContext<'a> {
             avg_freq,
             num_timesteps_per_chunk,
             channel_range_sel,
+            cross_metrics_cutoff_m,
         };
 
-        info!("{}", result);
+        info!("{result}");
 
         if matches.get_flag("dry-run") {
             return Err(DryRun {});
@@ -1549,6 +1592,7 @@ impl<'a> BirliContext<'a> {
             avg_freq: self.avg_freq,
             num_timesteps_per_chunk: self.num_timesteps_per_chunk,
             channel_range_sel: self.channel_range_sel,
+            cross_metrics_cutoff_m: self.cross_metrics_cutoff_m,
         };
         for &(range_start, range_end) in &ranges {
             ranged_context.vis_sel.coarse_chan_range = range_start..range_end + 1;
@@ -1585,6 +1629,96 @@ impl<'a> BirliContext<'a> {
             ranged_context.run()?;
         }
         Ok(())
+    }
+
+    /// Save SSINS and EAVILS metrics to FITS.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_metrics_to_fits(
+        &self,
+        jones_array: ArrayView3<Jones<f32>>,
+        flag_array: ArrayView3<bool>,
+        flag_ctx: &FlagContext,
+        corr_ctx: &CorrelatorContext,
+        chunk_vis_sel: &VisSelection,
+        metrics_path: &Path,
+    ) {
+        // `flag` (aoflagger feature) needs `ssins` to be mutable.
+        #[cfg_attr(not(feature = "aoflagger"), allow(unused_mut))]
+        let mut ssins = SSINS::new(jones_array, flag_array, corr_ctx, chunk_vis_sel, flag_ctx);
+        let eavils = EAVILS::new(jones_array, corr_ctx, chunk_vis_sel, flag_ctx);
+        let auto_metrics = AutoMetrics::new(jones_array, corr_ctx, chunk_vis_sel, flag_ctx);
+
+        let path = Path::new(metrics_path.to_str().unwrap());
+        if path.exists() {
+            std::fs::remove_file(path).unwrap();
+        }
+        let mut fptr = FitsFile::create(path).open().unwrap();
+
+        with_increment_duration!(
+            "write",
+            if let Err(e) = auto_metrics.save_to_fits(&mut fptr) {
+                log::warn!("Failed to save AutoMetrics to FITS: {e}");
+            }
+        );
+
+        // this requires the aoflagger feature flag.
+        #[cfg(feature = "aoflagger")]
+        {
+            use crate::metrics::AOFlagMetrics;
+
+            let aoflagger_metrics =
+                AOFlagMetrics::new(flag_array, corr_ctx, chunk_vis_sel, flag_ctx);
+
+            with_increment_duration!(
+                "write",
+                if let Err(e) = aoflagger_metrics.save_to_fits(&mut fptr) {
+                    log::warn!("Failed to save AOFlagger metrics to FITS: {e}");
+                }
+            );
+
+            let cross_metrics = CrossMetrics::new(
+                jones_array,
+                corr_ctx,
+                chunk_vis_sel,
+                flag_ctx,
+                self.cross_metrics_cutoff_m,
+            );
+            with_increment_duration!(
+                "write",
+                if let Err(e) = cross_metrics.save_to_fits(&mut fptr) {
+                    log::warn!("Failed to save CrossMetrics to FITS: {e}");
+                }
+            );
+
+            ssins.flag(
+                None,
+                // Some( "/Users/dev/Code/aoflagger/data/strategies/generic-minimal.lua".to_string(), ),
+            );
+            println!("SSINS flags:");
+            let flag_dims = ssins.flag_array.dim();
+            for t in 0..flag_dims.0 {
+                for f in 0..flag_dims.1 {
+                    let c = if ssins.flag_array[[t, f]] { "#" } else { " " };
+                    print!("{c}");
+                }
+                println!();
+            }
+        }
+
+        with_increment_duration!(
+            "write",
+            if let Err(e) = ssins.save_to_fits(&mut fptr) {
+                log::warn!("Failed to save SSINS metrics to FITS: {e}");
+            }
+        );
+        with_increment_duration!(
+            "write",
+            if let Err(e) = eavils.save_to_fits(&mut fptr) {
+                log::warn!("Failed to save EAVILS metrics to FITS: {e}");
+            }
+        );
+
+        log::info!("Saved SSINS and EAVILS metrics to {metrics_path:?}");
     }
 
     /// Read, Preprocess and write corrected visibilities chunks.
@@ -1879,7 +2013,18 @@ impl<'a> BirliContext<'a> {
                 &flag_ctx.antenna_flags,
             )?;
 
-            // output flags (before averaging)
+            // Save SSINS metrics to FITS if output path is specified
+            if let Some(metrics_path) = &io_ctx.metrics_out {
+                self.save_metrics_to_fits(
+                    jones_array.view(),
+                    flag_array.view(),
+                    &flag_ctx,
+                    corr_ctx,
+                    &chunk_vis_sel,
+                    metrics_path,
+                );
+            }
+
             if let Some(flag_file_set) = flag_file_set.as_mut() {
                 with_increment_duration!(
                     "write",
@@ -2990,6 +3135,36 @@ mod argparse_tests {
     }
 
     #[test]
+    fn test_parse_valid_raw_chan_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-raw-chans", "5", "10", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        let BirliContext { flag_ctx, .. } = BirliContext::from_args(&args).unwrap();
+
+        assert!(flag_ctx.raw_chan_flags[5]);
+        assert!(flag_ctx.raw_chan_flags[10]);
+        assert!(!flag_ctx.raw_chan_flags[4]);
+        assert!(!flag_ctx.raw_chan_flags[11]);
+    }
+
+    #[test]
+    fn test_parse_invalid_raw_chan_flag() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec!["birli", "-m", metafits_path, "--flag-raw-chans", "0", "9999", "--"];
+        args.extend_from_slice(&gpufits_paths);
+
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::CLIError(_))
+        ));
+    }
+
+    #[test]
     fn test_parse_invalid_antenna_flag() {
         let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
 
@@ -3423,7 +3598,7 @@ mod tests_aoflagger {
             metafits_path
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("high_2019B_2458765_EOR0"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
@@ -3985,7 +4160,7 @@ mod tests_aoflagger {
             Some(ms_path.to_str().unwrap().into())
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will correct digital gains"));
         assert!(display.contains("Will not flag with aoflagger"));
 
@@ -4077,7 +4252,7 @@ mod tests_aoflagger {
             Some(ms_path.to_str().unwrap().into())
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will correct coarse pfb passband gains"));
 
         let comment = birli_ctx.prep_ctx.as_comment();
@@ -4159,7 +4334,7 @@ mod tests_aoflagger {
             Some(ms_path.to_str().unwrap().into())
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
         assert!(display.contains("Will not correct coarse pfb passband gains"));
@@ -4430,7 +4605,7 @@ mod tests_aoflagger {
             "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
             "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
         ];
-        println!("{:?}", args);
+        println!("{args:?}");
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -4444,7 +4619,7 @@ mod tests_aoflagger {
             metafits_path.display().to_string()
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will not correct Van Vleck"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
@@ -4503,7 +4678,7 @@ mod tests_aoflagger {
             "--flag-init", "0",
             "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
         ];
-        println!("{:?}", args);
+        println!("{args:?}");
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -4517,7 +4692,7 @@ mod tests_aoflagger {
             metafits_path.display().to_string()
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will not correct Van Vleck"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));
@@ -4577,7 +4752,7 @@ mod tests_aoflagger {
             "--flag-init", "0",
             "tests/data/1254670392_avg/1254670392_20191009153257_gpubox01_00.fits",
         ];
-        println!("{:?}", args);
+        println!("{args:?}");
 
         let birli_ctx = BirliContext::from_args(&args).unwrap();
 
@@ -4591,7 +4766,7 @@ mod tests_aoflagger {
             metafits_path
         );
 
-        let display = format!("{}", birli_ctx);
+        let display = format!("{birli_ctx}");
         assert!(display.contains("Will correct Van Vleck"));
         assert!(display.contains("Will not correct cable lengths"));
         assert!(display.contains("Will not correct digital gains"));

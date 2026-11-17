@@ -606,17 +606,7 @@ pub fn compare_ms_with_csv(
                             }
                             assert!(
                                   abs_diff_eq!(obs_val, exp_val, epsilon = vis_margin.epsilon),
-                                  "visibility arrays don't match (obs {} != exp {}) in row {} (bl {:?} ts {}), pol {} ({}), vis index {}. \nobserved: {:?} != \nexpected: {:?}",
-                                  obs_val,
-                                  exp_val,
-                                  row_idx,
-                                  exp_baseline,
-                                  exp_mjd,
-                                  pol,
-                                  pol_idx,
-                                  vis_idx,
-                                  obs_pol_vis,
-                                  exp_pol_vis
+                                  "visibility arrays don't match (obs {obs_val} != exp {exp_val}) in row {row_idx} (bl {exp_baseline:?} ts {exp_mjd}), pol {pol} ({pol_idx}), vis index {vis_idx}. \nobserved: {obs_pol_vis:?} != \nexpected: {exp_pol_vis:?}"
                               );
                         }
                     }
@@ -649,17 +639,7 @@ pub fn compare_ms_with_csv(
                         {
                             assert!(
                                   abs_diff_eq!(obs_val, exp_val, epsilon = vis_margin.epsilon),
-                                  "weight arrays don't match (obs {} != exp {}) in row {} (bl {:?} ts {}), pol {} ({}), weight index {}. \nobserved: {:?} != \nexpected: {:?}",
-                                  obs_val,
-                                  exp_val,
-                                  row_idx,
-                                  exp_baseline,
-                                  exp_mjd,
-                                  pol,
-                                  pol_idx,
-                                  weight_idx,
-                                  obs_pol_weight,
-                                  exp_pol_weight
+                                  "weight arrays don't match (obs {obs_val} != exp {exp_val}) in row {row_idx} (bl {exp_baseline:?} ts {exp_mjd}), pol {pol} ({pol_idx}), weight index {weight_idx}. \nobserved: {obs_pol_weight:?} != \nexpected: {exp_pol_weight:?}"
                               );
                         }
                     }
@@ -690,17 +670,7 @@ pub fn compare_ms_with_csv(
                         {
                             assert!(
                                   obs_val == exp_val,
-                                  "flag arrays don't match (obs {} != exp {}) in row {} (bl {:?} ts {}), pol {} ({}), flag index {}. \nobserved: {:?} != \nexpected: {:?}",
-                                  obs_val,
-                                  exp_val,
-                                  row_idx,
-                                  exp_baseline,
-                                  exp_mjd,
-                                  pol,
-                                  pol_idx,
-                                  flag_idx,
-                                  obs_pol_flag,
-                                  exp_pol_flag
+                                  "flag arrays don't match (obs {obs_val} != exp {exp_val}) in row {row_idx} (bl {exp_baseline:?} ts {exp_mjd}), pol {pol} ({pol_idx}), flag index {flag_idx}. \nobserved: {obs_pol_flag:?} != \nexpected: {exp_pol_flag:?}"
                               );
                         }
                     }
