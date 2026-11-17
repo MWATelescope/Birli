@@ -49,7 +49,8 @@ use crate::{
         mwalib,
         ndarray::{s, ArrayView3},
         precession::{precess_time, PrecessionInfo},
-        History, Jones, LatLngHeight, MwaObsContext, ObsContext, RADec, VisContext, ENH,
+        History, Jones, LatLngHeight, MwaObsContext, ObsContext, PolConvention, RADec, VisContext,
+        ENH,
     },
     passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
     with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection,
@@ -1389,6 +1390,7 @@ impl<'a> BirliContext<'a> {
             cable_delays_applied,
             geometric_delays_applied,
             deripple_applied,
+            digital_gains_applied,
             ..
         } = meta_ctx;
 
@@ -1443,7 +1445,14 @@ impl<'a> BirliContext<'a> {
             ) && !cable_delays_disabled
         };
 
-        prep_ctx.correct_digital_gains = !matches.get_flag("no-digital-gains");
+        prep_ctx.correct_digital_gains = {
+            let digital_gains_disabled = matches.get_flag("no-digital-gains");
+            info!(
+                "digital gain corrections: applied={:?}, disabled={}",
+                digital_gains_applied, digital_gains_disabled
+            );
+            !digital_gains_applied && !digital_gains_disabled
+        };
 
         prep_ctx.passband_gains = match matches
             .get_one::<String>("passband-gains")
@@ -1836,11 +1845,7 @@ impl<'a> BirliContext<'a> {
             .antennas
             .iter()
             .map(|a| {
-                let enh = ENH {
-                    e: a.east_m,
-                    n: a.north_m,
-                    h: a.height_m,
-                };
+                let enh = ENH::from_mwalib_antenna(a);
                 let xyz = enh.to_xyz_inner(s_lat, c_lat);
                 (a.tile_name.clone(), xyz)
             })
@@ -1861,6 +1866,8 @@ impl<'a> BirliContext<'a> {
                     Some(&history),
                 )
                 .expect("unable to initialize uvfits writer")
+                .with_conventions(PolConvention::MWA, prep_ctx.uvw_frame())
+                .expect("unable to write uvfits conventions")
             })
         });
         let mut ms_writer = io_ctx.ms_out.as_ref().map(|ms_out| {
@@ -1871,7 +1878,8 @@ impl<'a> BirliContext<'a> {
                 antenna_positions,
                 dut1,
                 true,
-            );
+            )
+            .with_conventions(PolConvention::MWA, prep_ctx.uvw_frame());
             println!(
                 "Writing to MS: {} with {} chans selected",
                 ms_out.display(),
@@ -2328,6 +2336,54 @@ mod argparse_tests {
         let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args_no_dry_run).unwrap();
 
         assert!(prep_ctx.passband_gains.is_none());
+    }
+
+    /// Digital gains are corrected unless `--no-digital-gains` is given or the
+    /// correlator has already applied them (metafits `DGAINS` = 1).
+    #[test]
+    fn test_no_digital_gains_when_applied_by_correlator() {
+        use marlu::fitsio::FitsFile;
+        use tempfile::tempdir;
+
+        // Evaluate the arguments of the corrections' `info!` lines too.
+        log::set_max_level(log::LevelFilter::Info);
+
+        let metafits = "tests/data/1439922144_deripple/1439922144.metafits";
+        let gpufits = "tests/data/1439922144_deripple/1439922144_20250822182206_ch137_000.fits";
+
+        #[rustfmt::skip]
+        let args = vec!["birli", "-m", metafits, "--no-draw-progress", gpufits];
+        let BirliContext {
+            prep_ctx, corr_ctx, ..
+        } = BirliContext::from_args(&args).unwrap();
+        assert!(!corr_ctx.metafits_context.digital_gains_applied);
+        assert!(prep_ctx.correct_digital_gains);
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli", "-m", metafits, "--no-draw-progress", "--no-digital-gains", gpufits,
+        ];
+        let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args).unwrap();
+        assert!(!prep_ctx.correct_digital_gains);
+
+        // The same metafits, with the digital gains applied by the correlator.
+        let tmp_dir = tempdir().unwrap();
+        let dgains_metafits = tmp_dir.path().join("1439922144.metafits");
+        std::fs::copy(metafits, &dgains_metafits).unwrap();
+        {
+            let mut fptr = FitsFile::edit(&dgains_metafits).unwrap();
+            let hdu = fptr.primary_hdu().unwrap();
+            hdu.write_key(&mut fptr, "DGAINS", 1).unwrap();
+        }
+        let dgains_metafits = dgains_metafits.to_str().unwrap();
+
+        #[rustfmt::skip]
+        let args = vec!["birli", "-m", dgains_metafits, "--no-draw-progress", gpufits];
+        let BirliContext {
+            prep_ctx, corr_ctx, ..
+        } = BirliContext::from_args(&args).unwrap();
+        assert!(corr_ctx.metafits_context.digital_gains_applied);
+        assert!(!prep_ctx.correct_digital_gains);
     }
 
     /// Oversampled observations get no edge flags by default; asking for them

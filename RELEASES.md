@@ -1,13 +1,18 @@
 <!-- markdownlint-disable=MD025 -->
 
-# Version 0.22.0 (2026-11-16)
+# Version 0.22.0 (2026-11-17)
 
+- ✨ new feature:
+  - Birli will not correct the digital gains, if it has already been done by the correlator (NOTE: as of writing the correction of digital gains features is not yet implemented in the MWAX correlator so this is a pre-emptive feature updates to ensure Birli is ready for it when is released)
+- 🐛 bug fixes:
+  - tile positions in uvfits `AIPS AN` and MS `ANTENNA` tables are now relative to the array centre, not ~378 m too high as in cotter's files, and long-baseline tiles' heights include the Earth's curvature (up to ~1 m at 3.5 km). This uses Marlu 0.20's `ENH::from_mwalib_antenna` (MWATelescope/Marlu#49 and #51) and mwalib 4's curvature-corrected `Antenna::height_m`
+  - `--emulate-cotter` computes UVWs (and the geometric correction) in cotter's frame, Marlu's `UvwFrame::Cotter` (mean sidereal time, projection onto the aberrated phase centre). Otherwise Birli uses Marlu's default frame, which differs from cotter's by up to ~8 cm per km in `w`
 - 🙏 quality of life:
   - warn when `--flag-edge-width` or `--flag-edge-chans` flags the coarse-channel edges of an oversampled observation, which don't need flagging
   - README: Birli flags no edge channels by default (the 80 kHz in the Cotter comparison table is Cotter's default), and DC flagging is only the default for legacy correlator observations
 - ➕ dependencies:
   - MSRV updated to 1.88.0
-  - marlu v0.20.0 (mwalib v4.0.0)
+  - marlu v0.20.0 (mwalib v4.0.0; `get_fine_chan_freqs_hz_array` now returns a `Result`). Fixes #207
 
 # Version 0.21.0 (2026-10-15)
 
