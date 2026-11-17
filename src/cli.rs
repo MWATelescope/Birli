@@ -1346,6 +1346,7 @@ impl<'a> BirliContext<'a> {
             cable_delays_applied,
             geometric_delays_applied,
             deripple_applied,
+            digital_gains_applied,
             ..
         } = meta_ctx;
 
@@ -1400,7 +1401,14 @@ impl<'a> BirliContext<'a> {
             ) && !cable_delays_disabled
         };
 
-        prep_ctx.correct_digital_gains = !matches.get_flag("no-digital-gains");
+        prep_ctx.correct_digital_gains = {
+            let digital_gains_disabled = matches.get_flag("no-digital-gains");
+            info!(
+                "digital gain corrections: applied={:?}, disabled={}",
+                digital_gains_applied, digital_gains_disabled
+            );
+            !digital_gains_applied && !digital_gains_disabled
+        };
 
         prep_ctx.passband_gains = match matches
             .get_one::<String>("passband-gains")
@@ -2177,6 +2185,54 @@ mod argparse_tests {
         let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args_no_dry_run).unwrap();
 
         assert!(prep_ctx.passband_gains.is_none());
+    }
+
+    /// Digital gains are corrected unless `--no-digital-gains` is given or the
+    /// correlator has already applied them (metafits `DGAINS` = 1).
+    #[test]
+    fn test_no_digital_gains_when_applied_by_correlator() {
+        use marlu::fitsio::FitsFile;
+        use tempfile::tempdir;
+
+        // Evaluate the arguments of the corrections' `info!` lines too.
+        log::set_max_level(log::LevelFilter::Info);
+
+        let metafits = "tests/data/1439922144_deripple/1439922144.metafits";
+        let gpufits = "tests/data/1439922144_deripple/1439922144_20250822182206_ch137_000.fits";
+
+        #[rustfmt::skip]
+        let args = vec!["birli", "-m", metafits, "--no-draw-progress", gpufits];
+        let BirliContext {
+            prep_ctx, corr_ctx, ..
+        } = BirliContext::from_args(&args).unwrap();
+        assert!(!corr_ctx.metafits_context.digital_gains_applied);
+        assert!(prep_ctx.correct_digital_gains);
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli", "-m", metafits, "--no-draw-progress", "--no-digital-gains", gpufits,
+        ];
+        let BirliContext { prep_ctx, .. } = BirliContext::from_args(&args).unwrap();
+        assert!(!prep_ctx.correct_digital_gains);
+
+        // The same metafits, with the digital gains applied by the correlator.
+        let tmp_dir = tempdir().unwrap();
+        let dgains_metafits = tmp_dir.path().join("1439922144.metafits");
+        std::fs::copy(metafits, &dgains_metafits).unwrap();
+        {
+            let mut fptr = FitsFile::edit(&dgains_metafits).unwrap();
+            let hdu = fptr.primary_hdu().unwrap();
+            hdu.write_key(&mut fptr, "DGAINS", 1).unwrap();
+        }
+        let dgains_metafits = dgains_metafits.to_str().unwrap();
+
+        #[rustfmt::skip]
+        let args = vec!["birli", "-m", dgains_metafits, "--no-draw-progress", gpufits];
+        let BirliContext {
+            prep_ctx, corr_ctx, ..
+        } = BirliContext::from_args(&args).unwrap();
+        assert!(corr_ctx.metafits_context.digital_gains_applied);
+        assert!(!prep_ctx.correct_digital_gains);
     }
 
     /// Oversampled observations get no edge flags by default; asking for them
