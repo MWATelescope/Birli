@@ -124,7 +124,12 @@ fn blackman_window(n: usize) -> Array1<f64> {
 }
 
 /// Perform a delay transform (FFT along frequency axis) for each antenna.
-/// Input: rdx_ant_freq (nants, nfreqs), freq_hz (nfreqs)
+/// Input: `rdx_ant_freq` (nants, nfreqs), `freq_hz` (nfreqs)
+///
+/// # Errors
+///
+/// Returns an error if no delays fall within `config.max_delay_ns`.
+#[allow(clippy::cognitive_complexity)]
 pub fn delay_transform(
     rdx_ant_freq: &Array2<f64>,
     freq_hz: &Array1<f64>,
@@ -270,7 +275,10 @@ pub fn delay_transform(
                 .take_while(|(_, &d)| d <= config.max_delay_ns)
                 .map(|(i, _)| i)
                 .collect();
-            if !subset_indices.is_empty() {
+            if subset_indices.is_empty() {
+                debug!("No delays <= {} ns found!", config.max_delay_ns);
+                return Err("No valid delays in requested range".into());
+            } else {
                 let subset_end = subset_indices.len();
                 let mut subset_spectrum = Array2::zeros((nants, subset_end));
                 let mut subset_delays = Array1::zeros(subset_end);
@@ -286,9 +294,6 @@ pub fn delay_transform(
                     subset_delays[subset_end - 1]
                 );
                 (subset_spectrum, subset_delays)
-            } else {
-                debug!("No delays <= {} ns found!", config.max_delay_ns);
-                return Err("No valid delays in requested range".into());
             }
         }
     };
@@ -438,6 +443,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "cli")]
     #[ignore] // Run with: cargo test test_real_data_debug -- --ignored --nocapture
     fn test_real_data_debug() {
         use crate::cli::BirliContext;
