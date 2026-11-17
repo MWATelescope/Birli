@@ -65,7 +65,8 @@ impl MetricsContext {
     /// This is a convenience function for backward compatibility
     pub fn from_mwalib(corr_ctx: &CorrelatorContext, vis_sel: &VisSelection) -> Self {
         let fine_chan_freqs_hz = corr_ctx
-            .get_fine_chan_freqs_hz_array(&vis_sel.coarse_chan_range.clone().collect::<Vec<_>>());
+            .get_fine_chan_freqs_hz_array(&vis_sel.coarse_chan_range.clone().collect::<Vec<_>>())
+            .expect("failed to get fine channel frequencies");
 
         let timestamps_s: Vec<f64> = corr_ctx.timesteps[vis_sel.timestep_range.clone()]
             .iter()

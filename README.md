@@ -617,8 +617,11 @@ less sensitive to signals at the edges of each coarse channel.
 Birli can flag the first and last `--flag-edge-chans` channels of each coarse channel,
 or the first and last `--flag-edge-width` kHz of each coarse channel.
 
-There is no established default value for edge channel flagging, but somewhere between 40-160kHz
-is usually good. Oversampled ovservations will not need edge channel flags.
+Birli doesn't flag any edge channels by default. There is no established value for edge channel
+flagging of critically sampled observations, but somewhere between 40-160kHz is usually good.
+Oversampled observations (`OVERSAMP = 1` in the metafits, e.g. MWA Phase III) have a flat passband
+right to the coarse channel edges and should not have their edge channels flagged; Birli warns if
+`--flag-edge-width` or `--flag-edge-chans` is used on one.
 
 The fourier transform of each coarse channel signal results in a DC bin at the center of the
 coarse channel. For legacy correlator observations, where this is done at 10kHz, the
@@ -736,10 +739,10 @@ The following table shows how Birli options map onto Cotter options:
 | `--no-apply-amps`                   |                         | With `--apply-di-cal`, apply phases only (unit amplitude).
 | `--no-digital-gains`                | `-nosbgains`            | Do not correct for the digital gains.
 | `--max-memory` (WIP)                | `-absmem <gb>`          | Use at most the given amount of memory, specified in gigabytes.
-| `--flag-edge-width <kHz>`           | `-edgewidth <kHz>`      | Flag the given width of edge channels of each sub-band (default: 80 kHz).
+| `--flag-edge-width <kHz>`           | `-edgewidth <kHz>`      | Flag the given width of edge channels of each sub-band. Cotter's default is 80 kHz; Birli flags no edge channels unless asked, and oversampled observations shouldn't have their edges flagged.
 | `--flag-init <sec>`                 | `-initflag <sec>`       | Specify number of seconds to flag at beginning of observation (default: QUACK)
 | `--flag-end <sec>`                  | `-endflag <sec>`        | Specify number of seconds to flag extra at end of observation (default: 0s).
-| `--flag-dc`                         | `-flagdcchannels`       | Flag the centre channel of each sub-band (currently the default).
+| `--flag-dc`                         | `-flagdcchannels`       | Flag the centre channel of each sub-band (the default for legacy correlator observations only).
 | `--no-flag-dc`                      | `-noflagdcchannels`     | Do not flag the centre channel of each sub-band.
 | `--flag-antennas <ANTS>...` (WIP)   | `-flagantenna <lst>`    | Mark the comma-separated list of zero-indexed antennas as flagged antennas.
 | `--flag-coarse-chans <CHANS>` (WIP) | `-flagsubband <lst>`    | Flag the comma-separated list of zero-indexed sub-bands.

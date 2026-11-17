@@ -80,8 +80,9 @@ pub fn correct_cable_lengths(
     let meta_ctx = &corr_ctx.metafits_context;
     let num_fine_chans_per_coarse = meta_ctx.num_corr_fine_chans_per_coarse;
 
-    let all_freqs_hz =
-        corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>());
+    let all_freqs_hz = corr_ctx
+        .get_fine_chan_freqs_hz_array(&coarse_chan_range.clone().collect::<Vec<_>>())
+        .expect("failed to get fine channel frequencies");
 
     let vis_dims = jones_array.dim();
     if vis_dims.1 != coarse_chan_range.len() * num_fine_chans_per_coarse {
@@ -225,7 +226,8 @@ pub fn correct_geometry(
     let timesteps = &corr_ctx.timesteps[vis_sel.timestep_range.clone()];
 
     let all_freqs_hz = corr_ctx
-        .get_fine_chan_freqs_hz_array(&vis_sel.coarse_chan_range.clone().collect::<Vec<_>>());
+        .get_fine_chan_freqs_hz_array(&vis_sel.coarse_chan_range.clone().collect::<Vec<_>>())
+        .expect("failed to get fine channel frequencies");
     let jones_dims = jones_array.dim();
 
     let integration_time_s = corr_ctx.metafits_context.corr_int_time_ms as f64 / 1000.0;
@@ -486,7 +488,10 @@ pub fn correct_coarse_passband_gains(
         }));
     };
 
-    let fscrunch = if passband_gains.len() % num_fine_chans_per_coarse == 0 {
+    let fscrunch = if passband_gains
+        .len()
+        .is_multiple_of(num_fine_chans_per_coarse)
+    {
         passband_gains.len() / num_fine_chans_per_coarse
     } else {
         return Err(PassbandCorrection::BadArrayShape(BadArrayShape {
@@ -724,7 +729,9 @@ mod tests {
         .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
-        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
+        let all_freqs_hz = corr_ctx
+            .get_fine_chan_freqs_hz_array(&coarse_chan_indices)
+            .unwrap();
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 0
         let viz_0_0_0 = jones_array[(0, 0, 0)];
@@ -867,7 +874,9 @@ mod tests {
         .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
-        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
+        let all_freqs_hz = corr_ctx
+            .get_fine_chan_freqs_hz_array(&coarse_chan_indices)
+            .unwrap();
 
         // ts 0, chan 0 (cc 0, fc 0), baseline 0
         let viz_0_0_0 = jones_array[(0, 0, 0)];
@@ -1033,7 +1042,9 @@ mod tests {
         let corr_ctx = get_mwa_ord_context();
         let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
-        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
+        let all_freqs_hz = corr_ctx
+            .get_fine_chan_freqs_hz_array(&coarse_chan_indices)
+            .unwrap();
 
         let array_pos = LatLngHeight::mwa();
 
@@ -1194,7 +1205,9 @@ mod tests {
         .unwrap();
 
         let coarse_chan_indices: Vec<_> = vis_sel.coarse_chan_range.clone().collect();
-        let all_freqs_hz = corr_ctx.get_fine_chan_freqs_hz_array(&coarse_chan_indices);
+        let all_freqs_hz = corr_ctx
+            .get_fine_chan_freqs_hz_array(&coarse_chan_indices)
+            .unwrap();
 
         let array_pos = LatLngHeight::mwa();
 
