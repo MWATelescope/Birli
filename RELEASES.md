@@ -1,5 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Unreleased
+
+- 🐛 bug fixes:
+  - AOFlagger is no longer run on autocorrelations, which its strategies aren't designed for. Autos keep the flags they had before AOFlagger (edges, flagged tiles, etc.). Fixes #175
+
 # Version 0.22.0 (2026-11-17)
 
 - ✨ new feature:
