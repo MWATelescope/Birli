@@ -4863,13 +4863,16 @@ mod tests_aoflagger_flagset {
         .unwrap();
 
         // there is a slight difference between aoflagger 3.1 and 3.2 :(
+        // so only the first few baselines are compared. Baseline 0 is the
+        // autocorrelation of tile 0, which aoflagger no longer flags (#175),
+        // while the files on disk were made when it did, so start at 1.
         assert_eq!(
-            our_flags.slice(s![0..1, ..20, ..]),
-            disk_flags_ts1.slice(s![.., ..20, ..])
+            our_flags.slice(s![0..1, 1..20, ..]),
+            disk_flags_ts1.slice(s![.., 1..20, ..])
         );
         assert_eq!(
-            our_flags.slice(s![1..2, ..20, ..]),
-            disk_flags_ts2.slice(s![.., ..20, ..])
+            our_flags.slice(s![1..2, 1..20, ..]),
+            disk_flags_ts2.slice(s![.., 1..20, ..])
         );
     }
 }

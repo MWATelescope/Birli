@@ -345,17 +345,47 @@ impl PreprocessContext<'_> {
                 if let Some(strategy) = self.aoflagger_strategy.as_ref() {
                     trace!("using aoflagger");
                     let aoflagger = unsafe { cxx_aoflagger_new() };
-                    with_increment_duration!(
-                        "flag",
-                        flag_jones_array_existing(
-                            &aoflagger,
-                            strategy,
-                            jones_array.view(),
-                            flag_array.view_mut(),
-                            true,
-                            self.draw_progress,
-                        )
-                    );
+                    // AOFlagger strategies are designed for cross-correlations,
+                    // so autocorrelations are not passed to it (#175). They
+                    // keep whatever flags they already have.
+                    let cross_bl_idxs = sel_ant_pairs
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(bl_idx, (ant1, ant2))| (ant1 != ant2).then_some(bl_idx))
+                        .collect::<Vec<_>>();
+                    if cross_bl_idxs.len() == sel_ant_pairs.len() {
+                        // no autos selected, flag in place
+                        with_increment_duration!(
+                            "flag",
+                            flag_jones_array_existing(
+                                &aoflagger,
+                                strategy,
+                                jones_array.view(),
+                                flag_array.view_mut(),
+                                true,
+                                self.draw_progress,
+                            )
+                        );
+                    } else if !cross_bl_idxs.is_empty() {
+                        let cross_jones = jones_array.select(Axis(2), &cross_bl_idxs);
+                        let mut cross_flags = flag_array.select(Axis(2), &cross_bl_idxs);
+                        with_increment_duration!(
+                            "flag",
+                            flag_jones_array_existing(
+                                &aoflagger,
+                                strategy,
+                                cross_jones.view(),
+                                cross_flags.view_mut(),
+                                true,
+                                self.draw_progress,
+                            )
+                        );
+                        for (cross_idx, &bl_idx) in cross_bl_idxs.iter().enumerate() {
+                            flag_array
+                                .index_axis_mut(Axis(2), bl_idx)
+                                .assign(&cross_flags.index_axis(Axis(2), cross_idx));
+                        }
+                    }
                 }
             }
         }
@@ -708,5 +738,77 @@ mod tests {
         assert_approx_eq!(f32, jones_array[(0, 0, 2)][2].im, -kappas2[1] as f32, epsilon=1e-9);
         assert_approx_eq!(f32, jones_array[(0, 0, 2)][3].re, sigmas2[1].powi(2) as f32);
 
+    }
+
+    #[cfg(feature = "aoflagger")]
+    #[test]
+    fn test_aoflagger_skips_autos() {
+        // #175: AOFlagger strategies are for cross-correlations, so autos
+        // must keep their existing flags while crosses get flagged.
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
+
+        // 3 antennas: autos (0,0) (1,1) (2,2) and crosses (0,1) (0,2) (1,2)
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.retain_antennas(&corr_ctx.metafits_context, &[0, 1, 2]);
+        let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
+        assert_eq!(ant_pairs.iter().filter(|(a, b)| a == b).count(), 3);
+
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
+        let flags_before = flag_array.clone();
+        let mut weight_array =
+            flag_to_weight_array(flag_array.view(), get_weight_factor(&corr_ctx));
+
+        // the generic minimal strategy is enough to flag some crosses
+        let aoflagger = unsafe { cxx_aoflagger_new() };
+        let prep_ctx = PreprocessContext {
+            aoflagger_strategy: Some(aoflagger.FindStrategyFileGeneric(&String::from("minimal"))),
+            correct_van_vleck: false,
+            correct_cable_lengths: false,
+            correct_digital_gains: false,
+            correct_geometry: false,
+            passband_gains: None,
+            draw_progress: false,
+            ..PreprocessContext::default()
+        };
+        prep_ctx
+            .preprocess(
+                &corr_ctx,
+                jones_array.view_mut(),
+                weight_array.view_mut(),
+                flag_array.view_mut(),
+                &vis_sel,
+                &[],
+            )
+            .unwrap();
+
+        let mut num_new_cross_flags = 0;
+        for (bl_idx, (ant1, ant2)) in ant_pairs.iter().enumerate() {
+            let before = flags_before.index_axis(Axis(2), bl_idx);
+            let after = flag_array.index_axis(Axis(2), bl_idx);
+            if ant1 == ant2 {
+                assert_eq!(
+                    before, after,
+                    "aoflagger changed flags of auto {ant1}-{ant2}"
+                );
+            } else {
+                num_new_cross_flags += after
+                    .iter()
+                    .zip(before.iter())
+                    .filter(|(&a, &b)| a && !b)
+                    .count();
+            }
+        }
+        assert!(num_new_cross_flags > 0, "aoflagger flagged no crosses");
     }
 }
