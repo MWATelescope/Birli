@@ -2,9 +2,8 @@
 
 `birli --metrics-out <PATH>` writes a FITS file of cheap summaries of the visibilities, which are
 useful for finding radio-frequency interference (RFI) and misbehaving tiles without opening the
-visibilities themselves. They are computed for each chunk of visibilities after the corrections
-and flagging, and before averaging, so they are at the time and frequency resolution of the raw
-data.
+visibilities themselves. They are computed from the visibilities after the corrections and flagging, and before averaging,
+so they are at the time and frequency resolution of the raw data.
 
 ```bash
 birli \
@@ -43,12 +42,17 @@ Things to know about all of them:
 
 ### Which file
 
-- When the observation is processed in more than one chunk of timesteps (`--time-chunk` or
-  `--max-memory`), each chunk has its own metrics, in its own file, with the timestep indices of
-  the chunk before the extension: `metrics_ts0-29.fits`, `metrics_ts30-59.fits`.
+- The metrics of all the selected timesteps go in one file, like the visibilities. When the
+  observation is processed in chunks of timesteps (`--time-chunk` or `--max-memory`), the metrics
+  are accumulated chunk by chunk, and written at the end. They are the same however the timesteps
+  are chunked, including the SSINS differences between the last timestep of one chunk and the first
+  of the next.
+  This needs memory that `--max-memory` does not count: the amplitude of every autocorrelation
+  (`4 × tiles × timesteps × channels` 32-bit floats), two 64-bit floats for every polarisation,
+  baseline and channel, and the last timestep of each chunk.
 - When the coarse channels are not contiguous, or are selected with `--sel-chan-ranges`, each range
   of channels has its own file, named like the visibility files: `metrics_ch62-63.fits`.
-- No file is written for a chunk where every timestep or every channel is flagged.
+- No file is written if every timestep or every channel is flagged.
 
 ### Autocorrelations
 
@@ -112,7 +116,7 @@ zscore(t, f) = sqrt(N(t, f) / C) * (mean_amp(t, f) / mean_amp(f) - 1)
 ```
 
 There is one fewer timestep than in the visibilities, and the time axis starts halfway between the
-first two timesteps. The metrics are left out if a chunk has only one timestep.
+first two timesteps. The metrics are left out if only one timestep is selected.
 
 | HDU | FITS axes | contents |
 | --- | --- | --- |

@@ -5,6 +5,7 @@
 - ✨ new features:
   - `--metrics-out <PATH>` writes a FITS file of quality-assurance metrics (see `doc/metrics.md`): per-tile autocorrelation bandpasses with their polynomial fits and delay transforms, SSINS and EAVILS z-scores, and with the aoflagger feature, flag occupancy and the delay transform of short baselines (`--cross-metrics-cutoff`)
   - `--flag-raw-chans` flags fine channels by their index in the whole observation, so a fine channel can be flagged in only one coarse channel
+  - the metrics of all timesteps go in one file, and are the same however the observation is chunked with `--time-chunk` or `--max-memory`
   - library: new modules `metrics`, `delay_transform` and `math`, `FlagContext::raw_chan_flags` and `FlagContext::get_raw_chan_flags`
 
 # Version 0.22.0 (2026-11-17)

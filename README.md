@@ -747,9 +747,10 @@ corrections and flagging, and before averaging:
 
 See [doc/metrics.md](doc/metrics.md) for what is in the file and how to read it.
 
-When the observation is processed in more than one chunk of timesteps, or range of coarse channels,
-there is a metrics file for each, with a suffix for the timestep indices (`_ts0-29`) or the coarse
-channels (`_ch62-63`) before the extension.
+The metrics of all the timesteps go in one file, however the observation is chunked with
+`--time-chunk` or `--max-memory`. When there is more than one range of coarse channels, there is a
+metrics file for each, with a suffix for the coarse channels (`_ch62-63`) before the extension, like
+the visibility files.
 
 ## Comparison with Cotter
 

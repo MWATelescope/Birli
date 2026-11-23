@@ -1,7 +1,7 @@
 //! Quality-assurance metrics for preprocessed visibilities.
 //!
-//! These metrics are cheap summaries of a chunk of visibilities, which are
-//! computed after the corrections and flagging, before averaging. They are
+//! These metrics are cheap summaries of visibilities, which are computed
+//! after the corrections and flagging, before averaging. They are
 //! written to a FITS file with `birli --metrics-out <PATH>`, or they can be
 //! computed and written one at a time with this module.
 //!
@@ -13,12 +13,16 @@
 //! | `AOFlagMetrics` | fraction of cross-correlation baselines flagged at each time and frequency | `aoflagger` feature |
 //! | `CrossMetrics` | per-tile delay transform of the cross-correlations on short baselines | `aoflagger` feature |
 //!
-//! Every metric has two constructors:
+//! Every metric has three ways to make it:
 //! - `new` takes the [`mwalib::CorrelatorContext`](CorrelatorContext),
 //!   [`VisSelection`] and [`FlagContext`] of an observation that was read with
 //!   Birli.
 //! - `new_from_metadata` takes a [`MetricsContext`], so that the metrics can be
 //!   computed for visibilities from any source.
+//! - a builder (like [`AutoMetricsBuilder`]) takes the visibilities in chunks
+//!   of timesteps, for observations that don't fit in memory. The metrics
+//!   are the same however the timesteps are chunked. This is what `birli
+//!   --metrics-out` uses.
 //!
 //! and a `save_to_fits` method, which appends the metric's HDUs to an open
 //! FITS file. The layout of these HDUs is described in
@@ -98,7 +102,7 @@ use rayon::prelude::*;
 use marlu::XyzGeocentric;
 
 #[cfg(feature = "aoflagger")]
-use crate::marlu::{ndarray::Axis, num_complex::Complex};
+use crate::marlu::num_complex::Complex;
 use crate::{
     delay_transform::{calculate_delay_channels, delay_transform, DelayTransformConfig},
     marlu::{
@@ -109,7 +113,10 @@ use crate::{
             FitsFile,
         },
         mwalib::CorrelatorContext,
-        ndarray::{s, Array1, Array2, Array3, Array4, ArrayView3},
+        ndarray::{
+            s, Array1, Array2, Array3, Array4, ArrayView2, ArrayView3, ArrayViewMut1,
+            ArrayViewMut2, Axis,
+        },
         Jones, VisSelection,
     },
     math::fit_polynomial,
@@ -462,48 +469,44 @@ pub struct AutoMetrics {
     pub delay_res_ns: f64,
 }
 
-impl AutoMetrics {
-    /// Create [`AutoMetrics`] for visibilities that were read with the
-    /// selection `chunk_vis_sel` of the observation `corr_ctx`.
-    ///
-    /// # Panics
-    ///
-    /// See [`AutoMetrics::new_from_metadata`].
-    pub fn new(
-        jones_array_tfb: ArrayView3<Jones<f32>>,
-        corr_ctx: &CorrelatorContext,
-        chunk_vis_sel: &VisSelection,
-        flag_ctx: &FlagContext,
-    ) -> Self {
-        let (metadata, timestep_flags, chan_flags) =
-            selection_metadata(corr_ctx, chunk_vis_sel, flag_ctx);
-        Self::new_from_metadata(jones_array_tfb, &metadata, &timestep_flags, &chan_flags)
-    }
+/// Computes [`AutoMetrics`] from visibilities which arrive in chunks of
+/// timesteps, so that the visibilities of the whole observation don't need to
+/// be in memory at once.
+///
+/// The result is the same as [`AutoMetrics::new_from_metadata`] on all of the
+/// visibilities, however they are chunked.
+///
+/// The amplitude of every autocorrelation is kept, which is `4 * tiles *
+/// timesteps * channels` 32-bit floats.
+pub struct AutoMetricsBuilder {
+    metadata: MetricsContext,
+    timestep_flags: Vec<bool>,
+    chan_flags: Vec<bool>,
+    /// The position in `metadata.antennas`, and the baseline index of each
+    /// autocorrelation, in order of increasing antenna index.
+    autos: Vec<(usize, usize)>,
+    /// The autocorrelation amplitude `(antenna, polarisation, time,
+    /// frequency)`, `NaN` where it is flagged or has not been pushed.
+    auto_amp_aptf: Array4<f32>,
+    num_timesteps_pushed: usize,
+}
 
-    /// Create [`AutoMetrics`] from visibilities `[timestep][channel][baseline]`
-    /// and their metadata.
+impl AutoMetricsBuilder {
+    /// Start computing [`AutoMetrics`] for all of the timesteps, channels and
+    /// baselines in `metadata`.
     ///
     /// # Panics
     ///
     /// Panics if:
     /// - all timesteps or all channels are flagged,
-    /// - there are fewer than 2 channels,
-    /// - the dimensions of the visibilities or flags don't match `metadata`.
-    pub fn new_from_metadata(
-        jones_array_tfb: ArrayView3<Jones<f32>>,
-        metadata: &MetricsContext,
-        timestep_flags: &[bool],
-        chan_flags: &[bool],
-    ) -> Self {
-        let (num_timesteps, num_freqs, _) = jones_array_tfb.dim();
-        let num_pols = 4;
-
-        let num_unflagged_times = timestep_flags.iter().filter(|&t| !t).count() as f32;
-        assert!(num_unflagged_times > 0.0, "all timesteps are flagged");
+    /// - the lengths of the flags don't match `metadata`.
+    pub fn new(metadata: &MetricsContext, timestep_flags: &[bool], chan_flags: &[bool]) -> Self {
+        assert!(
+            timestep_flags.iter().any(|&t| !t),
+            "all timesteps are flagged"
+        );
         assert!(chan_flags.iter().any(|&c| !c), "all channels are flagged");
 
-        // The position in metadata.antennas, and the baseline index of each
-        // autocorrelation, in order of increasing antenna index.
         let sel_ants = selected_antennas(&metadata.antenna_pairs);
         let mut autos: Vec<(usize, usize)> = metadata
             .antenna_pairs
@@ -516,31 +519,84 @@ impl AutoMetrics {
             })
             .collect();
         autos.sort_unstable();
-        let num_sel_ants = autos.len();
 
-        // time-mean of the amplitude, and the amplitude itself
-        let mut auto_spectrum_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, num_pols));
-        let mut auto_sub_aptf =
-            Array4::<f32>::zeros((num_sel_ants, num_pols, num_timesteps, num_freqs));
-        for (a, &(_, bl_idx)) in autos.iter().enumerate() {
-            for p in 0..num_pols {
+        Self {
+            auto_amp_aptf: Array4::from_elem(
+                (autos.len(), 4, timestep_flags.len(), chan_flags.len()),
+                f32::NAN,
+            ),
+            metadata: metadata.clone(),
+            timestep_flags: timestep_flags.to_vec(),
+            chan_flags: chan_flags.to_vec(),
+            autos,
+            num_timesteps_pushed: 0,
+        }
+    }
+
+    /// Add the visibilities `[timestep][channel][baseline]` of the next
+    /// timesteps.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the channels or baselines don't match the metadata, or if
+    /// there are more timesteps than are left.
+    pub fn push(&mut self, jones_array_tfb: ArrayView3<Jones<f32>>) {
+        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+        let first_timestep = self.num_timesteps_pushed;
+        assert!(
+            first_timestep + num_timesteps <= self.timestep_flags.len(),
+            "too many timesteps"
+        );
+        assert_eq!(num_freqs, self.chan_flags.len());
+        assert_eq!(num_baselines, self.metadata.antenna_pairs.len());
+
+        for (a, &(_, bl_idx)) in self.autos.iter().enumerate() {
+            for p in 0..4 {
                 let fits_p = hyperdrive_to_fits_stokes(p);
-                for f in 0..num_freqs {
-                    if chan_flags[f] {
-                        auto_spectrum_afp[[a, f, fits_p]] = f32::NAN;
-                        auto_sub_aptf.slice_mut(s![a, fits_p, .., f]).fill(f32::NAN);
-                        continue;
-                    }
-                    for t in 0..num_timesteps {
-                        if timestep_flags[t] {
-                            auto_sub_aptf[[a, fits_p, t, f]] = f32::NAN;
-                        } else {
-                            let amp = jones_array_tfb[[t, f, bl_idx]][p].norm();
-                            auto_spectrum_afp[[a, f, fits_p]] += amp / num_unflagged_times;
-                            auto_sub_aptf[[a, fits_p, t, f]] = amp;
-                        }
+                for t in (0..num_timesteps).filter(|&t| !self.timestep_flags[first_timestep + t]) {
+                    for f in (0..num_freqs).filter(|&f| !self.chan_flags[f]) {
+                        self.auto_amp_aptf[[a, fits_p, first_timestep + t, f]] =
+                            jones_array_tfb[[t, f, bl_idx]][p].norm();
                     }
                 }
+            }
+        }
+        self.num_timesteps_pushed += num_timesteps;
+    }
+
+    /// Compute the metrics.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - not all of the timesteps have been pushed,
+    /// - there are fewer than 2 channels.
+    pub fn finish(self) -> AutoMetrics {
+        let Self {
+            metadata,
+            timestep_flags,
+            chan_flags,
+            autos,
+            auto_amp_aptf: mut auto_sub_aptf,
+            num_timesteps_pushed,
+        } = self;
+        let (num_sel_ants, num_pols, num_timesteps, num_freqs) = auto_sub_aptf.dim();
+        assert_eq!(
+            num_timesteps_pushed, num_timesteps,
+            "not all timesteps were pushed"
+        );
+        let num_unflagged_times = timestep_flags.iter().filter(|&t| !t).count() as f32;
+
+        // the bandpass: the time-mean of the amplitude
+        let mut auto_spectrum_afp =
+            Array3::<f32>::from_elem((num_sel_ants, num_freqs, num_pols), f32::NAN);
+        for ((a, f, p), mean) in auto_spectrum_afp.indexed_iter_mut() {
+            if chan_flags[f] {
+                continue;
+            }
+            *mean = 0.0;
+            for t in (0..num_timesteps).filter(|&t| !timestep_flags[t]) {
+                *mean += auto_sub_aptf[[a, p, t, f]] / num_unflagged_times;
             }
         }
 
@@ -585,7 +641,7 @@ impl AutoMetrics {
                 .map(|&(ant_pos, _)| &metadata.antennas[ant_pos])
         };
 
-        Self {
+        AutoMetrics {
             auto_sub_aptf,
             auto_spectrum_afp,
             auto_coeffs_apo,
@@ -614,6 +670,53 @@ impl AutoMetrics {
             start_delay_ns: delay_info.start_delay_ns,
             delay_res_ns: delay_info.actual_delay_res_ns,
         }
+    }
+}
+
+impl AutoMetrics {
+    /// Create [`AutoMetrics`] for visibilities that were read with the
+    /// selection `chunk_vis_sel` of the observation `corr_ctx`.
+    ///
+    /// # Panics
+    ///
+    /// See [`AutoMetrics::new_from_metadata`].
+    pub fn new(
+        jones_array_tfb: ArrayView3<Jones<f32>>,
+        corr_ctx: &CorrelatorContext,
+        chunk_vis_sel: &VisSelection,
+        flag_ctx: &FlagContext,
+    ) -> Self {
+        let (metadata, timestep_flags, chan_flags) =
+            selection_metadata(corr_ctx, chunk_vis_sel, flag_ctx);
+        Self::new_from_metadata(jones_array_tfb, &metadata, &timestep_flags, &chan_flags)
+    }
+
+    /// Create [`AutoMetrics`] from visibilities `[timestep][channel][baseline]`
+    /// and their metadata.
+    ///
+    /// To compute the metrics from visibilities that don't fit in memory, see
+    /// [`AutoMetricsBuilder`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - all timesteps or all channels are flagged,
+    /// - there are fewer than 2 channels,
+    /// - the dimensions of the visibilities or flags don't match `metadata`.
+    pub fn new_from_metadata(
+        jones_array_tfb: ArrayView3<Jones<f32>>,
+        metadata: &MetricsContext,
+        timestep_flags: &[bool],
+        chan_flags: &[bool],
+    ) -> Self {
+        let (num_timesteps, num_freqs, _) = jones_array_tfb.dim();
+        let mut builder = AutoMetricsBuilder::new(
+            metadata,
+            &timestep_flags[..num_timesteps],
+            &chan_flags[..num_freqs],
+        );
+        builder.push(jones_array_tfb);
+        builder.finish()
     }
 
     /// Write these metrics to HDUs in an open FITS file:
@@ -864,6 +967,243 @@ pub struct SSINS {
     pub channel_width_hz: f64,
 }
 
+/// Computes [`SSINS`] from visibilities which arrive in chunks of timesteps,
+/// so that the visibilities of the whole observation don't need to be in
+/// memory at once.
+///
+/// The result is the same as [`SSINS::new_from_metadata`] on all of the
+/// visibilities, however they are chunked: the last timestep of each chunk is
+/// kept, to difference with the first timestep of the next.
+pub struct SSINSBuilder {
+    metadata: MetricsContext,
+    timestep_flags: Vec<bool>,
+    chan_flags: Vec<bool>,
+    /// Baseline indices of the cross-correlations. SSINS's
+    /// `spectrum_type="cross"` leaves out the autos.
+    cross_bl_idxs: Vec<usize>,
+    /// Sum over unflagged cross baselines of `|V(t+1) - V(t)|`
+    /// `(times-1, frequencies, polarisations)`
+    diff_sum_amp_tfp: Array3<f64>,
+    /// How many baselines are in each sum `(times-1, frequencies)`
+    num_baselines_tf: Array2<u32>,
+    /// The visibilities and flags `[channel][baseline]` of the last timestep
+    /// that was pushed, if there are more to come.
+    last_timestep: Option<(Array2<Jones<f32>>, Array2<bool>)>,
+    num_timesteps_pushed: usize,
+}
+
+impl SSINSBuilder {
+    /// Start computing [`SSINS`] for all of the timesteps, channels and
+    /// baselines in `metadata`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there are fewer than 2 timesteps.
+    pub fn new(metadata: &MetricsContext, timestep_flags: &[bool], chan_flags: &[bool]) -> Self {
+        let num_timesteps = timestep_flags.len();
+        let num_freqs = chan_flags.len();
+        assert!(num_timesteps >= 2, "SSINS requires at least 2 timesteps");
+
+        let cross_bl_idxs: Vec<usize> = metadata
+            .antenna_pairs
+            .iter()
+            .enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .map(|(i, _)| i)
+            .collect();
+
+        Self {
+            metadata: metadata.clone(),
+            timestep_flags: timestep_flags.to_vec(),
+            chan_flags: chan_flags.to_vec(),
+            cross_bl_idxs,
+            diff_sum_amp_tfp: Array3::zeros((num_timesteps - 1, num_freqs, 4)),
+            num_baselines_tf: Array2::zeros((num_timesteps - 1, num_freqs)),
+            last_timestep: None,
+            num_timesteps_pushed: 0,
+        }
+    }
+
+    /// Add the visibilities `[timestep][channel][baseline]` and flags of the
+    /// next timesteps.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the visibilities and flags don't have the same dimensions,
+    /// the channels or baselines don't match the metadata, or if there are
+    /// more timesteps than are left.
+    pub fn push(
+        &mut self,
+        jones_array_tfb: ArrayView3<Jones<f32>>,
+        flag_array_tfb: ArrayView3<bool>,
+    ) {
+        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+        assert_eq!(jones_array_tfb.dim(), flag_array_tfb.dim());
+        let first_timestep = self.num_timesteps_pushed;
+        let num_timesteps_total = self.timestep_flags.len();
+        assert!(
+            first_timestep + num_timesteps <= num_timesteps_total,
+            "too many timesteps"
+        );
+        assert_eq!(num_freqs, self.chan_flags.len());
+        assert_eq!(num_baselines, self.metadata.antenna_pairs.len());
+        if num_timesteps == 0 {
+            return;
+        }
+
+        let Self {
+            timestep_flags,
+            chan_flags,
+            cross_bl_idxs,
+            diff_sum_amp_tfp,
+            num_baselines_tf,
+            ..
+        } = self;
+
+        // The difference between timestep `t` and `t + 1` of the observation
+        let diff_timesteps =
+            |t: usize,
+             (jones_fb, flags_fb): (ArrayView2<Jones<f32>>, ArrayView2<bool>),
+             (next_jones_fb, next_flags_fb): (ArrayView2<Jones<f32>>, ArrayView2<bool>),
+             mut sum_fp: ArrayViewMut2<f64>,
+             mut count_f: ArrayViewMut1<u32>| {
+                if timestep_flags[t] || timestep_flags[t + 1] {
+                    return;
+                }
+                for f in 0..num_freqs {
+                    if chan_flags[f] {
+                        continue;
+                    }
+                    for &b in cross_bl_idxs.iter() {
+                        if flags_fb[[f, b]] || next_flags_fb[[f, b]] {
+                            continue;
+                        }
+                        let diff = next_jones_fb[[f, b]] - jones_fb[[f, b]];
+                        for p in 0..4 {
+                            sum_fp[[f, p]] += f64::from(diff[p].norm());
+                        }
+                        count_f[f] += 1;
+                    }
+                }
+            };
+        let timestep = |t: usize| {
+            (
+                jones_array_tfb.index_axis(Axis(0), t),
+                flag_array_tfb.index_axis(Axis(0), t),
+            )
+        };
+
+        // the last timestep of the previous chunk, with the first of this one
+        if let Some((last_jones_fb, last_flags_fb)) = &self.last_timestep {
+            diff_timesteps(
+                first_timestep - 1,
+                (last_jones_fb.view(), last_flags_fb.view()),
+                timestep(0),
+                diff_sum_amp_tfp.index_axis_mut(Axis(0), first_timestep - 1),
+                num_baselines_tf.index_axis_mut(Axis(0), first_timestep - 1),
+            );
+        }
+
+        // the timesteps within this chunk
+        let diff_range = first_timestep..first_timestep + num_timesteps - 1;
+        diff_sum_amp_tfp
+            .slice_mut(s![diff_range.clone(), .., ..])
+            .outer_iter_mut()
+            .into_par_iter()
+            .zip(
+                num_baselines_tf
+                    .slice_mut(s![diff_range, ..])
+                    .outer_iter_mut(),
+            )
+            .enumerate()
+            .for_each(|(t, (sum_fp, count_f))| {
+                diff_timesteps(
+                    first_timestep + t,
+                    timestep(t),
+                    timestep(t + 1),
+                    sum_fp,
+                    count_f,
+                );
+            });
+
+        self.num_timesteps_pushed += num_timesteps;
+        self.last_timestep = (self.num_timesteps_pushed < num_timesteps_total).then(|| {
+            let (jones_fb, flags_fb) = timestep(num_timesteps - 1);
+            (jones_fb.to_owned(), flags_fb.to_owned())
+        });
+    }
+
+    /// Compute the metrics.
+    ///
+    /// # Panics
+    ///
+    /// Panics if not all of the timesteps have been pushed.
+    pub fn finish(self) -> SSINS {
+        let Self {
+            metadata,
+            cross_bl_idxs,
+            diff_sum_amp_tfp,
+            num_baselines_tf,
+            num_timesteps_pushed,
+            timestep_flags,
+            ..
+        } = self;
+        let (num_diffs, num_freqs, _) = diff_sum_amp_tfp.dim();
+        assert_eq!(
+            num_timesteps_pushed,
+            timestep_flags.len(),
+            "not all timesteps were pushed"
+        );
+
+        // time mean weighted by the number of baselines, like SSINS's np.ma.average.
+        let mut diff_mean_amp_fp = Array2::<f32>::from_elem((num_freqs, 4), f32::NAN);
+        for f in 0..num_freqs {
+            let count: f64 = num_baselines_tf
+                .column(f)
+                .iter()
+                .map(|&n| f64::from(n))
+                .sum();
+            if count > 0.0 {
+                for p in 0..4 {
+                    diff_mean_amp_fp[[f, p]] =
+                        (diff_sum_amp_tfp.slice(s![.., f, p]).sum() / count) as f32;
+                }
+            }
+        }
+
+        let c = 4.0 / std::f64::consts::PI - 1.0;
+        let mut zscore = Array3::<f32>::from_elem((num_diffs, num_freqs, 4), f32::NAN);
+        for t in 0..num_diffs {
+            for f in 0..num_freqs {
+                let n = num_baselines_tf[[t, f]];
+                if n == 0 {
+                    continue;
+                }
+                let n = f64::from(n);
+                for p in 0..4 {
+                    let mean_amp = diff_sum_amp_tfp[[t, f, p]] / n;
+                    zscore[[t, f, p]] = ((n / c).sqrt()
+                        * (mean_amp / f64::from(diff_mean_amp_fp[[f, p]]) - 1.0))
+                        as f32;
+                }
+            }
+        }
+
+        SSINS {
+            zscore,
+            diff_mean_amp_fp,
+            flag_array: Array2::<bool>::default((num_diffs, num_freqs)),
+            num_baselines_tf,
+            num_baselines: cross_bl_idxs.len(),
+            // each difference is halfway between two timesteps
+            start_time_gps_s: (metadata.timestamps_s[0] + metadata.timestamps_s[1]) / 2.0,
+            integration_time_s: metadata.integration_time_s(),
+            start_freq_hz: metadata.fine_chan_freqs_hz[0],
+            channel_width_hz: metadata.channel_width_hz(),
+        }
+    }
+}
+
 impl SSINS {
     /// Create [`SSINS`] for visibilities that were read with the selection
     /// `chunk_vis_sel` of the observation `corr_ctx`.
@@ -892,6 +1232,9 @@ impl SSINS {
     /// Create [`SSINS`] from visibilities `[timestep][channel][baseline]`,
     /// their flags, and their metadata.
     ///
+    /// To compute the metrics from visibilities that don't fit in memory, see
+    /// [`SSINSBuilder`].
+    ///
     /// # Panics
     ///
     /// Panics if:
@@ -906,94 +1249,13 @@ impl SSINS {
         chan_flags: &[bool],
     ) -> Self {
         let (num_timesteps, num_freqs, _) = jones_array_tfb.dim();
-        assert_eq!(jones_array_tfb.dim(), flag_array_tfb.dim());
-
-        assert!(num_timesteps >= 2, "SSINS requires at least 2 timesteps");
-
-        // SSINS's spectrum_type="cross" leaves out the autos.
-        let cross_bl_idxs: Vec<usize> = metadata
-            .antenna_pairs
-            .iter()
-            .enumerate()
-            .filter(|(_, (a, b))| a != b)
-            .map(|(i, _)| i)
-            .collect();
-
-        // sum over unflagged cross baselines of |V(t+1) - V(t)|, and how many there are.
-        let mut diff_sum_amp_tfp = Array3::<f64>::zeros((num_timesteps - 1, num_freqs, 4));
-        let mut num_baselines_tf = Array2::<u32>::zeros((num_timesteps - 1, num_freqs));
-        diff_sum_amp_tfp
-            .outer_iter_mut()
-            .into_par_iter()
-            .zip(num_baselines_tf.outer_iter_mut())
-            .enumerate()
-            .for_each(|(t, (mut sum_fp, mut count_f))| {
-                if timestep_flags[t] || timestep_flags[t + 1] {
-                    return;
-                }
-                for f in 0..num_freqs {
-                    if chan_flags[f] {
-                        continue;
-                    }
-                    for &b in &cross_bl_idxs {
-                        if flag_array_tfb[[t, f, b]] || flag_array_tfb[[t + 1, f, b]] {
-                            continue;
-                        }
-                        let diff = jones_array_tfb[[t + 1, f, b]] - jones_array_tfb[[t, f, b]];
-                        for p in 0..4 {
-                            sum_fp[[f, p]] += f64::from(diff[p].norm());
-                        }
-                        count_f[f] += 1;
-                    }
-                }
-            });
-
-        // time mean weighted by the number of baselines, like SSINS's np.ma.average.
-        let mut diff_mean_amp_fp = Array2::<f32>::from_elem((num_freqs, 4), f32::NAN);
-        for f in 0..num_freqs {
-            let count: f64 = num_baselines_tf
-                .column(f)
-                .iter()
-                .map(|&n| f64::from(n))
-                .sum();
-            if count > 0.0 {
-                for p in 0..4 {
-                    diff_mean_amp_fp[[f, p]] =
-                        (diff_sum_amp_tfp.slice(s![.., f, p]).sum() / count) as f32;
-                }
-            }
-        }
-
-        let c = 4.0 / std::f64::consts::PI - 1.0;
-        let mut zscore = Array3::<f32>::from_elem((num_timesteps - 1, num_freqs, 4), f32::NAN);
-        for t in 0..num_timesteps - 1 {
-            for f in 0..num_freqs {
-                let n = num_baselines_tf[[t, f]];
-                if n == 0 {
-                    continue;
-                }
-                let n = f64::from(n);
-                for p in 0..4 {
-                    let mean_amp = diff_sum_amp_tfp[[t, f, p]] / n;
-                    zscore[[t, f, p]] = ((n / c).sqrt()
-                        * (mean_amp / f64::from(diff_mean_amp_fp[[f, p]]) - 1.0))
-                        as f32;
-                }
-            }
-        }
-
-        Self {
-            zscore,
-            diff_mean_amp_fp,
-            flag_array: Array2::<bool>::default((num_timesteps - 1, num_freqs)),
-            num_baselines_tf,
-            num_baselines: cross_bl_idxs.len(),
-            // each difference is halfway between two timesteps
-            start_time_gps_s: (metadata.timestamps_s[0] + metadata.timestamps_s[1]) / 2.0,
-            integration_time_s: metadata.integration_time_s(),
-            start_freq_hz: metadata.fine_chan_freqs_hz[0],
-            channel_width_hz: metadata.channel_width_hz(),
-        }
+        let mut builder = SSINSBuilder::new(
+            metadata,
+            &timestep_flags[..num_timesteps],
+            &chan_flags[..num_freqs],
+        );
+        builder.push(jones_array_tfb, flag_array_tfb);
+        builder.finish()
     }
 
     /// Flag the z-scores with an `AOFlagger` strategy (the generic "minimal"
@@ -1152,6 +1414,181 @@ pub struct EAVILS {
     pub channel_width_hz: f64,
 }
 
+/// Computes [`EAVILS`] from visibilities which arrive in chunks of timesteps,
+/// so that the visibilities of the whole observation don't need to be in
+/// memory at once.
+///
+/// The result does not depend on how the visibilities are chunked: the
+/// variance over time of each baseline is accumulated one timestep at a time
+/// with Welford's algorithm.
+///
+/// The mean and variance of every polarisation, baseline and channel are kept
+/// as 64-bit floats, because accumulating them in 32 bits loses precision.
+pub struct EAVILSBuilder {
+    metadata: MetricsContext,
+    timestep_flags: Vec<bool>,
+    chan_flags: Vec<bool>,
+    /// Sum over baselines of the amplitude `(times, frequencies,
+    /// polarisations)`, `NaN` where it is flagged.
+    sum_amp_tfp: Array3<f32>,
+    /// Mean over the unflagged timesteps so far of the amplitude
+    /// `(frequencies, baselines, polarisations)`
+    mean_amp_fbp: Array3<f64>,
+    /// Sum over the unflagged timesteps so far of the squared difference of
+    /// the amplitude from its mean `(frequencies, baselines, polarisations)`
+    sum_sq_dev_amp_fbp: Array3<f64>,
+    num_unflagged_timesteps_pushed: usize,
+    num_timesteps_pushed: usize,
+}
+
+impl EAVILSBuilder {
+    /// Start computing [`EAVILS`] for all of the timesteps, channels and
+    /// baselines in `metadata`.
+    pub fn new(metadata: &MetricsContext, timestep_flags: &[bool], chan_flags: &[bool]) -> Self {
+        let num_timesteps = timestep_flags.len();
+        let num_freqs = chan_flags.len();
+        let num_baselines = metadata.antenna_pairs.len();
+        Self {
+            metadata: metadata.clone(),
+            timestep_flags: timestep_flags.to_vec(),
+            chan_flags: chan_flags.to_vec(),
+            sum_amp_tfp: Array3::zeros((num_timesteps, num_freqs, 4)),
+            mean_amp_fbp: Array3::zeros((num_freqs, num_baselines, 4)),
+            sum_sq_dev_amp_fbp: Array3::zeros((num_freqs, num_baselines, 4)),
+            num_unflagged_timesteps_pushed: 0,
+            num_timesteps_pushed: 0,
+        }
+    }
+
+    /// Add the visibilities `[timestep][channel][baseline]` of the next
+    /// timesteps.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the channels or baselines don't match the metadata, or if
+    /// there are more timesteps than are left.
+    pub fn push(&mut self, jones_array_tfb: ArrayView3<Jones<f32>>) {
+        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+        let first_timestep = self.num_timesteps_pushed;
+        assert!(
+            first_timestep + num_timesteps <= self.timestep_flags.len(),
+            "too many timesteps"
+        );
+        assert_eq!(num_freqs, self.chan_flags.len());
+        assert_eq!(num_baselines, self.metadata.antenna_pairs.len());
+
+        for t in 0..num_timesteps {
+            let mut sum_amp_fp = self.sum_amp_tfp.index_axis_mut(Axis(0), first_timestep + t);
+            if self.timestep_flags[first_timestep + t] {
+                sum_amp_fp.fill(f32::NAN);
+                continue;
+            }
+            self.num_unflagged_timesteps_pushed += 1;
+            let n = self.num_unflagged_timesteps_pushed as f64;
+            for f in 0..num_freqs {
+                if self.chan_flags[f] {
+                    sum_amp_fp.row_mut(f).fill(f32::NAN);
+                    continue;
+                }
+                for b in 0..num_baselines {
+                    for p in 0..4 {
+                        let amp = jones_array_tfb[[t, f, b]][p].norm();
+                        sum_amp_fp[[f, p]] += amp;
+                        // Welford's algorithm
+                        let mean = &mut self.mean_amp_fbp[[f, b, p]];
+                        let amp = f64::from(amp);
+                        let dev = amp - *mean;
+                        *mean += dev / n;
+                        self.sum_sq_dev_amp_fbp[[f, b, p]] += dev * (amp - *mean);
+                    }
+                }
+            }
+        }
+        self.num_timesteps_pushed += num_timesteps;
+    }
+
+    /// Compute the metrics.
+    ///
+    /// # Panics
+    ///
+    /// Panics if not all of the timesteps have been pushed.
+    pub fn finish(self) -> EAVILS {
+        let Self {
+            metadata,
+            timestep_flags,
+            chan_flags,
+            sum_amp_tfp: mut mean_amp_tfp,
+            sum_sq_dev_amp_fbp: mut var_amp_fbp,
+            num_unflagged_timesteps_pushed: num_unflagged_timesteps,
+            num_timesteps_pushed,
+            ..
+        } = self;
+        let (num_timesteps, num_freqs, _) = mean_amp_tfp.dim();
+        let num_baselines = metadata.antenna_pairs.len();
+        assert_eq!(
+            num_timesteps_pushed, num_timesteps,
+            "not all timesteps were pushed"
+        );
+
+        mean_amp_tfp /= num_baselines as f32;
+
+        // the mean over time of the baseline-mean
+        let mut mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
+        for t in (0..num_timesteps).filter(|&t| !timestep_flags[t]) {
+            for f in 0..num_freqs {
+                for p in 0..4 {
+                    mean_amp_fp[[f, p]] += mean_amp_tfp[[t, f, p]];
+                }
+            }
+        }
+        mean_amp_fp /= num_unflagged_timesteps as f32;
+
+        // the time-variance of the amplitude for each freq, bl, pol
+        if num_unflagged_timesteps > 0 {
+            var_amp_fbp /= num_unflagged_timesteps as f64;
+        }
+
+        // the square root of the baseline-mean of the variance
+        let mut sqrt_mean_var_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
+        for f in 0..num_freqs {
+            for p in 0..4 {
+                if chan_flags[f] {
+                    mean_amp_fp[[f, p]] = f32::NAN;
+                    sqrt_mean_var_amp_fp[[f, p]] = f32::NAN;
+                    continue;
+                }
+                for b in 0..num_baselines {
+                    sqrt_mean_var_amp_fp[[f, p]] += var_amp_fbp[[f, b, p]] as f32;
+                }
+            }
+        }
+        sqrt_mean_var_amp_fp /= num_baselines as f32;
+        sqrt_mean_var_amp_fp = sqrt_mean_var_amp_fp.sqrt();
+
+        let mut zscore = mean_amp_tfp;
+        for t in 0..num_timesteps {
+            for f in 0..num_freqs {
+                for p in 0..4 {
+                    zscore[[t, f, p]] =
+                        (zscore[[t, f, p]] - mean_amp_fp[[f, p]]) / sqrt_mean_var_amp_fp[[f, p]];
+                }
+            }
+        }
+        zscore *= (num_baselines as f32).sqrt();
+
+        EAVILS {
+            zscore,
+            mean_amp_fp,
+            sqrt_mean_var_amp_fp,
+            flag_array: Array2::<bool>::default((num_timesteps, num_freqs)),
+            start_time_gps_s: metadata.timestamps_s[0],
+            integration_time_s: metadata.integration_time_s(),
+            start_freq_hz: metadata.fine_chan_freqs_hz[0],
+            channel_width_hz: metadata.channel_width_hz(),
+        }
+    }
+}
+
 impl EAVILS {
     /// Create [`EAVILS`] for visibilities that were read with the selection
     /// `chunk_vis_sel` of the observation `corr_ctx`.
@@ -1173,121 +1610,27 @@ impl EAVILS {
     /// Create [`EAVILS`] from visibilities `[timestep][channel][baseline]` and
     /// their metadata.
     ///
+    /// To compute the metrics from visibilities that don't fit in memory, see
+    /// [`EAVILSBuilder`].
+    ///
     /// # Panics
     ///
     /// Panics if the dimensions of the visibilities or flags don't match
     /// `metadata`.
-    #[allow(clippy::cognitive_complexity)]
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         metadata: &MetricsContext,
         timestep_flags: &[bool],
         chan_flags: &[bool],
     ) -> Self {
-        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
-
-        let mut mean_amp_tfp = Array3::<f32>::zeros((num_timesteps, num_freqs, 4));
-        let mut mean_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
-        let mut mean_amp_fbp = Array3::<f32>::zeros((num_freqs, num_baselines, 4));
-        let num_unflagged_timesteps = timestep_flags.iter().filter(|&t| !t).count();
-
-        for t in 0..num_timesteps {
-            for f in 0..num_freqs {
-                for b in 0..num_baselines {
-                    for p in 0..4 {
-                        if chan_flags[f] {
-                            mean_amp_fbp[[f, b, p]] = f32::NAN;
-                            mean_amp_tfp[[t, f, p]] = f32::NAN;
-                        } else if timestep_flags[t] {
-                            mean_amp_tfp[[t, f, p]] = f32::NAN;
-                        } else {
-                            let jones_p_norm = jones_array_tfb[[t, f, b]][p].norm();
-                            mean_amp_tfp[[t, f, p]] += jones_p_norm;
-                            mean_amp_fbp[[f, b, p]] += jones_p_norm;
-                        }
-                    }
-                }
-            }
-        }
-
-        mean_amp_tfp /= num_baselines as f32;
-        if num_unflagged_timesteps > 0 {
-            mean_amp_fbp /= num_unflagged_timesteps as f32;
-        }
-
-        for t in 0..num_timesteps {
-            if timestep_flags[t] {
-                continue;
-            }
-            for f in 0..num_freqs {
-                for p in 0..4 {
-                    if chan_flags[f] {
-                        mean_amp_fp[[f, p]] = f32::NAN;
-                        continue;
-                    }
-                    mean_amp_fp[[f, p]] += mean_amp_tfp[[t, f, p]];
-                }
-            }
-        }
-        mean_amp_fp /= num_unflagged_timesteps as f32;
-
-        // calculate the time-variance of amplitude for each freq, bl, pol
-        let mut var_amp_fbp = Array3::<f32>::zeros((num_freqs, num_baselines, 4));
-        for t in 0..num_timesteps {
-            if timestep_flags[t] {
-                continue;
-            }
-            for f in 0..num_freqs {
-                for b in 0..num_baselines {
-                    for p in 0..4 {
-                        if chan_flags[f] {
-                            var_amp_fbp[[f, b, p]] = f32::NAN;
-                            continue;
-                        }
-                        let amp = jones_array_tfb[[t, f, b]][p].norm();
-                        var_amp_fbp[[f, b, p]] += (amp - mean_amp_fbp[[f, b, p]]).powi(2);
-                    }
-                }
-            }
-        }
-
-        if num_unflagged_timesteps > 0 {
-            var_amp_fbp /= num_unflagged_timesteps as f32;
-        }
-
-        // the square root of the baseline-mean of the variance
-        let mut sqrt_mean_var_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
-        for f in 0..num_freqs {
-            for b in 0..num_baselines {
-                for p in 0..4 {
-                    sqrt_mean_var_amp_fp[[f, p]] += var_amp_fbp[[f, b, p]];
-                }
-            }
-        }
-        sqrt_mean_var_amp_fp /= num_baselines as f32;
-        sqrt_mean_var_amp_fp = sqrt_mean_var_amp_fp.sqrt();
-
-        let mut zscore = mean_amp_tfp;
-        for t in 0..num_timesteps {
-            for f in 0..num_freqs {
-                for p in 0..4 {
-                    zscore[[t, f, p]] =
-                        (zscore[[t, f, p]] - mean_amp_fp[[f, p]]) / sqrt_mean_var_amp_fp[[f, p]];
-                }
-            }
-        }
-        zscore *= (num_baselines as f32).sqrt();
-
-        Self {
-            zscore,
-            mean_amp_fp,
-            sqrt_mean_var_amp_fp,
-            flag_array: Array2::<bool>::default((num_timesteps, num_freqs)),
-            start_time_gps_s: metadata.timestamps_s[0],
-            integration_time_s: metadata.integration_time_s(),
-            start_freq_hz: metadata.fine_chan_freqs_hz[0],
-            channel_width_hz: metadata.channel_width_hz(),
-        }
+        let (num_timesteps, num_freqs, _) = jones_array_tfb.dim();
+        let mut builder = EAVILSBuilder::new(
+            metadata,
+            &timestep_flags[..num_timesteps],
+            &chan_flags[..num_freqs],
+        );
+        builder.push(jones_array_tfb);
+        builder.finish()
     }
 
     /// Write these metrics to HDUs in an open FITS file:
@@ -1374,6 +1717,84 @@ pub struct AOFlagMetrics {
     pub channel_width_hz: f64,
 }
 
+/// Computes [`AOFlagMetrics`] from flags which arrive in chunks of timesteps,
+/// so that the flags of the whole observation don't need to be in memory at
+/// once.
+///
+/// The result is the same as [`AOFlagMetrics::new_from_metadata`] on all of
+/// the flags, however they are chunked.
+#[cfg(feature = "aoflagger")]
+pub struct AOFlagMetricsBuilder {
+    metadata: MetricsContext,
+    timestep_flags: Vec<bool>,
+    chan_flags: Vec<bool>,
+    occupancy_tf: Array2<f64>,
+    num_timesteps_pushed: usize,
+}
+
+#[cfg(feature = "aoflagger")]
+impl AOFlagMetricsBuilder {
+    /// Start computing [`AOFlagMetrics`] for all of the timesteps, channels
+    /// and baselines in `metadata`.
+    pub fn new(metadata: &MetricsContext, timestep_flags: &[bool], chan_flags: &[bool]) -> Self {
+        Self {
+            metadata: metadata.clone(),
+            timestep_flags: timestep_flags.to_vec(),
+            chan_flags: chan_flags.to_vec(),
+            occupancy_tf: Array2::from_elem((timestep_flags.len(), chan_flags.len()), f64::NAN),
+            num_timesteps_pushed: 0,
+        }
+    }
+
+    /// Add the flags `[timestep][channel][baseline]` of the next timesteps.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the channels or baselines don't match the metadata, or if
+    /// there are more timesteps than are left.
+    pub fn push(&mut self, flag_array_tfb: ArrayView3<bool>) {
+        let (num_timesteps, num_freqs, num_baselines) = flag_array_tfb.dim();
+        let timestep_range = self.num_timesteps_pushed..self.num_timesteps_pushed + num_timesteps;
+        assert!(
+            timestep_range.end <= self.timestep_flags.len(),
+            "too many timesteps"
+        );
+        assert_eq!(num_freqs, self.chan_flags.len());
+        assert_eq!(num_baselines, self.metadata.antenna_pairs.len());
+
+        self.occupancy_tf
+            .slice_mut(s![timestep_range.clone(), ..])
+            .assign(&AOFlagMetrics::compute_cross_occupancy(
+                flag_array_tfb,
+                &self.timestep_flags[timestep_range],
+                &self.chan_flags,
+                &self.metadata.antenna_pairs,
+            ));
+        self.num_timesteps_pushed += num_timesteps;
+    }
+
+    /// Compute the metrics.
+    ///
+    /// # Panics
+    ///
+    /// Panics if not all of the timesteps have been pushed.
+    pub fn finish(self) -> AOFlagMetrics {
+        assert_eq!(
+            self.num_timesteps_pushed,
+            self.timestep_flags.len(),
+            "not all timesteps were pushed"
+        );
+        let metadata = &self.metadata;
+        AOFlagMetrics {
+            start_time_gps_s: metadata.timestamps_s[0],
+            integration_time_s: metadata.integration_time_s(),
+            start_freq_hz: metadata.fine_chan_freqs_hz[0],
+            channel_width_hz: metadata.channel_width_hz(),
+            occupancy_tf: self.occupancy_tf,
+        }
+    }
+}
+
 #[cfg(feature = "aoflagger")]
 impl AOFlagMetrics {
     /// Compute occupancy across baselines excluding autocorrelations
@@ -1423,6 +1844,9 @@ impl AOFlagMetrics {
     /// Create [`AOFlagMetrics`] from flags `[timestep][channel][baseline]` and
     /// their metadata.
     ///
+    /// To compute the metrics from flags that don't fit in memory, see
+    /// [`AOFlagMetricsBuilder`].
+    ///
     /// # Panics
     ///
     /// Panics if the dimensions of the flags don't match `metadata`.
@@ -1432,20 +1856,14 @@ impl AOFlagMetrics {
         timestep_flags: &[bool],
         chan_flags: &[bool],
     ) -> Self {
-        let occupancy_tf = Self::compute_cross_occupancy(
-            flag_array_tfb,
-            timestep_flags,
-            chan_flags,
-            &metadata.antenna_pairs,
+        let (num_timesteps, num_freqs, _) = flag_array_tfb.dim();
+        let mut builder = AOFlagMetricsBuilder::new(
+            metadata,
+            &timestep_flags[..num_timesteps],
+            &chan_flags[..num_freqs],
         );
-
-        Self {
-            occupancy_tf,
-            start_time_gps_s: metadata.timestamps_s[0],
-            integration_time_s: metadata.integration_time_s(),
-            start_freq_hz: metadata.fine_chan_freqs_hz[0],
-            channel_width_hz: metadata.channel_width_hz(),
-        }
+        builder.push(flag_array_tfb);
+        builder.finish()
     }
 
     /// Write these metrics to the HDU `AO_FLAG_METRICS` in an open FITS file:
@@ -1510,6 +1928,223 @@ pub struct CrossMetrics {
     pub delay_res_ns: f64,
 }
 
+/// Computes [`CrossMetrics`] from visibilities which arrive in chunks of
+/// timesteps, so that the visibilities of the whole observation don't need to
+/// be in memory at once.
+///
+/// The result is the same as [`CrossMetrics::new_from_metadata`] on all of the
+/// visibilities, however they are chunked.
+#[cfg(feature = "aoflagger")]
+pub struct CrossMetricsBuilder {
+    metadata: MetricsContext,
+    timestep_flags: Vec<bool>,
+    chan_flags: Vec<bool>,
+    /// The baseline index of each short baseline, and the positions of its
+    /// antennas in `metadata.antennas`.
+    short_baselines: Vec<(usize, usize, usize)>,
+    /// Sum over time of the finite visibilities of each short baseline
+    /// `(short baseline, frequency, polarisation)`
+    sum_vis_bfp: Array3<Complex<f64>>,
+    /// How many visibilities are in each sum
+    count_bfp: Array3<u32>,
+    num_timesteps_pushed: usize,
+}
+
+#[cfg(feature = "aoflagger")]
+impl CrossMetricsBuilder {
+    /// Start computing [`CrossMetrics`] for all of the timesteps, channels
+    /// and baselines in `metadata`, using baselines up to `baseline_cutoff_m`
+    /// metres long.
+    pub fn new(
+        metadata: &MetricsContext,
+        timestep_flags: &[bool],
+        chan_flags: &[bool],
+        baseline_cutoff_m: f32,
+    ) -> Self {
+        // metadata.antennas is in the order of the sorted antenna indices.
+        let sel_ants = selected_antennas(&metadata.antenna_pairs);
+        let ant_pos = |ant_idx: usize| {
+            sel_ants
+                .binary_search(&ant_idx)
+                .expect("antenna is in a pair")
+        };
+        let cutoff_sq = f64::from(baseline_cutoff_m * baseline_cutoff_m);
+
+        let short_baselines: Vec<_> = metadata
+            .antenna_pairs
+            .iter()
+            .enumerate()
+            .filter(|&(_, &(ant1, ant2))| ant1 != ant2)
+            .map(|(bl_idx, &(ant1, ant2))| (bl_idx, ant_pos(ant1), ant_pos(ant2)))
+            .filter(|&(_, pos1, pos2)| {
+                let (meta1, meta2) = (&metadata.antennas[pos1], &metadata.antennas[pos2]);
+                let dx = meta1.north_m - meta2.north_m;
+                let dy = meta1.east_m - meta2.east_m;
+                let dz = meta1.height_m - meta2.height_m;
+                dx * dx + dy * dy + dz * dz <= cutoff_sq
+            })
+            .collect();
+
+        let sum_dim = (short_baselines.len(), chan_flags.len(), 4);
+        Self {
+            metadata: metadata.clone(),
+            timestep_flags: timestep_flags.to_vec(),
+            chan_flags: chan_flags.to_vec(),
+            short_baselines,
+            sum_vis_bfp: Array3::zeros(sum_dim),
+            count_bfp: Array3::zeros(sum_dim),
+            num_timesteps_pushed: 0,
+        }
+    }
+
+    /// Add the visibilities `[timestep][channel][baseline]` of the next
+    /// timesteps.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the channels or baselines don't match the metadata, or if
+    /// there are more timesteps than are left.
+    pub fn push(&mut self, jones_array_tfb: ArrayView3<Jones<f32>>) {
+        let (num_timesteps, num_freqs, num_baselines) = jones_array_tfb.dim();
+        let first_timestep = self.num_timesteps_pushed;
+        assert!(
+            first_timestep + num_timesteps <= self.timestep_flags.len(),
+            "too many timesteps"
+        );
+        assert_eq!(num_freqs, self.chan_flags.len());
+        assert_eq!(num_baselines, self.metadata.antenna_pairs.len());
+
+        let timestep_flags = &self.timestep_flags[first_timestep..first_timestep + num_timesteps];
+        let chan_flags = &self.chan_flags;
+        self.sum_vis_bfp
+            .outer_iter_mut()
+            .into_par_iter()
+            .zip(self.count_bfp.outer_iter_mut())
+            .zip(&self.short_baselines)
+            .for_each(|((mut sum_fp, mut count_fp), &(bl_idx, _, _))| {
+                for t in (0..num_timesteps).filter(|&t| !timestep_flags[t]) {
+                    for f in (0..num_freqs).filter(|&f| !chan_flags[f]) {
+                        for p in 0..4 {
+                            let val = jones_array_tfb[[t, f, bl_idx]][p];
+                            if val.re.is_finite() && val.im.is_finite() {
+                                sum_fp[[f, p]] +=
+                                    Complex::new(f64::from(val.re), f64::from(val.im));
+                                count_fp[[f, p]] += 1;
+                            }
+                        }
+                    }
+                }
+            });
+        self.num_timesteps_pushed += num_timesteps;
+    }
+
+    /// Compute the metrics.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - not all of the timesteps have been pushed,
+    /// - there are fewer than 2 channels.
+    pub fn finish(self) -> CrossMetrics {
+        let Self {
+            metadata,
+            timestep_flags,
+            chan_flags,
+            short_baselines,
+            sum_vis_bfp,
+            count_bfp,
+            num_timesteps_pushed,
+        } = self;
+        assert_eq!(
+            num_timesteps_pushed,
+            timestep_flags.len(),
+            "not all timesteps were pushed"
+        );
+        let num_freqs = chan_flags.len();
+        let num_sel_ants = metadata.antennas.len();
+
+        let freqs_arr = Array1::from(metadata.fine_chan_freqs_hz.clone());
+        let delay_info = calculate_delay_channels(num_freqs, &freqs_arr, &DELAY_TRANSFORM_CONFIG);
+        let num_delays = delay_info.n_delay_channels;
+
+        // The delay spectrum of the amplitude of the time-averaged
+        // visibilities of each polarisation of each short baseline, or None if
+        // it has no visibilities.
+        let delay_spectra: Vec<[Option<Array1<f32>>; 4]> = sum_vis_bfp
+            .outer_iter()
+            .into_par_iter()
+            .zip(count_bfp.outer_iter())
+            .map(|(sum_fp, count_fp)| {
+                std::array::from_fn(|p| {
+                    let spectrum: Array1<f64> = sum_fp
+                        .column(p)
+                        .iter()
+                        .zip(count_fp.column(p))
+                        .map(|(sum, &count)| {
+                            if count > 0 {
+                                (sum / f64::from(count)).norm()
+                            } else {
+                                0.0
+                            }
+                        })
+                        .collect();
+                    if !spectrum.iter().any(|&x| x > 0.0) {
+                        return None;
+                    }
+                    let delay_result = delay_transform(
+                        &spectrum.insert_axis(Axis(0)),
+                        &freqs_arr,
+                        &DELAY_TRANSFORM_CONFIG,
+                    )
+                    .ok()?;
+                    Some(delay_result.delay_spectrum.row(0).mapv(|x| x as f32))
+                })
+            })
+            .collect();
+
+        // The mean of the delay spectra of the short baselines of each antenna
+        let mut short_ant_delay_pol_adp = Array3::<f32>::zeros((num_sel_ants, num_delays, 4));
+        let mut ant_baseline_counts = Array2::<u32>::zeros((num_sel_ants, 4));
+        for (&(_, pos1, pos2), delay_spectra_p) in short_baselines.iter().zip(&delay_spectra) {
+            for (p, delay_spectrum) in delay_spectra_p.iter().enumerate() {
+                let Some(delay_spectrum) = delay_spectrum else {
+                    continue;
+                };
+                for pos in [pos1, pos2] {
+                    let mut acc = short_ant_delay_pol_adp.slice_mut(s![pos, .., p]);
+                    acc += delay_spectrum;
+                    ant_baseline_counts[[pos, p]] += 1;
+                }
+            }
+        }
+        for ((a, p), &count) in ant_baseline_counts.indexed_iter() {
+            let mut delay_spectrum = short_ant_delay_pol_adp.slice_mut(s![a, .., p]);
+            if count > 0 {
+                delay_spectrum /= count as f32;
+            } else {
+                delay_spectrum.fill(f32::NAN);
+            }
+        }
+
+        CrossMetrics {
+            short_ant_delay_pol_adp,
+            antenna_names: metadata
+                .antennas
+                .iter()
+                .map(|ant| ant.tile_name.clone())
+                .collect(),
+            antenna_ids: metadata.antennas.iter().map(|ant| ant.ant_id).collect(),
+            antenna_nums: metadata.antennas.iter().map(|ant| ant.tile_id).collect(),
+            start_freq_hz: metadata.fine_chan_freqs_hz[0],
+            channel_width_hz: metadata.channel_width_hz(),
+            start_time_gps_s: metadata.timestamps_s[0],
+            integration_time_s: metadata.integration_time_s(),
+            start_delay_ns: delay_info.start_delay_ns,
+            delay_res_ns: delay_info.actual_delay_res_ns,
+        }
+    }
+}
+
 #[cfg(feature = "aoflagger")]
 impl CrossMetrics {
     /// Create [`CrossMetrics`] for visibilities that were read with the
@@ -1541,6 +2176,9 @@ impl CrossMetrics {
     /// and their metadata, using baselines up to `baseline_cutoff_m` metres
     /// long.
     ///
+    /// To compute the metrics from visibilities that don't fit in memory, see
+    /// [`CrossMetricsBuilder`].
+    ///
     /// # Panics
     ///
     /// Panics if:
@@ -1554,134 +2192,14 @@ impl CrossMetrics {
         baseline_cutoff_m: f32,
     ) -> Self {
         let (num_timesteps, num_freqs, _) = jones_array_tfb.dim();
-
-        // metadata.antennas is in the order of the sorted antenna indices.
-        let sel_ants = selected_antennas(&metadata.antenna_pairs);
-        let num_sel_ants = sel_ants.len();
-        let ant_pos = |ant_idx: usize| {
-            sel_ants
-                .binary_search(&ant_idx)
-                .expect("antenna is in a pair")
-        };
-
-        let freqs_arr = Array1::from(metadata.fine_chan_freqs_hz.clone());
-        let delay_info = calculate_delay_channels(num_freqs, &freqs_arr, &DELAY_TRANSFORM_CONFIG);
-        let num_delays = delay_info.n_delay_channels;
-        let cutoff_sq = f64::from(baseline_cutoff_m * baseline_cutoff_m);
-
-        // The sum of the delay spectra of the short baselines of each antenna,
-        // and how many there are, accumulated over baselines in parallel.
-        let zeros = || {
-            (
-                Array3::<f32>::zeros((num_sel_ants, num_delays, 4)),
-                Array2::<u32>::zeros((num_sel_ants, 4)),
-            )
-        };
-        let (mut short_ant_delay_pol_adp, ant_baseline_counts) = metadata
-            .antenna_pairs
-            .par_iter()
-            .enumerate()
-            .fold(
-                zeros,
-                |(mut acc_delay, mut acc_counts), (bl_idx, &(ant1, ant2))| {
-                    if ant1 == ant2 {
-                        return (acc_delay, acc_counts); // Skip autos
-                    }
-
-                    let (pos1, pos2) = (ant_pos(ant1), ant_pos(ant2));
-                    let (meta1, meta2) = (&metadata.antennas[pos1], &metadata.antennas[pos2]);
-                    let dx = meta1.north_m - meta2.north_m;
-                    let dy = meta1.east_m - meta2.east_m;
-                    let dz = meta1.height_m - meta2.height_m;
-                    if dx * dx + dy * dy + dz * dz > cutoff_sq {
-                        return (acc_delay, acc_counts);
-                    }
-
-                    // Mean over time of the complex visibilities of this baseline
-                    let mut complex_spectrum = Array2::<Complex<f64>>::zeros((num_freqs, 4));
-                    let mut counts = Array2::<u32>::zeros((num_freqs, 4));
-                    for t in (0..num_timesteps).filter(|&t| !timestep_flags[t]) {
-                        for f in (0..num_freqs).filter(|&f| !chan_flags[f]) {
-                            for p in 0..4 {
-                                let val = jones_array_tfb[[t, f, bl_idx]][p];
-                                if val.re.is_finite() && val.im.is_finite() {
-                                    complex_spectrum[[f, p]] +=
-                                        Complex::new(f64::from(val.re), f64::from(val.im));
-                                    counts[[f, p]] += 1;
-                                }
-                            }
-                        }
-                    }
-
-                    for p in 0..4 {
-                        // amplitude of the time-averaged spectrum
-                        let spectrum: Array1<f64> = complex_spectrum
-                            .column(p)
-                            .iter()
-                            .zip(counts.column(p))
-                            .map(|(sum, &count)| {
-                                if count > 0 {
-                                    (sum / f64::from(count)).norm()
-                                } else {
-                                    0.0
-                                }
-                            })
-                            .collect();
-                        if !spectrum.iter().any(|&x| x > 0.0) {
-                            continue;
-                        }
-                        let Ok(delay_result) = delay_transform(
-                            &spectrum.insert_axis(Axis(0)),
-                            &freqs_arr,
-                            &DELAY_TRANSFORM_CONFIG,
-                        ) else {
-                            continue;
-                        };
-                        let delay_spectrum = delay_result.delay_spectrum.row(0).mapv(|x| x as f32);
-                        for pos in [pos1, pos2] {
-                            let mut acc = acc_delay.slice_mut(s![pos, .., p]);
-                            acc += &delay_spectrum;
-                            acc_counts[[pos, p]] += 1;
-                        }
-                    }
-                    (acc_delay, acc_counts)
-                },
-            )
-            .reduce(zeros, |(delay1, counts1), (delay2, counts2)| {
-                (delay1 + delay2, counts1 + counts2)
-            });
-
-        // Normalise by the number of short baselines of each antenna
-        for ((a, p), &count) in ant_baseline_counts.indexed_iter() {
-            let mut delay_spectrum = short_ant_delay_pol_adp.slice_mut(s![a, .., p]);
-            if count > 0 {
-                delay_spectrum /= count as f32;
-            } else {
-                delay_spectrum.fill(f32::NAN);
-            }
-        }
-
-        Self {
-            short_ant_delay_pol_adp,
-            antenna_names: metadata.antennas[..num_sel_ants]
-                .iter()
-                .map(|ant| ant.tile_name.clone())
-                .collect(),
-            antenna_ids: metadata.antennas[..num_sel_ants]
-                .iter()
-                .map(|ant| ant.ant_id)
-                .collect(),
-            antenna_nums: metadata.antennas[..num_sel_ants]
-                .iter()
-                .map(|ant| ant.tile_id)
-                .collect(),
-            start_freq_hz: metadata.fine_chan_freqs_hz[0],
-            channel_width_hz: metadata.channel_width_hz(),
-            start_time_gps_s: metadata.timestamps_s[0],
-            integration_time_s: metadata.integration_time_s(),
-            start_delay_ns: delay_info.start_delay_ns,
-            delay_res_ns: delay_info.actual_delay_res_ns,
-        }
+        let mut builder = CrossMetricsBuilder::new(
+            metadata,
+            &timestep_flags[..num_timesteps],
+            &chan_flags[..num_freqs],
+            baseline_cutoff_m,
+        );
+        builder.push(jones_array_tfb);
+        builder.finish()
     }
 
     /// Write these metrics to HDUs in an open FITS file: `CROSS_DELAY_POL=<pol>`
@@ -3364,6 +3882,292 @@ mod aoflagger_tests {
         ssins.flag_array.fill(false);
         ssins.flag(Some(strategy));
         assert_eq!(ssins.flag_array, flag_array);
+    }
+}
+
+/// The builders give the same metrics however the visibilities are chunked.
+#[cfg(test)]
+mod builder_tests {
+    use super::{test_common::*, *};
+    use crate::marlu::ndarray::{Array, Dimension};
+
+    /// Split into chunks of 1, 3, then the rest of the timesteps.
+    fn chunks<T>(array: &Array3<T>) -> [ArrayView3<'_, T>; 3] {
+        [
+            array.slice(s![0..1, .., ..]),
+            array.slice(s![1..4, .., ..]),
+            array.slice(s![4.., .., ..]),
+        ]
+    }
+
+    /// Metadata, visibilities, flags, timestep flags and channel flags, with
+    /// some of everything flagged, and one non-finite visibility.
+    #[allow(clippy::type_complexity)]
+    fn setup() -> (
+        MetricsContext,
+        Array3<Jones<f32>>,
+        Array3<bool>,
+        Vec<bool>,
+        Vec<bool>,
+    ) {
+        let (num_times, num_freqs) = (7, 16);
+        let ctx = metrics_context(num_times, num_freqs, &[0, 1, 3, 5]);
+        let mut vis = synthetic_vis(&ctx);
+        vis[[5, 2, 1]] = Jones::nan();
+        let mut flags = Array3::from_elem(vis.dim(), false);
+        flags[[0, 0, 1]] = true;
+        flags[[4, 3, 2]] = true;
+        flags[[6, 5, 4]] = true;
+        let mut timestep_flags = vec![false; num_times];
+        timestep_flags[2] = true;
+        let mut chan_flags = vec![false; num_freqs];
+        chan_flags[7] = true;
+        (ctx, vis, flags, timestep_flags, chan_flags)
+    }
+
+    /// Bitwise equality, so that NaNs are equal.
+    fn assert_same<D: Dimension>(chunked: &Array<f32, D>, whole: &Array<f32, D>) {
+        assert_eq!(chunked.dim(), whole.dim());
+        for (a, b) in chunked.iter().zip(whole) {
+            assert_eq!(a.to_bits(), b.to_bits(), "{a} != {b}");
+        }
+    }
+
+    #[test]
+    fn test_autometrics_builder_chunks() {
+        let (ctx, vis, _, timestep_flags, chan_flags) = setup();
+        let whole = AutoMetrics::new_from_metadata(vis.view(), &ctx, &timestep_flags, &chan_flags);
+
+        let mut builder = AutoMetricsBuilder::new(&ctx, &timestep_flags, &chan_flags);
+        for chunk in chunks(&vis) {
+            builder.push(chunk);
+        }
+        let chunked = builder.finish();
+
+        assert_same(&chunked.auto_sub_aptf, &whole.auto_sub_aptf);
+        assert_same(&chunked.auto_spectrum_afp, &whole.auto_spectrum_afp);
+        assert_same(&chunked.auto_coeffs_apo, &whole.auto_coeffs_apo);
+        assert_same(&chunked.auto_delay_afp, &whole.auto_delay_afp);
+        assert_eq!(chunked.antenna_names, whole.antenna_names);
+        assert_eq!(
+            chunked.start_time_gps_s.to_bits(),
+            whole.start_time_gps_s.to_bits()
+        );
+        // there is something to compare
+        assert!(whole.auto_sub_aptf.iter().any(|x| x.is_finite()));
+        assert!(whole.auto_sub_aptf.iter().any(|x| x.is_nan()));
+    }
+
+    #[test]
+    fn test_ssins_builder_chunks() {
+        let (ctx, vis, flags, timestep_flags, chan_flags) = setup();
+        let whole =
+            SSINS::new_from_metadata(vis.view(), flags.view(), &ctx, &timestep_flags, &chan_flags);
+
+        let mut builder = SSINSBuilder::new(&ctx, &timestep_flags, &chan_flags);
+        for (vis_chunk, flag_chunk) in chunks(&vis).into_iter().zip(chunks(&flags)) {
+            builder.push(vis_chunk, flag_chunk);
+        }
+        // an empty chunk changes nothing
+        builder.push(vis.slice(s![0..0, .., ..]), flags.slice(s![0..0, .., ..]));
+        let chunked = builder.finish();
+
+        // the differences across the chunk boundaries are included
+        assert_eq!(chunked.zscore.dim(), (6, 16, 4));
+        assert_same(&chunked.zscore, &whole.zscore);
+        assert_same(&chunked.diff_mean_amp_fp, &whole.diff_mean_amp_fp);
+        assert_eq!(chunked.num_baselines_tf, whole.num_baselines_tf);
+        assert_eq!(chunked.num_baselines, whole.num_baselines);
+        assert_eq!(
+            chunked.start_time_gps_s.to_bits(),
+            whole.start_time_gps_s.to_bits()
+        );
+        // differences 0 and 3 are across chunk boundaries
+        for t in [0, 3] {
+            assert!(whole
+                .zscore
+                .slice(s![t, 0, ..])
+                .iter()
+                .all(|x| x.is_finite()));
+            assert!(whole.num_baselines_tf.row(t).iter().any(|&n| n > 0));
+        }
+    }
+
+    #[test]
+    fn test_eavils_builder_chunks() {
+        let (ctx, mut vis, _, timestep_flags, chan_flags) = setup();
+        // EAVILS does not skip non-finite visibilities
+        vis[[5, 2, 1]] = Jones::identity();
+        let whole = EAVILS::new_from_metadata(vis.view(), &ctx, &timestep_flags, &chan_flags);
+
+        let mut builder = EAVILSBuilder::new(&ctx, &timestep_flags, &chan_flags);
+        for chunk in chunks(&vis) {
+            builder.push(chunk);
+        }
+        let chunked = builder.finish();
+
+        assert_same(&chunked.zscore, &whole.zscore);
+        assert_same(&chunked.mean_amp_fp, &whole.mean_amp_fp);
+        assert_same(&chunked.sqrt_mean_var_amp_fp, &whole.sqrt_mean_var_amp_fp);
+        assert!(whole.zscore.iter().any(|x| x.is_finite()));
+    }
+
+    /// The variance that is accumulated a timestep at a time is the
+    /// population variance over time of the amplitude of each baseline.
+    #[test]
+    fn test_eavils_builder_variance() {
+        let (num_times, num_freqs) = (5, 3);
+        let ctx = metrics_context(num_times, num_freqs, &[0, 1]);
+        let vis = synthetic_vis(&ctx);
+        let num_baselines = ctx.antenna_pairs.len();
+        let mut timestep_flags = vec![false; num_times];
+        timestep_flags[1] = true;
+
+        let eavils = EAVILS::new_from_metadata(vis.view(), &ctx, &timestep_flags, &[false; 3]);
+
+        for f in 0..num_freqs {
+            for p in 0..4 {
+                let mut mean_var = 0.0;
+                for b in 0..num_baselines {
+                    let amps: Vec<f64> = (0..num_times)
+                        .filter(|&t| !timestep_flags[t])
+                        .map(|t| f64::from(vis[[t, f, b]][p].norm()))
+                        .collect();
+                    let mean = amps.iter().sum::<f64>() / amps.len() as f64;
+                    mean_var += amps.iter().map(|amp| (amp - mean).powi(2)).sum::<f64>()
+                        / amps.len() as f64
+                        / num_baselines as f64;
+                }
+                let expected = mean_var.sqrt();
+                let actual = f64::from(eavils.sqrt_mean_var_amp_fp[[f, p]]);
+                assert!(
+                    (actual - expected).abs() <= 1e-5 * expected,
+                    "f={f} p={p}: {actual} != {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "too many timesteps")]
+    fn test_autometrics_builder_too_many_timesteps() {
+        let (ctx, vis, _, timestep_flags, chan_flags) = setup();
+        let mut builder = AutoMetricsBuilder::new(&ctx, &timestep_flags, &chan_flags);
+        builder.push(vis.view());
+        builder.push(vis.slice(s![0..1, .., ..]));
+    }
+
+    #[test]
+    #[should_panic(expected = "not all timesteps were pushed")]
+    fn test_autometrics_builder_too_few_timesteps() {
+        let (ctx, vis, _, timestep_flags, chan_flags) = setup();
+        let mut builder = AutoMetricsBuilder::new(&ctx, &timestep_flags, &chan_flags);
+        builder.push(vis.slice(s![0..1, .., ..]));
+        builder.finish();
+    }
+
+    #[test]
+    #[should_panic(expected = "too many timesteps")]
+    fn test_ssins_builder_too_many_timesteps() {
+        let (ctx, vis, flags, timestep_flags, chan_flags) = setup();
+        let mut builder = SSINSBuilder::new(&ctx, &timestep_flags, &chan_flags);
+        builder.push(vis.view(), flags.view());
+        builder.push(vis.slice(s![0..1, .., ..]), flags.slice(s![0..1, .., ..]));
+    }
+
+    #[test]
+    #[should_panic(expected = "not all timesteps were pushed")]
+    fn test_ssins_builder_too_few_timesteps() {
+        let (ctx, vis, flags, timestep_flags, chan_flags) = setup();
+        let mut builder = SSINSBuilder::new(&ctx, &timestep_flags, &chan_flags);
+        builder.push(vis.slice(s![0..1, .., ..]), flags.slice(s![0..1, .., ..]));
+        builder.finish();
+    }
+
+    #[test]
+    #[should_panic(expected = "too many timesteps")]
+    fn test_eavils_builder_too_many_timesteps() {
+        let (ctx, vis, _, timestep_flags, chan_flags) = setup();
+        let mut builder = EAVILSBuilder::new(&ctx, &timestep_flags, &chan_flags);
+        builder.push(vis.view());
+        builder.push(vis.slice(s![0..1, .., ..]));
+    }
+
+    #[test]
+    #[should_panic(expected = "not all timesteps were pushed")]
+    fn test_eavils_builder_too_few_timesteps() {
+        let (ctx, vis, _, timestep_flags, chan_flags) = setup();
+        let mut builder = EAVILSBuilder::new(&ctx, &timestep_flags, &chan_flags);
+        builder.push(vis.slice(s![0..1, .., ..]));
+        builder.finish();
+    }
+
+    #[cfg(feature = "aoflagger")]
+    #[test]
+    fn test_aoflagmetrics_builder_chunks() {
+        let (ctx, _, flags, timestep_flags, chan_flags) = setup();
+        let whole =
+            AOFlagMetrics::new_from_metadata(flags.view(), &ctx, &timestep_flags, &chan_flags);
+
+        let mut builder = AOFlagMetricsBuilder::new(&ctx, &timestep_flags, &chan_flags);
+        for chunk in chunks(&flags) {
+            builder.push(chunk);
+        }
+        let chunked = builder.finish();
+
+        assert_same(
+            &chunked.occupancy_tf.mapv(|x| x as f32),
+            &whole.occupancy_tf.mapv(|x| x as f32),
+        );
+        assert!(whole.occupancy_tf.iter().any(|&x| x > 0.0));
+    }
+
+    #[cfg(feature = "aoflagger")]
+    #[test]
+    #[should_panic(expected = "not all timesteps were pushed")]
+    fn test_aoflagmetrics_builder_too_few_timesteps() {
+        let (ctx, _, flags, timestep_flags, chan_flags) = setup();
+        let mut builder = AOFlagMetricsBuilder::new(&ctx, &timestep_flags, &chan_flags);
+        builder.push(flags.slice(s![0..1, .., ..]));
+        builder.finish();
+    }
+
+    #[cfg(feature = "aoflagger")]
+    #[test]
+    fn test_crossmetrics_builder_chunks() {
+        let (ctx, vis, _, timestep_flags, chan_flags) = setup();
+        // antennas are 10 m apart, so this includes some baselines, not all
+        let cutoff_m = 25.0;
+        let whole = CrossMetrics::new_from_metadata(
+            vis.view(),
+            &ctx,
+            &timestep_flags,
+            &chan_flags,
+            cutoff_m,
+        );
+
+        let mut builder = CrossMetricsBuilder::new(&ctx, &timestep_flags, &chan_flags, cutoff_m);
+        for chunk in chunks(&vis) {
+            builder.push(chunk);
+        }
+        let chunked = builder.finish();
+
+        assert_same(
+            &chunked.short_ant_delay_pol_adp,
+            &whole.short_ant_delay_pol_adp,
+        );
+        assert!(whole.short_ant_delay_pol_adp.iter().any(|x| x.is_finite()));
+        assert_eq!(chunked.antenna_names, whole.antenna_names);
+    }
+
+    #[cfg(feature = "aoflagger")]
+    #[test]
+    #[should_panic(expected = "not all timesteps were pushed")]
+    fn test_crossmetrics_builder_too_few_timesteps() {
+        let (ctx, vis, _, timestep_flags, chan_flags) = setup();
+        let mut builder = CrossMetricsBuilder::new(&ctx, &timestep_flags, &chan_flags, 25.0);
+        builder.push(vis.slice(s![0..1, .., ..]));
+        builder.finish();
     }
 }
 
