@@ -237,19 +237,23 @@ fn describe_selection_error(error: SelectionError, corr_ctx: &CorrelatorContext)
 fn validate_output_path(
     option: &str,
     path: &Path,
-    extension: &str,
+    extensions: &[&str],
     is_directory: bool,
 ) -> Result<(), BirliError> {
     let received_ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    if !received_ext.eq_ignore_ascii_case(extension) {
+    if !extensions
+        .iter()
+        .any(|e| received_ext.eq_ignore_ascii_case(e))
+    {
         let other = match received_ext.to_ascii_lowercase().as_str() {
             "ms" => " (use --ms-out to write a measurement set)",
-            "uvfits" => " (use --uvfits-out to write uvfits)",
+            "uvfits" | "uvf" => " (use --uvfits-out to write uvfits)",
             _ => "",
         };
+        let extension = extensions.iter().map(|e| format!(".{e}")).join(" or ");
         return Err(BirliError::CLIError(InvalidCommandLineArgument {
             option: option.into(),
-            expected: format!("a path ending in .{extension}"),
+            expected: format!("a path ending in {extension}"),
             received: format!("{}{other}", path.display()),
         }));
     }
@@ -264,7 +268,8 @@ fn validate_output_path(
     if !is_directory && path.is_dir() {
         return Err(BirliError::CLIError(InvalidCommandLineArgument {
             option: option.into(),
-            expected: format!("a path that is not an existing directory, {extension} is a file"),
+            expected: "a path that is not an existing directory, uvfits is written to a file"
+                .into(),
             received: path.display().to_string(),
         }));
     }
@@ -1086,10 +1091,10 @@ impl<'a> BirliContext<'a> {
             flag_template: matches.get_one::<String>("flag-template").cloned(),
         };
         if let Some(path) = io_ctx.uvfits_out.as_ref() {
-            validate_output_path("--uvfits-out <PATH>", path, "uvfits", false)?;
+            validate_output_path("--uvfits-out <PATH>", path, &["uvfits", "uvf"], false)?;
         }
         if let Some(path) = io_ctx.ms_out.as_ref() {
-            validate_output_path("--ms-out <PATH>", path, "ms", true)?;
+            validate_output_path("--ms-out <PATH>", path, &["ms"], true)?;
         }
         Ok(io_ctx)
     }
@@ -2244,6 +2249,7 @@ mod argparse_tests {
             ("-u", "1254670392.ms"),
             ("-u", "1254670392"),
             ("-M", "1254670392.uvfits"),
+            ("-M", "1254670392.uvf"),
             ("-M", "1254670392.fits"),
         ] {
             let out_path = tmp_dir.path().join(name);
@@ -2261,6 +2267,22 @@ mod argparse_tests {
             assert!(matches!(err, BirliError::CLIError(_)), "{err}");
             assert!(format!("{err}").contains("a path ending in"), "{err}");
         }
+
+        // .uvf is uvfits too
+        let out_path = tmp_dir.path().join("1254670392.uvf");
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--dry-run",
+            "-u",
+            out_path.to_str().unwrap(),
+        ];
+        args.extend_from_slice(&gpufits_paths);
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::DryRun {})
+        ));
 
         // the extension is not case sensitive
         let out_path = tmp_dir.path().join("1254670392.UVFITS");
