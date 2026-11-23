@@ -2316,30 +2316,25 @@ mod argparse_tests {
         // two timeblocks
         let path = tmp_dir.path().join("two_timeblocks.bin");
         write_aocal(&path, 2, 128, 24);
-        let err = run_with(&path)
-            .err()
-            .expect("two timeblocks should be an error");
+        let err = run_with(&path).expect_err("two timeblocks should be an error");
         assert!(matches!(err, BirliError::BadArrayShape(_)), "{err}");
         assert!(format!("{err}").contains("exactly 1 timeblock"), "{err}");
 
         // a number of channels that does not divide into the coarse channels
         let path = tmp_dir.path().join("odd_channels.bin");
         write_aocal(&path, 1, 128, 25);
-        let err = run_with(&path)
-            .err()
-            .expect("25 channels should be an error");
+        let err = run_with(&path).expect_err("25 channels should be an error");
         assert!(matches!(err, BirliError::BadArrayShape(_)), "{err}");
 
         // not a solutions file
         let path = tmp_dir.path().join("not_solutions.bin");
         std::fs::write(&path, b"not calibration solutions").unwrap();
-        let err = run_with(&path).err().expect("junk should be an error");
+        let err = run_with(&path).expect_err("junk should be an error");
         assert!(matches!(err, BirliError::ReadSolutionsError(_)), "{err}");
 
         // missing
         let err = run_with(&tmp_dir.path().join("missing.bin"))
-            .err()
-            .expect("a missing file should be an error");
+            .expect_err("a missing file should be an error");
         assert!(matches!(err, BirliError::ReadSolutionsError(_)), "{err}");
     }
 
@@ -2378,8 +2373,7 @@ mod argparse_tests {
             BirliContext::from_args(args_with_template(template.to_str().unwrap())).unwrap();
         let err = birli_ctx
             .run()
-            .err()
-            .expect("a template without %% should be an error");
+            .expect_err("a template without %% should be an error");
         assert!(matches!(err, BirliError::IOError(_)), "{err}");
     }
 
