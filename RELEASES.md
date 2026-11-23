@@ -2,6 +2,8 @@
 
 # Unreleased
 
+- ✨ new feature:
+  - `--apply-di-cal` reads hyperdrive fits calibration solutions when the path ends in `.fits`. Tiles are matched by name and channels by frequency, so the solutions don't have to span the whole observation or have its resolution. Tiles and channels without solutions are flagged. Birli warns when the passband, digital gain, cable length or geometric corrections recorded in the solutions differ from the ones it is about to apply. Fixes #155
 - 🙏 quality of life:
   - `--uvfits-out` must end in `.uvfits` and `--ms-out` in `.ms`, and Birli checks this (and that a uvfits path isn't an existing directory, or a measurement set path an existing file) before reading any data. Fixes #41
   - gpubox files with no timesteps in common give an error that lists the timesteps each gpubox channel provides, instead of a panic. Errors while reading calibration solutions or writing uvfits, measurement sets and flag files are also reported instead of panicking. Fixes #139

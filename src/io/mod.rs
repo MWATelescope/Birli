@@ -4,6 +4,7 @@
 
 pub mod aocal;
 pub mod error;
+pub mod hyperdrive;
 pub mod mwaf;
 
 use std::{
@@ -39,7 +40,8 @@ pub struct IOContext {
     pub metafits_in: PathBuf,
     /// A vector of gpufits .fits input paths
     pub gpufits_in: Vec<PathBuf>,
-    /// Optional path to a .bin ao calibration solutions input file
+    /// Optional path to a calibration solutions input file: hyperdrive
+    /// solutions if it ends in .fits, otherwise MWAOCAL binary (.bin)
     pub aocalsols_in: Option<PathBuf>,
 
     // out
