@@ -2514,6 +2514,34 @@ mod argparse_tests {
         assert!(matches!(err, BirliError::IOError(_)), "{err}");
     }
 
+    /// An output that can't be created (here, inside something that is not a
+    /// directory) is an error from `run`, not a panic.
+    #[test]
+    fn test_output_cannot_be_created() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+        let tmp_dir = tempdir().unwrap();
+        let not_a_dir = tmp_dir.path().join("not_a_directory");
+        std::fs::write(&not_a_dir, b"").unwrap();
+        for (flag, name) in [("-u", "1297526432.uvfits"), ("-M", "1297526432.ms")] {
+            let out_path = not_a_dir.join(name);
+            let mut args = vec![
+                "birli",
+                "-m",
+                metafits_path,
+                "--no-draw-progress",
+                flag,
+                out_path.to_str().unwrap(),
+            ];
+            args.extend_from_slice(&gpufits_paths);
+            let birli_ctx = BirliContext::from_args(&args).unwrap();
+            let err = birli_ctx
+                .run()
+                .expect_err("an output that can't be created should be an error");
+            assert!(matches!(err, BirliError::IOError(_)), "{flag}: {err}");
+            assert!(!out_path.exists());
+        }
+    }
+
     /// Each channel range gets its own uvfits and measurement set.
     #[test]
     fn test_run_ranges_names_both_outputs() {
