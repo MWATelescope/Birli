@@ -126,6 +126,8 @@
 // #![allow(clippy::missing_panics_doc)]
 // #![allow(clippy::must_use_candidate)]
 
+// `p` for a polarisation index, and `ρ` for a correlation in van_vleck.
+#![allow(confusable_idents)]
 // won't fix:
 // #![allow(clippy::module_name_repetitions)]
 // #![allow(clippy::cast_precision_loss)]
@@ -155,7 +157,6 @@
 // TODO: Look at these later:
 #![allow(clippy::suboptimal_flops)]
 #![allow(clippy::redundant_pub_crate)]
-#![allow(confusable_idents)]
 // won't fix:
 #![allow(clippy::debug_assert_with_mut_call)]
 
@@ -198,18 +199,16 @@ pub use error::BirliError;
 pub mod preprocessing;
 pub use preprocessing::PreprocessContext;
 
-/// Metrics for data quality assessment
-pub use metrics::{AntennaMetadata, MetricsContext};
-
-pub mod delay_transform;
 pub mod van_vleck;
-pub use delay_transform::{delay_transform, DelayTransformConfig, DelayTransformResult};
 pub use van_vleck::{correct_van_vleck, get_vv_sample_scale};
 
-/// Small numerical helpers (polynomial fitting)
+pub mod delay_transform;
+pub use delay_transform::{delay_transform, DelayTransformConfig, DelayTransformResult};
+
 pub mod math;
-/// Quality-assurance metrics (autos, SSINS, EAVILS)
+
 pub mod metrics;
+pub use metrics::{AntennaMetadata, MetricsContext};
 
 cfg_if! {
     if #[cfg(feature = "cli")] {

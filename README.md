@@ -466,6 +466,9 @@ FLAGGING:
         --flag-fine-chans <CHANS>...      Flag fine chan indices in each coarse chan
         --flag-init <SECONDS>             Flag <SECONDS> after first common time (quack time)
         --flag-init-steps <COUNT>         Flag <COUNT> steps after first common time
+        --flag-raw-chans <CHANS>...       Flag fine chans by their index in the whole observation:
+                                          coarse chan index * fine chans per coarse + fine chan
+                                          index
         --flag-times <STEPS>...           Flag additional time steps
         --no-flag-dc                      Do not flag DC centre chans
         --no-flag-metafits                Ignore antenna flags in metafits
@@ -488,8 +491,14 @@ OUTPUT:
     -f, --flag-template <TEMPLATE>    The template used to name flag files. Percents are substituted
                                       for the zero-prefixed GPUBox ID, which can be up to 3
                                       characters long. Example: FlagFile%%%.mwaf
+        --metrics-out <PATH>          Path for quality-assurance metrics output (FITS)
     -M, --ms-out <PATH>               Path for measurement set output
     -u, --uvfits-out <PATH>           Path for uvfits output
+
+METRICS:
+        --cross-metrics-cutoff <METRES>    Longest baseline to include in the cross-correlation
+                                           delay metrics (needs the aoflagger feature) [default:
+                                           30.0]
 
 AOFLAGGER:
         --aoflagger-strategy <PATH>    Strategy to use for RFI Flagging
@@ -634,6 +643,11 @@ Birli will only flag the DC bin for legacy correlator observations. You can over
 You can provide a set of fine channel indices within each coarse channel to flag using `--flag-fine-chans`,
 or a set of coarse channel indices to flag using `--flag-coarse-chans`.
 
+To flag a fine channel in only one coarse channel, use `--flag-raw-chans` with its index in the whole
+observation: the index of the coarse channel, times the number of fine channels in each coarse
+channel, plus the index of the fine channel in its coarse channel. For example, with 32 fine channels
+in each coarse channel, `--flag-raw-chans 70` flags fine channel 6 of coarse channel 2.
+
 ### Timestp Flagging
 
 The first couple of seconds of data are often unusable due to the time it takes for changes to take
@@ -717,6 +731,25 @@ birli \
 When processing a set of coarse channels which are not contiguous in receiver channel number, a suffix
 will be added to the measurement set and uvfits filenames which indicates the coarse channel, or
 coarse channel range in that file.
+
+### Quality Metrics
+
+`--metrics-out` writes a FITS file of quality-assurance metrics for the visibilities, after the
+corrections and flagging, and before averaging:
+
+- the autocorrelation bandpass of each tile, a polynomial fit to it, and its delay transform, where
+  cable reflections show up as peaks
+- [SSINS](https://ssins.readthedocs.io/en/latest/) z-scores: the baseline-averaged amplitude of the
+  visibilities differenced in time, which is sensitive to faint RFI
+- EAVILS z-scores: the baseline-averaged amplitude of the visibilities
+- with the aoflagger feature: the fraction of baselines flagged at each time and frequency, and
+  the delay transform of the cross-correlations on baselines shorter than `--cross-metrics-cutoff`
+
+See [doc/metrics.md](doc/metrics.md) for what is in the file and how to read it.
+
+When the observation is processed in more than one chunk of timesteps, or range of coarse channels,
+there is a metrics file for each, with a suffix for the timestep indices (`_ts0-29`) or the coarse
+channels (`_ch62-63`) before the extension.
 
 ## Comparison with Cotter
 

@@ -28,7 +28,7 @@ use mwalib::{
 use prettytable::{format as prettyformat, row, table};
 
 #[cfg(feature = "aoflagger")]
-use crate::metrics::CrossMetrics;
+use crate::metrics::{AOFlagMetrics, CrossMetrics};
 use crate::metrics::{AutoMetrics, EAVILS, SSINS};
 use crate::{
     calibration::{calsols_phase_only, flag_antennas_with_nan_calsols},
@@ -37,7 +37,7 @@ use crate::{
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
     },
     flags::FlagContext,
-    io::{aocal::AOCalSols, read_mwalib, IOContext},
+    io::{aocal::AOCalSols, error::IOError, read_mwalib, IOContext},
     marlu::{
         built_info::PKG_VERSION as MARLU_PKG_VERSION,
         constants::{
@@ -82,8 +82,21 @@ pub struct BirliContext<'a> {
     pub num_timesteps_per_chunk: Option<usize>,
     /// channel selections for picket-fencing
     pub channel_range_sel: ChannelRanges,
-    /// Baseline cutoff for cross metrics (metres)
+    /// The longest baseline that is included in the cross-correlation delay
+    /// metrics `crate::metrics::CrossMetrics` \[metres\]
     pub cross_metrics_cutoff_m: f32,
+}
+
+/// Add `suffix` to the end of the stem of the file name in `path`, before its
+/// extension, so `out/obs.uvfits` with `_ch137` is `out/obs_ch137.uvfits`.
+fn path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut file_name = path.file_stem().unwrap_or_default().to_os_string();
+    file_name.push(suffix);
+    if let Some(extension) = path.extension() {
+        file_name.push(".");
+        file_name.push(extension);
+    }
+    path.with_file_name(file_name)
 }
 
 // Add build-time information from the "built" crate.
@@ -764,7 +777,7 @@ impl<'a> BirliContext<'a> {
                 .num_args(1..)
                 .value_parser(clap::value_parser!(usize))
                 .required(false),
-            arg!(--"flag-raw-chans" <CHANS> "Flag specific fine chan indices across selected coarse chans")
+            arg!(--"flag-raw-chans" <CHANS> "Flag fine chans by their index in the whole observation: coarse chan index * fine chans per coarse + fine chan index")
                 .help_heading("FLAGGING")
                 .num_args(1..)
                 .value_parser(clap::value_parser!(usize))
@@ -864,11 +877,11 @@ impl<'a> BirliContext<'a> {
                 .help_heading("OUTPUT")
                 .required(false)
                 .value_parser(clap::value_parser!(PathBuf)),
-            arg!(--"metrics-out" <PATH> "Path for FITS metrics output")
+            arg!(--"metrics-out" <PATH> "Path for quality-assurance metrics output (FITS)")
                 .help_heading("OUTPUT")
                 .required(false)
                 .value_parser(clap::value_parser!(PathBuf)),
-            arg!(--"cross-metrics-cutoff" <METRES> "Baseline length cutoff for cross metrics")
+            arg!(--"cross-metrics-cutoff" <METRES> "Longest baseline to include in the cross-correlation delay metrics (needs the aoflagger feature)")
                 .help_heading("METRICS")
                 .default_value("30.0")
                 .required(false)
@@ -1610,28 +1623,38 @@ impl<'a> BirliContext<'a> {
                 _ => unreachable!(),
             };
 
-            if let Some(path) = ranged_context.io_ctx.ms_out.as_mut() {
-                path.set_file_name(format!(
-                    "{}{}.{}",
-                    path.file_stem().unwrap().to_str().unwrap(),
-                    suffix,
-                    path.extension().unwrap().to_str().unwrap()
-                ));
-            }
-            if let Some(path) = ranged_context.io_ctx.uvfits_out.as_mut() {
-                path.set_file_name(format!(
-                    "{}{}.{}",
-                    path.file_stem().unwrap().to_str().unwrap(),
-                    suffix,
-                    path.extension().unwrap().to_str().unwrap()
-                ));
+            let io_ctx = &mut ranged_context.io_ctx;
+            for path in [
+                io_ctx.ms_out.as_mut(),
+                io_ctx.uvfits_out.as_mut(),
+                io_ctx.metrics_out.as_mut(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                *path = path_with_suffix(path, &suffix);
             }
             ranged_context.run()?;
         }
         Ok(())
     }
 
-    /// Save SSINS and EAVILS metrics to FITS.
+    /// Compute the quality-assurance metrics (see [`crate::metrics`]) of a
+    /// chunk of preprocessed visibilities, and write them to a new FITS file
+    /// at `metrics_path`, replacing it if it exists.
+    ///
+    /// With the `aoflagger` feature, this also writes the flag occupancy and
+    /// the delay spectra of baselines shorter than
+    /// [`BirliContext::cross_metrics_cutoff_m`], and flags the SSINS z-scores
+    /// with `AOFlagger`'s minimal strategy.
+    ///
+    /// Nothing is written if all the timesteps, or all the channels of the
+    /// chunk are flagged, and the SSINS metrics are left out if the chunk has
+    /// fewer than two timesteps.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file can't be replaced or written.
     #[allow(clippy::too_many_arguments)]
     pub fn save_metrics_to_fits(
         &self,
@@ -1641,84 +1664,79 @@ impl<'a> BirliContext<'a> {
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         metrics_path: &Path,
-    ) {
+    ) -> Result<(), BirliError> {
+        let timestep_range = &chunk_vis_sel.timestep_range;
+        let all_timesteps_flagged = flag_ctx.timestep_flags[timestep_range.clone()]
+            .iter()
+            .all(|&flag| flag);
+        let all_chans_flagged = flag_ctx
+            .get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range)
+            .iter()
+            .all(|&flag| flag);
+        if all_timesteps_flagged || all_chans_flagged {
+            warn!(
+                "Not writing metrics to {}: all {} in timesteps {timestep_range:?} are flagged",
+                metrics_path.display(),
+                if all_timesteps_flagged {
+                    "timesteps"
+                } else {
+                    "channels"
+                },
+            );
+            return Ok(());
+        }
+
+        let auto_metrics = AutoMetrics::new(jones_array, corr_ctx, chunk_vis_sel, flag_ctx);
+        // SSINS is the difference between timesteps, so it needs two of them.
         // `flag` (aoflagger feature) needs `ssins` to be mutable.
         #[cfg_attr(not(feature = "aoflagger"), allow(unused_mut))]
-        let mut ssins = SSINS::new(jones_array, flag_array, corr_ctx, chunk_vis_sel, flag_ctx);
+        let mut ssins = (timestep_range.len() >= 2)
+            .then(|| SSINS::new(jones_array, flag_array, corr_ctx, chunk_vis_sel, flag_ctx));
+        if ssins.is_none() {
+            warn!(
+                "Not writing SSINS metrics to {}: timesteps {timestep_range:?} are fewer than 2",
+                metrics_path.display(),
+            );
+        }
         let eavils = EAVILS::new(jones_array, corr_ctx, chunk_vis_sel, flag_ctx);
-        let auto_metrics = AutoMetrics::new(jones_array, corr_ctx, chunk_vis_sel, flag_ctx);
-
-        let path = Path::new(metrics_path.to_str().unwrap());
-        if path.exists() {
-            std::fs::remove_file(path).unwrap();
-        }
-        let mut fptr = FitsFile::create(path).open().unwrap();
-
-        with_increment_duration!(
-            "write",
-            if let Err(e) = auto_metrics.save_to_fits(&mut fptr) {
-                log::warn!("Failed to save AutoMetrics to FITS: {e}");
-            }
-        );
-
-        // this requires the aoflagger feature flag.
         #[cfg(feature = "aoflagger")]
-        {
-            use crate::metrics::AOFlagMetrics;
-
-            let aoflagger_metrics =
-                AOFlagMetrics::new(flag_array, corr_ctx, chunk_vis_sel, flag_ctx);
-
-            with_increment_duration!(
-                "write",
-                if let Err(e) = aoflagger_metrics.save_to_fits(&mut fptr) {
-                    log::warn!("Failed to save AOFlagger metrics to FITS: {e}");
-                }
-            );
-
-            let cross_metrics = CrossMetrics::new(
-                jones_array,
-                corr_ctx,
-                chunk_vis_sel,
-                flag_ctx,
-                self.cross_metrics_cutoff_m,
-            );
-            with_increment_duration!(
-                "write",
-                if let Err(e) = cross_metrics.save_to_fits(&mut fptr) {
-                    log::warn!("Failed to save CrossMetrics to FITS: {e}");
-                }
-            );
-
-            ssins.flag(
-                None,
-                // Some( "/Users/dev/Code/aoflagger/data/strategies/generic-minimal.lua".to_string(), ),
-            );
-            println!("SSINS flags:");
-            let flag_dims = ssins.flag_array.dim();
-            for t in 0..flag_dims.0 {
-                for f in 0..flag_dims.1 {
-                    let c = if ssins.flag_array[[t, f]] { "#" } else { " " };
-                    print!("{c}");
-                }
-                println!();
+        let (aoflag_metrics, cross_metrics) = {
+            if let Some(ssins) = ssins.as_mut() {
+                ssins.flag(None);
             }
-        }
+            (
+                AOFlagMetrics::new(flag_array, corr_ctx, chunk_vis_sel, flag_ctx),
+                CrossMetrics::new(
+                    jones_array,
+                    corr_ctx,
+                    chunk_vis_sel,
+                    flag_ctx,
+                    self.cross_metrics_cutoff_m,
+                ),
+            )
+        };
 
-        with_increment_duration!(
-            "write",
-            if let Err(e) = ssins.save_to_fits(&mut fptr) {
-                log::warn!("Failed to save SSINS metrics to FITS: {e}");
+        let write_metrics = || -> Result<(), IOError> {
+            if metrics_path.exists() {
+                std::fs::remove_file(metrics_path)?;
             }
-        );
-        with_increment_duration!(
-            "write",
-            if let Err(e) = eavils.save_to_fits(&mut fptr) {
-                log::warn!("Failed to save EAVILS metrics to FITS: {e}");
+            let mut fptr = FitsFile::create(metrics_path).open()?;
+            auto_metrics.save_to_fits(&mut fptr)?;
+            #[cfg(feature = "aoflagger")]
+            {
+                aoflag_metrics.save_to_fits(&mut fptr)?;
+                cross_metrics.save_to_fits(&mut fptr)?;
             }
-        );
+            if let Some(ssins) = &ssins {
+                ssins.save_to_fits(&mut fptr)?;
+            }
+            eavils.save_to_fits(&mut fptr)?;
+            Ok(())
+        };
+        with_increment_duration!("write", write_metrics()?);
 
-        log::info!("Saved SSINS and EAVILS metrics to {metrics_path:?}");
+        info!("Saved metrics to {}", metrics_path.display());
+        Ok(())
     }
 
     /// Read, Preprocess and write corrected visibilities chunks.
@@ -2013,18 +2031,29 @@ impl<'a> BirliContext<'a> {
                 &flag_ctx.antenna_flags,
             )?;
 
-            // Save SSINS metrics to FITS if output path is specified
+            // output metrics (before averaging)
             if let Some(metrics_path) = &io_ctx.metrics_out {
+                // each chunk has its own metrics, so each needs its own file.
+                let chunk_metrics_path = if vis_sel.timestep_range.len() > chunk_size {
+                    let chunk_timesteps = &chunk_vis_sel.timestep_range;
+                    path_with_suffix(
+                        metrics_path,
+                        &format!("_ts{}-{}", chunk_timesteps.start, chunk_timesteps.end - 1),
+                    )
+                } else {
+                    metrics_path.clone()
+                };
                 self.save_metrics_to_fits(
                     jones_array.view(),
                     flag_array.view(),
                     &flag_ctx,
                     corr_ctx,
                     &chunk_vis_sel,
-                    metrics_path,
-                );
+                    &chunk_metrics_path,
+                )?;
             }
 
+            // output flags (before averaging)
             if let Some(flag_file_set) = flag_file_set.as_mut() {
                 with_increment_duration!(
                     "write",
@@ -3540,6 +3569,407 @@ mod channel_range_tests {
         // ...
         assert!(channel_range_sel.ranges[11].0 == 22);
         assert!(channel_range_sel.ranges[11].1 == 23);
+    }
+}
+
+/// Tests of `--metrics-out`. These work with or without the aoflagger feature.
+#[cfg(test)]
+mod metrics_tests {
+    use std::path::{Path, PathBuf};
+
+    use tempfile::tempdir;
+
+    use super::{path_with_suffix, BirliContext};
+    use crate::{
+        error::BirliError,
+        marlu::fitsio::{hdu::HduInfo, FitsFile},
+        test_common::{get_1119683928_picket_paths, get_mwax_data_paths},
+    };
+
+    /// The names of the HDUs in a FITS file, after the primary HDU.
+    fn hdu_names(path: &Path) -> Vec<String> {
+        let mut fptr = FitsFile::open(path).unwrap();
+        let num_hdus = fptr.iter().count();
+        (1..num_hdus)
+            .map(|i| {
+                let hdu = fptr.hdu(i).unwrap();
+                hdu.read_key::<String>(&mut fptr, "EXTNAME").unwrap()
+            })
+            .collect()
+    }
+
+    /// Read an image HDU and its shape.
+    fn read_image(path: &Path, extname: &str) -> (Vec<usize>, Vec<f64>) {
+        let mut fptr = FitsFile::open(path).unwrap();
+        let hdu = fptr.hdu(extname).unwrap();
+        let HduInfo::ImageInfo { shape, .. } = &hdu.info else {
+            panic!("{extname} is not an image");
+        };
+        (shape.clone(), hdu.read_image(&mut fptr).unwrap())
+    }
+
+    /// Arguments to write only metrics for the 1297526432 mwax dataset, which
+    /// has 2 tiles, 4 timesteps and 2 coarse channels of 2 fine channels.
+    fn mwax_metrics_args(metrics_path: &Path, extra_args: &[&str]) -> Vec<String> {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--metrics-out",
+            metrics_path.to_str().unwrap(),
+            "--no-draw-progress",
+            "--flag-init",
+            "0",
+        ];
+        #[cfg(feature = "aoflagger")]
+        args.push("--no-rfi");
+        args.extend_from_slice(extra_args);
+        args.push("--");
+        args.extend_from_slice(&gpufits_paths);
+        args.into_iter().map(String::from).collect()
+    }
+
+    #[test]
+    fn test_path_with_suffix() {
+        for (path, suffix, expected) in [
+            ("out/obs.uvfits", "_ch137", "out/obs_ch137.uvfits"),
+            ("obs.ms", "_ch62-63", "obs_ch62-63.ms"),
+            (
+                "/tmp/a.b/metrics.tar.fits",
+                "_ts0-9",
+                "/tmp/a.b/metrics.tar_ts0-9.fits",
+            ),
+            ("out/no_extension", "_ch1", "out/no_extension_ch1"),
+        ] {
+            assert_eq!(
+                path_with_suffix(Path::new(path), suffix),
+                PathBuf::from(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_metrics_args() {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("metrics.fits");
+
+        // no metrics by default
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+        let mut args = vec!["birli", "-m", metafits_path, "--"];
+        args.extend_from_slice(&gpufits_paths);
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+        assert!(birli_ctx.io_ctx.metrics_out.is_none());
+
+        let birli_ctx = BirliContext::from_args(mwax_metrics_args(&metrics_path, &[])).unwrap();
+        assert_eq!(birli_ctx.io_ctx.metrics_out, Some(metrics_path.clone()));
+        assert!((birli_ctx.cross_metrics_cutoff_m - 30.0).abs() < 1e-6);
+
+        let birli_ctx = BirliContext::from_args(mwax_metrics_args(
+            &metrics_path,
+            &["--cross-metrics-cutoff", "123.5"],
+        ))
+        .unwrap();
+        assert!((birli_ctx.cross_metrics_cutoff_m - 123.5).abs() < 1e-6);
+
+        assert!(matches!(
+            BirliContext::from_args(mwax_metrics_args(
+                &metrics_path,
+                &["--cross-metrics-cutoff", "short"],
+            )),
+            Err(BirliError::ClapError(_))
+        ));
+    }
+
+    /// All the metrics are written to one file, which replaces any existing
+    /// file.
+    #[test]
+    fn test_run_writes_metrics() {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("metrics.fits");
+        std::fs::write(&metrics_path, "not a fits file").unwrap();
+
+        let birli_ctx = BirliContext::from_args(mwax_metrics_args(
+            &metrics_path,
+            &["--cross-metrics-cutoff", "10000"],
+        ))
+        .unwrap();
+        let tile_names: Vec<String> = birli_ctx
+            .corr_ctx
+            .metafits_context
+            .antennas
+            .iter()
+            .map(|ant| ant.tile_name.clone())
+            .collect();
+        assert_eq!(tile_names.len(), 2);
+        birli_ctx.run().unwrap();
+
+        let mut expected_hdus: Vec<String> = tile_names
+            .iter()
+            .map(|name| format!("AUTO_SUB_ANT={name}"))
+            .collect();
+        let per_pol = |prefix: &str, pols: [&str; 4]| pols.map(|pol| format!("{prefix}={pol}"));
+        let fits_pols = ["XX", "YY", "XY", "YX"];
+        let jones_pols = ["XX", "XY", "YX", "YY"];
+        expected_hdus.extend(per_pol("AUTO_POL", fits_pols));
+        expected_hdus.push("AUTO_COEFFS".into());
+        expected_hdus.extend(per_pol("AUTO_DELAY_POL", fits_pols));
+        #[cfg(feature = "aoflagger")]
+        {
+            expected_hdus.push("AO_FLAG_METRICS".into());
+            expected_hdus.extend(per_pol("CROSS_DELAY_POL", fits_pols));
+        }
+        expected_hdus.extend(per_pol("SSINS_POL", jones_pols));
+        expected_hdus
+            .extend(["SSINS_FLAGS", "SSINS_N_BL", "SSINS_DIFF_MEAN_AMP_FP"].map(String::from));
+        expected_hdus.extend(per_pol("EAVILS_POL", jones_pols));
+        expected_hdus.extend(
+            [
+                "EAVILS_FLAGS",
+                "EAVILS_MEAN_AMP_FP",
+                "EAVILS_SQRT_MEAN_VAR_AMP_FP",
+            ]
+            .map(String::from),
+        );
+        assert_eq!(hdu_names(&metrics_path), expected_hdus);
+
+        // 4 timesteps, 4 fine channels, 2 tiles.
+        let (shape, data) = read_image(&metrics_path, "AUTO_POL=XX");
+        assert_eq!(shape, [2, 4]);
+        assert!(data.iter().all(|x| x.is_finite() && *x > 0.0));
+        let (shape, data) = read_image(&metrics_path, "EAVILS_POL=XX");
+        assert_eq!(shape, [4, 4]);
+        assert!(data.iter().all(|x| x.is_finite()));
+        let (shape, data) = read_image(&metrics_path, "SSINS_POL=YY");
+        assert_eq!(shape, [3, 4]);
+        assert!(data.iter().all(|x| x.is_finite()));
+        // one cross-correlation, which is not flagged
+        let (_, data) = read_image(&metrics_path, "SSINS_N_BL");
+        assert!(data.iter().all(|&n| (n - 1.0).abs() < 1e-12));
+        #[cfg(feature = "aoflagger")]
+        {
+            let (shape, data) = read_image(&metrics_path, "AO_FLAG_METRICS");
+            assert_eq!(shape, [4, 4]);
+            assert!(data.iter().all(|&occupancy| occupancy.abs() < 1e-12));
+            let (shape, data) = read_image(&metrics_path, "CROSS_DELAY_POL=XY");
+            assert_eq!(shape[0], 2);
+            assert!(data.iter().all(|x| x.is_finite()));
+        }
+    }
+
+    /// Channels flagged with `--flag-raw-chans` and `--flag-fine-chans` are
+    /// left out of the metrics.
+    #[test]
+    fn test_run_metrics_with_flagged_chans() {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("metrics.fits");
+
+        // the observation has 24 coarse channels of 2 fine channels. The
+        // first fine channel of every coarse channel, and the second fine
+        // channel of the second selected coarse channel are flagged.
+        let birli_ctx = BirliContext::from_args(mwax_metrics_args(&metrics_path, &[])).unwrap();
+        let second_coarse_chan_idx = birli_ctx.vis_sel.coarse_chan_range.start + 1;
+        let raw_chan_idx = (second_coarse_chan_idx * 2 + 1).to_string();
+        let birli_ctx = BirliContext::from_args(mwax_metrics_args(
+            &metrics_path,
+            &[
+                "--flag-fine-chans",
+                "0",
+                "--flag-raw-chans",
+                raw_chan_idx.as_str(),
+            ],
+        ))
+        .unwrap();
+        assert_eq!(
+            birli_ctx
+                .flag_ctx
+                .get_raw_chan_flags(&birli_ctx.vis_sel.coarse_chan_range),
+            [true, false, true, true]
+        );
+        birli_ctx.run().unwrap();
+
+        for extname in ["AUTO_POL=XX", "EAVILS_POL=XX", "SSINS_POL=XX"] {
+            let (shape, data) = read_image(&metrics_path, extname);
+            assert_eq!(shape[1], 4);
+            for (i, value) in data.iter().enumerate() {
+                assert_eq!(value.is_finite(), i % 4 == 1, "{extname} {i} {value}");
+            }
+        }
+    }
+
+    /// When the observation is processed in chunks, each chunk gets its own
+    /// metrics file.
+    #[test]
+    fn test_run_chunked_metrics() {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("metrics.fits");
+
+        let birli_ctx =
+            BirliContext::from_args(mwax_metrics_args(&metrics_path, &["--time-chunk", "2"]))
+                .unwrap();
+        let timestep_range = birli_ctx.vis_sel.timestep_range.clone();
+        assert_eq!(timestep_range.len(), 4);
+        let gps_times_s: Vec<f64> = birli_ctx.corr_ctx.timesteps[timestep_range.clone()]
+            .iter()
+            .map(|ts| ts.gps_time_ms as f64 / 1000.0)
+            .collect();
+        birli_ctx.run().unwrap();
+
+        assert!(!metrics_path.exists());
+        for (chunk_idx, chunk_start) in [timestep_range.start, timestep_range.start + 2]
+            .into_iter()
+            .enumerate()
+        {
+            let chunk_path = tmp_dir.path().join(format!(
+                "metrics_ts{}-{}.fits",
+                chunk_start,
+                chunk_start + 1
+            ));
+            assert!(chunk_path.exists(), "{chunk_path:?} does not exist");
+            // 2 timesteps, 4 fine channels
+            let (shape, _) = read_image(&chunk_path, "EAVILS_POL=XX");
+            assert_eq!(shape, [2, 4]);
+            let (shape, _) = read_image(&chunk_path, "SSINS_POL=XX");
+            assert_eq!(shape, [1, 4]);
+            // the time axis starts at the first timestep of the chunk
+            let mut fptr = FitsFile::open(&chunk_path).unwrap();
+            let hdu = fptr.hdu("EAVILS_POL=XX").unwrap();
+            let start_time_s: f64 = hdu.read_key(&mut fptr, "CRVAL2").unwrap();
+            assert!((start_time_s - gps_times_s[chunk_idx * 2]).abs() < 1e-6);
+        }
+        assert_eq!(std::fs::read_dir(tmp_dir.path()).unwrap().count(), 2);
+    }
+
+    /// A chunk with one timestep has no SSINS metrics, and a chunk which is
+    /// entirely flagged has no metrics.
+    #[test]
+    fn test_run_chunked_metrics_single_and_flagged_timesteps() {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("metrics.fits");
+
+        let birli_ctx = BirliContext::from_args(mwax_metrics_args(
+            &metrics_path,
+            &["--time-chunk", "1", "--flag-end-steps", "1"],
+        ))
+        .unwrap();
+        let timestep_range = birli_ctx.vis_sel.timestep_range.clone();
+        assert_eq!(timestep_range.len(), 4);
+        birli_ctx.run().unwrap();
+
+        for (i, timestep_idx) in timestep_range.enumerate() {
+            let chunk_path = tmp_dir
+                .path()
+                .join(format!("metrics_ts{timestep_idx}-{timestep_idx}.fits"));
+            if i == 3 {
+                // the last timestep is flagged
+                assert!(!chunk_path.exists(), "{chunk_path:?} exists");
+                continue;
+            }
+            let hdus = hdu_names(&chunk_path);
+            assert!(hdus.contains(&"AUTO_POL=XX".to_string()));
+            assert!(hdus.contains(&"EAVILS_POL=XX".to_string()));
+            assert!(!hdus.iter().any(|name| name.starts_with("SSINS")));
+            let (shape, _) = read_image(&chunk_path, "EAVILS_POL=XX");
+            assert_eq!(shape, [1, 4]);
+        }
+        assert_eq!(std::fs::read_dir(tmp_dir.path()).unwrap().count(), 3);
+    }
+
+    /// No metrics are written if every channel is flagged.
+    #[test]
+    fn test_run_metrics_all_chans_flagged() {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("metrics.fits");
+
+        let birli_ctx = BirliContext::from_args(mwax_metrics_args(
+            &metrics_path,
+            &["--flag-fine-chans", "0", "1"],
+        ))
+        .unwrap();
+        birli_ctx.run().unwrap();
+
+        assert!(!metrics_path.exists());
+    }
+
+    /// When the coarse channels are not contiguous, each range of channels
+    /// gets its own metrics file.
+    #[test]
+    fn test_run_ranges_metrics() {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("metrics.fits");
+        let (metafits_path, gpufits_paths) = get_1119683928_picket_paths();
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", metafits_path,
+            "--metrics-out", metrics_path.to_str().unwrap(),
+            "--sel-chan-ranges", "0-1,5",
+            "--sel-ants", "5", "4", "20", "19",
+            "--flag-init", "0",
+            "--no-draw-progress",
+            "--pfb-gains", "none",
+            "--no-digital-gains",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+        ];
+        #[cfg(feature = "aoflagger")]
+        args.push("--no-rfi");
+        args.push("--");
+        args.extend_from_slice(&gpufits_paths);
+
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+        assert_eq!(birli_ctx.channel_range_sel.ranges, vec![(0, 1), (5, 5)]);
+        let rec_chans: Vec<usize> = birli_ctx
+            .corr_ctx
+            .coarse_chans
+            .iter()
+            .map(|chan| chan.rec_chan_number)
+            .collect();
+        let fine_chans_per_coarse = birli_ctx
+            .corr_ctx
+            .metafits_context
+            .num_corr_fine_chans_per_coarse;
+        let fine_chan_freqs_hz = birli_ctx
+            .corr_ctx
+            .metafits_context
+            .metafits_fine_chan_freqs_hz
+            .clone();
+        birli_ctx.run_ranges().unwrap();
+
+        assert!(!metrics_path.exists());
+        for (file_name, first_coarse_chan, num_coarse_chans) in [
+            (
+                format!("metrics_ch{}-{}.fits", rec_chans[0], rec_chans[1]),
+                0,
+                2,
+            ),
+            (format!("metrics_ch{}.fits", rec_chans[5]), 5, 1),
+        ] {
+            let range_path = tmp_dir.path().join(file_name);
+            assert!(range_path.exists(), "{range_path:?} does not exist");
+            // 4 tiles, and the fine channels of this range
+            let (shape, data) = read_image(&range_path, "AUTO_POL=XX");
+            assert_eq!(shape, [4, num_coarse_chans * fine_chans_per_coarse]);
+            assert!(data.iter().any(|x| x.is_finite() && *x > 0.0));
+            let mut fptr = FitsFile::open(&range_path).unwrap();
+            let hdu = fptr.hdu("AUTO_POL=XX").unwrap();
+            let start_freq_hz: f64 = hdu.read_key(&mut fptr, "CRVAL1").unwrap();
+            let expected_hz = fine_chan_freqs_hz[first_coarse_chan * fine_chans_per_coarse];
+            assert!((start_freq_hz - expected_hz).abs() < 1e-3);
+        }
+        assert_eq!(std::fs::read_dir(tmp_dir.path()).unwrap().count(), 2);
+    }
+
+    /// It is an error if the metrics file can't be written.
+    #[test]
+    fn test_run_metrics_unwritable() {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("does_not_exist").join("metrics.fits");
+
+        let birli_ctx = BirliContext::from_args(mwax_metrics_args(&metrics_path, &[])).unwrap();
+        assert!(matches!(birli_ctx.run(), Err(BirliError::IOError(_))));
+        assert!(!metrics_path.exists());
     }
 }
 

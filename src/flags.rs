@@ -35,7 +35,9 @@ pub struct FlagContext {
     pub coarse_chan_flags: Vec<bool>,
     /// Which fine channel indices are flagged in every coarse channel
     pub fine_chan_flags: Vec<bool>,
-    /// Which mwalib fine channel indices are flagged
+    /// Which fine channels of the observation are flagged, indexed by mwalib
+    /// coarse channel index * fine channels per coarse channel + fine channel
+    /// index
     pub raw_chan_flags: Vec<bool>,
     /// Which mwalib antenna indices are flagged
     pub antenna_flags: Vec<bool>,
@@ -174,41 +176,63 @@ impl FlagContext {
         }
     }
 
-    /// Get the flags for the fine channels in the given coarse channel range.
+    /// Get the flag of each fine channel in the given range of mwalib coarse
+    /// channel indices.
     ///
-    /// This combines the flags from the fine channels, the coarse channels, and
-    /// the raw channels.
+    /// A fine channel is flagged if any of these are set:
+    /// - its coarse channel in [`FlagContext::coarse_chan_flags`],
+    /// - its index within the coarse channel in
+    ///   [`FlagContext::fine_chan_flags`],
+    /// - its index within the observation in [`FlagContext::raw_chan_flags`],
+    /// - [`FlagContext::flag_dc`], if it is the centre channel of its coarse
+    ///   channel.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use birli::FlagContext;
+    ///
+    /// // 2 timesteps, 3 coarse channels of 4 fine channels, 1 antenna.
+    /// let mut flag_ctx = FlagContext::blank_from_dimensions(2, 3, 4, 1);
+    /// // flag the last coarse channel
+    /// flag_ctx.coarse_chan_flags[2] = true;
+    /// // flag the first fine channel of every coarse channel
+    /// flag_ctx.fine_chan_flags[0] = true;
+    /// // flag the third fine channel of the second coarse channel
+    /// flag_ctx.raw_chan_flags[4 + 2] = true;
+    ///
+    /// assert_eq!(
+    ///     flag_ctx.get_raw_chan_flags(&(1..3)),
+    ///     vec![true, false, true, false, true, true, true, true]
+    /// );
+    /// ```
     pub fn get_raw_chan_flags(&self, coarse_chan_range: &Range<usize>) -> Vec<bool> {
-        let coarse_chan_flags = &self.coarse_chan_flags[coarse_chan_range.clone()];
         let fine_chan_count = self.fine_chan_flags.len();
         let mut fine_chan_flags = self.fine_chan_flags.clone();
         if self.flag_dc {
             fine_chan_flags[fine_chan_count / 2] = true;
         }
-        let raw_chan_flags = &self.raw_chan_flags
-            [coarse_chan_range.start * fine_chan_count..coarse_chan_range.end * fine_chan_count];
 
-        let chan_flags: Vec<_> = coarse_chan_flags
-            .iter()
-            .enumerate()
-            .flat_map(|(local_coarse_idx, coarse_chan_flag)| {
-                if *coarse_chan_flag {
-                    vec![true; fine_chan_count]
-                } else {
-                    let raw_start = local_coarse_idx * fine_chan_count;
-                    let raw_end = raw_start + fine_chan_count;
-                    let coarse_raw_flags = &raw_chan_flags[raw_start..raw_end];
-
-                    // Combine fine_chan_flags with raw_chan_flags for this coarse channel
-                    fine_chan_flags
-                        .iter()
-                        .zip(coarse_raw_flags.iter())
-                        .map(|(&fine_flag, &raw_flag)| fine_flag || raw_flag)
-                        .collect::<Vec<bool>>()
-                }
+        coarse_chan_range
+            .clone()
+            .flat_map(|coarse_chan_idx| {
+                let coarse_chan_flag = self.coarse_chan_flags[coarse_chan_idx];
+                let raw_chan_start = coarse_chan_idx * fine_chan_count;
+                fine_chan_flags
+                    .iter()
+                    .enumerate()
+                    .map(move |(fine_chan_idx, &fine_chan_flag)| {
+                        // a context made without `blank_from_dimensions` might
+                        // not have raw channel flags
+                        let raw_chan_flag = self
+                            .raw_chan_flags
+                            .get(raw_chan_start + fine_chan_idx)
+                            .is_some_and(|&flag| flag);
+                        coarse_chan_flag || fine_chan_flag || raw_chan_flag
+                    })
+                    .collect::<Vec<_>>()
             })
-            .collect();
-        chan_flags
+            .collect()
     }
 
     /// Set flags from this context in an existing array.
@@ -297,10 +321,12 @@ pub fn jones_baseline_view_to_imageset(
     imgset
 }
 
-/// Create an aoflagger [`CxxImageSet`] for array of amplitudes
+/// Create an aoflagger [`CxxImageSet`] for an array of real values, like
+/// amplitudes or z-scores.
 ///
-/// since most strategies assume jones matrix, the imageset will have a count
-/// of 2x the polarization count. imaginary values are set to 0.
+/// Most strategies expect the real and imaginary parts of each polarization,
+/// so the imageset has two images for each polarization: the values, and an
+/// image of zeros in place of the imaginary part.
 ///
 /// # Assumptions
 ///
@@ -692,7 +718,7 @@ mod tests {
             get_mwa_ord_dodgy_context, get_mwa_ord_no_overlap_context,
             get_mwa_ord_no_timesteps_context, get_mwax_context,
         },
-        FlagFileSet, VisSelection,
+        FlagContext, FlagFileSet, VisSelection,
     };
 
     #[test]
@@ -828,6 +854,141 @@ mod tests {
     }
 
     #[test]
+    fn test_set_flags_with_raw_chan_flags() {
+        // Create a simple FlagContext with known dimensions
+        let num_timesteps = 2;
+        let num_coarse_chans = 3;
+        let num_fine_chans_per_coarse = 4;
+        let num_ants = 2;
+
+        let mut flag_ctx = FlagContext::blank_from_dimensions(
+            num_timesteps,
+            num_coarse_chans,
+            num_fine_chans_per_coarse,
+            num_ants,
+        );
+
+        // Set up some test flags
+        flag_ctx.timestep_flags[0] = true; // Flag first timestep
+        flag_ctx.coarse_chan_flags[1] = true; // Flag second coarse channel
+        flag_ctx.fine_chan_flags[2] = true; // Flag third fine channel in all coarse channels
+
+        // Set up raw_chan_flags - flag specific fine channels in specific coarse channels
+        // For coarse channel 0, flag fine channel 1
+        flag_ctx.raw_chan_flags[1] = true;
+        // For coarse channel 2, flag fine channel 3
+        flag_ctx.raw_chan_flags[2 * num_fine_chans_per_coarse + 3] = true;
+
+        // Create test ranges
+        let timestep_range = 0..num_timesteps;
+        let coarse_chan_range = 0..num_coarse_chans;
+        let ant_pairs = vec![(0, 1)]; // One baseline
+
+        // Create flag array
+        let mut flag_array = Array3::from_elem(
+            (
+                num_timesteps,
+                num_coarse_chans * num_fine_chans_per_coarse,
+                1,
+            ),
+            false,
+        );
+
+        // Apply flags
+        flag_ctx
+            .set_flags(
+                flag_array.view_mut(),
+                &timestep_range,
+                &coarse_chan_range,
+                &ant_pairs,
+            )
+            .unwrap();
+
+        // Test that timestep flags work (first timestep should be flagged)
+        assert!(flag_array[[0, 0, 0]]); // First timestep, first channel, first baseline
+        assert!(!flag_array[[1, 0, 0]]); // Second timestep, first channel, first baseline
+
+        // Test that coarse channel flags work (second coarse channel should be flagged)
+        let second_coarse_start = num_fine_chans_per_coarse;
+        let second_coarse_end = second_coarse_start + num_fine_chans_per_coarse;
+        for ch in second_coarse_start..second_coarse_end {
+            assert!(flag_array[[1, ch, 0]]); // Second timestep, all channels in second coarse channel
+        }
+
+        // Test that fine channel flags work (third fine channel should be flagged in all coarse channels)
+        for coarse in 0..num_coarse_chans {
+            if coarse != 1 {
+                // Skip the already flagged coarse channel
+                let fine_ch_2_idx = coarse * num_fine_chans_per_coarse + 2;
+                assert!(flag_array[[1, fine_ch_2_idx, 0]]);
+            }
+        }
+
+        // Test that raw_chan_flags work
+        // Fine channel 1 in coarse channel 0 should be flagged
+        assert!(flag_array[[1, 1, 0]]);
+        // Fine channel 3 in coarse channel 2 should be flagged
+        assert!(flag_array[[1, 2 * num_fine_chans_per_coarse + 3, 0]]);
+
+        // Test that non-flagged channels remain unflagged
+        assert!(!flag_array[[1, 0, 0]]); // Fine ch 0 in coarse ch 0
+        assert!(!flag_array[[1, 2 * num_fine_chans_per_coarse, 0]]); // Fine ch 0 in coarse ch 2
+    }
+
+    /// The flags of a range of coarse channels combine the coarse, fine, raw
+    /// and DC flags.
+    #[test]
+    fn test_get_raw_chan_flags() {
+        let (num_coarse_chans, fine_chans_per_coarse) = (3, 4);
+        let mut flag_ctx =
+            FlagContext::blank_from_dimensions(2, num_coarse_chans, fine_chans_per_coarse, 2);
+        assert_eq!(flag_ctx.raw_chan_flags.len(), 12);
+        assert_eq!(flag_ctx.get_raw_chan_flags(&(0..3)), vec![false; 12]);
+
+        flag_ctx.coarse_chan_flags[0] = true;
+        flag_ctx.fine_chan_flags[3] = true;
+        flag_ctx.raw_chan_flags[fine_chans_per_coarse] = true;
+        flag_ctx.raw_chan_flags[2 * fine_chans_per_coarse + 1] = true;
+        #[rustfmt::skip]
+        assert_eq!(
+            flag_ctx.get_raw_chan_flags(&(0..3)),
+            vec![
+                true, true, true, true,
+                true, false, false, true,
+                false, true, false, true,
+            ]
+        );
+        // a range which doesn't start at the first coarse channel
+        assert_eq!(
+            flag_ctx.get_raw_chan_flags(&(2..3)),
+            vec![false, true, false, true]
+        );
+        assert!(flag_ctx.get_raw_chan_flags(&(1..1)).is_empty());
+
+        // the centre channel of each coarse channel
+        flag_ctx.flag_dc = true;
+        assert_eq!(
+            flag_ctx.get_raw_chan_flags(&(1..3)),
+            vec![true, false, true, true, false, true, true, true]
+        );
+    }
+
+    /// A context without raw channel flags has none flagged.
+    #[test]
+    fn test_get_raw_chan_flags_without_raw_chan_flags() {
+        let flag_ctx = FlagContext {
+            coarse_chan_flags: vec![false, true],
+            fine_chan_flags: vec![false, true, false],
+            ..FlagContext::default()
+        };
+        assert!(flag_ctx.raw_chan_flags.is_empty());
+        assert_eq!(
+            flag_ctx.get_raw_chan_flags(&(0..2)),
+            vec![false, true, false, true, true, true]
+        );
+    }
+
+    #[test]
     fn test_get_unflagged_timestep_ranges() {
         let mut flag_array = Array3::from_elem((3, 3, 3), false);
         flag_array[[1, 0, 0]] = true;
@@ -852,7 +1013,7 @@ mod tests_aoflagger {
     use ndarray::Array3;
 
     use crate::{
-        flags::{flag_jones_array, flag_jones_array_existing, FlagContext},
+        flags::{amps_tfp_to_imageset, flag_jones_array, flag_jones_array_existing, FlagContext},
         io::read_mwalib,
         BirliError, VisSelection,
     };
@@ -1050,85 +1211,29 @@ mod tests_aoflagger {
         ));
     }
 
+    /// A real-valued array is copied to the "real" image of each
+    /// polarisation, and the "imaginary" images are zero.
     #[test]
-    fn test_set_flags_with_raw_chan_flags() {
-        // Create a simple FlagContext with known dimensions
-        let num_timesteps = 2;
-        let num_coarse_chans = 3;
-        let num_fine_chans_per_coarse = 4;
-        let num_ants = 2;
+    fn test_amps_tfp_to_imageset() {
+        let (num_times, num_chans, num_pols) = (3, 5, 4);
+        let amps_tfp = Array3::from_shape_fn((num_times, num_chans, num_pols), |(t, f, p)| {
+            (1 + t + 10 * f + 100 * p) as f32
+        });
+        let aoflagger = unsafe { cxx_aoflagger_new() };
 
-        let mut flag_ctx = FlagContext::blank_from_dimensions(
-            num_timesteps,
-            num_coarse_chans,
-            num_fine_chans_per_coarse,
-            num_ants,
-        );
+        let imgset = amps_tfp_to_imageset(&aoflagger, amps_tfp.view());
 
-        // Set up some test flags
-        flag_ctx.timestep_flags[0] = true; // Flag first timestep
-        flag_ctx.coarse_chan_flags[1] = true; // Flag second coarse channel
-        flag_ctx.fine_chan_flags[2] = true; // Flag third fine channel in all coarse channels
-
-        // Set up raw_chan_flags - flag specific fine channels in specific coarse channels
-        // For coarse channel 0, flag fine channel 1
-        flag_ctx.raw_chan_flags[1] = true;
-        // For coarse channel 2, flag fine channel 3
-        flag_ctx.raw_chan_flags[2 * num_fine_chans_per_coarse + 3] = true;
-
-        // Create test ranges
-        let timestep_range = 0..num_timesteps;
-        let coarse_chan_range = 0..num_coarse_chans;
-        let ant_pairs = vec![(0, 1)]; // One baseline
-
-        // Create flag array
-        let mut flag_array = Array3::from_elem(
-            (
-                num_timesteps,
-                num_coarse_chans * num_fine_chans_per_coarse,
-                1,
-            ),
-            false,
-        );
-
-        // Apply flags
-        flag_ctx
-            .set_flags(
-                flag_array.view_mut(),
-                &timestep_range,
-                &coarse_chan_range,
-                &ant_pairs,
-            )
-            .unwrap();
-
-        // Test that timestep flags work (first timestep should be flagged)
-        assert!(flag_array[[0, 0, 0]]); // First timestep, first channel, first baseline
-        assert!(!flag_array[[1, 0, 0]]); // Second timestep, first channel, first baseline
-
-        // Test that coarse channel flags work (second coarse channel should be flagged)
-        let second_coarse_start = num_fine_chans_per_coarse;
-        let second_coarse_end = second_coarse_start + num_fine_chans_per_coarse;
-        for ch in second_coarse_start..second_coarse_end {
-            assert!(flag_array[[1, ch, 0]]); // Second timestep, all channels in second coarse channel
-        }
-
-        // Test that fine channel flags work (third fine channel should be flagged in all coarse channels)
-        for coarse in 0..num_coarse_chans {
-            if coarse != 1 {
-                // Skip the already flagged coarse channel
-                let fine_ch_2_idx = coarse * num_fine_chans_per_coarse + 2;
-                assert!(flag_array[[1, fine_ch_2_idx, 0]]);
+        assert_eq!(imgset.Width(), num_times);
+        assert_eq!(imgset.Height(), num_chans);
+        assert_eq!(imgset.ImageCount(), 2 * num_pols);
+        let stride = imgset.HorizontalStride();
+        for p in 0..num_pols {
+            let real = imgset.ImageBuffer(2 * p);
+            let imag = imgset.ImageBuffer(2 * p + 1);
+            for ((t, f), &amp) in amps_tfp.slice(ndarray::s![.., .., p]).indexed_iter() {
+                assert_eq!(real[f * stride + t].to_bits(), amp.to_bits());
+                assert_eq!(imag[f * stride + t].to_bits(), 0.0_f32.to_bits());
             }
         }
-
-        // Test that raw_chan_flags work
-        // Fine channel 1 in coarse channel 0 should be flagged
-        assert!(flag_array[[1, 1, 0]]);
-        // Fine channel 3 in coarse channel 2 should be flagged
-        assert!(flag_array[[1, 2 * num_fine_chans_per_coarse + 3, 0]]);
-
-        // Test that non-flagged channels remain unflagged
-        assert!(!flag_array[[1, 0, 0]]); // Fine ch 0 in coarse ch 0
-        assert!(!flag_array[[1, 2 * num_fine_chans_per_coarse, 0]]); // Fine ch 0 in coarse ch 2
     }
 }

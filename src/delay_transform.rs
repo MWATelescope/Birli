@@ -1,21 +1,95 @@
-//! Delay transform utilities for Birli
+//! Delay transform of real-valued spectra.
 //!
-//! This module provides a delay transform for per-antenna spectra, using
-//! a Blackman window and zero-padding to achieve the requested delay resolution.
+//! A delay transform is the Fourier transform of a spectrum along its frequency
+//! axis. A ripple with period `P` Hz in a spectrum shows up as a peak at a delay
+//! of `1 / P` seconds, so the delay spectrum of a tile's bandpass shows cable
+//! reflections and other standing waves as peaks at the delay of the
+//! reflection.
+//!
+//! [`delay_transform`] takes one spectrum per row (for example, the
+//! time-averaged autocorrelation of each tile), and for each row it:
+//!
+//! 1. replaces non-finite samples (flagged channels) with zero,
+//! 2. applies a Blackman window, to keep the sidelobes of the strong
+//!    zero-delay term out of the delays of interest,
+//! 3. zero-pads the spectrum by a whole number of times, so that the delay
+//!    bins are no wider than [`DelayTransformConfig::target_delay_res_ns`],
+//! 4. takes the amplitude of the forward FFT,
+//! 5. keeps only the delays between [`DelayTransformConfig::min_delay_ns`] and
+//!    [`DelayTransformConfig::max_delay_ns`].
+//!
+//! The amplitudes are not normalised: they scale with the number of channels
+//! and with the window.
+//!
+//! The spectra are real, so the delay spectrum is symmetric: for a channel
+//! width `df`, delays above `1 / (2 df)` are aliases of the delays below it.
+//!
+//! # Examples
+//!
+//! A 2 MHz ripple shows up as a peak at 500 ns.
+//!
+//! ```rust
+//! use birli::{delay_transform, marlu::ndarray::{Array1, Array2}, DelayTransformConfig};
+//! use std::f64::consts::TAU;
+//!
+//! // 1024 channels of 40 kHz
+//! let freq_hz = Array1::from_iter((0..1024).map(|i| 150e6 + 40e3 * i as f64));
+//! // one tile, whose bandpass has a 2 MHz ripple
+//! let spectrum = Array2::from_shape_fn((1, 1024), |(_, i)| {
+//!     1.0 + 0.1 * (TAU * freq_hz[i] / 2e6).cos()
+//! });
+//! let config = DelayTransformConfig {
+//!     min_delay_ns: 100.0,
+//!     max_delay_ns: 3000.0,
+//!     target_delay_res_ns: 1.0,
+//! };
+//!
+//! let result = delay_transform(&spectrum, &freq_hz, &config).unwrap();
+//!
+//! let (peak_idx, _) = result
+//!     .delay_spectrum
+//!     .row(0)
+//!     .iter()
+//!     .enumerate()
+//!     .max_by(|a, b| a.1.total_cmp(b.1))
+//!     .unwrap();
+//! assert!((result.delays_ns[peak_idx] - 500.0).abs() < 2.0);
+//! ```
 
-use log::debug;
+use std::{f64::consts::PI, ops::Range};
+
+use log::trace;
 use marlu::ndarray::{Array1, Array2};
 use rustfft::{num_complex::Complex64, FftPlanner};
-use std::f64::consts::PI;
+use thiserror::Error;
+
+/// If fewer than this many delay bins fall between
+/// [`DelayTransformConfig::min_delay_ns`] and
+/// [`DelayTransformConfig::max_delay_ns`], the requested range is too narrow
+/// to be useful and [`delay_transform`] falls back to a broader range.
+const MIN_DELAY_BINS: usize = 6;
+
+/// Errors that can occur in a delay transform
+#[derive(Error, Debug)]
+pub enum DelayTransformError {
+    /// There are no delays at or below `max_delay_ns`, which only happens when
+    /// it is negative.
+    #[error("no delays in the requested range, max_delay_ns={max_delay_ns}")]
+    NoDelaysInRange {
+        /// The maximum delay that was asked for \[ns\]
+        max_delay_ns: f64,
+    },
+}
 
 /// Configuration for the delay transform.
 #[derive(Debug, Clone, Copy)]
 pub struct DelayTransformConfig {
-    /// Minimum delay to include in output [ns]
+    /// Minimum delay to include in output \[ns\]
     pub min_delay_ns: f64,
-    /// Maximum delay to include in output [ns]
+    /// Maximum delay to include in output \[ns\]
     pub max_delay_ns: f64,
-    /// Target delay resolution [ns]
+    /// Target delay resolution \[ns\]. The spectrum is zero-padded until the
+    /// delay bins are at most this wide.
     pub target_delay_res_ns: f64,
 }
 
@@ -32,301 +106,206 @@ impl Default for DelayTransformConfig {
 /// Result of the delay transform.
 #[derive(Debug)]
 pub struct DelayTransformResult {
-    /// Delay spectrum (nants, ndelays)
+    /// Amplitude of the delay spectrum of each input row `(nants, ndelays)`
     pub delay_spectrum: Array2<f64>,
-    /// Delay axis [ns]
+    /// The delay of each bin in `delay_spectrum` \[ns\]
     pub delays_ns: Array1<f64>,
 }
 
-/// Information about delay transform dimensions
+/// The dimensions of a delay transform, see [`calculate_delay_channels`].
 #[derive(Debug)]
 pub struct DelayChannelInfo {
-    /// Number of delay channels in the output
+    /// Number of delay bins in the output
     pub n_delay_channels: usize,
-    /// Zero-padded frequency channels
+    /// Delay of the first bin in the output \[ns\]
+    pub start_delay_ns: f64,
+    /// Number of frequency channels after zero-padding, which is also the
+    /// number of delay bins before the requested range is selected
     pub nfreqs_padded: usize,
-    /// Actual delay resolution achieved [ns]
+    /// Actual delay resolution achieved \[ns\]
     pub actual_delay_res_ns: f64,
-    /// Maximum computable delay [ns]
+    /// Delay of the last bin before the requested range is selected \[ns\]
     pub max_computable_delay_ns: f64,
 }
 
-/// Calculate the number of delay channels that will be in the transform result
+/// The indices of the padded delay bins that end up in the output.
+///
+/// - If at least [`MIN_DELAY_BINS`] bins are between `config.min_delay_ns` and
+///   `config.max_delay_ns`, it is those bins.
+/// - Otherwise the range that was asked for is too narrow, and `min_delay_ns`
+///   is ignored: it is all the bins up to `config.max_delay_ns`.
+///
+/// `None` if there are no such bins, which needs a negative `max_delay_ns`.
+fn selected_delay_bins(
+    nfreqs_padded: usize,
+    delay_res_ns: f64,
+    config: &DelayTransformConfig,
+) -> Option<Range<usize>> {
+    let delay_ns = |i: usize| i as f64 * delay_res_ns;
+    let in_range = |i: &usize| {
+        let delay_ns = delay_ns(*i);
+        delay_ns >= config.min_delay_ns && delay_ns <= config.max_delay_ns
+    };
+
+    // delays increase with bin index, so the bins in range are contiguous
+    let first = (0..nfreqs_padded).find(in_range);
+    let last = (0..nfreqs_padded).rev().find(in_range);
+    if let (Some(first), Some(last)) = (first, last) {
+        if last + 1 - first >= MIN_DELAY_BINS {
+            return Some(first..last + 1);
+        }
+    }
+
+    let num_below_max = (0..nfreqs_padded)
+        .take_while(|&i| delay_ns(i) <= config.max_delay_ns)
+        .count();
+    (num_below_max > 0).then_some(0..num_below_max)
+}
+
+/// Calculate the dimensions of the result of [`delay_transform`] for spectra
+/// of `nfreqs` channels at frequencies `freq_hz`, without doing the transform.
+///
+/// The channel width is taken from the first two frequencies, which should be
+/// evenly spaced.
+///
+/// # Panics
+///
+/// Panics if `freq_hz` has fewer than two channels.
 pub fn calculate_delay_channels(
     nfreqs: usize,
     freq_hz: &Array1<f64>,
     config: &DelayTransformConfig,
 ) -> DelayChannelInfo {
-    // Calculate zero-padding factor for better delay resolution
     let freq_res_hz = freq_hz[1] - freq_hz[0];
 
-    // Zero-padding factor to reach target delay resolution
+    // Zero-padding factor to reach the target delay resolution
     let pad_factor =
         ((1e9 / (config.target_delay_res_ns * freq_res_hz * nfreqs as f64)).ceil() as usize).max(1);
     let nfreqs_padded = nfreqs * pad_factor;
 
-    // Actual delay resolution and range
-    let delay_res_s = 1.0 / (nfreqs_padded as f64 * freq_res_hz);
-    let actual_delay_res_ns = delay_res_s * 1e9;
+    let actual_delay_res_ns = 1e9 / (nfreqs_padded as f64 * freq_res_hz);
     let max_computable_delay_ns = (nfreqs_padded - 1) as f64 * actual_delay_res_ns;
 
-    // Create delay axis to determine filtering
-    let mut delays_ns = Array1::zeros(nfreqs_padded);
-    for i in 0..nfreqs_padded {
-        delays_ns[i] = i as f64 * actual_delay_res_ns;
-    }
-
-    // Determine final number of channels based on filtering logic
-    let delay_mask: Vec<bool> = delays_ns
-        .iter()
-        .map(|&d| d >= config.min_delay_ns && d <= config.max_delay_ns)
-        .collect();
-    let mask_count = delay_mask.iter().filter(|&&x| x).count();
-
-    let n_delay_channels = if mask_count > 5 {
-        // Will use filtered range
-        mask_count
-    } else {
-        // Will use broader range
-        if max_computable_delay_ns < config.max_delay_ns {
-            // Show full computed range
-            nfreqs_padded
-        } else {
-            // Show subset up to max_delay_ns
-            delays_ns
-                .iter()
-                .take_while(|&&d| d <= config.max_delay_ns)
-                .count()
-                .max(1) // Ensure at least 1 channel
-        }
-    };
+    let (n_delay_channels, start_delay_ns) =
+        selected_delay_bins(nfreqs_padded, actual_delay_res_ns, config).map_or((1, 0.0), |bins| {
+            (bins.len(), bins.start as f64 * actual_delay_res_ns)
+        });
 
     DelayChannelInfo {
         n_delay_channels,
+        start_delay_ns,
         nfreqs_padded,
         actual_delay_res_ns,
         max_computable_delay_ns,
     }
 }
 
-/// Blackman window (same as numpy.blackman)
+/// Blackman window (same as `numpy.blackman`)
 fn blackman_window(n: usize) -> Array1<f64> {
-    let mut window = Array1::zeros(n);
     if n == 1 {
-        window[0] = 1.0;
-        return window;
+        return Array1::ones(1);
     }
-    for i in 0..n {
+    Array1::from_shape_fn(n, |i| {
         let a = 2.0 * PI * i as f64 / (n as f64 - 1.0);
-        window[i] = 0.42 - 0.5 * a.cos() + 0.08 * (2.0 * a).cos();
-    }
-    window
+        0.42 - 0.5 * a.cos() + 0.08 * (2.0 * a).cos()
+    })
 }
 
-/// Perform a delay transform (FFT along frequency axis) for each antenna.
-/// Input: `rdx_ant_freq` (nants, nfreqs), `freq_hz` (nfreqs)
+/// Perform a delay transform (the amplitude of the FFT along the frequency
+/// axis) of each row of `rdx_ant_freq`. See the [module docs](self) for the
+/// details.
+///
+/// - `rdx_ant_freq` - spectra with dimensions `(nants, nfreqs)`. Non-finite
+///   samples are treated as zero. A row with no finite samples gives a row of
+///   `NaN`.
+/// - `freq_hz` - the centre frequency of each channel \[Hz\], which should be
+///   evenly spaced.
+///
+/// The number of delay bins in the result can be calculated ahead of time with
+/// [`calculate_delay_channels`].
 ///
 /// # Errors
 ///
-/// Returns an error if no delays fall within `config.max_delay_ns`.
-#[allow(clippy::cognitive_complexity)]
+/// Returns [`DelayTransformError::NoDelaysInRange`] if no delays are at or
+/// below `config.max_delay_ns`.
+///
+/// # Panics
+///
+/// Panics if `freq_hz` has fewer than two channels.
 pub fn delay_transform(
     rdx_ant_freq: &Array2<f64>,
     freq_hz: &Array1<f64>,
     config: &DelayTransformConfig,
-) -> Result<DelayTransformResult, Box<dyn std::error::Error>> {
-    let nants = rdx_ant_freq.nrows();
-    let nfreqs = rdx_ant_freq.ncols();
+) -> Result<DelayTransformResult, DelayTransformError> {
+    let (nants, nfreqs) = rdx_ant_freq.dim();
 
-    debug!(
-        "Computing delay transform: {}-{} ns",
-        config.min_delay_ns, config.max_delay_ns
-    );
-
-    // Get delay channel information
     let delay_info = calculate_delay_channels(nfreqs, freq_hz, config);
     let nfreqs_padded = delay_info.nfreqs_padded;
-
-    debug!(
-        "Zero-padding: {} -> {} for {:.1} ns resolution",
-        nfreqs, nfreqs_padded, delay_info.actual_delay_res_ns
+    let delay_res_ns = delay_info.actual_delay_res_ns;
+    trace!(
+        "delay transform: zero-padding {nfreqs} -> {nfreqs_padded} channels for {delay_res_ns:.2} ns resolution"
     );
 
-    // Initialize output array
-    let mut rdx_ant_delay = Array2::from_elem((nants, nfreqs_padded), f64::NAN);
+    let delay_bins = selected_delay_bins(nfreqs_padded, delay_res_ns, config).ok_or(
+        DelayTransformError::NoDelaysInRange {
+            max_delay_ns: config.max_delay_ns,
+        },
+    )?;
 
-    // FFT setup
-    let mut planner = FftPlanner::new();
-    let fft = planner.plan_fft_forward(nfreqs_padded);
-
-    // Blackman window
+    let fft = FftPlanner::new().plan_fft_forward(nfreqs_padded);
     let window = blackman_window(nfreqs);
 
-    // Process each antenna
-    for ant in 0..nants {
-        let ant_data = rdx_ant_freq.row(ant);
-        let valid_mask: Vec<bool> = ant_data.iter().map(|&x| x.is_finite()).collect();
-        if !valid_mask.iter().any(|&x| x) {
+    let mut delay_spectrum = Array2::from_elem((nants, delay_bins.len()), f64::NAN);
+    let mut buffer = vec![Complex64::new(0.0, 0.0); nfreqs_padded];
+    for (spectrum, mut delay_spectrum) in rdx_ant_freq
+        .outer_iter()
+        .zip(delay_spectrum.outer_iter_mut())
+    {
+        if !spectrum.iter().any(|x| x.is_finite()) {
             continue;
         }
-        let mut data_windowed = Array1::zeros(nfreqs);
-        for i in 0..nfreqs {
-            data_windowed[i] = if valid_mask[i] {
-                ant_data[i] * window[i]
-            } else {
-                0.0
-            };
-        }
-        let mut data_padded: Vec<Complex64> = vec![Complex64::new(0.0, 0.0); nfreqs_padded];
-        for i in 0..nfreqs {
-            data_padded[i] = Complex64::new(data_windowed[i], 0.0);
-        }
-        fft.process(&mut data_padded);
-        for i in 0..nfreqs_padded {
-            rdx_ant_delay[[ant, i]] = data_padded[i].norm();
-        }
-    }
-
-    // Delay axis [ns]
-    let mut delays_ns = Array1::zeros(nfreqs_padded);
-    for i in 0..nfreqs_padded {
-        delays_ns[i] = i as f64 * delay_info.actual_delay_res_ns;
-    }
-
-    debug!(
-        "Actual delay range: 0 to {:.1} ns, res={:.2} ns",
-        delay_info.max_computable_delay_ns, delay_info.actual_delay_res_ns
-    );
-    debug!(
-        "Channel BW = {:.3} MHz -> delay period = {:.1} ns",
-        (freq_hz[1] - freq_hz[0]) / 1e6,
-        1e9 / (freq_hz[1] - freq_hz[0])
-    );
-
-    // Check if we have finite data
-    let has_finite = rdx_ant_delay.iter().any(|&x| x.is_finite());
-    debug!(
-        "Delay data shape: {:?}, has finite data: {}",
-        rdx_ant_delay.dim(),
-        has_finite
-    );
-
-    if has_finite {
-        let min_val = rdx_ant_delay
-            .iter()
-            .filter(|&&x| x.is_finite())
-            .fold(f64::INFINITY, |a, &b| a.min(b));
-        let max_val = rdx_ant_delay
-            .iter()
-            .filter(|&&x| x.is_finite())
-            .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-        debug!("Data range: {min_val:.2e} to {max_val:.2e}");
-    }
-
-    // Filter to requested delay range (same logic as in calculate_delay_channels)
-    let delay_mask: Vec<bool> = delays_ns
-        .iter()
-        .map(|&d| d >= config.min_delay_ns && d <= config.max_delay_ns)
-        .collect();
-    let mask_count = delay_mask.iter().filter(|&&x| x).count();
-
-    debug!(
-        "Requested range {}-{} ns has {} points",
-        config.min_delay_ns, config.max_delay_ns, mask_count
-    );
-
-    let (filtered_delay_spectrum, filtered_delays) = if mask_count > 5 {
-        // Apply the mask
-        let valid_indices: Vec<usize> = delay_mask
-            .iter()
-            .enumerate()
-            .filter(|(_, &mask)| mask)
-            .map(|(i, _)| i)
-            .collect();
-        let mut filtered_spectrum = Array2::zeros((nants, valid_indices.len()));
-        let mut filtered_delays_array = Array1::zeros(valid_indices.len());
-        for (new_idx, &old_idx) in valid_indices.iter().enumerate() {
-            for ant in 0..nants {
-                filtered_spectrum[[ant, new_idx]] = rdx_ant_delay[[ant, old_idx]];
-            }
-            filtered_delays_array[new_idx] = delays_ns[old_idx];
-        }
-
-        debug!(
-            "Using filtered range: {:.1} to {:.1} ns",
-            filtered_delays_array[0],
-            filtered_delays_array[filtered_delays_array.len() - 1]
-        );
-
-        (filtered_spectrum, filtered_delays_array)
-    } else {
-        // Show broader range if requested range is too narrow
-        if delay_info.max_computable_delay_ns < config.max_delay_ns {
-            debug!(
-                "Showing full computed range: 0 to {:.1} ns",
-                delay_info.max_computable_delay_ns
-            );
-            (rdx_ant_delay, delays_ns)
-        } else {
-            // Show subset up to max_delay_ns
-            let subset_indices: Vec<usize> = delays_ns
-                .iter()
-                .enumerate()
-                .take_while(|(_, &d)| d <= config.max_delay_ns)
-                .map(|(i, _)| i)
-                .collect();
-            if subset_indices.is_empty() {
-                debug!("No delays <= {} ns found!", config.max_delay_ns);
-                return Err("No valid delays in requested range".into());
-            } else {
-                let subset_end = subset_indices.len();
-                let mut subset_spectrum = Array2::zeros((nants, subset_end));
-                let mut subset_delays = Array1::zeros(subset_end);
-                for i in 0..subset_end {
-                    for ant in 0..nants {
-                        subset_spectrum[[ant, i]] = rdx_ant_delay[[ant, i]];
-                    }
-                    subset_delays[i] = delays_ns[i];
-                }
-
-                debug!(
-                    "Showing subset: 0 to {:.1} ns",
-                    subset_delays[subset_end - 1]
-                );
-                (subset_spectrum, subset_delays)
+        buffer.fill(Complex64::new(0.0, 0.0));
+        for ((buf, &x), &w) in buffer.iter_mut().zip(spectrum.iter()).zip(window.iter()) {
+            if x.is_finite() {
+                *buf = Complex64::new(x * w, 0.0);
             }
         }
-    };
+        fft.process(&mut buffer);
+        for (out, transformed) in delay_spectrum.iter_mut().zip(&buffer[delay_bins.clone()]) {
+            *out = transformed.norm();
+        }
+    }
 
-    debug!(
-        "Final result: {:.1} to {:.1} ns, {} points",
-        filtered_delays[0],
-        filtered_delays[filtered_delays.len() - 1],
-        filtered_delays.len()
-    );
+    let delays_ns = delay_bins.map(|i| i as f64 * delay_res_ns).collect();
 
     Ok(DelayTransformResult {
-        delay_spectrum: filtered_delay_spectrum,
-        delays_ns: filtered_delays,
+        delay_spectrum,
+        delays_ns,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use approx::assert_abs_diff_eq;
+    use std::f64::consts::TAU;
 
     use super::*;
 
+    /// 128 channels of 10 kHz, starting at 133 MHz.
+    fn fine_freqs_hz() -> Array1<f64> {
+        Array1::from_iter((0..128).map(|i| 133e6 + i as f64 * 10e3))
+    }
+
     #[test]
     fn test_blackman_window() {
-        let window = blackman_window(10);
-        assert_eq!(window.len(), 10);
-        // Blackman window should start and end near zero
-        assert!(window[0] < 0.1);
-        assert!(window[9] < 0.1);
-        // And peak in the middle
-        assert!(window[4] > 0.3);
-        assert!(window[5] > 0.3);
+        // numpy.blackman(5)
+        let window = blackman_window(5);
+        for (&obs, exp) in window.iter().zip([0.0, 0.34, 1.0, 0.34, 0.0]) {
+            assert_abs_diff_eq!(obs, exp, epsilon = 1e-12);
+        }
+        // numpy.blackman(1)
+        assert_eq!(blackman_window(1).to_vec(), vec![1.0]);
+        assert_eq!(blackman_window(0).len(), 0);
     }
 
     #[test]
@@ -340,10 +319,33 @@ mod tests {
         };
 
         let info = calculate_delay_channels(nfreqs, &freq_hz, &config);
+        // the channels are 100/63 MHz wide, so 64 channels give 9.84 ns
+        // resolution, and they need to be padded 20 times to get under 0.5 ns
+        assert_eq!(info.nfreqs_padded, 64 * 20);
+        assert_abs_diff_eq!(info.actual_delay_res_ns, 0.4921875, epsilon = 1e-9);
+        assert_abs_diff_eq!(
+            info.max_computable_delay_ns,
+            1279.0 * 0.4921875,
+            epsilon = 1e-6
+        );
+        // bins 13 (6.40 ns) to 121 (59.55 ns)
         assert_eq!(info.n_delay_channels, 109);
-        assert!(info.nfreqs_padded >= nfreqs);
-        assert_abs_diff_eq!(info.actual_delay_res_ns, 0.5, epsilon = 1e-1);
-        assert!(info.max_computable_delay_ns >= 60.0);
+        assert_abs_diff_eq!(info.start_delay_ns, 13.0 * 0.4921875, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn test_no_padding_when_resolution_is_already_fine_enough() {
+        // 128 channels of 10 kHz give 781.25 ns resolution
+        let freq_hz = fine_freqs_hz();
+        let config = DelayTransformConfig {
+            min_delay_ns: 0.0,
+            max_delay_ns: 1e6,
+            target_delay_res_ns: 1000.0,
+        };
+        let info = calculate_delay_channels(128, &freq_hz, &config);
+        assert_eq!(info.nfreqs_padded, 128);
+        assert_abs_diff_eq!(info.actual_delay_res_ns, 781.25, epsilon = 1e-9);
+        assert_eq!(info.n_delay_channels, 128);
     }
 
     #[test]
@@ -354,137 +356,179 @@ mod tests {
         let freq_hz = Array1::linspace(100e6, 200e6, nfreqs);
         let config = DelayTransformConfig::default();
 
-        // Test that calculate_delay_channels predicts the correct size
+        // calculate_delay_channels predicts the size of the result
         let info = calculate_delay_channels(nfreqs, &freq_hz, &config);
         let result = delay_transform(&rdx_ant_freq, &freq_hz, &config).unwrap();
 
-        assert_eq!(result.delay_spectrum.nrows(), nants);
-        assert_eq!(result.delay_spectrum.ncols(), info.n_delay_channels);
+        assert_eq!(result.delay_spectrum.dim(), (nants, info.n_delay_channels));
         assert_eq!(result.delays_ns.len(), info.n_delay_channels);
+        // the default range starts at zero delay, and the bins are evenly spaced
+        assert_abs_diff_eq!(result.delays_ns[0], 0.0);
+        assert_abs_diff_eq!(info.start_delay_ns, 0.0);
+        assert_abs_diff_eq!(
+            result.delays_ns[1] - result.delays_ns[0],
+            info.actual_delay_res_ns,
+            epsilon = 1e-9
+        );
+        assert!(*result.delays_ns.last().unwrap() <= config.max_delay_ns);
     }
 
+    /// A ripple in the spectrum gives a peak at the delay of the ripple, with
+    /// an amplitude that scales with the amplitude of the ripple.
     #[test]
-    fn test_uvfits_like_parameters() {
-        // Test with parameters similar to the UVfits file that Python processes
-        let nants = 3;
-        let nfreqs = 128;
-
-        // MWA-like frequency setup: 133-156 MHz, 10 kHz channels
-        let start_freq = 133e6; // 133 MHz
-        let freq_res = 10e3; // 10 kHz
-        let freq_hz = Array1::from_iter((0..nfreqs).map(|i| start_freq + i as f64 * freq_res));
-
-        // Create some realistic test data with different spectral signatures per antenna
-        let mut rdx_ant_freq = Array2::zeros((nants, nfreqs));
-        for ant in 0..nants {
-            for freq in 0..nfreqs {
-                // Simulate different antenna responses
-                let normalized_freq = freq as f64 / nfreqs as f64;
-                rdx_ant_freq[[ant, freq]] = match ant {
-                    0 => 1e6 * (1.0 + 0.1 * (normalized_freq * 4.0 * std::f64::consts::PI).sin()), // Strong sine pattern
-                    1 => 5e5 * (1.0 + 0.05 * (normalized_freq * 8.0 * std::f64::consts::PI).sin()), // Weaker, higher freq
-                    _ => 2e6 * (1.0 + 0.2 * (normalized_freq * 2.0 * std::f64::consts::PI).cos()), // Cosine pattern
-                };
-            }
-        }
-
+    fn test_delay_transform_finds_ripple() {
+        // 1024 channels of 40 kHz give 24 ns resolution before padding
+        let freq_hz = Array1::from_iter((0..1024).map(|i| 150e6 + i as f64 * 40e3));
+        let ripples = [(0.1, 250e-9), (0.2, 400e-9), (0.4, 400e-9)];
+        let rdx_ant_freq = Array2::from_shape_fn((ripples.len(), freq_hz.len()), |(ant, f)| {
+            let (amp, delay_s) = ripples[ant];
+            1e6 * (1.0 + amp * (TAU * freq_hz[f] * delay_s).cos())
+        });
         let config = DelayTransformConfig {
-            min_delay_ns: 10.0,
-            max_delay_ns: 1000.0,
+            min_delay_ns: 100.0,
+            max_delay_ns: 3000.0,
             target_delay_res_ns: 1.0,
         };
 
         let result = delay_transform(&rdx_ant_freq, &freq_hz, &config).unwrap();
 
-        eprintln!("UVfits-like test results:");
-        eprintln!("Input shape: {:?}", rdx_ant_freq.dim());
-        eprintln!("Output shape: {:?}", result.delay_spectrum.dim());
-        eprintln!(
-            "Delay range: {:.1} to {:.1} ns",
-            result.delays_ns[0],
-            result.delays_ns[result.delays_ns.len() - 1]
-        );
-        eprintln!(
-            "Input data range: {:.2e} to {:.2e}",
-            rdx_ant_freq.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
-            rdx_ant_freq
-                .iter()
-                .fold(f64::NEG_INFINITY, |a, &b| a.max(b))
-        );
-        eprintln!(
-            "Output data range: {:.2e} to {:.2e}",
-            result
-                .delay_spectrum
-                .iter()
-                .filter(|&&x| x.is_finite())
-                .fold(f64::INFINITY, |a, &b| a.min(b)),
-            result
-                .delay_spectrum
-                .iter()
-                .filter(|&&x| x.is_finite())
-                .fold(f64::NEG_INFINITY, |a, &b| a.max(b))
-        );
+        assert!(result.delays_ns[0] >= config.min_delay_ns);
+        assert!(result.delays_ns[0] < config.min_delay_ns + 1.0);
+        assert!(*result.delays_ns.last().unwrap() <= config.max_delay_ns);
+        assert!(*result.delays_ns.last().unwrap() > config.max_delay_ns - 1.0);
 
-        // Basic sanity checks
-        assert_eq!(result.delay_spectrum.nrows(), nants);
-        assert!(result.delay_spectrum.ncols() > 100); // Should have reasonable number of delay channels
-        assert!(result.delays_ns[0] >= 10.0);
-        assert!(result.delays_ns[result.delays_ns.len() - 1] <= 1000.0);
+        // the delay and amplitude of the peak of each spectrum
+        let peaks: Vec<(f64, f64)> = result
+            .delay_spectrum
+            .outer_iter()
+            .map(|row| {
+                let (idx, amp) = row
+                    .iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.total_cmp(b.1))
+                    .unwrap();
+                (result.delays_ns[idx], *amp)
+            })
+            .collect();
+        assert_abs_diff_eq!(peaks[0].0, 250.0, epsilon = 2.0);
+        assert_abs_diff_eq!(peaks[1].0, 400.0, epsilon = 2.0);
+        assert_abs_diff_eq!(peaks[2].0, 400.0, epsilon = 2.0);
+        // twice the ripple, twice the peak
+        assert_abs_diff_eq!(peaks[2].1 / peaks[1].1, 2.0, epsilon = 0.01);
+        // a ripple of relative amplitude `a` on a spectrum of amplitude `s`
+        // peaks at `a * s / 2` times the sum of the window.
+        let window_sum = blackman_window(1024).sum();
+        assert_abs_diff_eq!(
+            peaks[1].1 / (0.2 * 1e6 / 2.0 * window_sum),
+            1.0,
+            epsilon = 0.01
+        );
+    }
 
-        // Check that we have finite, non-zero data
-        let has_finite = result
+    /// The transform is linear in the spectrum
+    #[test]
+    fn test_delay_transform_is_linear() {
+        let freq_hz = fine_freqs_hz();
+        let spectrum = Array2::from_shape_fn((1, 128), |(_, f)| ((f * 7) % 13) as f64);
+        let config = DelayTransformConfig::default();
+        let result = delay_transform(&spectrum, &freq_hz, &config).unwrap();
+        let result_x3 = delay_transform(&(&spectrum * 3.0), &freq_hz, &config).unwrap();
+        for (a, b) in result
             .delay_spectrum
             .iter()
-            .any(|&x| x.is_finite() && x > 0.0);
-        assert!(
-            has_finite,
-            "Delay spectrum should contain finite, positive values"
+            .zip(result_x3.delay_spectrum.iter())
+        {
+            assert_abs_diff_eq!(a * 3.0, *b, epsilon = 1e-9);
+        }
+        // zero delay is the sum of the windowed spectrum
+        let windowed_sum: f64 = spectrum
+            .row(0)
+            .iter()
+            .zip(blackman_window(128).iter())
+            .map(|(x, w)| x * w)
+            .sum();
+        assert_abs_diff_eq!(result.delay_spectrum[[0, 0]], windowed_sum, epsilon = 1e-9);
+    }
+
+    /// Flagged (NaN) channels are treated as zero, and a spectrum which is
+    /// entirely flagged gives NaN.
+    #[test]
+    fn test_delay_transform_handles_nan() {
+        let freq_hz = fine_freqs_hz();
+        let mut spectra = Array2::from_shape_fn((3, 128), |(_, f)| 1.0 + (f % 5) as f64);
+        // tile 0 has a flagged channel, tile 1 has the same channel zeroed
+        spectra[[0, 17]] = f64::NAN;
+        spectra[[1, 17]] = 0.0;
+        // tile 2 is flagged
+        spectra.row_mut(2).fill(f64::NAN);
+
+        let result = delay_transform(&spectra, &freq_hz, &DelayTransformConfig::default()).unwrap();
+
+        assert!(result.delay_spectrum.row(0).iter().all(|x| x.is_finite()));
+        assert_eq!(result.delay_spectrum.row(0), result.delay_spectrum.row(1));
+        assert!(result.delay_spectrum.row(2).iter().all(|x| x.is_nan()));
+    }
+
+    /// When fewer than `MIN_DELAY_BINS` bins are in the requested range, all
+    /// the delays up to the maximum are given instead.
+    #[test]
+    fn test_narrow_delay_range_falls_back_to_broader_range() {
+        // 128 channels of 10 kHz give 781.25 ns resolution without padding
+        let freq_hz = fine_freqs_hz();
+        let spectra = Array2::ones((2, 128));
+
+        // only 2 bins (1562.5, 2343.75) are between 1000 and 3000 ns, so this
+        // gives bins 0..=3
+        let config = DelayTransformConfig {
+            min_delay_ns: 1000.0,
+            max_delay_ns: 3000.0,
+            target_delay_res_ns: 1000.0,
+        };
+        let info = calculate_delay_channels(128, &freq_hz, &config);
+        let result = delay_transform(&spectra, &freq_hz, &config).unwrap();
+        assert_eq!(info.n_delay_channels, 4);
+        assert_eq!(
+            result.delays_ns.to_vec(),
+            vec![0.0, 781.25, 1562.5, 2343.75]
+        );
+        assert_eq!(result.delay_spectrum.dim(), (2, 4));
+
+        // nothing is in range, and the maximum is beyond the last bin, so this
+        // gives every bin.
+        let config = DelayTransformConfig {
+            min_delay_ns: 1e6,
+            max_delay_ns: 2e6,
+            target_delay_res_ns: 1000.0,
+        };
+        let info = calculate_delay_channels(128, &freq_hz, &config);
+        let result = delay_transform(&spectra, &freq_hz, &config).unwrap();
+        assert_eq!(info.n_delay_channels, 128);
+        assert_eq!(result.delays_ns.len(), 128);
+        assert_abs_diff_eq!(
+            *result.delays_ns.last().unwrap(),
+            info.max_computable_delay_ns
         );
     }
 
     #[test]
-    #[cfg(feature = "cli")]
-    #[ignore] // Run with: cargo test test_real_data_debug -- --ignored --nocapture
-    fn test_real_data_debug() {
-        use crate::cli::BirliContext;
-        use std::path::Path;
-
-        let metafits_path = "/Users/dev/Code/mwa-demo/demo/data/1361397000/raw/1361397000.metafits";
-        let gpubox_path = "/Users/dev/Code/mwa-demo/demo/data/1361397000/raw/1361397000_20230225214942_ch137_000.fits";
-        let output_path = "test_debug_metrics.fits";
-
-        // Check if input files exist
-        if !Path::new(metafits_path).exists() || !Path::new(gpubox_path).exists() {
-            eprintln!("Skipping test - input files not found");
-            eprintln!("Expected: {metafits_path} and {gpubox_path}");
-            return;
-        }
-
-        // Use BirliContext following the pattern from existing tests
-        let args = vec![
-            "birli",
-            "--metrics-out",
-            output_path,
-            "-m",
-            metafits_path,
-            "--no-draw-progress",
-            gpubox_path,
-        ];
-
-        let birli_ctx = BirliContext::from_args(&args).unwrap();
-        birli_ctx.run().unwrap();
-
-        // Check if output file was created
-        assert!(
-            Path::new(output_path).exists(),
-            "Output metrics file was not created"
+    fn test_no_delays_in_range() {
+        let freq_hz = fine_freqs_hz();
+        let spectra = Array2::ones((1, 128));
+        let config = DelayTransformConfig {
+            min_delay_ns: -20.0,
+            max_delay_ns: -10.0,
+            target_delay_res_ns: 1.0,
+        };
+        let err = delay_transform(&spectra, &freq_hz, &config).unwrap_err();
+        assert!(matches!(
+            err,
+            DelayTransformError::NoDelaysInRange { max_delay_ns } if max_delay_ns < 0.0
+        ));
+        assert!(err.to_string().contains("no delays in the requested range"));
+        // the size calculation never gives zero
+        assert_eq!(
+            calculate_delay_channels(128, &freq_hz, &config).n_delay_channels,
+            1
         );
-
-        eprintln!("Successfully created {output_path}");
-        eprintln!("You can view it with: carta {output_path}");
-        eprintln!("Debug output should show spectral analysis above");
-
-        // Clean up
-        std::fs::remove_file(output_path).ok();
     }
 }

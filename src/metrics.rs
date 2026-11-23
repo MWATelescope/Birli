@@ -1,48 +1,157 @@
-//! SSINS (Sky-Subtract Incoherent Noise Spectra)
+//! Quality-assurance metrics for preprocessed visibilities.
 //!
-//! This module implements the SSINS algorithm, which is a method for
-//! subtracting incoherent noise from the visibilities.
+//! These metrics are cheap summaries of a chunk of visibilities, which are
+//! computed after the corrections and flagging, before averaging. They are
+//! written to a FITS file with `birli --metrics-out <PATH>`, or they can be
+//! computed and written one at a time with this module.
 //!
-//! The algorithm is described in:
-//! - <https://arxiv.org/abs/1906.01093>
-//! - <https://ssins.readthedocs.io/en/latest/>
+//! | metric | what it is | needs |
+//! | --- | --- | --- |
+//! | [`AutoMetrics`] | per-tile autocorrelation bandpass, its polynomial fit and delay transform, and the autocorrelations with the bandpass subtracted | autocorrelations |
+//! | [`SSINS`] | z-scores of the incoherent noise spectrum: the baseline-averaged amplitude of the time-differenced cross-correlations, as in [SSINS](https://ssins.readthedocs.io/en/latest/) ([Wilensky et al. 2019](https://arxiv.org/abs/1906.01093)) | at least 2 timesteps |
+//! | [`EAVILS`] | z-scores of the baseline-averaged amplitude of the visibilities, without time differencing | |
+//! | `AOFlagMetrics` | fraction of cross-correlation baselines flagged at each time and frequency | `aoflagger` feature |
+//! | `CrossMetrics` | per-tile delay transform of the cross-correlations on short baselines | `aoflagger` feature |
+//!
+//! Every metric has two constructors:
+//! - `new` takes the [`mwalib::CorrelatorContext`](CorrelatorContext),
+//!   [`VisSelection`] and [`FlagContext`] of an observation that was read with
+//!   Birli.
+//! - `new_from_metadata` takes a [`MetricsContext`], so that the metrics can be
+//!   computed for visibilities from any source.
+//!
+//! and a `save_to_fits` method, which appends the metric's HDUs to an open
+//! FITS file. The layout of these HDUs is described in
+//! [`doc/metrics.md`](https://github.com/MWATelescope/Birli/blob/main/doc/metrics.md).
+//!
+//! # Conventions
+//!
+//! - Visibility and flag arrays have dimensions `[timestep][channel][baseline]`,
+//!   like the arrays in the rest of Birli.
+//! - Timesteps in `timestep_flags` and channels in `chan_flags` are left out of
+//!   every metric. Only [`SSINS`] and `AOFlagMetrics` look at the flags of
+//!   individual visibilities.
+//! - [`Jones`] matrices are in the order `XX, XY, YX, YY`. [`SSINS`] and
+//!   [`EAVILS`] keep this order. [`AutoMetrics`] arrays are in the order of the
+//!   FITS Stokes axis, `XX, YY, XY, YX`, see [`hyperdrive_to_fits_stokes`].
+//!
+//! # Examples
+//!
+//! ```rust
+//! use birli::{
+//!     marlu::{fitsio::FitsFile, mwalib::CorrelatorContext},
+//!     metrics::{AutoMetrics, EAVILS, SSINS},
+//!     FlagContext, VisSelection,
+//! };
+//! use tempfile::tempdir;
+//!
+//! // a legacy observation with 4 timesteps of 2 coarse channels, each with 2
+//! // fine channels
+//! let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
+//! let gpufits_paths = vec![
+//!     "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
+//!     "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox01_01.fits",
+//!     "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
+//!     "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
+//! ];
+//! let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
+//!
+//! // read the first 4 tiles
+//! let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+//! vis_sel.retain_antennas(&corr_ctx.metafits_context, &[0, 1, 2, 3]);
+//! let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+//! let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+//! let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+//! let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+//! flag_ctx
+//!     .set_flags(
+//!         flag_array.view_mut(),
+//!         &vis_sel.timestep_range,
+//!         &vis_sel.coarse_chan_range,
+//!         &vis_sel.get_ant_pairs(&corr_ctx.metafits_context),
+//!     )
+//!     .unwrap();
+//! birli::io::read_mwalib(&vis_sel, &corr_ctx, jones_array.view_mut(), flag_array.view_mut(), false)
+//!     .unwrap();
+//!
+//! let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+//! let ssins = SSINS::new(jones_array.view(), flag_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+//! let eavils = EAVILS::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+//!
+//! // one bandpass per tile and polarisation
+//! assert_eq!(auto_metrics.auto_spectrum_afp.dim(), (4, 4, 4));
+//! // one fewer timestep than the data, because SSINS differences in time
+//! assert_eq!(ssins.zscore.dim(), (3, 4, 4));
+//! assert_eq!(eavils.zscore.dim(), (4, 4, 4));
+//!
+//! let tmp_dir = tempdir().unwrap();
+//! let mut fptr = FitsFile::create(tmp_dir.path().join("metrics.fits")).open().unwrap();
+//! auto_metrics.save_to_fits(&mut fptr).unwrap();
+//! ssins.save_to_fits(&mut fptr).unwrap();
+//! eavils.save_to_fits(&mut fptr).unwrap();
+//! ```
 
-use std::collections::HashMap;
+use std::collections::BTreeSet;
 
 use rayon::prelude::*;
 
 use marlu::XyzGeocentric;
 
 #[cfg(feature = "aoflagger")]
-use crate::marlu::{
-    ndarray::{Array1, Axis},
-    num_complex::Complex,
-};
+use crate::marlu::{ndarray::Axis, num_complex::Complex};
 use crate::{
     delay_transform::{calculate_delay_channels, delay_transform, DelayTransformConfig},
     marlu::{
         fitsio::{
-            images::{ImageDescription, ImageType},
+            hdu::FitsHdu,
+            images::{ImageDescription, ImageType, WriteImage},
+            tables::{ColumnDataType, ColumnDescription},
             FitsFile,
         },
         mwalib::CorrelatorContext,
-        ndarray::{s, Array2, Array3, Array4, ArrayView3},
+        ndarray::{s, Array1, Array2, Array3, Array4, ArrayView3},
         Jones, VisSelection,
     },
+    math::fit_polynomial,
     FlagContext,
 };
 
-/// Minimal metadata required for metrics calculation
-/// This allows metrics to work with any data source, not just mwalib `CorrelatorContext`
+/// The result of writing to a FITS file.
+type FitsResult<T> = Result<T, crate::marlu::fitsio::errors::Error>;
+
+/// Names of the polarisations in the order of a [`Jones`] matrix.
+const JONES_POL_NAMES: [&str; 4] = ["XX", "XY", "YX", "YY"];
+
+/// Names of the polarisations in the order of the FITS Stokes axis (-5, -6,
+/// -7, -8), see [`hyperdrive_to_fits_stokes`].
+const FITS_POL_NAMES: [&str; 4] = ["XX", "YY", "XY", "YX"];
+
+/// The delays in the delay transforms of [`AutoMetrics`] and [`CrossMetrics`].
+const DELAY_TRANSFORM_CONFIG: DelayTransformConfig = DelayTransformConfig {
+    min_delay_ns: 100.0,
+    max_delay_ns: 3000.0,
+    target_delay_res_ns: 1.0,
+};
+
+/// The order of the polynomial that [`AutoMetrics`] fits to each bandpass.
+const AUTO_POLY_ORDER: usize = 2;
+
+/// The metadata that is needed to calculate metrics.
+///
+/// This allows metrics to work with visibilities from any source, not just
+/// those that were read with an mwalib [`CorrelatorContext`].
 #[derive(Debug, Clone)]
 pub struct MetricsContext {
-    /// Antenna information for selected antennas
+    /// Information about each antenna that is in `antenna_pairs`, in order of
+    /// increasing antenna index. So if `antenna_pairs` only has antennas 2 and
+    /// 5, this has two elements: antenna 2, then antenna 5.
     pub antennas: Vec<AntennaMetadata>,
-    /// Fine channel frequencies in Hz
+    /// Centre frequency of each fine channel \[Hz\]
     pub fine_chan_freqs_hz: Vec<f64>,
-    /// GPS timestamps in seconds
+    /// GPS time of each timestep \[s\]
     pub timestamps_s: Vec<f64>,
-    /// Antenna pairs (indices into the antennas vec) - corresponds to baseline dimension
+    /// The antenna indices of each baseline, in the order of the baseline axis
+    /// of the visibilities. Autocorrelations have the same index twice.
     pub antenna_pairs: Vec<(usize, usize)>,
 }
 
@@ -74,8 +183,14 @@ pub struct AntennaMetadata {
 }
 
 impl MetricsContext {
-    /// Create `MetricsContext` from mwalib `CorrelatorContext` and `VisSelection`
-    /// This is a convenience function for backward compatibility
+    /// Create a [`MetricsContext`] for the timesteps, coarse channels and
+    /// baselines of `vis_sel` in the observation `corr_ctx`.
+    ///
+    /// The receiver and cable of a tile are those of its X polarisation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `vis_sel` is not a selection of `corr_ctx`.
     pub fn from_mwalib(corr_ctx: &CorrelatorContext, vis_sel: &VisSelection) -> Self {
         let fine_chan_freqs_hz = corr_ctx
             .get_fine_chan_freqs_hz_array(&vis_sel.coarse_chan_range.clone().collect::<Vec<_>>())
@@ -88,16 +203,7 @@ impl MetricsContext {
 
         let antenna_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
 
-        // Get unique antennas from antenna_pairs
-        let mut unique_ant_indices = std::collections::HashSet::new();
-        for &(a, b) in &antenna_pairs {
-            unique_ant_indices.insert(a);
-            unique_ant_indices.insert(b);
-        }
-        let mut sorted_ant_indices: Vec<usize> = unique_ant_indices.into_iter().collect();
-        sorted_ant_indices.sort_unstable();
-
-        let antennas: Vec<AntennaMetadata> = sorted_ant_indices
+        let antennas: Vec<AntennaMetadata> = selected_antennas(&antenna_pairs)
             .iter()
             .map(|&idx| {
                 let ant = &corr_ctx.metafits_context.antennas[idx];
@@ -124,15 +230,67 @@ impl MetricsContext {
             antenna_pairs,
         }
     }
+
+    /// The time between the first two timesteps \[s\], or 1 if there is only
+    /// one timestep.
+    fn integration_time_s(&self) -> f64 {
+        if self.timestamps_s.len() > 1 {
+            self.timestamps_s[1] - self.timestamps_s[0]
+        } else {
+            1.0
+        }
+    }
+
+    /// The frequency difference between the first two channels \[Hz\], or 1 if
+    /// there is only one channel.
+    fn channel_width_hz(&self) -> f64 {
+        if self.fine_chan_freqs_hz.len() > 1 {
+            self.fine_chan_freqs_hz[1] - self.fine_chan_freqs_hz[0]
+        } else {
+            1.0
+        }
+    }
 }
 
-/// when you want to convert hyperdrive stokes order to standard stokes order.
-/// fits standard:
-/// −5 'XX' X parallel linear
-/// −6 'YY' Y parallel linear
-/// −7 'XY' XY cross linear
-/// −8 'YX' YX cross linear
-/// but hyperdrive is XX XY YX YY
+/// The sorted indices of the antennas which are in any of `antenna_pairs`.
+/// [`MetricsContext::antennas`] is in this order.
+fn selected_antennas(antenna_pairs: &[(usize, usize)]) -> Vec<usize> {
+    antenna_pairs
+        .iter()
+        .flat_map(|&(a, b)| [a, b])
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// The metadata, timestep flags and channel flags for the selection `vis_sel`
+/// of the observation `corr_ctx`.
+fn selection_metadata(
+    corr_ctx: &CorrelatorContext,
+    vis_sel: &VisSelection,
+    flag_ctx: &FlagContext,
+) -> (MetricsContext, Vec<bool>, Vec<bool>) {
+    (
+        MetricsContext::from_mwalib(corr_ctx, vis_sel),
+        flag_ctx.timestep_flags[vis_sel.timestep_range.clone()].to_vec(),
+        flag_ctx.get_raw_chan_flags(&vis_sel.coarse_chan_range),
+    )
+}
+
+/// Convert a polarisation index in the order of a [`Jones`] matrix (as in
+/// hyperdrive: `XX, XY, YX, YY`) to an index in the order of the FITS Stokes
+/// axis:
+///
+/// | Stokes | polarisation | FITS index | Jones index |
+/// | --- | --- | --- | --- |
+/// | -5 | `XX` | 0 | 0 |
+/// | -6 | `YY` | 1 | 3 |
+/// | -7 | `XY` | 2 | 1 |
+/// | -8 | `YX` | 3 | 2 |
+///
+/// # Panics
+///
+/// Panics if `pol` is not less than 4.
 pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
     match pol {
         0 => 0,
@@ -143,21 +301,136 @@ pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
     }
 }
 
-/// Autocorrelation metrics
+/// Append an image HDU called `extname` to a FITS file.
+///
+/// `dimensions` are in the order of the array that `data` was flattened from,
+/// which is the reverse of the order of the FITS axes: the last dimension is
+/// FITS axis 1.
+fn write_image_hdu<T: WriteImage + Copy>(
+    fptr: &mut FitsFile,
+    extname: &str,
+    dimensions: &[usize],
+    data: impl IntoIterator<Item = T>,
+) -> FitsResult<FitsHdu> {
+    let hdu = fptr.create_image(
+        extname,
+        &ImageDescription {
+            data_type: ImageType::Double,
+            dimensions,
+        },
+    )?;
+    hdu.write_image(fptr, &data.into_iter().collect::<Vec<_>>())?;
+    hdu.write_key(fptr, "BSCALE", 1.0f64)?;
+    hdu.write_key(fptr, "BZERO", 0.0f64)?;
+    Ok(hdu)
+}
+
+/// A linear axis of a FITS image.
+struct FitsAxis<'a> {
+    /// What the axis is (`CTYPEn`)
+    ctype: &'a str,
+    /// The value at the first pixel (`CRVALn`)
+    crval: f64,
+    /// The increment between pixels (`CDELTn`), if it is written.
+    cdelt: Option<f64>,
+    /// The unit of the values (`CUNITn`), if it is written.
+    cunit: Option<&'a str>,
+}
+
+impl FitsAxis<'_> {
+    /// Describe FITS axis number `axis` (starting from 1) of `hdu`.
+    fn write(&self, fptr: &mut FitsFile, hdu: &FitsHdu, axis: usize) -> FitsResult<()> {
+        hdu.write_key(fptr, &format!("CTYPE{axis}"), self.ctype)?;
+        hdu.write_key(fptr, &format!("CRVAL{axis}"), self.crval)?;
+        if let Some(cdelt) = self.cdelt {
+            hdu.write_key(fptr, &format!("CDELT{axis}"), cdelt)?;
+        }
+        hdu.write_key(fptr, &format!("CRPIX{axis}"), 1.0f64)?;
+        if let Some(cunit) = self.cunit {
+            hdu.write_key(fptr, &format!("CUNIT{axis}"), cunit)?;
+        }
+        Ok(())
+    }
+}
+
+/// The time and frequency axes of a metric.
+#[derive(Debug, Clone, Copy)]
+struct TimeFreqAxes {
+    /// GPS time of the first timestep \[s\]
+    start_time_gps_s: f64,
+    /// Integration time of each timestep \[s\]
+    integration_time_s: f64,
+    /// Centre frequency of the first channel \[Hz\]
+    start_freq_hz: f64,
+    /// Fine channel width \[Hz\]
+    channel_width_hz: f64,
+}
+
+impl TimeFreqAxes {
+    const fn freq(&self) -> FitsAxis<'static> {
+        FitsAxis {
+            ctype: "FREQ",
+            crval: self.start_freq_hz,
+            cdelt: Some(self.channel_width_hz),
+            cunit: Some("Hz"),
+        }
+    }
+
+    const fn time(&self) -> FitsAxis<'static> {
+        FitsAxis {
+            ctype: "TIME",
+            crval: self.start_time_gps_s,
+            cdelt: Some(self.integration_time_s),
+            cunit: Some("s"),
+        }
+    }
+
+    /// Describe an image with dimensions `[timestep][channel]`: frequency is
+    /// FITS axis 1 and time is FITS axis 2.
+    fn write(&self, fptr: &mut FitsFile, hdu: &FitsHdu) -> FitsResult<()> {
+        self.freq().write(fptr, hdu, 1)?;
+        self.time().write(fptr, hdu, 2)
+    }
+}
+
+/// Autocorrelation metrics.
+///
+/// For each tile with an autocorrelation in the selection, and each
+/// polarisation:
+/// - the bandpass: the amplitude of the autocorrelation, averaged over the
+///   unflagged timesteps;
+/// - the autocorrelation amplitude at each timestep, with the bandpass
+///   subtracted;
+/// - the coefficients of a second order polynomial fit to the bandpass;
+/// - the delay transform of the bandpass between 100 and 3000 ns, where
+///   reflections in the cables show up as peaks. See
+///   [`mod@crate::delay_transform`].
+///
+/// Flagged channels and timesteps are `NaN`. The flags of individual
+/// visibilities are not used.
+///
+/// The polarisation axes are in the order of the FITS Stokes axis:
+/// `XX, YY, XY, YX`. The antenna axes are in order of increasing antenna
+/// index.
 pub struct AutoMetrics {
-    /// auto with mean(time) subtracted (antenna, times, frequencies, polarizations)
+    /// The autocorrelation amplitude with its mean over time (the bandpass)
+    /// subtracted `(antenna, polarisation, time, frequency)`
     pub auto_sub_aptf: Array4<f32>,
-    /// auto mean(time) (antenna, frequencies, polarizations)
+    /// The bandpass: the mean over time of the autocorrelation amplitude
+    /// `(antenna, frequency, polarisation)`
     pub auto_spectrum_afp: Array3<f32>,
-    /// polynomial coeffs (antenna, pol, order) - raw frequency basis
+    /// Coefficients of the polynomial fit to the bandpass, lowest order first,
+    /// as a function of frequency in Hz `(antenna, polarisation, order)`. `NaN`
+    /// where the fit failed.
     pub auto_coeffs_apo: Array3<f32>,
-    /// delay transform of auto mean(time) (antenna, delays, polarizations)
+    /// Delay transform of the bandpass `(antenna, delay, polarisation)`
     pub auto_delay_afp: Array3<f32>,
     /// Tile names of the selected antennas
     pub antenna_names: Vec<String>,
-    /// Tile IDs of the selected antennas
+    /// Antenna indices of the selected antennas, which is the order of the
+    /// antennas in the metafits. Written to FITS as `ANT_ID`.
     pub antenna_ids: Vec<u32>,
-    /// Antenna indices of the selected antennas
+    /// Tile IDs of the selected antennas. Written to FITS as `ANT_NUM`.
     pub antenna_nums: Vec<u32>,
     /// Receiver number of each antenna
     pub rx_numbers: Vec<u32>,
@@ -169,284 +442,245 @@ pub struct AutoMetrics {
     pub cable_flavours: Vec<String>,
     /// Whether each antenna has a whitening filter
     pub whitening_filters: Vec<bool>,
-    /// Geocentric position of each antenna
+    /// Position of each antenna relative to the centre of the array \[m\].
+    ///
+    /// Despite the type, this is not geocentric: `x` is north, `y` is east and
+    /// `z` is height.
     pub antenna_positions: Vec<XyzGeocentric>,
 
-    /// Centre frequency of the first channel [Hz]
+    /// Centre frequency of the first channel \[Hz\]
     pub start_freq_hz: f64,
-    /// Fine channel width [Hz]
+    /// Fine channel width \[Hz\]
     pub channel_width_hz: f64,
-    /// GPS time of the first timestep [s]
+    /// GPS time of the first timestep \[s\]
     pub start_time_gps_s: f64,
-    /// Integration time of each timestep [s]
+    /// Integration time of each timestep \[s\]
     pub integration_time_s: f64,
+    /// Delay of the first bin of `auto_delay_afp` \[ns\]
+    pub start_delay_ns: f64,
+    /// Width of the bins of `auto_delay_afp` \[ns\]
+    pub delay_res_ns: f64,
 }
 
 impl AutoMetrics {
-    // RUST_LOG=birli=debug cargo run --release -- --sel-ants 5 4 20 19 --provided-chan-ranges --flag-init 0 --metrics-out metrics_1119683928.fits -m tests/data/1119683928_picket/1119683928.metafits tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits 2>&1 | tee birli.log
-
-    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
+    /// Create [`AutoMetrics`] for visibilities that were read with the
+    /// selection `chunk_vis_sel` of the observation `corr_ctx`.
+    ///
+    /// # Panics
+    ///
+    /// See [`AutoMetrics::new_from_metadata`].
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
     ) -> Self {
-        let metadata = MetricsContext::from_mwalib(corr_ctx, chunk_vis_sel);
-        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
-        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
-
+        let (metadata, timestep_flags, chan_flags) =
+            selection_metadata(corr_ctx, chunk_vis_sel, flag_ctx);
         Self::new_from_metadata(jones_array_tfb, &metadata, &timestep_flags, &chan_flags)
     }
 
-    /// Create `AutoMetrics` from visibility data and metadata
+    /// Create [`AutoMetrics`] from visibilities `[timestep][channel][baseline]`
+    /// and their metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - all timesteps or all channels are flagged,
+    /// - there are fewer than 2 channels,
+    /// - the dimensions of the visibilities or flags don't match `metadata`.
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         metadata: &MetricsContext,
         timestep_flags: &[bool],
         chan_flags: &[bool],
     ) -> Self {
-        let (num_timesteps, num_freqs, _num_baselines) = jones_array_tfb.dim();
+        let (num_timesteps, num_freqs, _) = jones_array_tfb.dim();
+        let num_pols = 4;
 
-        // Map from baseline index to auto-correlation antenna index in metadata.antennas
-        let mut ant_idx_to_metadata_pos: HashMap<usize, usize> = HashMap::new();
-        for (pos, _ant_meta) in metadata.antennas.iter().enumerate() {
-            // Find this antenna in antenna_pairs to get its original index
-            for &(a_idx, b_idx) in &metadata.antenna_pairs {
-                if a_idx == b_idx {
-                    // This is an auto, check if it matches
-                    // We need to map back - assume antenna_pairs uses indices that match position in original antenna list
-                    // For now, we'll use a different approach
-                    ant_idx_to_metadata_pos.insert(pos, pos);
-                    break;
-                }
-            }
-        }
+        let num_unflagged_times = timestep_flags.iter().filter(|&t| !t).count() as f32;
+        assert!(num_unflagged_times > 0.0, "all timesteps are flagged");
+        assert!(chan_flags.iter().any(|&c| !c), "all channels are flagged");
 
-        // Find auto-correlations in the baseline list
-        let sel_auto_pairs: HashMap<usize, usize> = metadata
+        // The position in metadata.antennas, and the baseline index of each
+        // autocorrelation, in order of increasing antenna index.
+        let sel_ants = selected_antennas(&metadata.antenna_pairs);
+        let mut autos: Vec<(usize, usize)> = metadata
             .antenna_pairs
             .iter()
             .enumerate()
             .filter(|&(_, &(a, b))| a == b)
-            .map(|(bl_idx, &(a, _))| (a, bl_idx))
+            .map(|(bl_idx, &(a, _))| {
+                let ant_pos = sel_ants.binary_search(&a).expect("antenna is in a pair");
+                (ant_pos, bl_idx)
+            })
             .collect();
+        autos.sort_unstable();
+        let num_sel_ants = autos.len();
 
-        let num_sel_ants = sel_auto_pairs.len();
-        let sel_auto_idxs = {
-            let mut sel_auto_idxs = sel_auto_pairs.keys().copied().collect::<Vec<_>>();
-            sel_auto_idxs.sort_unstable();
-            sel_auto_idxs
-        };
-
-        // Create a mapping from antenna indices to their positions in the selected antennas list
-        let mut ant_to_pos: HashMap<usize, usize> = HashMap::new();
-        for (pos, &ant_num) in sel_auto_idxs.iter().enumerate() {
-            ant_to_pos.insert(ant_num, pos);
-        }
-
-        let num_pols = 4;
-        let mut auto_power_aptf = Array4::<f32>::zeros((num_sel_ants, 4, num_timesteps, num_freqs));
-        let mut auto_spectrum_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, 4));
-        let num_unflagged_times_f32: f32 = timestep_flags.iter().filter(|&t| !t).count() as f32;
-        assert!(
-            (num_unflagged_times_f32 - 0.0).abs() >= 0.00001,
-            "all timesteps are flagged"
-        );
-        assert!(
-            (chan_flags.iter().filter(|&c| !c).count()) != 0,
-            "all channels are flagged"
-        );
-
-        for t in 0..num_timesteps {
-            for f in 0..num_freqs {
-                for (&a, &i) in &sel_auto_pairs {
-                    let a_pos = ant_to_pos[&a];
-                    for p in 0..4 {
-                        if chan_flags[f] {
-                            auto_power_aptf[[a_pos, hyperdrive_to_fits_stokes(p), t, f]] = f32::NAN;
-                            auto_spectrum_afp[[a_pos, f, hyperdrive_to_fits_stokes(p)]] = f32::NAN;
-                        } else if timestep_flags[t] {
-                            auto_power_aptf[[a_pos, hyperdrive_to_fits_stokes(p), t, f]] = f32::NAN;
+        // time-mean of the amplitude, and the amplitude itself
+        let mut auto_spectrum_afp = Array3::<f32>::zeros((num_sel_ants, num_freqs, num_pols));
+        let mut auto_sub_aptf =
+            Array4::<f32>::zeros((num_sel_ants, num_pols, num_timesteps, num_freqs));
+        for (a, &(_, bl_idx)) in autos.iter().enumerate() {
+            for p in 0..num_pols {
+                let fits_p = hyperdrive_to_fits_stokes(p);
+                for f in 0..num_freqs {
+                    if chan_flags[f] {
+                        auto_spectrum_afp[[a, f, fits_p]] = f32::NAN;
+                        auto_sub_aptf.slice_mut(s![a, fits_p, .., f]).fill(f32::NAN);
+                        continue;
+                    }
+                    for t in 0..num_timesteps {
+                        if timestep_flags[t] {
+                            auto_sub_aptf[[a, fits_p, t, f]] = f32::NAN;
                         } else {
-                            let jones_p_norm = jones_array_tfb[[t, f, i]][p].norm();
-                            auto_spectrum_afp[[a_pos, f, hyperdrive_to_fits_stokes(p)]] +=
-                                jones_p_norm / num_unflagged_times_f32;
-                            auto_power_aptf[[a_pos, hyperdrive_to_fits_stokes(p), t, f]] +=
-                                jones_p_norm;
+                            let amp = jones_array_tfb[[t, f, bl_idx]][p].norm();
+                            auto_spectrum_afp[[a, f, fits_p]] += amp / num_unflagged_times;
+                            auto_sub_aptf[[a, fits_p, t, f]] = amp;
                         }
                     }
                 }
             }
         }
-        // fit polynomials (in frequency, Hz) to auto_spectrum_afp for each antenna and polarization
-        let poly_order = 2;
-        let freqs = &metadata.fine_chan_freqs_hz;
-        let mut auto_coeffs_apo = Array3::<f32>::zeros((num_sel_ants, num_pols, poly_order + 1));
 
+        // subtract the time-mean
+        for ((a, p, _, f), amp) in auto_sub_aptf.indexed_iter_mut() {
+            *amp -= auto_spectrum_afp[[a, f, p]];
+        }
+
+        // fit a polynomial in frequency to each bandpass
+        let mut auto_coeffs_apo =
+            Array3::<f32>::from_elem((num_sel_ants, num_pols, AUTO_POLY_ORDER + 1), f32::NAN);
         for a in 0..num_sel_ants {
             for p in 0..num_pols {
-                let spectrum = auto_spectrum_afp.slice(s![a, .., p]);
-                let y: Vec<f32> = spectrum.iter().copied().collect();
-
-                if let Some(coeffs) = crate::math::fit_polynomial(freqs, &y, poly_order) {
-                    for (k, &c) in coeffs.iter().enumerate() {
-                        auto_coeffs_apo[[a, p, k]] = c;
-                    }
-                } else {
-                    auto_coeffs_apo.slice_mut(s![a, p, ..]).fill(f32::NAN);
+                let spectrum = auto_spectrum_afp.slice(s![a, .., p]).to_vec();
+                if let Some(coeffs) =
+                    fit_polynomial(&metadata.fine_chan_freqs_hz, &spectrum, AUTO_POLY_ORDER)
+                {
+                    auto_coeffs_apo
+                        .slice_mut(s![a, p, ..])
+                        .assign(&Array1::from(coeffs));
                 }
             }
         }
 
-        // Subtract mean
-        let mut auto_sub_aptf = auto_power_aptf;
-        for a in 0..num_sel_ants {
-            for p in 0..num_pols {
-                for t in 0..num_timesteps {
-                    for f in 0..num_freqs {
-                        auto_sub_aptf[[a, hyperdrive_to_fits_stokes(p), t, f]] -=
-                            auto_spectrum_afp[[a, f, hyperdrive_to_fits_stokes(p)]];
-                    }
-                }
-            }
-        }
-
-        let mut antenna_ids = Vec::<u32>::with_capacity(num_sel_ants);
-        let mut antenna_names = Vec::<String>::with_capacity(num_sel_ants);
-        let mut antenna_positions = Vec::<XyzGeocentric>::with_capacity(num_sel_ants);
-        let mut antenna_nums = Vec::<u32>::with_capacity(num_sel_ants);
-        let mut rx_numbers = Vec::<u32>::with_capacity(num_sel_ants);
-        let mut rx_slots = Vec::<u32>::with_capacity(num_sel_ants);
-        let mut rx_types = Vec::<String>::with_capacity(num_sel_ants);
-        let mut cable_flavours = Vec::<String>::with_capacity(num_sel_ants);
-        let mut whitening_filters = Vec::<bool>::with_capacity(num_sel_ants);
-
-        // Delay transform
-        let delay_transform_config = DelayTransformConfig {
-            min_delay_ns: 100.0,
-            max_delay_ns: 3000.0,
-            target_delay_res_ns: 1.0,
-        };
-        let freqs_arr = marlu::ndarray::Array1::from(metadata.fine_chan_freqs_hz.clone());
-        let delay_info = calculate_delay_channels(num_freqs, &freqs_arr, &delay_transform_config);
-        let num_delays = delay_info.n_delay_channels;
-        let mut auto_delay_afp = Array3::<f32>::zeros((num_sel_ants, num_delays, num_pols));
-
-        for pol in 0..num_pols {
-            let spectrum_f64 = auto_spectrum_afp
-                .slice(s![.., .., pol])
-                .mapv(|x| x as f64)
-                .to_owned();
-
-            let delay_spectrum =
-                delay_transform(&spectrum_f64, &freqs_arr, &delay_transform_config)
-                    .expect("delay_transform failed");
+        // delay transform of each bandpass
+        let freqs_hz = Array1::from(metadata.fine_chan_freqs_hz.clone());
+        let delay_info = calculate_delay_channels(num_freqs, &freqs_hz, &DELAY_TRANSFORM_CONFIG);
+        let mut auto_delay_afp =
+            Array3::<f32>::zeros((num_sel_ants, delay_info.n_delay_channels, num_pols));
+        for p in 0..num_pols {
+            let spectrum_af = auto_spectrum_afp.slice(s![.., .., p]).mapv(f64::from);
+            let delay_result = delay_transform(&spectrum_af, &freqs_hz, &DELAY_TRANSFORM_CONFIG)
+                .expect("delay_transform failed");
             auto_delay_afp
-                .slice_mut(s![.., .., pol])
-                .assign(&delay_spectrum.delay_spectrum.mapv(|x| x as f32));
+                .slice_mut(s![.., .., p])
+                .assign(&delay_result.delay_spectrum.mapv(|x| x as f32));
         }
 
-        // Collect antenna metadata for selected autos (sel_auto_idxs are metafits indices; metadata.antennas is 0..n by same order)
-        for (pos, _) in sel_auto_idxs.iter().enumerate() {
-            let ant = &metadata.antennas[pos];
-            antenna_ids.push(ant.ant_id);
-            antenna_names.push(ant.tile_name.clone());
-            antenna_positions.push(XyzGeocentric {
-                x: ant.north_m,
-                y: ant.east_m,
-                z: ant.height_m,
-            });
-            antenna_nums.push(ant.tile_id);
-            rx_numbers.push(ant.rec_number);
-            rx_slots.push(ant.rec_slot_number);
-            rx_types.push(ant.rec_type.clone());
-            cable_flavours.push(ant.cable_flavour.clone());
-            whitening_filters.push(ant.has_whitening_filter);
-        }
+        let sel_ant_meta = || {
+            autos
+                .iter()
+                .map(|&(ant_pos, _)| &metadata.antennas[ant_pos])
+        };
 
         Self {
             auto_sub_aptf,
             auto_spectrum_afp,
             auto_coeffs_apo,
             auto_delay_afp,
-            antenna_names,
-            antenna_positions,
-            antenna_ids,
-            antenna_nums,
-            rx_numbers,
-            rx_slots,
-            rx_types,
-            cable_flavours,
-            whitening_filters,
+            antenna_names: sel_ant_meta().map(|ant| ant.tile_name.clone()).collect(),
+            antenna_ids: sel_ant_meta().map(|ant| ant.ant_id).collect(),
+            antenna_nums: sel_ant_meta().map(|ant| ant.tile_id).collect(),
+            rx_numbers: sel_ant_meta().map(|ant| ant.rec_number).collect(),
+            rx_slots: sel_ant_meta().map(|ant| ant.rec_slot_number).collect(),
+            rx_types: sel_ant_meta().map(|ant| ant.rec_type.clone()).collect(),
+            cable_flavours: sel_ant_meta()
+                .map(|ant| ant.cable_flavour.clone())
+                .collect(),
+            whitening_filters: sel_ant_meta().map(|ant| ant.has_whitening_filter).collect(),
+            antenna_positions: sel_ant_meta()
+                .map(|ant| XyzGeocentric {
+                    x: ant.north_m,
+                    y: ant.east_m,
+                    z: ant.height_m,
+                })
+                .collect(),
             start_freq_hz: metadata.fine_chan_freqs_hz[0],
-            channel_width_hz: if metadata.fine_chan_freqs_hz.len() > 1 {
-                metadata.fine_chan_freqs_hz[1] - metadata.fine_chan_freqs_hz[0]
-            } else {
-                0.0
-            },
+            channel_width_hz: metadata.channel_width_hz(),
             start_time_gps_s: metadata.timestamps_s[0],
-            integration_time_s: if metadata.timestamps_s.len() > 1 {
-                metadata.timestamps_s[1] - metadata.timestamps_s[0]
-            } else {
-                1.0 // Default to 1 second if only one timestep
-            },
+            integration_time_s: metadata.integration_time_s(),
+            start_delay_ns: delay_info.start_delay_ns,
+            delay_res_ns: delay_info.actual_delay_res_ns,
         }
     }
 
-    /// Write these metrics to HDUs in an open FITS file.
+    /// Write these metrics to HDUs in an open FITS file:
+    ///
+    /// - `AUTO_SUB_ANT=<tile name>` for each antenna: an image of
+    ///   [`AutoMetrics::auto_sub_aptf`] with FITS axes (frequency, time,
+    ///   Stokes), and the metadata of the tile in the header.
+    /// - `AUTO_POL=<pol>` for each polarisation: an image of
+    ///   [`AutoMetrics::auto_spectrum_afp`] with FITS axes (frequency,
+    ///   antenna).
+    /// - `AUTO_COEFFS`: a table with a row for each antenna, with the metadata
+    ///   of the tile and [`AutoMetrics::auto_coeffs_apo`].
+    /// - `AUTO_DELAY_POL=<pol>` for each polarisation: an image of
+    ///   [`AutoMetrics::auto_delay_afp`] with FITS axes (delay, antenna).
     ///
     /// # Errors
     ///
     /// Returns an error if writing to the FITS file fails.
-    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
-        let (num_ants, num_pols, _num_times, num_freqs) = self.auto_sub_aptf.dim();
+    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> FitsResult<()> {
+        let (num_ants, num_pols, num_times, num_freqs) = self.auto_sub_aptf.dim();
+        let num_delays = self.auto_delay_afp.dim().1;
+        let whitening_filters: Vec<i32> = self
+            .whitening_filters
+            .iter()
+            .map(|&w| i32::from(w))
+            .collect();
 
-        for a in 0..self.auto_sub_aptf.dim().0 {
-            let antenna_name = self.antenna_names[a].clone();
-            let dim = [
-                self.auto_sub_aptf.dim().1,
-                self.auto_sub_aptf.dim().2,
-                self.auto_sub_aptf.dim().3,
-            ];
-            let image_description = ImageDescription {
-                data_type: ImageType::Double,
-                dimensions: &dim,
-            };
-            let extname = format!("AUTO_SUB_ANT={antenna_name}");
-            let hdu = fptr.create_image(&extname, &image_description)?;
-            hdu.write_image(
+        // every per-antenna field is indexed by `a`
+        #[allow(clippy::needless_range_loop)]
+        for a in 0..num_ants {
+            let hdu = write_image_hdu(
                 fptr,
-                &self
-                    .auto_sub_aptf
-                    .slice(s![a, .., .., ..])
-                    .iter()
-                    .copied()
-                    .collect::<Vec<_>>(),
+                &format!("AUTO_SUB_ANT={}", self.antenna_names[a]),
+                &[num_pols, num_times, num_freqs],
+                self.auto_sub_aptf.slice(s![a, .., .., ..]).iter().copied(),
             )?;
-            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-            hdu.write_key(fptr, "BZERO", 0.0f64)?;
-            hdu.write_key(fptr, "CTYPE3", "FREQ")?;
-            hdu.write_key(fptr, "CRVAL3", self.start_freq_hz)?;
-            // hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
-            hdu.write_key(fptr, "CRPIX3", 1.0f64)?;
-            hdu.write_key(fptr, "CUNIT3", "Hz")?;
-            hdu.write_key(fptr, "CTYPE2", "TIME")?;
-            hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
-            hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
-            hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
+            // CDELT is left off the frequency axis, because carta does not
+            // display the image properly with it.
+            FitsAxis {
+                ctype: "FREQ",
+                crval: self.start_freq_hz,
+                cdelt: None,
+                cunit: Some("Hz"),
+            }
+            .write(fptr, &hdu, 1)?;
+            hdu.write_key(fptr, "CHAN_WIDTH", self.channel_width_hz)?;
+            FitsAxis {
+                ctype: "TIME",
+                crval: self.start_time_gps_s,
+                cdelt: Some(self.integration_time_s),
+                cunit: Some("s"),
+            }
+            .write(fptr, &hdu, 2)?;
+            FitsAxis {
+                ctype: "STOKES",
+                crval: -5.0, // XX
+                cdelt: Some(-1.0),
+                cunit: None,
+            }
+            .write(fptr, &hdu, 3)?;
 
-            hdu.write_key(fptr, "CTYPE1", "STOKES")?;
-            hdu.write_key(fptr, "CRVAL1", -5.0f64)?; // xx
-            hdu.write_key(fptr, "CDELT1", -1.0f64)?;
-            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-
-            hdu.write_key(fptr, "ANTNAME", antenna_name)?;
+            hdu.write_key(fptr, "ANTNAME", self.antenna_names[a].clone())?;
             hdu.write_key(fptr, "ANT_ID", self.antenna_ids[a])?;
             hdu.write_key(fptr, "ANT_NUM", self.antenna_nums[a])?;
             hdu.write_key(fptr, "ANT_TYPE", self.rx_types[a].clone())?;
             hdu.write_key(fptr, "CABLE_FLAVOUR", self.cable_flavours[a].clone())?;
-            hdu.write_key(fptr, "WHITENING_FILTER", self.whitening_filters[a] as i32)?;
+            hdu.write_key(fptr, "WHITENING_FILTER", whitening_filters[a])?;
             hdu.write_key(fptr, "RX_NUMBER", self.rx_numbers[a])?;
             hdu.write_key(fptr, "RX_SLOT", self.rx_slots[a])?;
             hdu.write_key(fptr, "RX_TYPE", self.rx_types[a].clone())?;
@@ -457,34 +691,23 @@ impl AutoMetrics {
             hdu.write_key(fptr, "OBSGEO-Z", position.z)?;
         }
 
-        for pol_idx in 0..num_pols {
-            // this is in fits standard order, not hyperdrive order
-            let pol_name = ["XX", "YY", "XY", "YX"][pol_idx];
-            let dim = [num_ants, num_freqs];
-            let image_description = ImageDescription {
-                data_type: ImageType::Double,
-                dimensions: &dim,
-            };
-            let extname = format!("AUTO_POL={pol_name}");
-            let hdu = fptr.create_image(&extname, &image_description)?;
-            hdu.write_image(
+        for (p, pol_name) in FITS_POL_NAMES.into_iter().enumerate() {
+            let hdu = write_image_hdu(
                 fptr,
-                &self
-                    .auto_spectrum_afp
-                    .slice(s![.., .., pol_idx])
-                    .iter()
-                    .copied()
-                    .collect::<Vec<_>>(),
+                &format!("AUTO_POL={pol_name}"),
+                &[num_ants, num_freqs],
+                self.auto_spectrum_afp.slice(s![.., .., p]).iter().copied(),
             )?;
-            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-            hdu.write_key(fptr, "BZERO", 0.0f64)?;
-            hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-            hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
-            // if left uncommented, carta will not display it properly.
-            // hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
+            // CDELT is left off the frequency axis, because carta does not
+            // display the image properly with it.
+            FitsAxis {
+                ctype: "FREQ",
+                crval: self.start_freq_hz,
+                cdelt: None,
+                cunit: Some("Hz"),
+            }
+            .write(fptr, &hdu, 1)?;
             hdu.write_key(fptr, "CHAN_WIDTH", self.channel_width_hz)?;
-            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-            hdu.write_key(fptr, "CUNIT1", "Hz")?;
             hdu.write_key(fptr, "CTYPE2", "BASELINE")?;
             hdu.write_key(fptr, "CRVAL2", 0.0f64)?;
             hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
@@ -493,212 +716,93 @@ impl AutoMetrics {
             hdu.write_key(fptr, "TELESCOP", "MWA")?;
         }
 
-        // Write polynomial coefficients to binary table
-        let extname = "AUTO_COEFFS";
-        let poly_order = self.auto_coeffs_apo.dim().2 - 1;
-        let num_coeffs = poly_order + 1;
-
-        let mut ant_names_col = Vec::with_capacity(num_ants);
-        let mut ant_ids_col = Vec::with_capacity(num_ants);
-        let mut ant_nums_col = Vec::with_capacity(num_ants);
-        let mut ant_types_col = Vec::with_capacity(num_ants);
-        let mut cable_flavours_col = Vec::with_capacity(num_ants);
-        let mut whitening_filters_col = Vec::with_capacity(num_ants);
-        let mut rx_numbers_col = Vec::with_capacity(num_ants);
-        let mut rx_slots_col = Vec::with_capacity(num_ants);
-        let mut rx_types_col = Vec::with_capacity(num_ants);
-        let mut obsgeo_x_col = Vec::with_capacity(num_ants);
-        let mut obsgeo_y_col = Vec::with_capacity(num_ants);
-        let mut obsgeo_z_col = Vec::with_capacity(num_ants);
-
-        let mut coeffs_xx_col = Vec::with_capacity(num_ants * num_coeffs);
-        let mut coeffs_yy_col = Vec::with_capacity(num_ants * num_coeffs);
-        let mut coeffs_xy_col = Vec::with_capacity(num_ants * num_coeffs);
-        let mut coeffs_yx_col = Vec::with_capacity(num_ants * num_coeffs);
-
-        // hyperdrive order: XX XY YX YY
-        // fits order: XX YY XY YX (we want to match what we write in other extensions)
-        // But auto_coeffs_apo is indexed by hyperdrive_to_fits_stokes(p) if we were consistent?
-        // Wait, auto_spectrum_afp is indexed by hyperdrive_to_fits_stokes(p).
-        // Let's check AutoMetrics::new.
-        //   auto_spectrum_afp[[a_pos, f, hyperdrive_to_fits_stokes(p)]]
-        // So axis 2 of auto_spectrum_afp is fits stokes order.
-        // Therefore axis 1 of auto_coeffs_apo is fits stokes order.
-        // FITS Order: 0:XX, 1:YY, 2:XY, 3:YX
-
-        for a in 0..num_ants {
-            ant_names_col.push(self.antenna_names[a].clone());
-            ant_ids_col.push(self.antenna_ids[a]);
-            ant_nums_col.push(self.antenna_nums[a]);
-            ant_types_col.push(self.rx_types[a].clone());
-            cable_flavours_col.push(self.cable_flavours[a].clone());
-            whitening_filters_col.push(self.whitening_filters[a] as i32);
-            rx_numbers_col.push(self.rx_numbers[a]);
-            rx_slots_col.push(self.rx_slots[a]);
-            rx_types_col.push(self.rx_types[a].clone());
-
-            let position = self.antenna_positions[a];
-            obsgeo_x_col.push(position.x);
-            obsgeo_y_col.push(position.y);
-            obsgeo_z_col.push(position.z);
-
-            // XX (index 0)
-            for k in 0..num_coeffs {
-                coeffs_xx_col.push(self.auto_coeffs_apo[[a, 0, k]] as f64);
-            }
-            // YY (index 1)
-            for k in 0..num_coeffs {
-                coeffs_yy_col.push(self.auto_coeffs_apo[[a, 1, k]] as f64);
-            }
-            // XY (index 2)
-            for k in 0..num_coeffs {
-                coeffs_xy_col.push(self.auto_coeffs_apo[[a, 2, k]] as f64);
-            }
-            // YX (index 3)
-            for k in 0..num_coeffs {
-                coeffs_yx_col.push(self.auto_coeffs_apo[[a, 3, k]] as f64);
-            }
+        let num_coeffs = self.auto_coeffs_apo.dim().2;
+        let string_col = |name| {
+            ColumnDescription::new(name)
+                .with_type(ColumnDataType::String)
+                .that_repeats(32)
+                .create()
+        };
+        let scalar_col =
+            |name, data_type| ColumnDescription::new(name).with_type(data_type).create();
+        let coeffs_col = |name: &str| {
+            ColumnDescription::new(name)
+                .with_type(ColumnDataType::Double)
+                .that_repeats(num_coeffs)
+                .create()
+        };
+        let mut columns = vec![
+            string_col("ANT_NAME")?,
+            scalar_col("ANT_ID", ColumnDataType::Int)?,
+            scalar_col("ANT_NUM", ColumnDataType::Int)?,
+            string_col("ANT_TYPE")?,
+            string_col("CABLE_FLAVOUR")?,
+            scalar_col("WHITENING_FILTER", ColumnDataType::Int)?,
+            scalar_col("RX_NUMBER", ColumnDataType::Int)?,
+            scalar_col("RX_SLOT", ColumnDataType::Int)?,
+            string_col("RX_TYPE")?,
+            scalar_col("OBSGEO-X", ColumnDataType::Double)?,
+            scalar_col("OBSGEO-Y", ColumnDataType::Double)?,
+            scalar_col("OBSGEO-Z", ColumnDataType::Double)?,
+        ];
+        for pol_name in FITS_POL_NAMES {
+            columns.push(coeffs_col(&format!("COEFFS_{pol_name}"))?);
         }
 
-        use crate::marlu::fitsio::tables::{ColumnDataType, ColumnDescription};
+        let hdu = fptr.create_table("AUTO_COEFFS", &columns)?;
+        hdu.write_col(fptr, "ANT_NAME", &self.antenna_names)?;
+        hdu.write_col(fptr, "ANT_ID", &self.antenna_ids)?;
+        hdu.write_col(fptr, "ANT_NUM", &self.antenna_nums)?;
+        hdu.write_col(fptr, "ANT_TYPE", &self.rx_types)?;
+        hdu.write_col(fptr, "CABLE_FLAVOUR", &self.cable_flavours)?;
+        hdu.write_col(fptr, "WHITENING_FILTER", &whitening_filters)?;
+        hdu.write_col(fptr, "RX_NUMBER", &self.rx_numbers)?;
+        hdu.write_col(fptr, "RX_SLOT", &self.rx_slots)?;
+        hdu.write_col(fptr, "RX_TYPE", &self.rx_types)?;
+        let positions = &self.antenna_positions;
+        hdu.write_col(
+            fptr,
+            "OBSGEO-X",
+            &positions.iter().map(|p| p.x).collect::<Vec<_>>(),
+        )?;
+        hdu.write_col(
+            fptr,
+            "OBSGEO-Y",
+            &positions.iter().map(|p| p.y).collect::<Vec<_>>(),
+        )?;
+        hdu.write_col(
+            fptr,
+            "OBSGEO-Z",
+            &positions.iter().map(|p| p.z).collect::<Vec<_>>(),
+        )?;
+        for (p, pol_name) in FITS_POL_NAMES.into_iter().enumerate() {
+            // one row of coefficients per antenna
+            let coeffs: Vec<f64> = self
+                .auto_coeffs_apo
+                .slice(s![.., p, ..])
+                .iter()
+                .map(|&c| f64::from(c))
+                .collect();
+            hdu.write_col(fptr, format!("COEFFS_{pol_name}"), &coeffs)?;
+        }
+        hdu.write_key(fptr, "TELESCOP", "MWA")?;
+        hdu.write_key(fptr, "POLY_ORD", (num_coeffs - 1) as u32)?;
 
-        let columns = vec![
-            ColumnDescription::new("ANT_NAME")
-                .with_type(ColumnDataType::String)
-                .that_repeats(32) // String width
-                .create()?,
-            ColumnDescription::new("ANT_ID")
-                .with_type(ColumnDataType::Int)
-                .create()?,
-            ColumnDescription::new("ANT_NUM")
-                .with_type(ColumnDataType::Int)
-                .create()?,
-            ColumnDescription::new("ANT_TYPE")
-                .with_type(ColumnDataType::String)
-                .that_repeats(32)
-                .create()?,
-            ColumnDescription::new("CABLE_FLAVOUR")
-                .with_type(ColumnDataType::String)
-                .that_repeats(32)
-                .create()?,
-            ColumnDescription::new("WHITENING_FILTER")
-                .with_type(ColumnDataType::Int)
-                .create()?,
-            ColumnDescription::new("RX_NUMBER")
-                .with_type(ColumnDataType::Int)
-                .create()?,
-            ColumnDescription::new("RX_SLOT")
-                .with_type(ColumnDataType::Int)
-                .create()?,
-            ColumnDescription::new("RX_TYPE")
-                .with_type(ColumnDataType::String)
-                .that_repeats(32)
-                .create()?,
-            ColumnDescription::new("OBSGEO-X")
-                .with_type(ColumnDataType::Double)
-                .create()?,
-            ColumnDescription::new("OBSGEO-Y")
-                .with_type(ColumnDataType::Double)
-                .create()?,
-            ColumnDescription::new("OBSGEO-Z")
-                .with_type(ColumnDataType::Double)
-                .create()?,
-            ColumnDescription::new("COEFFS_XX")
-                .with_type(ColumnDataType::Double)
-                .that_repeats(num_coeffs)
-                .create()?,
-            ColumnDescription::new("COEFFS_YY")
-                .with_type(ColumnDataType::Double)
-                .that_repeats(num_coeffs)
-                .create()?,
-            ColumnDescription::new("COEFFS_XY")
-                .with_type(ColumnDataType::Double)
-                .that_repeats(num_coeffs)
-                .create()?,
-            ColumnDescription::new("COEFFS_YX")
-                .with_type(ColumnDataType::Double)
-                .that_repeats(num_coeffs)
-                .create()?,
-        ];
-
-        let table_hdu = fptr.create_table(extname, &columns)?;
-
-        table_hdu.write_col(fptr, "ANT_NAME", &ant_names_col)?;
-        table_hdu.write_col(fptr, "ANT_ID", &ant_ids_col)?;
-        table_hdu.write_col(fptr, "ANT_NUM", &ant_nums_col)?;
-        table_hdu.write_col(fptr, "ANT_TYPE", &ant_types_col)?;
-        table_hdu.write_col(fptr, "CABLE_FLAVOUR", &cable_flavours_col)?;
-        table_hdu.write_col(fptr, "WHITENING_FILTER", &whitening_filters_col)?;
-        table_hdu.write_col(fptr, "RX_NUMBER", &rx_numbers_col)?;
-        table_hdu.write_col(fptr, "RX_SLOT", &rx_slots_col)?;
-        table_hdu.write_col(fptr, "RX_TYPE", &rx_types_col)?;
-        table_hdu.write_col(fptr, "OBSGEO-X", &obsgeo_x_col)?;
-        table_hdu.write_col(fptr, "OBSGEO-Y", &obsgeo_y_col)?;
-        table_hdu.write_col(fptr, "OBSGEO-Z", &obsgeo_z_col)?;
-
-        table_hdu.write_col(fptr, "COEFFS_XX", &coeffs_xx_col)?;
-        table_hdu.write_col(fptr, "COEFFS_YY", &coeffs_yy_col)?;
-        table_hdu.write_col(fptr, "COEFFS_XY", &coeffs_xy_col)?;
-        table_hdu.write_col(fptr, "COEFFS_YX", &coeffs_yx_col)?;
-
-        table_hdu.write_key(fptr, "TELESCOP", "MWA")?;
-        table_hdu.write_key(fptr, "POLY_ORD", poly_order as u32)?;
-
-        // // write out auto_var_atp
-        // for pol_idx in 0..num_pols {
-        //     let pol_name = ["XX", "YY", "XY", "YX"][pol_idx];
-        //     let dim = [num_ants, num_timesteps];
-        //     let image_description = ImageDescription {
-        //         data_type: ImageType::Double,
-        //         dimensions: &dim,
-        //     };
-        //     let extname = format!("AUTO_VAR_POL={pol_name}");
-        //     let hdu = fptr.create_image(&extname, &image_description)?;
-        //     hdu.write_image(
-        //         fptr,
-        //         &self
-        //             .auto_var_atp
-        //             .slice(s![.., .., pol_idx])
-        //             .iter()
-        //             .copied()
-        //             .collect::<Vec<_>>(),
-        //     )?;
-        //     hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-        //     hdu.write_key(fptr, "BZERO", 0.0f64)?;
-        //     hdu.write_key(fptr, "CTYPE1", "TIME")?;
-        //     hdu.write_key(fptr, "CRVAL1", self.start_time_gps_s)?;
-        //     hdu.write_key(fptr, "CDELT1", self.integration_time_s)?;
-        //     hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-        //     hdu.write_key(fptr, "CUNIT1", "s")?;
-        //     hdu.write_key(fptr, "CTYPE2", "BASELINE")?;
-        // }
-
-        let num_delays = self.auto_delay_afp.dim().1;
-        // write out auto_delay_spectrum_afp
-        for pol_idx in 0..num_pols {
-            let pol_name = ["XX", "YY", "XY", "YX"][pol_idx];
-            let dim = [num_ants, num_delays];
-            let image_description = ImageDescription {
-                data_type: ImageType::Double,
-                dimensions: &dim,
-            };
-            let extname = format!("AUTO_DELAY_POL={pol_name}");
-            let hdu = fptr.create_image(&extname, &image_description)?;
-            hdu.write_image(
+        for (p, pol_name) in FITS_POL_NAMES.into_iter().enumerate() {
+            let hdu = write_image_hdu(
                 fptr,
-                &self
-                    .auto_delay_afp
-                    .slice(s![.., .., pol_idx])
-                    .iter()
-                    .copied()
-                    .collect::<Vec<_>>(),
+                &format!("AUTO_DELAY_POL={pol_name}"),
+                &[num_ants, num_delays],
+                self.auto_delay_afp.slice(s![.., .., p]).iter().copied(),
             )?;
-            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-            hdu.write_key(fptr, "BZERO", 0.0f64)?;
-            hdu.write_key(fptr, "CTYPE1", "DELAY")?;
-            hdu.write_key(fptr, "CRVAL1", 0.0f64)?;
-            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-            hdu.write_key(fptr, "CUNIT1", "ns")?;
+            FitsAxis {
+                ctype: "DELAY",
+                crval: self.start_delay_ns,
+                cdelt: None,
+                cunit: Some("ns"),
+            }
+            .write(fptr, &hdu, 1)?;
+            hdu.write_key(fptr, "DELAY_RES", self.delay_res_ns)?;
             hdu.write_key(fptr, "CTYPE2", "BASELINE")?;
             hdu.write_key(fptr, "CRVAL2", 0.0f64)?;
             hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
@@ -710,43 +814,63 @@ impl AutoMetrics {
     }
 }
 
-/// SSINS (Sky-Subtract Incoherent Noise Spectra)
+/// SSINS (Sky-Subtracted Incoherent Noise Spectra)
 ///
-/// incoherently averaged (along baseline) difference between the visibilities in time,
-/// computed like `SSINS.INS(SS.read(..., diff=True), spectrum_type="cross", order=0)`:
+/// The amplitude of the difference between the visibilities at adjacent
+/// timesteps, averaged incoherently over the cross-correlation baselines, as a
+/// z-score. The sky changes slowly, so it cancels in the difference, leaving
+/// noise and anything that changes quickly, like radio-frequency interference.
+///
+/// It is computed like `SSINS.INS(SS.read(..., diff=True), spectrum_type="cross", order=0)`
+/// in [SSINS](https://ssins.readthedocs.io/en/latest/):
 /// - only cross-correlations are averaged;
 /// - a baseline contributes to (t, f) only if neither of the visibilities being
 ///   differenced is flagged, so `N_bl` is counted per (t, f);
 /// - the time mean is weighted by `N_bl`.
 ///
-/// product is a 3D zscore array of shape `(num_timesteps - 1, num_freqs, num_pols=4)`
-/// `C = (4/pi - 1)`
-/// `zscore = (N_bl(t, f) / C).sqrt() * (mean_amp_tfp / mean_amp_fp - 1)`
-/// cells with no unflagged baselines are NaN.
+/// The product is a 3D z-score array with dimensions
+/// `(num_timesteps - 1, num_freqs, num_pols=4)`, where
+///
+/// ```text
+/// C = 4/pi - 1
+/// zscore = sqrt(N_bl(t, f) / C) * (mean_amp_tfp / mean_amp_fp - 1)
+/// ```
+///
+/// Cells with no unflagged baselines are `NaN`. The polarisations are in the
+/// order of a [`Jones`] matrix: `XX, XY, YX, YY`.
 #[allow(clippy::upper_case_acronyms)]
 pub struct SSINS {
-    /// (times-1, frequencies, polarizations)
+    /// z-score of the baseline-averaged amplitude of the time difference
+    /// `(times-1, frequencies, polarisations)`
     pub zscore: Array3<f32>,
-    /// (frequencies, polarizations)
+    /// The mean over time of the baseline-averaged amplitude of the time
+    /// difference, weighted by the number of baselines
+    /// `(frequencies, polarisations)`
     pub diff_mean_amp_fp: Array2<f32>,
-    /// (times-1, frequencies)
+    /// Flags for the z-scores `(times-1, frequencies)`. These are all `false`,
+    /// unless they have been set by `SSINS::flag` (`aoflagger` feature).
     pub flag_array: Array2<bool>,
     /// number of unflagged cross-correlation baselines averaged in each (time-1, frequency)
     pub num_baselines_tf: Array2<u32>,
     /// number of cross-correlation baselines selected
     pub num_baselines: usize,
-    /// GPS time of the first timestep [s]
+    /// GPS time halfway between the first two timesteps \[s\]
     pub start_time_gps_s: f64,
-    /// Integration time of each timestep [s]
+    /// Integration time of each timestep \[s\]
     pub integration_time_s: f64,
-    /// Centre frequency of the first channel [Hz]
+    /// Centre frequency of the first channel \[Hz\]
     pub start_freq_hz: f64,
-    /// Fine channel width [Hz]
+    /// Fine channel width \[Hz\]
     pub channel_width_hz: f64,
 }
 
 impl SSINS {
-    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
+    /// Create [`SSINS`] for visibilities that were read with the selection
+    /// `chunk_vis_sel` of the observation `corr_ctx`.
+    ///
+    /// # Panics
+    ///
+    /// See [`SSINS::new_from_metadata`].
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         flag_array_tfb: ArrayView3<bool>,
@@ -754,10 +878,8 @@ impl SSINS {
         chunk_vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
     ) -> Self {
-        let metadata = MetricsContext::from_mwalib(corr_ctx, chunk_vis_sel);
-        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
-        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
-
+        let (metadata, timestep_flags, chan_flags) =
+            selection_metadata(corr_ctx, chunk_vis_sel, flag_ctx);
         Self::new_from_metadata(
             jones_array_tfb,
             flag_array_tfb,
@@ -767,7 +889,15 @@ impl SSINS {
         )
     }
 
-    /// Create SSINS from visibility data, per-visibility flags and metadata
+    /// Create [`SSINS`] from visibilities `[timestep][channel][baseline]`,
+    /// their flags, and their metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - there are fewer than 2 timesteps,
+    /// - the visibilities and flags don't have the same dimensions,
+    /// - the dimensions of the visibilities or flags don't match `metadata`.
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         flag_array_tfb: ArrayView3<bool>,
@@ -852,30 +982,17 @@ impl SSINS {
             }
         }
 
-        let integration_time_s = if metadata.timestamps_s.len() > 1 {
-            metadata.timestamps_s[1] - metadata.timestamps_s[0]
-        } else {
-            1.0 // Default to 1 second if only one timestep
-        };
-        // Compute the average time between adjacent timesteps
-        let timesteps_diff: Vec<f64> = metadata.timestamps_s[1..]
-            .iter()
-            .zip(&metadata.timestamps_s[..num_timesteps - 1])
-            .map(|(a, b)| (a + b) / 2.0)
-            .collect();
-
-        let freq_width_hz = metadata.fine_chan_freqs_hz[1] - metadata.fine_chan_freqs_hz[0];
-
         Self {
             zscore,
             diff_mean_amp_fp,
             flag_array: Array2::<bool>::default((num_timesteps - 1, num_freqs)),
             num_baselines_tf,
             num_baselines: cross_bl_idxs.len(),
-            start_time_gps_s: timesteps_diff[0],
-            integration_time_s,
+            // each difference is halfway between two timesteps
+            start_time_gps_s: (metadata.timestamps_s[0] + metadata.timestamps_s[1]) / 2.0,
+            integration_time_s: metadata.integration_time_s(),
             start_freq_hz: metadata.fine_chan_freqs_hz[0],
-            channel_width_hz: freq_width_hz,
+            channel_width_hz: metadata.channel_width_hz(),
         }
     }
 
@@ -890,84 +1007,58 @@ impl SSINS {
         let aoflagger = unsafe { cxx_aoflagger_new() };
         let imgset = amps_tfp_to_imageset(&aoflagger, self.zscore.view());
         let strategy_filename = strategy_filename
-            .unwrap_or(aoflagger.FindStrategyFileGeneric(&String::from("minimal")));
-        let flag_strategy = aoflagger.LoadStrategyFile(&strategy_filename.to_string());
+            .unwrap_or_else(|| aoflagger.FindStrategyFileGeneric(&String::from("minimal")));
+        let flag_strategy = aoflagger.LoadStrategyFile(&strategy_filename);
 
-        // This lets us pass in our mutable flag array view to something not expecting a mutable.
         let flagmask = flag_baseline_view_to_flagmask(&aoflagger, self.flag_array.view());
         let new_flagmask = flag_strategy.RunExisting(&imgset, &flagmask);
         let flag_buf = new_flagmask.Buffer();
         let stride = new_flagmask.HorizontalStride();
-        for (img_timestep_idx, mut flag_timestep_view) in
-            self.flag_array.outer_iter_mut().enumerate()
-        {
-            for (img_chan_idx, mut flag_singular_view) in
-                flag_timestep_view.outer_iter_mut().enumerate()
-            {
-                flag_singular_view.fill(flag_buf[img_chan_idx * stride + img_timestep_idx]);
-            }
+        for ((img_timestep_idx, img_chan_idx), flag) in self.flag_array.indexed_iter_mut() {
+            *flag = flag_buf[img_chan_idx * stride + img_timestep_idx];
         }
     }
 
-    /// Write these metrics to HDUs in an open FITS file.
+    /// Write these metrics to HDUs in an open FITS file:
+    ///
+    /// - `SSINS_POL=<pol>` for each polarisation: an image of [`SSINS::zscore`]
+    ///   with FITS axes (frequency, time).
+    /// - `SSINS_FLAGS`: an image of [`SSINS::flag_array`] (1 is flagged) with
+    ///   FITS axes (frequency, time).
+    /// - `SSINS_N_BL`: an image of [`SSINS::num_baselines_tf`] with FITS axes
+    ///   (frequency, time).
+    /// - `SSINS_DIFF_MEAN_AMP_FP`: an image of [`SSINS::diff_mean_amp_fp`] with
+    ///   FITS axes (polarisation, frequency).
     ///
     /// # Errors
     ///
     /// Returns an error if writing to the FITS file fails.
-    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
-        // Write one image per polarization
-        let pol_names = ["XX", "XY", "YX", "YY"];
-        let (num_times, num_freqs, num_pols) = self.zscore.dim();
+    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> FitsResult<()> {
+        let (num_times, num_freqs, _) = self.zscore.dim();
+        let axes = TimeFreqAxes {
+            start_time_gps_s: self.start_time_gps_s,
+            integration_time_s: self.integration_time_s,
+            start_freq_hz: self.start_freq_hz,
+            channel_width_hz: self.channel_width_hz,
+        };
 
-        for (pol_idx, &pol_name) in pol_names.iter().enumerate().take(num_pols) {
-            let dim = [num_times, num_freqs];
-            let image_description = ImageDescription {
-                data_type: ImageType::Double,
-                dimensions: &dim,
-            };
-            let extname = format!("SSINS_POL={pol_name}");
-            let hdu = fptr.create_image(&extname, &image_description)?;
-
-            // Write the data for this polarization
-            let pol_data: Vec<f32> = self
-                .zscore
-                .slice(s![.., .., pol_idx])
-                .iter()
-                .copied()
-                .collect();
-
-            hdu.write_image(fptr, &pol_data)?;
-
-            // Basic image info
-            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-            hdu.write_key(fptr, "BZERO", 0.0f64)?;
-
-            // Time axis info
-            hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-            hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
-            hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
-            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-            hdu.write_key(fptr, "CUNIT1", "Hz")?;
-
-            // Frequency axis info
-            hdu.write_key(fptr, "CTYPE2", "TIME")?;
-            hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
-            hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
-            hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
-            hdu.write_key(fptr, "CUNIT2", "s")?;
-
-            // SSINS-specific metadata
+        for (p, pol_name) in JONES_POL_NAMES.into_iter().enumerate() {
+            let hdu = write_image_hdu(
+                fptr,
+                &format!("SSINS_POL={pol_name}"),
+                &[num_times, num_freqs],
+                self.zscore.slice(s![.., .., p]).iter().copied(),
+            )?;
+            axes.write(fptr, &hdu)?;
             hdu.write_key(fptr, "POL", pol_name)?;
             hdu.write_key(fptr, "N_BL", self.num_baselines as u32)?;
             hdu.write_key(fptr, "TELESCOP", "MWA")?;
             hdu.write_key(fptr, "INSTRUME", "SSINS")?;
             hdu.write_key(fptr, "ORIGIN", "Birli")?;
-
-            // Add description
             hdu.write_key(
                 fptr,
                 "COMMENT",
-                "SSINS (Sky-Subtract Incoherent Noise Spectra)",
+                "SSINS (Sky-Subtracted Incoherent Noise Spectra)",
             )?;
             hdu.write_key(
                 fptr,
@@ -977,152 +1068,115 @@ impl SSINS {
             hdu.write_key(
                 fptr,
                 "COMMENT",
-                "One image per polarization (XX, YY, XY, YX)",
+                "One image per polarization (XX, XY, YX, YY)",
             )?;
         }
 
-        // Write flag array
-        let flag_dim = self.flag_array.dim();
-        let flag_image_description = ImageDescription {
-            data_type: ImageType::Double,
-            dimensions: &[flag_dim.0, flag_dim.1],
-        };
-        let flag_extname = "SSINS_FLAGS";
-        let hdu = fptr.create_image(flag_extname, &flag_image_description)?;
-        hdu.write_image(
+        let hdu = write_image_hdu(
             fptr,
-            &self
-                .flag_array
-                .iter()
-                .copied()
-                .map(|b| if b { 1.0 } else { 0.0 })
-                .collect::<Vec<_>>(),
+            "SSINS_FLAGS",
+            &[num_times, num_freqs],
+            self.flag_array.iter().map(|&b| f64::from(u8::from(b))),
         )?;
-
-        // Basic image info
-        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-        hdu.write_key(fptr, "BZERO", 0.0f64)?;
-
-        // Time axis info
-        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
-        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
-        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-        hdu.write_key(fptr, "CUNIT1", "Hz")?;
-
-        // Frequency axis info
-        hdu.write_key(fptr, "CTYPE2", "TIME")?;
-        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
-        hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
-        hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
-        hdu.write_key(fptr, "CUNIT2", "s")?;
-
-        // SSINS-specific metadata
+        axes.write(fptr, &hdu)?;
         hdu.write_key(fptr, "TELESCOP", "MWA")?;
         hdu.write_key(fptr, "INSTRUME", "SSINS")?;
         hdu.write_key(fptr, "ORIGIN", "Birli")?;
 
-        // write the number of unflagged cross baselines in each cell, which
-        // SSINS keeps as its weights_array.
-        let (nbl_times, nbl_freqs) = self.num_baselines_tf.dim();
-        let hdu = fptr.create_image(
-            "SSINS_N_BL",
-            &ImageDescription {
-                data_type: ImageType::Double,
-                dimensions: &[nbl_times, nbl_freqs],
-            },
-        )?;
-        hdu.write_image(
+        // the number of unflagged cross baselines in each cell, which SSINS
+        // keeps as its weights_array.
+        let hdu = write_image_hdu(
             fptr,
-            &self
-                .num_baselines_tf
-                .iter()
-                .map(|&n| f64::from(n))
-                .collect::<Vec<_>>(),
+            "SSINS_N_BL",
+            &[num_times, num_freqs],
+            self.num_baselines_tf.iter().map(|&n| f64::from(n)),
         )?;
-        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-        hdu.write_key(fptr, "BZERO", 0.0f64)?;
-        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
-        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
-        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-        hdu.write_key(fptr, "CUNIT1", "Hz")?;
-        hdu.write_key(fptr, "CTYPE2", "TIME")?;
-        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
-        hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
-        hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
-        hdu.write_key(fptr, "CUNIT2", "s")?;
+        axes.write(fptr, &hdu)?;
         hdu.write_key(fptr, "ORIGIN", "Birli")?;
 
-        // write diff_mean_amp_fp
-        let diff_mean_amp_fp_dim = self.diff_mean_amp_fp.dim();
-        let diff_mean_amp_fp_image_description = ImageDescription {
-            data_type: ImageType::Double,
-            dimensions: &[diff_mean_amp_fp_dim.0, diff_mean_amp_fp_dim.1],
-        };
-        let diff_mean_amp_fp_extname = "SSINS_DIFF_MEAN_AMP_FP";
-        let hdu = fptr.create_image(
-            diff_mean_amp_fp_extname,
-            &diff_mean_amp_fp_image_description,
-        )?;
-        hdu.write_image(
+        let hdu = write_image_hdu(
             fptr,
-            &self.diff_mean_amp_fp.iter().copied().collect::<Vec<_>>(),
+            "SSINS_DIFF_MEAN_AMP_FP",
+            &[num_freqs, 4],
+            self.diff_mean_amp_fp.iter().copied(),
         )?;
-        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-        hdu.write_key(fptr, "BZERO", 0.0f64)?;
-        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
+        // the polarisations are FITS axis 1, and frequency is FITS axis 2.
+        axes.freq().write(fptr, &hdu, 2)?;
 
         Ok(())
     }
 }
 
-/// EAVILS metrics: per-timestep z-scores of the baseline-averaged amplitude relative to
-/// its time mean, normalised by the mean variance over baselines.
+/// EAVILS (Expected Amplitude of `VisibILities` Spectra)
+///
+/// The amplitude of the visibilities, averaged incoherently over all selected
+/// baselines (including autocorrelations), as a z-score relative to its mean
+/// over time. This is like [`SSINS`], but without differencing the
+/// visibilities in time, so it is also sensitive to things that don't change
+/// between timesteps.
+///
+/// With `amp = |V|` for visibilities with dimensions (time, baseline,
+/// frequency, polarisation), it is equivalent to
+///
+/// ```python
+/// blmean = np.mean(amp, axis=1)
+/// stdv = np.sqrt(np.mean(np.var(amp, axis=0), axis=0))
+/// zscore = (blmean - np.mean(blmean, axis=0)) / stdv * np.sqrt(Nbls)
+/// ```
+///
+/// where the means and variances over time only include unflagged timesteps.
+/// Flagged channels and timesteps are `NaN`. The flags of individual
+/// visibilities are not used.
+///
+/// The polarisations are in the order of a [`Jones`] matrix: `XX, XY, YX, YY`.
 #[allow(clippy::upper_case_acronyms)]
 pub struct EAVILS {
-    // Ntimes,Nbls,Nfreqs,Npols = uvd_or_data.shape
-    // blmean_data = np.mean(np.abs(uvd_or_data),axis=1)
-    // blmean_data_sub = blmean_data - np.mean(blmean_data,axis=0)
-    // stdv_array = np.sqrt(np.mean(np.var(np.abs(uvd_or_data),axis=0,ddof=1),axis=0))
-    // stdv_array =  stdv_array * np.full((Ntimes,Nfreqs,Npols),1) #giving it same shape as other arrays
-    /// `(mean_amp_tfp - mean_amp_fp) / sqrt_mean_var_amp_fp` (times, frequencies, polarizations)
+    /// `sqrt(Nbls) * (mean_amp_tfp - mean_amp_fp) / sqrt_mean_var_amp_fp`
+    /// `(times, frequencies, polarisations)`
     pub zscore: Array3<f32>,
-    /// `np.mean(blmean_data, axis=0)` (frequencies, polarizations)
+    /// The mean over time of the baseline-averaged amplitude
+    /// `(frequencies, polarisations)`
     pub mean_amp_fp: Array2<f32>,
-    // pub mean_amp_fbp: Array3<f32>, // np.mean(np.abs(uvd_or_data),axis=0) (frequencies, baselines, polarizations)
-    // pub var_amp_fbp: Array3<f32>, // np.var(np.abs(uvd_or_data),axis=0,ddof=1) (frequencies, baselines, polarizations)
-    /// `np.sqrt(np.mean(np.var(np.abs(uvd_or_data), axis=0, ddof=1), axis=0))` (frequencies, polarizations)
+    /// The square root of the baseline-averaged variance over time of the
+    /// amplitude `(frequencies, polarisations)`
     pub sqrt_mean_var_amp_fp: Array2<f32>,
-    /// (times, frequencies)
+    /// Flags for the z-scores `(times, frequencies)`. These are all `false`.
     pub flag_array: Array2<bool>,
-    /// GPS time of the first timestep [s]
+    /// GPS time of the first timestep \[s\]
     pub start_time_gps_s: f64,
-    /// Integration time of each timestep [s]
+    /// Integration time of each timestep \[s\]
     pub integration_time_s: f64,
-    /// Centre frequency of the first channel [Hz]
+    /// Centre frequency of the first channel \[Hz\]
     pub start_freq_hz: f64,
-    /// Fine channel width [Hz]
+    /// Fine channel width \[Hz\]
     pub channel_width_hz: f64,
 }
 
 impl EAVILS {
-    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
+    /// Create [`EAVILS`] for visibilities that were read with the selection
+    /// `chunk_vis_sel` of the observation `corr_ctx`.
+    ///
+    /// # Panics
+    ///
+    /// See [`EAVILS::new_from_metadata`].
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
     ) -> Self {
-        let metadata = MetricsContext::from_mwalib(corr_ctx, chunk_vis_sel);
-        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
-        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
-
+        let (metadata, timestep_flags, chan_flags) =
+            selection_metadata(corr_ctx, chunk_vis_sel, flag_ctx);
         Self::new_from_metadata(jones_array_tfb, &metadata, &timestep_flags, &chan_flags)
     }
 
-    /// Create EAVILS from visibility data and metadata
+    /// Create [`EAVILS`] from visibilities `[timestep][channel][baseline]` and
+    /// their metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the dimensions of the visibilities or flags don't match
+    /// `metadata`.
     #[allow(clippy::cognitive_complexity)]
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
@@ -1190,9 +1244,8 @@ impl EAVILS {
                             var_amp_fbp[[f, b, p]] = f32::NAN;
                             continue;
                         }
-                        let jones_nodiff = jones_array_tfb[[t, f, b]];
-                        var_amp_fbp[[f, b, p]] +=
-                            (jones_nodiff[p].norm() - mean_amp_fbp[[f, b, p]]).powi(2);
+                        let amp = jones_array_tfb[[t, f, b]][p].norm();
+                        var_amp_fbp[[f, b, p]] += (amp - mean_amp_fbp[[f, b, p]]).powi(2);
                     }
                 }
             }
@@ -1202,7 +1255,7 @@ impl EAVILS {
             var_amp_fbp /= num_unflagged_timesteps as f32;
         }
 
-        // calculate mean_var_amp_fp
+        // the square root of the baseline-mean of the variance
         let mut sqrt_mean_var_amp_fp = Array2::<f32>::zeros((num_freqs, 4));
         for f in 0..num_freqs {
             for b in 0..num_baselines {
@@ -1214,7 +1267,6 @@ impl EAVILS {
         sqrt_mean_var_amp_fp /= num_baselines as f32;
         sqrt_mean_var_amp_fp = sqrt_mean_var_amp_fp.sqrt();
 
-        // calculate zscore
         let mut zscore = mean_amp_tfp;
         for t in 0..num_timesteps {
             for f in 0..num_freqs {
@@ -1226,200 +1278,99 @@ impl EAVILS {
         }
         zscore *= (num_baselines as f32).sqrt();
 
-        let flag_array = Array2::<bool>::default((num_timesteps, num_freqs));
-
-        let integration_time_s = if metadata.timestamps_s.len() > 1 {
-            metadata.timestamps_s[1] - metadata.timestamps_s[0]
-        } else {
-            1.0 // Default to 1 second if only one timestep
-        };
-        let freq_width_hz = if metadata.fine_chan_freqs_hz.len() > 1 {
-            metadata.fine_chan_freqs_hz[1] - metadata.fine_chan_freqs_hz[0]
-        } else {
-            1.0 // Default to 1 Hz if only one frequency
-        };
-
         Self {
             zscore,
             mean_amp_fp,
             sqrt_mean_var_amp_fp,
-            flag_array,
+            flag_array: Array2::<bool>::default((num_timesteps, num_freqs)),
             start_time_gps_s: metadata.timestamps_s[0],
-            integration_time_s,
+            integration_time_s: metadata.integration_time_s(),
             start_freq_hz: metadata.fine_chan_freqs_hz[0],
-            channel_width_hz: freq_width_hz,
+            channel_width_hz: metadata.channel_width_hz(),
         }
     }
 
-    /// Write these metrics to HDUs in an open FITS file.
+    /// Write these metrics to HDUs in an open FITS file:
+    ///
+    /// - `EAVILS_POL=<pol>` for each polarisation: an image of
+    ///   [`EAVILS::zscore`] with FITS axes (frequency, time).
+    /// - `EAVILS_FLAGS`: an image of [`EAVILS::flag_array`] (1 is flagged) with
+    ///   FITS axes (frequency, time).
+    /// - `EAVILS_MEAN_AMP_FP`: an image of [`EAVILS::mean_amp_fp`] with FITS
+    ///   axes (polarisation, frequency).
+    /// - `EAVILS_SQRT_MEAN_VAR_AMP_FP`: an image of
+    ///   [`EAVILS::sqrt_mean_var_amp_fp`] with FITS axes (polarisation,
+    ///   frequency).
     ///
     /// # Errors
     ///
     /// Returns an error if writing to the FITS file fails.
-    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
-        // Write one image per polarization
-        let pol_names = ["XX", "XY", "YX", "YY"];
-        let (num_times, num_freqs, num_pols) = self.zscore.dim();
+    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> FitsResult<()> {
+        const DESCRIPTION: &str = "EAVILS (Expected Amplitude of VisibILities Spectra)";
+        let (num_times, num_freqs, _) = self.zscore.dim();
+        let axes = TimeFreqAxes {
+            start_time_gps_s: self.start_time_gps_s,
+            integration_time_s: self.integration_time_s,
+            start_freq_hz: self.start_freq_hz,
+            channel_width_hz: self.channel_width_hz,
+        };
 
-        for (pol_idx, &pol_name) in pol_names.iter().enumerate().take(num_pols) {
-            let dim = [num_times, num_freqs];
-            let image_description = ImageDescription {
-                data_type: ImageType::Double,
-                dimensions: &dim,
-            };
-            let extname = format!("EAVILS_POL={pol_name}");
-            let hdu = fptr.create_image(&extname, &image_description)?;
-
-            // Write the data for this polarization
-            let pol_data: Vec<f32> = self
-                .zscore
-                .slice(s![.., .., pol_idx])
-                .iter()
-                .copied()
-                .collect();
-
-            hdu.write_image(fptr, &pol_data)?;
-
-            // Basic image info
-            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-            hdu.write_key(fptr, "BZERO", 0.0f64)?;
-
-            // Time axis info
-            hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-            hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
-            hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
-            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-            hdu.write_key(fptr, "CUNIT1", "Hz")?;
-
-            // Frequency axis info
-            hdu.write_key(fptr, "CTYPE2", "TIME")?;
-            hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
-            hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
-            hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
-            hdu.write_key(fptr, "CUNIT2", "s")?;
-
-            // SSINS-specific metadata
+        for (p, pol_name) in JONES_POL_NAMES.into_iter().enumerate() {
+            let hdu = write_image_hdu(
+                fptr,
+                &format!("EAVILS_POL={pol_name}"),
+                &[num_times, num_freqs],
+                self.zscore.slice(s![.., .., p]).iter().copied(),
+            )?;
+            axes.write(fptr, &hdu)?;
             hdu.write_key(fptr, "TELESCOP", "MWA")?;
             hdu.write_key(fptr, "INSTRUME", "EAVILS")?;
             hdu.write_key(fptr, "ORIGIN", "Birli")?;
             hdu.write_key(fptr, "POL", pol_name)?;
-
-            // Add description
-            hdu.write_key(
-                fptr,
-                "COMMENT",
-                "EAVILS (Expected Amplitude of VisibILities Spectra)",
-            )?;
+            hdu.write_key(fptr, "COMMENT", DESCRIPTION)?;
         }
 
-        // Write flag array
-        let flag_dim = self.flag_array.dim();
-        let flag_image_description = ImageDescription {
-            data_type: ImageType::Double,
-            dimensions: &[flag_dim.0, flag_dim.1],
-        };
-        let flag_extname = "EAVILS_FLAGS";
-        let hdu = fptr.create_image(flag_extname, &flag_image_description)?;
-        hdu.write_image(
+        let hdu = write_image_hdu(
             fptr,
-            &self
-                .flag_array
-                .iter()
-                .copied()
-                .map(|b| if b { 1.0 } else { 0.0 })
-                .collect::<Vec<_>>(),
+            "EAVILS_FLAGS",
+            &[num_times, num_freqs],
+            self.flag_array.iter().map(|&b| f64::from(u8::from(b))),
         )?;
-
-        // Basic image info
-        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-        hdu.write_key(fptr, "BZERO", 0.0f64)?;
-
-        // Time axis info
-        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
-        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
-        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-        hdu.write_key(fptr, "CUNIT1", "Hz")?;
-
-        // Frequency axis info
-        hdu.write_key(fptr, "CTYPE2", "TIME")?;
-        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
-        hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
-        hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
-        hdu.write_key(fptr, "CUNIT2", "s")?;
-
-        // SSINS-specific metadata
+        axes.write(fptr, &hdu)?;
         hdu.write_key(fptr, "TELESCOP", "MWA")?;
         hdu.write_key(fptr, "INSTRUME", "EAVILS")?;
         hdu.write_key(fptr, "ORIGIN", "Birli")?;
+        hdu.write_key(fptr, "COMMENT", DESCRIPTION)?;
 
-        // Add description
-        hdu.write_key(
-            fptr,
-            "COMMENT",
-            "EAVILS (Expected Amplitude of VisibILities Spectra)",
-        )?;
-
-        // write mean_amp_fp
-        let mean_amp_fp_dim = self.mean_amp_fp.dim();
-        let mean_amp_fp_image_description = ImageDescription {
-            data_type: ImageType::Double,
-            dimensions: &[mean_amp_fp_dim.0, mean_amp_fp_dim.1],
-        };
-        let mean_amp_fp_extname = "EAVILS_MEAN_AMP_FP";
-        let hdu = fptr.create_image(mean_amp_fp_extname, &mean_amp_fp_image_description)?;
-        hdu.write_image(fptr, &self.mean_amp_fp.iter().copied().collect::<Vec<_>>())?;
-        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-        hdu.write_key(fptr, "BZERO", 0.0f64)?;
-        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
-        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
-        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-        hdu.write_key(fptr, "CUNIT1", "Hz")?;
-
-        // write sqrt_mean_var_amp_fp
-        let sqrt_mean_var_amp_fp_dim = self.sqrt_mean_var_amp_fp.dim();
-        let sqrt_mean_var_amp_fp_image_description = ImageDescription {
-            data_type: ImageType::Double,
-            dimensions: &[sqrt_mean_var_amp_fp_dim.0, sqrt_mean_var_amp_fp_dim.1],
-        };
-        let sqrt_mean_var_amp_fp_extname = "EAVILS_SQRT_MEAN_VAR_AMP_FP";
-        let hdu = fptr.create_image(
-            sqrt_mean_var_amp_fp_extname,
-            &sqrt_mean_var_amp_fp_image_description,
-        )?;
-        hdu.write_image(
-            fptr,
-            &self
-                .sqrt_mean_var_amp_fp
-                .iter()
-                .copied()
-                .collect::<Vec<_>>(),
-        )?;
-        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-        hdu.write_key(fptr, "BZERO", 0.0f64)?;
-        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
-        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
-        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-        hdu.write_key(fptr, "CUNIT1", "Hz")?;
+        // the polarisations are FITS axis 1, and frequency is FITS axis 2.
+        for (extname, array_fp) in [
+            ("EAVILS_MEAN_AMP_FP", &self.mean_amp_fp),
+            ("EAVILS_SQRT_MEAN_VAR_AMP_FP", &self.sqrt_mean_var_amp_fp),
+        ] {
+            let hdu = write_image_hdu(fptr, extname, &[num_freqs, 4], array_fp.iter().copied())?;
+            axes.freq().write(fptr, &hdu, 2)?;
+        }
 
         Ok(())
     }
 }
 
-/// `AOFlagger` flag occupancy metrics
+/// Flag occupancy metrics: the fraction of the selected cross-correlation
+/// baselines that are flagged at each time and frequency, for example by
+/// `AOFlagger`.
 #[cfg(feature = "aoflagger")]
 pub struct AOFlagMetrics {
-    /// (times, frequencies)
+    /// Fraction of cross-correlations which are flagged `(times, frequencies)`.
+    /// `NaN` for flagged timesteps and channels, and if there are no
+    /// cross-correlations.
     pub occupancy_tf: Array2<f64>,
-    /// GPS time of the first timestep [s]
+    /// GPS time of the first timestep \[s\]
     pub start_time_gps_s: f64,
-    /// Integration time of each timestep [s]
+    /// Integration time of each timestep \[s\]
     pub integration_time_s: f64,
-    /// Centre frequency of the first channel [Hz]
+    /// Centre frequency of the first channel \[Hz\]
     pub start_freq_hz: f64,
-    /// Fine channel width [Hz]
+    /// Fine channel width \[Hz\]
     pub channel_width_hz: f64,
 }
 
@@ -1427,60 +1378,54 @@ pub struct AOFlagMetrics {
 impl AOFlagMetrics {
     /// Compute occupancy across baselines excluding autocorrelations
     ///
-    /// occupancy[t,f] = fraction of cross-correlation baselines flagged at (t,f)
+    /// `occupancy[t,f]` = fraction of cross-correlation baselines flagged at `(t,f)`
     fn compute_cross_occupancy(
         flag_array_tfb: ArrayView3<bool>,
         timestep_flags: &[bool],
         chan_flags: &[bool],
         ant_pairs: &[(usize, usize)],
     ) -> Array2<f64> {
-        let (num_timesteps, num_freqs, _num_baselines) = flag_array_tfb.dim();
-        let mut occupancy_tf = Array2::<f64>::zeros((num_timesteps, num_freqs));
+        let (num_timesteps, num_freqs, _) = flag_array_tfb.dim();
 
-        // indices of cross-correlation baselines (exclude a==b)
         let cross_baseline_indices: Vec<usize> = ant_pairs
             .iter()
             .enumerate()
-            .filter_map(|(i, &(a, b))| if a == b { None } else { Some(i) })
+            .filter(|(_, (a, b))| a != b)
+            .map(|(i, _)| i)
             .collect();
         let num_cross_baselines = cross_baseline_indices.len();
 
-        for t in 0..num_timesteps {
-            for f in 0..num_freqs {
-                if timestep_flags[t] || chan_flags[f] {
-                    occupancy_tf[[t, f]] = f64::NAN;
-                    continue;
-                }
-                let mut sum_flags = 0u32;
-                for &b_idx in &cross_baseline_indices {
-                    sum_flags += flag_array_tfb[[t, f, b_idx]] as u32;
-                }
-                if num_cross_baselines > 0 {
-                    occupancy_tf[[t, f]] = sum_flags as f64 / num_cross_baselines as f64;
-                } else {
-                    occupancy_tf[[t, f]] = f64::NAN;
-                }
+        Array2::from_shape_fn((num_timesteps, num_freqs), |(t, f)| {
+            if timestep_flags[t] || chan_flags[f] || num_cross_baselines == 0 {
+                return f64::NAN;
             }
-        }
-
-        occupancy_tf
+            let num_flagged = cross_baseline_indices
+                .iter()
+                .filter(|&&b| flag_array_tfb[[t, f, b]])
+                .count();
+            num_flagged as f64 / num_cross_baselines as f64
+        })
     }
 
-    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
+    /// Create [`AOFlagMetrics`] for flags of the selection `chunk_vis_sel` of
+    /// the observation `corr_ctx`.
     pub fn new(
         flag_array_tfb: ArrayView3<bool>,
         corr_ctx: &CorrelatorContext,
         chunk_vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
     ) -> Self {
-        let metadata = MetricsContext::from_mwalib(corr_ctx, chunk_vis_sel);
-        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
-        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
-
+        let (metadata, timestep_flags, chan_flags) =
+            selection_metadata(corr_ctx, chunk_vis_sel, flag_ctx);
         Self::new_from_metadata(flag_array_tfb, &metadata, &timestep_flags, &chan_flags)
     }
 
-    /// Create `AOFlagMetrics` from flag data and metadata
+    /// Create [`AOFlagMetrics`] from flags `[timestep][channel][baseline]` and
+    /// their metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the dimensions of the flags don't match `metadata`.
     pub fn new_from_metadata(
         flag_array_tfb: ArrayView3<bool>,
         metadata: &MetricsContext,
@@ -1494,85 +1439,86 @@ impl AOFlagMetrics {
             &metadata.antenna_pairs,
         );
 
-        let integration_time_s = if metadata.timestamps_s.len() > 1 {
-            metadata.timestamps_s[1] - metadata.timestamps_s[0]
-        } else {
-            1.0 // Default to 1 second if only one timestep
-        };
-        let freq_width_hz = if metadata.fine_chan_freqs_hz.len() > 1 {
-            metadata.fine_chan_freqs_hz[1] - metadata.fine_chan_freqs_hz[0]
-        } else {
-            1.0 // Default to 1 Hz if only one frequency
-        };
-
         Self {
             occupancy_tf,
             start_time_gps_s: metadata.timestamps_s[0],
-            integration_time_s,
+            integration_time_s: metadata.integration_time_s(),
             start_freq_hz: metadata.fine_chan_freqs_hz[0],
-            channel_width_hz: freq_width_hz,
+            channel_width_hz: metadata.channel_width_hz(),
         }
     }
 
-    /// Write these metrics to HDUs in an open FITS file.
+    /// Write these metrics to the HDU `AO_FLAG_METRICS` in an open FITS file:
+    /// an image of [`AOFlagMetrics::occupancy_tf`] with FITS axes (frequency,
+    /// time).
     ///
     /// # Errors
     ///
     /// Returns an error if writing to the FITS file fails.
-    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
-        let flag_dim: (usize, usize) = self.occupancy_tf.dim();
-        let flag_image_description = ImageDescription {
-            data_type: ImageType::Double,
-            dimensions: &[flag_dim.0, flag_dim.1],
-        };
-        let flag_extname = "AO_FLAG_METRICS";
-        let hdu = fptr.create_image(flag_extname, &flag_image_description)?;
-        hdu.write_image(fptr, &self.occupancy_tf.iter().copied().collect::<Vec<_>>())?;
-        // Basic image info
-        hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-        hdu.write_key(fptr, "BZERO", 0.0f64)?;
-
-        // Time axis info
-        hdu.write_key(fptr, "CTYPE1", "FREQ")?;
-        hdu.write_key(fptr, "CRVAL1", self.start_freq_hz)?;
-        hdu.write_key(fptr, "CDELT1", self.channel_width_hz)?;
-        hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-        hdu.write_key(fptr, "CUNIT1", "Hz")?;
-
-        // Frequency axis info
-        hdu.write_key(fptr, "CTYPE2", "TIME")?;
-        hdu.write_key(fptr, "CRVAL2", self.start_time_gps_s)?;
-        hdu.write_key(fptr, "CDELT2", self.integration_time_s)?;
-        hdu.write_key(fptr, "CRPIX2", 1.0f64)?;
-        hdu.write_key(fptr, "CUNIT2", "s")?;
-        Ok(())
+    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> FitsResult<()> {
+        let (num_times, num_freqs) = self.occupancy_tf.dim();
+        let hdu = write_image_hdu(
+            fptr,
+            "AO_FLAG_METRICS",
+            &[num_times, num_freqs],
+            self.occupancy_tf.iter().copied(),
+        )?;
+        TimeFreqAxes {
+            start_time_gps_s: self.start_time_gps_s,
+            integration_time_s: self.integration_time_s,
+            start_freq_hz: self.start_freq_hz,
+            channel_width_hz: self.channel_width_hz,
+        }
+        .write(fptr, &hdu)
     }
 }
 
-/// Cross-correlation delay metrics for short baselines
+/// Cross-correlation delay metrics for short baselines.
+///
+/// For each cross-correlation baseline no longer than a cutoff, the
+/// visibilities are averaged coherently over the unflagged timesteps, and the
+/// amplitude of that spectrum is delay transformed between 100 and 3000 ns
+/// (see [`mod@crate::delay_transform`]). The metric for each tile is the mean of
+/// the delay spectra of the short baselines it is part of.
+///
+/// The polarisations are in the order of a [`Jones`] matrix: `XX, XY, YX, YY`.
+/// The antenna axis is in order of increasing antenna index.
 #[cfg(feature = "aoflagger")]
 pub struct CrossMetrics {
-    /// (antennas, delay bin, polarizations)
+    /// Mean delay spectrum of the short baselines of each antenna
+    /// `(antenna, delay, polarisation)`. `NaN` for an antenna with no short
+    /// baselines.
     pub short_ant_delay_pol_adp: Array3<f32>,
     /// Tile names of the selected antennas
     pub antenna_names: Vec<String>,
-    /// Tile IDs of the selected antennas
+    /// Antenna indices of the selected antennas, which is the order of the
+    /// antennas in the metafits
     pub antenna_ids: Vec<u32>,
-    /// Antenna indices of the selected antennas
+    /// Tile IDs of the selected antennas
     pub antenna_nums: Vec<u32>,
-    /// Centre frequency of the first channel [Hz]
+    /// Centre frequency of the first channel \[Hz\]
     pub start_freq_hz: f64,
-    /// Fine channel width [Hz]
+    /// Fine channel width \[Hz\]
     pub channel_width_hz: f64,
-    /// GPS time of the first timestep [s]
+    /// GPS time of the first timestep \[s\]
     pub start_time_gps_s: f64,
-    /// Integration time of each timestep [s]
+    /// Integration time of each timestep \[s\]
     pub integration_time_s: f64,
+    /// Delay of the first bin of `short_ant_delay_pol_adp` \[ns\]
+    pub start_delay_ns: f64,
+    /// Width of the bins of `short_ant_delay_pol_adp` \[ns\]
+    pub delay_res_ns: f64,
 }
 
 #[cfg(feature = "aoflagger")]
 impl CrossMetrics {
-    /// Legacy constructor using `CorrelatorContext` (for backward compatibility)
+    /// Create [`CrossMetrics`] for visibilities that were read with the
+    /// selection `chunk_vis_sel` of the observation `corr_ctx`, using
+    /// baselines up to `baseline_cutoff_m` metres long.
+    ///
+    /// # Panics
+    ///
+    /// See [`CrossMetrics::new_from_metadata`].
     pub fn new(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         corr_ctx: &CorrelatorContext,
@@ -1580,10 +1526,8 @@ impl CrossMetrics {
         flag_ctx: &FlagContext,
         baseline_cutoff_m: f32,
     ) -> Self {
-        let metadata = MetricsContext::from_mwalib(corr_ctx, chunk_vis_sel);
-        let timestep_flags = flag_ctx.timestep_flags[chunk_vis_sel.timestep_range.clone()].to_vec();
-        let chan_flags = flag_ctx.get_raw_chan_flags(&chunk_vis_sel.coarse_chan_range.clone());
-
+        let (metadata, timestep_flags, chan_flags) =
+            selection_metadata(corr_ctx, chunk_vis_sel, flag_ctx);
         Self::new_from_metadata(
             jones_array_tfb,
             &metadata,
@@ -1593,7 +1537,15 @@ impl CrossMetrics {
         )
     }
 
-    /// Create `CrossMetrics` from visibility data and metadata
+    /// Create [`CrossMetrics`] from visibilities `[timestep][channel][baseline]`
+    /// and their metadata, using baselines up to `baseline_cutoff_m` metres
+    /// long.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - there are fewer than 2 channels,
+    /// - the dimensions of the visibilities or flags don't match `metadata`.
     pub fn new_from_metadata(
         jones_array_tfb: ArrayView3<Jones<f32>>,
         metadata: &MetricsContext,
@@ -1601,501 +1553,1822 @@ impl CrossMetrics {
         chan_flags: &[bool],
         baseline_cutoff_m: f32,
     ) -> Self {
-        let (num_timesteps, num_freqs, _num_baselines) = jones_array_tfb.dim();
+        let (num_timesteps, num_freqs, _) = jones_array_tfb.dim();
 
-        // Identify selected antennas
-        let mut sel_ants_set = std::collections::HashSet::new();
-        for &(a, b) in &metadata.antenna_pairs {
-            sel_ants_set.insert(a);
-            sel_ants_set.insert(b);
-        }
-        let mut sel_ants_sorted: Vec<usize> = sel_ants_set.into_iter().collect();
-        sel_ants_sorted.sort_unstable();
-
-        let num_sel_ants = sel_ants_sorted.len();
-        let mut ant_to_pos = HashMap::new();
-        for (i, &ant_idx) in sel_ants_sorted.iter().enumerate() {
-            ant_to_pos.insert(ant_idx, i);
-        }
-
-        let mut antenna_names = Vec::with_capacity(num_sel_ants);
-        let mut antenna_ids = Vec::with_capacity(num_sel_ants);
-        let mut antenna_nums = Vec::with_capacity(num_sel_ants);
-
-        for (pos, _) in sel_ants_sorted.iter().enumerate() {
-            let ant = &metadata.antennas[pos];
-            antenna_names.push(ant.tile_name.clone());
-            antenna_ids.push(ant.ant_id);
-            antenna_nums.push(ant.tile_id);
-        }
-
-        // Setup delay transform
-        let freqs = &metadata.fine_chan_freqs_hz;
-        let delay_transform_config = DelayTransformConfig {
-            min_delay_ns: 100.0,
-            max_delay_ns: 3000.0,
-            target_delay_res_ns: 1.0,
+        // metadata.antennas is in the order of the sorted antenna indices.
+        let sel_ants = selected_antennas(&metadata.antenna_pairs);
+        let num_sel_ants = sel_ants.len();
+        let ant_pos = |ant_idx: usize| {
+            sel_ants
+                .binary_search(&ant_idx)
+                .expect("antenna is in a pair")
         };
-        let freqs_arr = marlu::ndarray::Array1::from(freqs.clone());
-        let delay_info = calculate_delay_channels(num_freqs, &freqs_arr, &delay_transform_config);
-        let num_delays = delay_info.n_delay_channels;
 
-        // Use rayon for parallel processing of baselines
+        let freqs_arr = Array1::from(metadata.fine_chan_freqs_hz.clone());
+        let delay_info = calculate_delay_channels(num_freqs, &freqs_arr, &DELAY_TRANSFORM_CONFIG);
+        let num_delays = delay_info.n_delay_channels;
+        let cutoff_sq = f64::from(baseline_cutoff_m * baseline_cutoff_m);
+
+        // The sum of the delay spectra of the short baselines of each antenna,
+        // and how many there are, accumulated over baselines in parallel.
+        let zeros = || {
+            (
+                Array3::<f32>::zeros((num_sel_ants, num_delays, 4)),
+                Array2::<u32>::zeros((num_sel_ants, 4)),
+            )
+        };
         let (mut short_ant_delay_pol_adp, ant_baseline_counts) = metadata
             .antenna_pairs
             .par_iter()
             .enumerate()
             .fold(
-                || {
-                    (
-                        Array3::<f32>::zeros((num_sel_ants, num_delays, 4)),
-                        Array2::<u32>::zeros((num_sel_ants, 4)),
-                    )
-                },
-                |(mut acc_delay, mut acc_counts), (b_idx, &(a_idx, b_idx_ant))| {
-                    if a_idx == b_idx_ant {
+                zeros,
+                |(mut acc_delay, mut acc_counts), (bl_idx, &(ant1, ant2))| {
+                    if ant1 == ant2 {
                         return (acc_delay, acc_counts); // Skip autos
                     }
 
-                    let pos_a = ant_to_pos[&a_idx];
-                    let pos_b = ant_to_pos[&b_idx_ant];
-                    let ant_a = &metadata.antennas[pos_a];
-                    let ant_b = &metadata.antennas[pos_b];
-
-                    let dx = ant_a.north_m - ant_b.north_m;
-                    let dy = ant_a.east_m - ant_b.east_m;
-                    let dz = ant_a.height_m - ant_b.height_m;
-                    let len_sq = dx * dx + dy * dy + dz * dz;
-
-                    if len_sq > (baseline_cutoff_m * baseline_cutoff_m) as f64 {
+                    let (pos1, pos2) = (ant_pos(ant1), ant_pos(ant2));
+                    let (meta1, meta2) = (&metadata.antennas[pos1], &metadata.antennas[pos2]);
+                    let dx = meta1.north_m - meta2.north_m;
+                    let dy = meta1.east_m - meta2.east_m;
+                    let dz = meta1.height_m - meta2.height_m;
+                    if dx * dx + dy * dy + dz * dz > cutoff_sq {
                         return (acc_delay, acc_counts);
                     }
 
-                    // Calculate complex spectrum for this baseline
-                    // Mean over time of complex V
+                    // Mean over time of the complex visibilities of this baseline
                     let mut complex_spectrum = Array2::<Complex<f64>>::zeros((num_freqs, 4));
                     let mut counts = Array2::<u32>::zeros((num_freqs, 4));
-
-                    for t in 0..num_timesteps {
-                        if timestep_flags[t] {
-                            continue;
-                        }
-                        for f in 0..num_freqs {
-                            if chan_flags[f] {
-                                continue;
-                            }
-
+                    for t in (0..num_timesteps).filter(|&t| !timestep_flags[t]) {
+                        for f in (0..num_freqs).filter(|&f| !chan_flags[f]) {
                             for p in 0..4 {
-                                let val = jones_array_tfb[[t, f, b_idx]][p];
+                                let val = jones_array_tfb[[t, f, bl_idx]][p];
                                 if val.re.is_finite() && val.im.is_finite() {
                                     complex_spectrum[[f, p]] +=
-                                        Complex::new(val.re as f64, val.im as f64);
+                                        Complex::new(f64::from(val.re), f64::from(val.im));
                                     counts[[f, p]] += 1;
                                 }
                             }
                         }
                     }
 
-                    // Normalize complex_spectrum
-                    for f in 0..num_freqs {
-                        for p in 0..4 {
-                            if counts[[f, p]] > 0 {
-                                complex_spectrum[[f, p]] /= counts[[f, p]] as f64;
-                            }
-                        }
-                    }
-
-                    // Perform delay transform for each pol
                     for p in 0..4 {
-                        // Create spectrum array for this pol (magnitude for delay transform)
-                        let spec_col: Array1<f64> = complex_spectrum
+                        // amplitude of the time-averaged spectrum
+                        let spectrum: Array1<f64> = complex_spectrum
                             .column(p)
                             .iter()
-                            .map(|c| c.norm())
+                            .zip(counts.column(p))
+                            .map(|(sum, &count)| {
+                                if count > 0 {
+                                    (sum / f64::from(count)).norm()
+                                } else {
+                                    0.0
+                                }
+                            })
                             .collect();
-
-                        // If we have valid data
-                        if spec_col.iter().any(|x| *x > 0.0) {
-                            if let Ok(delay_res) = delay_transform(
-                                &spec_col.insert_axis(Axis(0)),
-                                &freqs_arr,
-                                &delay_transform_config,
-                            ) {
-                                let delay_spec = delay_res.delay_spectrum.row(0);
-
-                                // Accumulate to antennas (using local accumulator)
-                                if let Some(&idx_a) = ant_to_pos.get(&a_idx) {
-                                    let mut slice = acc_delay.slice_mut(s![idx_a, .., p]);
-                                    for d in 0..num_delays {
-                                        slice[d] += delay_spec[d] as f32;
-                                    }
-                                    acc_counts[[idx_a, p]] += 1;
-                                }
-                                if let Some(&idx_b) = ant_to_pos.get(&b_idx_ant) {
-                                    let mut slice = acc_delay.slice_mut(s![idx_b, .., p]);
-                                    for d in 0..num_delays {
-                                        slice[d] += delay_spec[d] as f32;
-                                    }
-                                    acc_counts[[idx_b, p]] += 1;
-                                }
-                            }
+                        if !spectrum.iter().any(|&x| x > 0.0) {
+                            continue;
+                        }
+                        let Ok(delay_result) = delay_transform(
+                            &spectrum.insert_axis(Axis(0)),
+                            &freqs_arr,
+                            &DELAY_TRANSFORM_CONFIG,
+                        ) else {
+                            continue;
+                        };
+                        let delay_spectrum = delay_result.delay_spectrum.row(0).mapv(|x| x as f32);
+                        for pos in [pos1, pos2] {
+                            let mut acc = acc_delay.slice_mut(s![pos, .., p]);
+                            acc += &delay_spectrum;
+                            acc_counts[[pos, p]] += 1;
                         }
                     }
                     (acc_delay, acc_counts)
                 },
             )
-            .reduce(
-                || {
-                    (
-                        Array3::<f32>::zeros((num_sel_ants, num_delays, 4)),
-                        Array2::<u32>::zeros((num_sel_ants, 4)),
-                    )
-                },
-                |(mut d1, mut c1), (d2, c2)| {
-                    d1 += &d2;
-                    c1 += &c2;
-                    (d1, c1)
-                },
-            );
+            .reduce(zeros, |(delay1, counts1), (delay2, counts2)| {
+                (delay1 + delay2, counts1 + counts2)
+            });
 
-        // Normalize by number of baselines per antenna
-        for a in 0..num_sel_ants {
-            for p in 0..4 {
-                let count = ant_baseline_counts[[a, p]];
-                if count > 0 {
-                    let mut slice = short_ant_delay_pol_adp.slice_mut(s![a, .., p]);
-                    for d in 0..num_delays {
-                        slice[d] /= count as f32;
-                    }
-                } else {
-                    let mut slice = short_ant_delay_pol_adp.slice_mut(s![a, .., p]);
-                    slice.fill(f32::NAN);
-                }
+        // Normalise by the number of short baselines of each antenna
+        for ((a, p), &count) in ant_baseline_counts.indexed_iter() {
+            let mut delay_spectrum = short_ant_delay_pol_adp.slice_mut(s![a, .., p]);
+            if count > 0 {
+                delay_spectrum /= count as f32;
+            } else {
+                delay_spectrum.fill(f32::NAN);
             }
         }
 
         Self {
             short_ant_delay_pol_adp,
-            antenna_names,
-            antenna_ids,
-            antenna_nums,
-            start_freq_hz: freqs[0],
-            channel_width_hz: freqs[1] - freqs[0],
+            antenna_names: metadata.antennas[..num_sel_ants]
+                .iter()
+                .map(|ant| ant.tile_name.clone())
+                .collect(),
+            antenna_ids: metadata.antennas[..num_sel_ants]
+                .iter()
+                .map(|ant| ant.ant_id)
+                .collect(),
+            antenna_nums: metadata.antennas[..num_sel_ants]
+                .iter()
+                .map(|ant| ant.tile_id)
+                .collect(),
+            start_freq_hz: metadata.fine_chan_freqs_hz[0],
+            channel_width_hz: metadata.channel_width_hz(),
             start_time_gps_s: metadata.timestamps_s[0],
-            integration_time_s: if metadata.timestamps_s.len() > 1 {
-                metadata.timestamps_s[1] - metadata.timestamps_s[0]
-            } else {
-                0.0
-            },
+            integration_time_s: metadata.integration_time_s(),
+            start_delay_ns: delay_info.start_delay_ns,
+            delay_res_ns: delay_info.actual_delay_res_ns,
         }
     }
 
-    /// Write these metrics to HDUs in an open FITS file.
+    /// Write these metrics to HDUs in an open FITS file: `CROSS_DELAY_POL=<pol>`
+    /// for each polarisation, which is an image of
+    /// [`CrossMetrics::short_ant_delay_pol_adp`] with FITS axes (delay,
+    /// antenna).
+    ///
+    /// The HDUs are in the order of the FITS Stokes axis: `XX, YY, XY, YX`.
     ///
     /// # Errors
     ///
     /// Returns an error if writing to the FITS file fails.
-    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> Result<(), Box<dyn std::error::Error>> {
-        let (num_ants, num_delays, num_pols) = self.short_ant_delay_pol_adp.dim();
+    pub fn save_to_fits(&self, fptr: &mut FitsFile) -> FitsResult<()> {
+        let (num_ants, num_delays, _) = self.short_ant_delay_pol_adp.dim();
 
-        for pol_idx in 0..num_pols {
-            let pol_name = ["XX", "YY", "XY", "YX"][pol_idx];
-            let dim = [num_ants, num_delays];
-            let image_description = ImageDescription {
-                data_type: ImageType::Double,
-                dimensions: &dim,
-            };
-            let extname = format!("CROSS_DELAY_POL={pol_name}");
-            let hdu = fptr.create_image(&extname, &image_description)?;
-
-            hdu.write_image(
+        for pol_name in FITS_POL_NAMES {
+            // the array is in the order of a Jones matrix
+            let p = JONES_POL_NAMES
+                .iter()
+                .position(|&name| name == pol_name)
+                .expect("all pols are in a Jones matrix");
+            let hdu = write_image_hdu(
                 fptr,
-                &self
-                    .short_ant_delay_pol_adp
-                    .slice(s![.., .., pol_idx])
+                &format!("CROSS_DELAY_POL={pol_name}"),
+                &[num_ants, num_delays],
+                self.short_ant_delay_pol_adp
+                    .slice(s![.., .., p])
                     .iter()
-                    .copied()
-                    .collect::<Vec<_>>(),
+                    .copied(),
             )?;
-
-            hdu.write_key(fptr, "BSCALE", 1.0f64)?;
-            hdu.write_key(fptr, "BZERO", 0.0f64)?;
-            hdu.write_key(fptr, "CTYPE1", "DELAY")?;
-            hdu.write_key(fptr, "CRVAL1", 0.0f64)?;
-            hdu.write_key(fptr, "CRPIX1", 1.0f64)?;
-            hdu.write_key(fptr, "CUNIT1", "ns")?;
+            FitsAxis {
+                ctype: "DELAY",
+                crval: self.start_delay_ns,
+                cdelt: None,
+                cunit: Some("ns"),
+            }
+            .write(fptr, &hdu, 1)?;
+            hdu.write_key(fptr, "DELAY_RES", self.delay_res_ns)?;
             hdu.write_key(fptr, "CTYPE2", "ANTENNA")?;
             hdu.write_key(fptr, "POL", pol_name)?;
             hdu.write_key(fptr, "N_ANTS", num_ants as u32)?;
             hdu.write_key(fptr, "TELESCOP", "MWA")?;
             hdu.write_key(fptr, "INSTRUME", "CROSS_METRICS")?;
             hdu.write_key(fptr, "ORIGIN", "Birli")?;
-
-            // Write antenna names/IDs if possible as table or keywords?
-            // AutoMetrics writes separate HDU per antenna for "AUTO_SUB_ANT", but "AUTO_POL" is (ants, freqs).
-            // Here we have (ants, delays).
-            // It is simpler to write one image per pol.
         }
         Ok(())
     }
 }
 
+#[cfg(test)]
+#[allow(clippy::needless_range_loop, clippy::cognitive_complexity)]
+mod test_common {
+    use super::{AntennaMetadata, MetricsContext};
+    use crate::marlu::{
+        fitsio::{hdu::HduInfo, FitsFile},
+        ndarray::{Array3, ArrayD, IxDyn},
+        num_complex::Complex,
+        Jones,
+    };
+    use std::f64::consts::TAU;
+    use tempfile::NamedTempFile;
+
+    /// Metadata for `num_times` timesteps of 2 s from GPS time 1e9,
+    /// `num_freqs` channels of 40 kHz from 150 MHz, and all the baselines
+    /// (with autos) of antennas with indices `ant_idxs`, 10 m apart on a
+    /// north-south line in order of index.
+    pub(super) fn metrics_context(
+        num_times: usize,
+        num_freqs: usize,
+        ant_idxs: &[usize],
+    ) -> MetricsContext {
+        let mut antenna_pairs = vec![];
+        for (i, &ant1) in ant_idxs.iter().enumerate() {
+            for &ant2 in &ant_idxs[i..] {
+                antenna_pairs.push((ant1, ant2));
+            }
+        }
+        let mut sorted_ant_idxs = ant_idxs.to_vec();
+        sorted_ant_idxs.sort_unstable();
+        MetricsContext {
+            antennas: sorted_ant_idxs
+                .iter()
+                .map(|&idx| AntennaMetadata {
+                    tile_name: format!("Tile{idx:03}"),
+                    tile_id: 1000 + idx as u32,
+                    ant_id: idx as u32,
+                    east_m: 0.5,
+                    north_m: 10.0 * idx as f64,
+                    height_m: 1.5,
+                    rec_number: 1 + idx as u32 / 8,
+                    rec_slot_number: 1 + idx as u32 % 8,
+                    rec_type: "RRI".into(),
+                    cable_flavour: format!("RG6_{}", 90 + 60 * (idx % 2)),
+                    has_whitening_filter: idx % 2 == 0,
+                })
+                .collect(),
+            fine_chan_freqs_hz: (0..num_freqs).map(|f| 150e6 + 40e3 * f as f64).collect(),
+            timestamps_s: (0..num_times).map(|t| 1e9 + 2.0 * t as f64).collect(),
+            antenna_pairs,
+        }
+    }
+
+    /// Visibilities for `ctx` which are different for every timestep, channel,
+    /// baseline and polarisation.
+    pub(super) fn synthetic_vis(ctx: &MetricsContext) -> Array3<Jones<f32>> {
+        let dims = (
+            ctx.timestamps_s.len(),
+            ctx.fine_chan_freqs_hz.len(),
+            ctx.antenna_pairs.len(),
+        );
+        Array3::from_shape_fn(dims, |(t, f, b)| {
+            let (ant1, ant2) = ctx.antenna_pairs[b];
+            Jones::from([0, 1, 2, 3].map(|p| {
+                // a bandpass with a ripple whose period depends on the baseline
+                // and polarisation, and which varies in time
+                let ripple = (TAU * f as f64 / (4.0 + (ant1 + 2 * ant2 + p) as f64)).cos();
+                let amp = (1 + ant1 + ant2) as f64 * (2.0 + ripple) + 0.1 * ((t * 7) % 5) as f64;
+                let phase = 0.3 * (p + b) as f64 + 0.01 * (t * f) as f64;
+                Complex::from_polar(amp as f32, phase as f32)
+            }))
+        })
+    }
+
+    /// Write something to a temporary FITS file with `save`, then open it.
+    pub(super) fn save_and_open(
+        save: impl FnOnce(&mut FitsFile) -> super::FitsResult<()>,
+    ) -> (NamedTempFile, FitsFile) {
+        let tmp_file = NamedTempFile::new().unwrap();
+        std::fs::remove_file(tmp_file.path()).unwrap();
+        {
+            let mut fptr = FitsFile::create(tmp_file.path()).open().unwrap();
+            save(&mut fptr).unwrap();
+        }
+        let fptr = FitsFile::open(tmp_file.path()).unwrap();
+        (tmp_file, fptr)
+    }
+
+    /// The names of the HDUs in a FITS file, after the primary HDU.
+    pub(super) fn hdu_names(fptr: &mut FitsFile) -> Vec<String> {
+        let num_hdus = fptr.iter().count();
+        (1..num_hdus)
+            .map(|i| {
+                let hdu = fptr.hdu(i).unwrap();
+                hdu.read_key::<String>(fptr, "EXTNAME").unwrap()
+            })
+            .collect()
+    }
+
+    /// Read an image HDU into an array with the dimensions it was written with.
+    pub(super) fn read_image(fptr: &mut FitsFile, extname: &str) -> ArrayD<f64> {
+        let hdu = fptr.hdu(extname).unwrap();
+        let HduInfo::ImageInfo { shape, .. } = &hdu.info else {
+            panic!("{extname} is not an image");
+        };
+        let shape = shape.clone();
+        let data: Vec<f64> = hdu.read_image(fptr).unwrap();
+        ArrayD::from_shape_vec(IxDyn(&shape), data).unwrap()
+    }
+
+    /// Assert that the string keys of an HDU are as expected.
+    pub(super) fn assert_str_keys(fptr: &mut FitsFile, extname: &str, expected: &[(&str, &str)]) {
+        let hdu = fptr.hdu(extname).unwrap();
+        for &(key, value) in expected {
+            let observed: String = hdu.read_key(fptr, key).unwrap();
+            assert_eq!(observed, value, "{extname} {key}");
+        }
+    }
+
+    /// Assert that the numeric keys of an HDU are as expected.
+    pub(super) fn assert_f64_keys(fptr: &mut FitsFile, extname: &str, expected: &[(&str, f64)]) {
+        let hdu = fptr.hdu(extname).unwrap();
+        for &(key, value) in expected {
+            let observed: f64 = hdu.read_key(fptr, key).unwrap();
+            assert!(
+                (observed - value).abs() <= 1e-9 * value.abs(),
+                "{extname} {key}: {observed} != {value}"
+            );
+        }
+    }
+
+    /// Assert that two arrays are the same to within a relative tolerance,
+    /// with NaNs in the same places.
+    pub(super) fn assert_close<'a>(
+        observed: impl IntoIterator<Item = &'a f32>,
+        expected: impl IntoIterator<Item = f64>,
+        rel_tol: f64,
+    ) {
+        let observed: Vec<f64> = observed.into_iter().map(|&x| f64::from(x)).collect();
+        let expected: Vec<f64> = expected.into_iter().collect();
+        assert_eq!(observed.len(), expected.len());
+        for (i, (obs, exp)) in observed.iter().zip(&expected).enumerate() {
+            assert!(
+                (obs.is_nan() && exp.is_nan()) || (obs - exp).abs() <= rel_tol * exp.abs().max(1.0),
+                "element {i}: {obs} != {exp}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::needless_range_loop, clippy::cognitive_complexity)]
+mod context_tests {
+    use super::{hyperdrive_to_fits_stokes, selected_antennas, MetricsContext};
+    use crate::marlu::{mwalib::CorrelatorContext, VisSelection};
+
+    fn get_mwax_context() -> CorrelatorContext {
+        CorrelatorContext::new(
+            "tests/data/1297526432_mwax/1297526432.metafits",
+            &[
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_hyperdrive_to_fits_stokes() {
+        // XX XY YX YY -> XX YY XY YX
+        let jones_pols = super::JONES_POL_NAMES;
+        let fits_pols = super::FITS_POL_NAMES;
+        for (p, jones_pol) in jones_pols.into_iter().enumerate() {
+            assert_eq!(fits_pols[hyperdrive_to_fits_stokes(p)], jones_pol);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid pol: 4")]
+    fn test_hyperdrive_to_fits_stokes_invalid() {
+        hyperdrive_to_fits_stokes(4);
+    }
+
+    #[test]
+    fn test_selected_antennas() {
+        assert_eq!(
+            selected_antennas(&[(5, 5), (5, 2), (2, 2), (7, 2)]),
+            vec![2, 5, 7]
+        );
+        assert!(selected_antennas(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_from_mwalib() {
+        let corr_ctx = get_mwax_context();
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.timestep_range = 1..3;
+        vis_sel.coarse_chan_range = 1..2;
+
+        let ctx = MetricsContext::from_mwalib(&corr_ctx, &vis_sel);
+
+        // every antenna is selected, in order
+        let meta_ctx = &corr_ctx.metafits_context;
+        assert_eq!(ctx.antennas.len(), meta_ctx.num_ants);
+        assert_eq!(
+            ctx.antenna_pairs,
+            vis_sel.get_ant_pairs(&corr_ctx.metafits_context)
+        );
+        for (ant, meta_ant) in ctx.antennas.iter().zip(&meta_ctx.antennas) {
+            assert_eq!(ant.tile_name, meta_ant.tile_name);
+            assert_eq!(ant.tile_id, meta_ant.tile_id);
+            assert_eq!(ant.ant_id, meta_ant.ant);
+            assert_eq!(ant.north_m.to_bits(), meta_ant.north_m.to_bits());
+            assert_eq!(ant.east_m.to_bits(), meta_ant.east_m.to_bits());
+            assert_eq!(ant.height_m.to_bits(), meta_ant.height_m.to_bits());
+            assert_eq!(ant.rec_number, meta_ant.rfinput_x.rec_number);
+            assert_eq!(ant.rec_slot_number, meta_ant.rfinput_x.rec_slot_number);
+            assert_eq!(ant.rec_type, meta_ant.rfinput_x.rec_type.to_string());
+            assert_eq!(ant.cable_flavour, meta_ant.rfinput_x.flavour);
+            assert_eq!(
+                ant.has_whitening_filter,
+                meta_ant.rfinput_x.has_whitening_filter
+            );
+        }
+
+        // the selected timesteps and coarse channel
+        assert_eq!(
+            ctx.timestamps_s,
+            corr_ctx.timesteps[1..3]
+                .iter()
+                .map(|ts| ts.gps_time_ms as f64 / 1000.0)
+                .collect::<Vec<_>>()
+        );
+        let fine_chans_per_coarse = meta_ctx.num_corr_fine_chans_per_coarse;
+        assert_eq!(ctx.fine_chan_freqs_hz.len(), fine_chans_per_coarse);
+        assert_eq!(
+            ctx.fine_chan_freqs_hz,
+            meta_ctx.metafits_fine_chan_freqs_hz[fine_chans_per_coarse..2 * fine_chans_per_coarse]
+        );
+
+        let int_time_s = meta_ctx.corr_int_time_ms as f64 / 1000.0;
+        assert!((ctx.integration_time_s() - int_time_s).abs() < 1e-9);
+        let fine_chan_width_hz = f64::from(meta_ctx.corr_fine_chan_width_hz);
+        assert!((ctx.channel_width_hz() - fine_chan_width_hz).abs() < 1e-9);
+    }
+
+    /// The antennas are in order of index, whatever the order of the baselines.
+    #[test]
+    fn test_from_mwalib_antenna_selection() {
+        let corr_ctx = get_mwax_context();
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.retain_antennas(&corr_ctx.metafits_context, &[1]);
+        vis_sel.timestep_range = 0..1;
+
+        let ctx = MetricsContext::from_mwalib(&corr_ctx, &vis_sel);
+
+        assert_eq!(ctx.antenna_pairs, vec![(1, 1)]);
+        assert_eq!(ctx.antennas.len(), 1);
+        assert_eq!(ctx.antennas[0].ant_id, 1);
+        assert_eq!(
+            ctx.antennas[0].tile_name,
+            corr_ctx.metafits_context.antennas[1].tile_name
+        );
+        // with one timestep, the integration time can't be measured
+        assert!((ctx.integration_time_s() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_single_channel_width() {
+        let mut ctx = super::test_common::metrics_context(2, 1, &[0]);
+        assert!((ctx.channel_width_hz() - 1.0).abs() < 1e-9);
+        ctx.fine_chan_freqs_hz.push(150.04e6);
+        assert!((ctx.channel_width_hz() - 40e3).abs() < 1e-3);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::needless_range_loop, clippy::cognitive_complexity)]
+mod autometrics_tests {
+    use super::{
+        test_common::{
+            assert_close, assert_f64_keys, assert_str_keys, hdu_names, metrics_context, read_image,
+            save_and_open, synthetic_vis,
+        },
+        AutoMetrics, FITS_POL_NAMES,
+    };
+    use crate::{
+        delay_transform::{delay_transform, DelayTransformConfig},
+        marlu::{
+            mwalib::CorrelatorContext,
+            ndarray::{s, Array1, Array2, Array3},
+            Jones, VisSelection,
+        },
+        FlagContext,
+    };
+
+    /// index into a Jones matrix of each polarisation in FITS order
+    const FITS_TO_JONES: [usize; 4] = [0, 3, 1, 2];
+
+    /// The values are right, with antennas that are not in order, and a
+    /// flagged timestep and channel.
+    #[test]
+    fn test_autometrics_values() {
+        let (num_times, num_freqs) = (5, 16);
+        // antenna 7 comes before antenna 2 in the baselines
+        let ctx = metrics_context(num_times, num_freqs, &[7, 2, 4]);
+        let vis = synthetic_vis(&ctx);
+        let mut timestep_flags = vec![false; num_times];
+        timestep_flags[3] = true;
+        let mut chan_flags = vec![false; num_freqs];
+        chan_flags[5] = true;
+
+        let auto = AutoMetrics::new_from_metadata(vis.view(), &ctx, &timestep_flags, &chan_flags);
+
+        // the antennas are in order of index
+        assert_eq!(auto.antenna_names, ["Tile002", "Tile004", "Tile007"]);
+        assert_eq!(auto.antenna_ids, [2, 4, 7]);
+        assert_eq!(auto.antenna_nums, [1002, 1004, 1007]);
+        assert_eq!(auto.rx_numbers, [1, 1, 1]);
+        assert_eq!(auto.rx_slots, [3, 5, 8]);
+        assert_eq!(auto.rx_types, ["RRI", "RRI", "RRI"]);
+        assert_eq!(auto.cable_flavours, ["RG6_90", "RG6_90", "RG6_150"]);
+        assert_eq!(auto.whitening_filters, [true, true, false]);
+        for (position, north_m) in auto.antenna_positions.iter().zip([20.0, 40.0, 70.0]) {
+            assert_eq!((position.x, position.y, position.z), (north_m, 0.5, 1.5));
+        }
+        assert_eq!(auto.start_freq_hz.to_bits(), 150e6_f64.to_bits());
+        assert_eq!(auto.channel_width_hz.to_bits(), 40e3_f64.to_bits());
+        assert_eq!(auto.start_time_gps_s.to_bits(), 1e9_f64.to_bits());
+        assert_eq!(auto.integration_time_s.to_bits(), 2.0_f64.to_bits());
+
+        assert_eq!(auto.auto_sub_aptf.dim(), (3, 4, num_times, num_freqs));
+        assert_eq!(auto.auto_spectrum_afp.dim(), (3, num_freqs, 4));
+        assert_eq!(auto.auto_coeffs_apo.dim(), (3, 4, 3));
+
+        let unflagged_times = [0, 1, 2, 4];
+        for (a, ant_idx) in [2, 4, 7].into_iter().enumerate() {
+            let bl_idx = ctx
+                .antenna_pairs
+                .iter()
+                .position(|&pair| pair == (ant_idx, ant_idx))
+                .unwrap();
+            for (fits_p, jones_p) in FITS_TO_JONES.into_iter().enumerate() {
+                let amp = |t: usize, f: usize| f64::from(vis[[t, f, bl_idx]][jones_p].norm());
+                for f in 0..num_freqs {
+                    let spectrum = auto.auto_spectrum_afp[[a, f, fits_p]];
+                    let sub = auto.auto_sub_aptf.slice(s![a, fits_p, .., f]);
+                    if chan_flags[f] {
+                        assert!(spectrum.is_nan());
+                        assert!(sub.iter().all(|x| x.is_nan()));
+                        continue;
+                    }
+                    // the bandpass is the mean over unflagged timesteps
+                    let mean = unflagged_times.iter().map(|&t| amp(t, f)).sum::<f64>() / 4.0;
+                    assert_close([&spectrum], [mean], 1e-6);
+                    // and it is subtracted from the amplitudes
+                    let expected = (0..num_times).map(|t| {
+                        if timestep_flags[t] {
+                            f64::NAN
+                        } else {
+                            amp(t, f) - mean
+                        }
+                    });
+                    assert_close(sub.iter(), expected, 1e-5);
+                }
+            }
+        }
+
+        // the polynomial is a fit to the bandpass: its residuals are no
+        // bigger than the ripple.
+        for ((a, f, p), &spectrum) in auto.auto_spectrum_afp.indexed_iter() {
+            if chan_flags[f] {
+                continue;
+            }
+            let freq_hz = ctx.fine_chan_freqs_hz[f];
+            let fit: f64 = (0..3)
+                .map(|k| f64::from(auto.auto_coeffs_apo[[a, p, k]]) * freq_hz.powi(k as i32))
+                .sum();
+            let ant_idx = [2, 4, 7][a] as f64;
+            assert!(
+                (fit - f64::from(spectrum)).abs() < 1.5 * (1.0 + 2.0 * ant_idx),
+                "a={a} f={f} p={p} fit={fit} spectrum={spectrum}"
+            );
+        }
+
+        // the delay spectrum is the delay transform of the bandpass
+        let config = DelayTransformConfig {
+            min_delay_ns: 100.0,
+            max_delay_ns: 3000.0,
+            target_delay_res_ns: 1.0,
+        };
+        let freqs_hz = Array1::from(ctx.fine_chan_freqs_hz.clone());
+        for p in 0..4 {
+            let spectrum_af: Array2<f64> =
+                auto.auto_spectrum_afp.slice(s![.., .., p]).mapv(f64::from);
+            let expected = delay_transform(&spectrum_af, &freqs_hz, &config).unwrap();
+            assert_close(
+                auto.auto_delay_afp.slice(s![.., .., p]).iter(),
+                expected.delay_spectrum.iter().copied(),
+                1e-6,
+            );
+            assert!((auto.start_delay_ns - expected.delays_ns[0]).abs() < 1e-9);
+            assert!(
+                (auto.delay_res_ns - (expected.delays_ns[1] - expected.delays_ns[0])).abs() < 1e-9
+            );
+        }
+        assert!(auto.start_delay_ns >= 100.0 && auto.start_delay_ns < 101.0);
+        assert!(auto.delay_res_ns <= 1.0 && auto.delay_res_ns > 0.9);
+    }
+
+    /// Only the antennas with autocorrelations have metrics, and they get the
+    /// right metadata.
+    #[test]
+    fn test_autometrics_without_some_autos() {
+        let mut ctx = metrics_context(2, 4, &[1, 3, 6]);
+        let vis = synthetic_vis(&ctx);
+        // leave out the autocorrelation of antenna 3
+        let keep: Vec<usize> = (0..ctx.antenna_pairs.len())
+            .filter(|&b| ctx.antenna_pairs[b] != (3, 3))
+            .collect();
+        let vis = vis.select(crate::marlu::ndarray::Axis(2), &keep);
+        ctx.antenna_pairs = keep.iter().map(|&b| ctx.antenna_pairs[b]).collect();
+
+        let auto = AutoMetrics::new_from_metadata(vis.view(), &ctx, &[false; 2], &[false; 4]);
+
+        assert_eq!(auto.antenna_names, ["Tile001", "Tile006"]);
+        assert_eq!(auto.antenna_ids, [1, 6]);
+        assert_eq!(auto.auto_spectrum_afp.dim(), (2, 4, 4));
+        // antenna 6's auto is the last baseline
+        let last_bl = ctx.antenna_pairs.len() - 1;
+        let amp = (vis[[0, 2, last_bl]][0].norm() + vis[[1, 2, last_bl]][0].norm()) / 2.0;
+        assert_close([&auto.auto_spectrum_afp[[1, 2, 0]]], [f64::from(amp)], 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "all timesteps are flagged")]
+    fn test_autometrics_all_timesteps_flagged() {
+        let ctx = metrics_context(2, 4, &[0, 1]);
+        let vis = synthetic_vis(&ctx);
+        AutoMetrics::new_from_metadata(vis.view(), &ctx, &[true; 2], &[false; 4]);
+    }
+
+    #[test]
+    #[should_panic(expected = "all channels are flagged")]
+    fn test_autometrics_all_channels_flagged() {
+        let ctx = metrics_context(2, 4, &[0, 1]);
+        let vis = synthetic_vis(&ctx);
+        AutoMetrics::new_from_metadata(vis.view(), &ctx, &[false; 2], &[true; 4]);
+    }
+
+    /// The polynomial coefficients are NaN when there aren't enough unflagged
+    /// channels to fit.
+    #[test]
+    fn test_autometrics_too_few_channels_to_fit() {
+        let ctx = metrics_context(2, 4, &[0, 1]);
+        let vis = synthetic_vis(&ctx);
+        let chan_flags = [false, true, true, false];
+        let auto = AutoMetrics::new_from_metadata(vis.view(), &ctx, &[false; 2], &chan_flags);
+        assert!(auto.auto_coeffs_apo.iter().all(|c| c.is_nan()));
+        assert!(auto.auto_delay_afp.iter().all(|d| d.is_finite()));
+    }
+
+    /// `AutoMetrics::new` uses the antennas, flags, times and frequencies of
+    /// the selection.
+    #[test]
+    fn test_autometrics_new_with_selection() {
+        let corr_ctx = CorrelatorContext::new(
+            "tests/data/1119683928_picket/1119683928.metafits",
+            &["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"],
+        )
+        .unwrap();
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let meta_ants = &corr_ctx.metafits_context.antennas;
+
+        // antennas which are not at the start, sequential or in order.
+        for ant_idxs in [vec![1, 2], vec![0, 1], vec![5], vec![20, 4, 19]] {
+            let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+            vis_sel.retain_antennas(&corr_ctx.metafits_context, &ant_idxs);
+            let mut sorted_ant_idxs = ant_idxs.clone();
+            sorted_ant_idxs.sort_unstable();
+            let num_ants = ant_idxs.len();
+
+            let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+            flag_ctx.fine_chan_flags[3] = true;
+            let (num_times, num_freqs, num_baselines) = vis_sel.get_shape(fine_chans_per_coarse);
+            let jones_array =
+                Array3::from_shape_fn((num_times, num_freqs, num_baselines), |(_, _, b)| {
+                    Jones::identity() * (1.0 + b as f32)
+                });
+
+            let auto = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+
+            assert_eq!(
+                auto.auto_sub_aptf.dim(),
+                (num_ants, 4, num_times, num_freqs)
+            );
+            assert_eq!(auto.auto_spectrum_afp.dim(), (num_ants, num_freqs, 4));
+            assert_eq!(auto.auto_coeffs_apo.dim(), (num_ants, 4, 3));
+            assert_eq!(auto.auto_delay_afp.dim().0, num_ants);
+            for (a, &ant_idx) in sorted_ant_idxs.iter().enumerate() {
+                assert_eq!(auto.antenna_names[a], meta_ants[ant_idx].tile_name);
+                assert_eq!(auto.antenna_ids[a], ant_idx as u32);
+                assert_eq!(auto.antenna_nums[a], meta_ants[ant_idx].tile_id);
+                // XX of the autocorrelation of this antenna
+                let bl_idx = vis_sel
+                    .get_ant_pairs(&corr_ctx.metafits_context)
+                    .iter()
+                    .position(|&pair| pair == (ant_idx, ant_idx))
+                    .unwrap();
+                assert_close(
+                    [&auto.auto_spectrum_afp[[a, 0, 0]]],
+                    [1.0 + bl_idx as f64],
+                    1e-6,
+                );
+                // the flagged fine channel
+                assert!(auto.auto_spectrum_afp[[a, 3, 0]].is_nan());
+            }
+            assert_eq!(
+                auto.start_freq_hz.to_bits(),
+                corr_ctx.metafits_context.metafits_fine_chan_freqs_hz[0].to_bits()
+            );
+            assert_eq!(
+                auto.start_time_gps_s.to_bits(),
+                (corr_ctx.timesteps[vis_sel.timestep_range.start].gps_time_ms as f64 / 1000.0)
+                    .to_bits()
+            );
+        }
+    }
+
+    #[test]
+    fn test_autometrics_save_to_fits() {
+        let (num_times, num_freqs) = (3, 8);
+        let ctx = metrics_context(num_times, num_freqs, &[4, 1]);
+        let vis = synthetic_vis(&ctx);
+        let mut chan_flags = vec![false; num_freqs];
+        chan_flags[0] = true;
+        let auto = AutoMetrics::new_from_metadata(vis.view(), &ctx, &[false; 3], &chan_flags);
+        let num_delays = auto.auto_delay_afp.dim().1;
+
+        let (_tmp_file, mut fptr) = save_and_open(|fptr| auto.save_to_fits(fptr));
+
+        assert_eq!(
+            hdu_names(&mut fptr),
+            [
+                "AUTO_SUB_ANT=Tile001",
+                "AUTO_SUB_ANT=Tile004",
+                "AUTO_POL=XX",
+                "AUTO_POL=YY",
+                "AUTO_POL=XY",
+                "AUTO_POL=YX",
+                "AUTO_COEFFS",
+                "AUTO_DELAY_POL=XX",
+                "AUTO_DELAY_POL=YY",
+                "AUTO_DELAY_POL=XY",
+                "AUTO_DELAY_POL=YX",
+            ]
+        );
+
+        for (a, extname) in ["AUTO_SUB_ANT=Tile001", "AUTO_SUB_ANT=Tile004"]
+            .into_iter()
+            .enumerate()
+        {
+            let image = read_image(&mut fptr, extname);
+            assert_eq!(image.shape(), [4, num_times, num_freqs]);
+            assert_close(
+                auto.auto_sub_aptf.slice(s![a, .., .., ..]).iter(),
+                image.iter().copied(),
+                0.0,
+            );
+            // the axes are in FITS order: the last dimension is axis 1.
+            assert_str_keys(
+                &mut fptr,
+                extname,
+                &[
+                    ("CTYPE1", "FREQ"),
+                    ("CUNIT1", "Hz"),
+                    ("CTYPE2", "TIME"),
+                    ("CUNIT2", "s"),
+                    ("CTYPE3", "STOKES"),
+                    ("ANTNAME", &auto.antenna_names[a]),
+                    ("ANT_TYPE", "RRI"),
+                    ("RX_TYPE", "RRI"),
+                    ("CABLE_FLAVOUR", &auto.cable_flavours[a]),
+                ],
+            );
+            assert_f64_keys(
+                &mut fptr,
+                extname,
+                &[
+                    ("NAXIS1", num_freqs as f64),
+                    ("NAXIS2", num_times as f64),
+                    ("NAXIS3", 4.0),
+                    ("CRVAL1", 150e6),
+                    ("CRPIX1", 1.0),
+                    ("CHAN_WIDTH", 40e3),
+                    ("CRVAL2", 1e9),
+                    ("CDELT2", 2.0),
+                    ("CRPIX2", 1.0),
+                    ("CRVAL3", -5.0),
+                    ("CDELT3", -1.0),
+                    ("CRPIX3", 1.0),
+                    ("ANT_ID", f64::from(auto.antenna_ids[a])),
+                    ("ANT_NUM", f64::from(auto.antenna_nums[a])),
+                    (
+                        "WHITENING_FILTER",
+                        f64::from(u8::from(auto.whitening_filters[a])),
+                    ),
+                    ("RX_NUMBER", f64::from(auto.rx_numbers[a])),
+                    ("RX_SLOT", f64::from(auto.rx_slots[a])),
+                    ("OBSGEO-X", auto.antenna_positions[a].x),
+                    ("OBSGEO-Y", auto.antenna_positions[a].y),
+                    ("OBSGEO-Z", auto.antenna_positions[a].z),
+                ],
+            );
+        }
+
+        for (p, pol_name) in FITS_POL_NAMES.into_iter().enumerate() {
+            let extname = format!("AUTO_POL={pol_name}");
+            let image = read_image(&mut fptr, &extname);
+            assert_eq!(image.shape(), [2, num_freqs]);
+            assert_close(
+                auto.auto_spectrum_afp.slice(s![.., .., p]).iter(),
+                image.iter().copied(),
+                0.0,
+            );
+            assert_str_keys(
+                &mut fptr,
+                &extname,
+                &[
+                    ("CTYPE1", "FREQ"),
+                    ("CUNIT1", "Hz"),
+                    ("CTYPE2", "BASELINE"),
+                    ("POL", pol_name),
+                    ("TELESCOP", "MWA"),
+                ],
+            );
+            assert_f64_keys(
+                &mut fptr,
+                &extname,
+                &[("CRVAL1", 150e6), ("CHAN_WIDTH", 40e3), ("N_ANTS", 2.0)],
+            );
+            // XX of the autocorrelation of antenna 4, which is the first
+            // baseline, is the second row.
+            if pol_name == "XX" {
+                let mean_amp = (0..num_times)
+                    .map(|t| f64::from(vis[[t, 2, 0]][0].norm()))
+                    .sum::<f64>()
+                    / num_times as f64;
+                assert!((image[[1, 2]] - mean_amp).abs() < 1e-5);
+            }
+
+            let extname = format!("AUTO_DELAY_POL={pol_name}");
+            let image = read_image(&mut fptr, &extname);
+            assert_eq!(image.shape(), [2, num_delays]);
+            assert_close(
+                auto.auto_delay_afp.slice(s![.., .., p]).iter(),
+                image.iter().copied(),
+                0.0,
+            );
+            assert_str_keys(
+                &mut fptr,
+                &extname,
+                &[
+                    ("CTYPE1", "DELAY"),
+                    ("CUNIT1", "ns"),
+                    ("CTYPE2", "BASELINE"),
+                    ("POL", pol_name),
+                ],
+            );
+            assert_f64_keys(
+                &mut fptr,
+                &extname,
+                &[
+                    ("CRVAL1", auto.start_delay_ns),
+                    ("DELAY_RES", auto.delay_res_ns),
+                    ("N_ANTS", 2.0),
+                ],
+            );
+        }
+
+        let hdu = fptr.hdu("AUTO_COEFFS").unwrap();
+        let names: Vec<String> = hdu.read_col(&mut fptr, "ANT_NAME").unwrap();
+        assert_eq!(names, auto.antenna_names);
+        let ant_ids: Vec<u32> = hdu.read_col(&mut fptr, "ANT_ID").unwrap();
+        assert_eq!(ant_ids, auto.antenna_ids);
+        let ant_nums: Vec<u32> = hdu.read_col(&mut fptr, "ANT_NUM").unwrap();
+        assert_eq!(ant_nums, auto.antenna_nums);
+        let flavours: Vec<String> = hdu.read_col(&mut fptr, "CABLE_FLAVOUR").unwrap();
+        assert_eq!(flavours, auto.cable_flavours);
+        let whitening_filters: Vec<i32> = hdu.read_col(&mut fptr, "WHITENING_FILTER").unwrap();
+        assert_eq!(whitening_filters, [0, 1]);
+        let rx_numbers: Vec<u32> = hdu.read_col(&mut fptr, "RX_NUMBER").unwrap();
+        assert_eq!(rx_numbers, auto.rx_numbers);
+        let rx_slots: Vec<u32> = hdu.read_col(&mut fptr, "RX_SLOT").unwrap();
+        assert_eq!(rx_slots, auto.rx_slots);
+        for col in ["ANT_TYPE", "RX_TYPE"] {
+            let rx_types: Vec<String> = hdu.read_col(&mut fptr, col).unwrap();
+            assert_eq!(rx_types, auto.rx_types);
+        }
+        let north_m: Vec<f64> = hdu.read_col(&mut fptr, "OBSGEO-X").unwrap();
+        assert_eq!(north_m, [10.0, 40.0]);
+        let east_m: Vec<f64> = hdu.read_col(&mut fptr, "OBSGEO-Y").unwrap();
+        assert_eq!(east_m, [0.5, 0.5]);
+        let height_m: Vec<f64> = hdu.read_col(&mut fptr, "OBSGEO-Z").unwrap();
+        assert_eq!(height_m, [1.5, 1.5]);
+        for (p, pol_name) in FITS_POL_NAMES.into_iter().enumerate() {
+            // 3 coefficients for each of the 2 antennas
+            let coeffs: Vec<f64> = hdu
+                .read_col(&mut fptr, &format!("COEFFS_{pol_name}"))
+                .unwrap();
+            assert_close(
+                auto.auto_coeffs_apo.slice(s![.., p, ..]).iter(),
+                coeffs,
+                0.0,
+            );
+        }
+        assert_eq!(hdu.read_key::<i64>(&mut fptr, "POLY_ORD").unwrap(), 2);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::needless_range_loop, clippy::cognitive_complexity)]
+mod ssins_fits_tests {
+    use super::{
+        test_common::{
+            assert_close, assert_f64_keys, assert_str_keys, hdu_names, metrics_context, read_image,
+            save_and_open, synthetic_vis,
+        },
+        JONES_POL_NAMES, SSINS,
+    };
+    use crate::{
+        marlu::{
+            mwalib::CorrelatorContext,
+            ndarray::{s, Array3},
+            VisSelection,
+        },
+        FlagContext,
+    };
+
+    #[test]
+    #[should_panic(expected = "SSINS requires at least 2 timesteps")]
+    fn test_ssins_needs_two_timesteps() {
+        let ctx = metrics_context(1, 4, &[0, 1]);
+        let vis = synthetic_vis(&ctx);
+        let flags = Array3::from_elem(vis.dim(), false);
+        SSINS::new_from_metadata(vis.view(), flags.view(), &ctx, &[false], &[false; 4]);
+    }
+
+    /// Flagged timesteps and channels are left out.
+    #[test]
+    fn test_ssins_timestep_and_chan_flags() {
+        let (num_times, num_freqs) = (6, 4);
+        let ctx = metrics_context(num_times, num_freqs, &[0, 1, 2]);
+        let vis = synthetic_vis(&ctx);
+        let flags = Array3::from_elem(vis.dim(), false);
+        let mut timestep_flags = vec![false; num_times];
+        timestep_flags[2] = true;
+        let mut chan_flags = vec![false; num_freqs];
+        chan_flags[1] = true;
+
+        let ssins =
+            SSINS::new_from_metadata(vis.view(), flags.view(), &ctx, &timestep_flags, &chan_flags);
+
+        assert_eq!(ssins.zscore.dim(), (num_times - 1, num_freqs, 4));
+        assert_eq!(ssins.num_baselines, 3);
+        for ((t, f), &num_baselines) in ssins.num_baselines_tf.indexed_iter() {
+            // differences 1 and 2 use the flagged timestep 2
+            let flagged = t == 1 || t == 2 || f == 1;
+            assert_eq!(num_baselines, if flagged { 0 } else { 3 });
+            for p in 0..4 {
+                assert_eq!(ssins.zscore[[t, f, p]].is_nan(), flagged);
+            }
+        }
+        assert!(ssins.diff_mean_amp_fp.row(1).iter().all(|x| x.is_nan()));
+        assert!(ssins.diff_mean_amp_fp.row(0).iter().all(|x| *x > 0.0));
+        assert!(ssins.flag_array.iter().all(|&flag| !flag));
+        // the first difference is between the first two timesteps
+        assert_eq!(ssins.start_time_gps_s.to_bits(), (1e9_f64 + 1.0).to_bits());
+        assert_eq!(ssins.integration_time_s.to_bits(), 2.0_f64.to_bits());
+        assert_eq!(ssins.start_freq_hz.to_bits(), 150e6_f64.to_bits());
+        assert_eq!(ssins.channel_width_hz.to_bits(), 40e3_f64.to_bits());
+    }
+
+    /// `SSINS::new` gives the same thing as `SSINS::new_from_metadata` with
+    /// the metadata and flags of the selection.
+    #[test]
+    fn test_ssins_new_with_selection() {
+        let corr_ctx = CorrelatorContext::new(
+            "tests/data/1297526432_mwax/1297526432.metafits",
+            &[
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+            ],
+        )
+        .unwrap();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+        flag_ctx.timestep_flags[3] = true;
+        flag_ctx.fine_chan_flags[1] = true;
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        crate::io::read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
+
+        let ssins = SSINS::new(
+            jones_array.view(),
+            flag_array.view(),
+            &corr_ctx,
+            &vis_sel,
+            &flag_ctx,
+        );
+
+        let (num_times, num_freqs, _) = jones_array.dim();
+        let (ctx, timestep_flags, chan_flags) =
+            super::selection_metadata(&corr_ctx, &vis_sel, &flag_ctx);
+        assert_eq!(timestep_flags, [false, false, false, true]);
+        assert_eq!(chan_flags, [false, true, false, true]);
+        let expected = SSINS::new_from_metadata(
+            jones_array.view(),
+            flag_array.view(),
+            &ctx,
+            &timestep_flags,
+            &chan_flags,
+        );
+        assert_eq!(ssins.zscore.dim(), (num_times - 1, num_freqs, 4));
+        assert_close(
+            ssins.zscore.iter(),
+            expected.zscore.iter().map(|&z| f64::from(z)),
+            0.0,
+        );
+        assert_eq!(ssins.num_baselines_tf, expected.num_baselines_tf);
+        // 2 tiles, so there is one cross-correlation
+        assert_eq!(ssins.num_baselines, 1);
+        assert!(ssins
+            .zscore
+            .slice(s![..2, 0, ..])
+            .iter()
+            .all(|z| z.is_finite()));
+        assert!(ssins.zscore.slice(s![2, .., ..]).iter().all(|z| z.is_nan()));
+        assert!(ssins.zscore.slice(s![.., 1, ..]).iter().all(|z| z.is_nan()));
+    }
+
+    #[test]
+    fn test_ssins_save_to_fits() {
+        let (num_times, num_freqs) = (4, 6);
+        let ctx = metrics_context(num_times, num_freqs, &[0, 1, 2]);
+        let vis = synthetic_vis(&ctx);
+        let mut flags = Array3::from_elem(vis.dim(), false);
+        // flag a cross-correlation
+        flags[[1, 2, 1]] = true;
+        let mut ssins =
+            SSINS::new_from_metadata(vis.view(), flags.view(), &ctx, &[false; 4], &[false; 6]);
+        ssins.flag_array[[2, 4]] = true;
+
+        let (_tmp_file, mut fptr) = save_and_open(|fptr| ssins.save_to_fits(fptr));
+
+        assert_eq!(
+            hdu_names(&mut fptr),
+            [
+                "SSINS_POL=XX",
+                "SSINS_POL=XY",
+                "SSINS_POL=YX",
+                "SSINS_POL=YY",
+                "SSINS_FLAGS",
+                "SSINS_N_BL",
+                "SSINS_DIFF_MEAN_AMP_FP",
+            ]
+        );
+
+        let time_freq_axes = [
+            ("NAXIS1", num_freqs as f64),
+            ("NAXIS2", (num_times - 1) as f64),
+            ("CRVAL1", 150e6),
+            ("CDELT1", 40e3),
+            ("CRPIX1", 1.0),
+            ("CRVAL2", 1e9 + 1.0),
+            ("CDELT2", 2.0),
+            ("CRPIX2", 1.0),
+        ];
+        let time_freq_units = [
+            ("CTYPE1", "FREQ"),
+            ("CUNIT1", "Hz"),
+            ("CTYPE2", "TIME"),
+            ("CUNIT2", "s"),
+        ];
+        for (p, pol_name) in JONES_POL_NAMES.into_iter().enumerate() {
+            let extname = format!("SSINS_POL={pol_name}");
+            let image = read_image(&mut fptr, &extname);
+            assert_eq!(image.shape(), [num_times - 1, num_freqs]);
+            assert_close(
+                ssins.zscore.slice(s![.., .., p]).iter(),
+                image.iter().copied(),
+                0.0,
+            );
+            assert_f64_keys(&mut fptr, &extname, &time_freq_axes);
+            assert_f64_keys(&mut fptr, &extname, &[("N_BL", 3.0)]);
+            assert_str_keys(&mut fptr, &extname, &time_freq_units);
+            assert_str_keys(
+                &mut fptr,
+                &extname,
+                &[
+                    ("POL", pol_name),
+                    ("TELESCOP", "MWA"),
+                    ("INSTRUME", "SSINS"),
+                    ("ORIGIN", "Birli"),
+                ],
+            );
+        }
+
+        let image = read_image(&mut fptr, "SSINS_FLAGS");
+        assert_eq!(image.shape(), [num_times - 1, num_freqs]);
+        for ((t, f), &flag) in ssins.flag_array.indexed_iter() {
+            assert_eq!(image[[t, f]].to_bits(), f64::from(u8::from(flag)).to_bits());
+        }
+        assert!(image[[2, 4]] > 0.5 && image.sum() < 1.5);
+        assert_f64_keys(&mut fptr, "SSINS_FLAGS", &time_freq_axes);
+        assert_str_keys(&mut fptr, "SSINS_FLAGS", &time_freq_units);
+
+        let image = read_image(&mut fptr, "SSINS_N_BL");
+        assert_eq!(image.shape(), [num_times - 1, num_freqs]);
+        for ((t, f), &num_baselines) in ssins.num_baselines_tf.indexed_iter() {
+            assert_eq!(image[[t, f]].to_bits(), f64::from(num_baselines).to_bits());
+        }
+        // the flagged visibility is in two differences
+        assert_eq!(image[[0, 2]].to_bits(), 2.0_f64.to_bits());
+        assert_eq!(image[[1, 2]].to_bits(), 2.0_f64.to_bits());
+        assert_eq!(image[[2, 2]].to_bits(), 3.0_f64.to_bits());
+        assert_f64_keys(&mut fptr, "SSINS_N_BL", &time_freq_axes);
+        assert_str_keys(&mut fptr, "SSINS_N_BL", &time_freq_units);
+
+        // polarisation is FITS axis 1, and frequency is FITS axis 2.
+        let extname = "SSINS_DIFF_MEAN_AMP_FP";
+        let image = read_image(&mut fptr, extname);
+        assert_eq!(image.shape(), [num_freqs, 4]);
+        assert_close(ssins.diff_mean_amp_fp.iter(), image.iter().copied(), 0.0);
+        assert_str_keys(&mut fptr, extname, &[("CTYPE2", "FREQ"), ("CUNIT2", "Hz")]);
+        assert_f64_keys(
+            &mut fptr,
+            extname,
+            &[
+                ("NAXIS1", 4.0),
+                ("NAXIS2", num_freqs as f64),
+                ("CRVAL2", 150e6),
+                ("CDELT2", 40e3),
+                ("CRPIX2", 1.0),
+            ],
+        );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::needless_range_loop, clippy::cognitive_complexity)]
+mod eavils_tests {
+    use super::{
+        test_common::{
+            assert_close, assert_f64_keys, assert_str_keys, hdu_names, metrics_context, read_image,
+            save_and_open, synthetic_vis,
+        },
+        EAVILS, JONES_POL_NAMES,
+    };
+    use crate::{
+        marlu::{mwalib::CorrelatorContext, ndarray::s, VisSelection},
+        FlagContext,
+    };
+
+    /// The values match the definition, with a flagged timestep and channel.
+    #[test]
+    fn test_eavils_values() {
+        let (num_times, num_freqs) = (5, 4);
+        let ctx = metrics_context(num_times, num_freqs, &[0, 1, 2]);
+        let num_baselines = ctx.antenna_pairs.len();
+        let vis = synthetic_vis(&ctx);
+        let mut timestep_flags = vec![false; num_times];
+        timestep_flags[1] = true;
+        let mut chan_flags = vec![false; num_freqs];
+        chan_flags[2] = true;
+
+        let eavils = EAVILS::new_from_metadata(vis.view(), &ctx, &timestep_flags, &chan_flags);
+
+        assert_eq!(eavils.zscore.dim(), (num_times, num_freqs, 4));
+        assert_eq!(eavils.mean_amp_fp.dim(), (num_freqs, 4));
+        assert_eq!(eavils.sqrt_mean_var_amp_fp.dim(), (num_freqs, 4));
+        assert!(eavils.flag_array.iter().all(|&flag| !flag));
+        assert_eq!(eavils.flag_array.dim(), (num_times, num_freqs));
+        assert_eq!(eavils.start_time_gps_s.to_bits(), 1e9_f64.to_bits());
+        assert_eq!(eavils.integration_time_s.to_bits(), 2.0_f64.to_bits());
+        assert_eq!(eavils.start_freq_hz.to_bits(), 150e6_f64.to_bits());
+        assert_eq!(eavils.channel_width_hz.to_bits(), 40e3_f64.to_bits());
+
+        let unflagged_times = [0, 2, 3, 4];
+        let mean = |values: &[f64]| values.iter().sum::<f64>() / values.len() as f64;
+        for f in 0..num_freqs {
+            for p in 0..4 {
+                if chan_flags[f] {
+                    assert!(eavils.mean_amp_fp[[f, p]].is_nan());
+                    assert!(eavils.sqrt_mean_var_amp_fp[[f, p]].is_nan());
+                    assert!(eavils.zscore.slice(s![.., f, p]).iter().all(|z| z.is_nan()));
+                    continue;
+                }
+                let amp = |t: usize, b: usize| f64::from(vis[[t, f, b]][p].norm());
+                // blmean = np.mean(amp, axis=baseline)
+                let blmean =
+                    |t: usize| mean(&(0..num_baselines).map(|b| amp(t, b)).collect::<Vec<_>>());
+                // np.mean(blmean, axis=time)
+                let mean_amp = mean(&unflagged_times.map(blmean));
+                // np.sqrt(np.mean(np.var(amp, axis=time), axis=baseline))
+                let stdv = mean(
+                    &(0..num_baselines)
+                        .map(|b| {
+                            let amps = unflagged_times.map(|t| amp(t, b));
+                            let mean_amp = mean(&amps);
+                            mean(&amps.map(|amp| (amp - mean_amp).powi(2)))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .sqrt();
+                assert_close([&eavils.mean_amp_fp[[f, p]]], [mean_amp], 1e-5);
+                assert_close([&eavils.sqrt_mean_var_amp_fp[[f, p]]], [stdv], 1e-4);
+                let zscores = (0..num_times).map(|t| {
+                    if timestep_flags[t] {
+                        f64::NAN
+                    } else {
+                        (blmean(t) - mean_amp) / stdv * (num_baselines as f64).sqrt()
+                    }
+                });
+                // the z-score is a small difference of f32 means
+                assert_close(eavils.zscore.slice(s![.., f, p]).iter(), zscores, 2e-3);
+            }
+        }
+    }
+
+    /// `EAVILS::new` uses the flags, times and frequencies of the selection.
+    #[test]
+    fn test_eavils_new_with_selection() {
+        let corr_ctx = CorrelatorContext::new(
+            "tests/data/1297526432_mwax/1297526432.metafits",
+            &[
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+            ],
+        )
+        .unwrap();
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        vis_sel.timestep_range = 1..4;
+        let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+        flag_ctx.timestep_flags[2] = true;
+        flag_ctx.coarse_chan_flags[vis_sel.coarse_chan_range.start + 1] = true;
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        crate::io::read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
+
+        let eavils = EAVILS::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+
+        let (ctx, timestep_flags, chan_flags) =
+            super::selection_metadata(&corr_ctx, &vis_sel, &flag_ctx);
+        assert_eq!(timestep_flags, [false, true, false]);
+        assert_eq!(chan_flags, [false, false, true, true]);
+        let expected =
+            EAVILS::new_from_metadata(jones_array.view(), &ctx, &timestep_flags, &chan_flags);
+        assert_close(
+            eavils.zscore.iter(),
+            expected.zscore.iter().map(|&z| f64::from(z)),
+            0.0,
+        );
+        assert_eq!(eavils.zscore.dim(), (3, 4, 4));
+        assert!(eavils
+            .zscore
+            .slice(s![0, ..2, ..])
+            .iter()
+            .all(|z| z.is_finite()));
+        assert!(eavils
+            .zscore
+            .slice(s![1, .., ..])
+            .iter()
+            .all(|z| z.is_nan()));
+        assert!(eavils
+            .zscore
+            .slice(s![.., 2.., ..])
+            .iter()
+            .all(|z| z.is_nan()));
+        assert_eq!(
+            eavils.start_time_gps_s.to_bits(),
+            (corr_ctx.timesteps[1].gps_time_ms as f64 / 1000.0).to_bits()
+        );
+    }
+
+    #[test]
+    fn test_eavils_save_to_fits() {
+        let (num_times, num_freqs) = (3, 6);
+        let ctx = metrics_context(num_times, num_freqs, &[0, 1]);
+        let vis = synthetic_vis(&ctx);
+        let mut eavils = EAVILS::new_from_metadata(vis.view(), &ctx, &[false; 3], &[false; 6]);
+        eavils.flag_array[[1, 5]] = true;
+
+        let (_tmp_file, mut fptr) = save_and_open(|fptr| eavils.save_to_fits(fptr));
+
+        assert_eq!(
+            hdu_names(&mut fptr),
+            [
+                "EAVILS_POL=XX",
+                "EAVILS_POL=XY",
+                "EAVILS_POL=YX",
+                "EAVILS_POL=YY",
+                "EAVILS_FLAGS",
+                "EAVILS_MEAN_AMP_FP",
+                "EAVILS_SQRT_MEAN_VAR_AMP_FP",
+            ]
+        );
+
+        let time_freq_axes = [
+            ("NAXIS1", num_freqs as f64),
+            ("NAXIS2", num_times as f64),
+            ("CRVAL1", 150e6),
+            ("CDELT1", 40e3),
+            ("CRPIX1", 1.0),
+            ("CRVAL2", 1e9),
+            ("CDELT2", 2.0),
+            ("CRPIX2", 1.0),
+        ];
+        let time_freq_units = [
+            ("CTYPE1", "FREQ"),
+            ("CUNIT1", "Hz"),
+            ("CTYPE2", "TIME"),
+            ("CUNIT2", "s"),
+            ("TELESCOP", "MWA"),
+            ("INSTRUME", "EAVILS"),
+            ("ORIGIN", "Birli"),
+        ];
+        for (p, pol_name) in JONES_POL_NAMES.into_iter().enumerate() {
+            let extname = format!("EAVILS_POL={pol_name}");
+            let image = read_image(&mut fptr, &extname);
+            assert_eq!(image.shape(), [num_times, num_freqs]);
+            assert_close(
+                eavils.zscore.slice(s![.., .., p]).iter(),
+                image.iter().copied(),
+                0.0,
+            );
+            assert_f64_keys(&mut fptr, &extname, &time_freq_axes);
+            assert_str_keys(&mut fptr, &extname, &time_freq_units);
+            assert_str_keys(&mut fptr, &extname, &[("POL", pol_name)]);
+        }
+
+        let image = read_image(&mut fptr, "EAVILS_FLAGS");
+        assert_eq!(image.shape(), [num_times, num_freqs]);
+        assert!(image[[1, 5]] > 0.5 && image.sum() < 1.5);
+        assert_f64_keys(&mut fptr, "EAVILS_FLAGS", &time_freq_axes);
+        assert_str_keys(&mut fptr, "EAVILS_FLAGS", &time_freq_units);
+
+        // polarisation is FITS axis 1, and frequency is FITS axis 2.
+        for (extname, array_fp) in [
+            ("EAVILS_MEAN_AMP_FP", &eavils.mean_amp_fp),
+            ("EAVILS_SQRT_MEAN_VAR_AMP_FP", &eavils.sqrt_mean_var_amp_fp),
+        ] {
+            let image = read_image(&mut fptr, extname);
+            assert_eq!(image.shape(), [num_freqs, 4]);
+            assert_close(array_fp.iter(), image.iter().copied(), 0.0);
+            assert_str_keys(&mut fptr, extname, &[("CTYPE2", "FREQ"), ("CUNIT2", "Hz")]);
+            assert_f64_keys(
+                &mut fptr,
+                extname,
+                &[
+                    ("NAXIS1", 4.0),
+                    ("NAXIS2", num_freqs as f64),
+                    ("CRVAL2", 150e6),
+                    ("CDELT2", 40e3),
+                    ("CRPIX2", 1.0),
+                ],
+            );
+        }
+    }
+}
+
 #[cfg(all(test, feature = "aoflagger"))]
-mod aoflagmetrics_tests {
-    use super::AOFlagMetrics;
-    use crate::marlu::ndarray::{Array2, Array3};
+#[allow(clippy::needless_range_loop, clippy::cognitive_complexity)]
+mod aoflagger_tests {
+    use super::{
+        test_common::{
+            assert_close, assert_f64_keys, assert_str_keys, hdu_names, metrics_context, read_image,
+            save_and_open, synthetic_vis,
+        },
+        AOFlagMetrics, CrossMetrics, DELAY_TRANSFORM_CONFIG, SSINS,
+    };
+    use crate::{
+        delay_transform::delay_transform,
+        marlu::{
+            mwalib::CorrelatorContext,
+            ndarray::{s, Array1, Array2, Array3, Axis},
+            num_complex::Complex,
+            Jones, VisSelection,
+        },
+        FlagContext,
+    };
+    use std::f64::consts::TAU;
+
+    fn get_mwax_context() -> CorrelatorContext {
+        CorrelatorContext::new(
+            "tests/data/1297526432_mwax/1297526432.metafits",
+            &[
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_000.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch117_001.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_000.fits",
+                "tests/data/1297526432_mwax/1297526432_20210216160014_ch118_001.fits",
+            ],
+        )
+        .unwrap()
+    }
 
     #[test]
     fn test_crosses_only_occupancy_helper() {
         // Two timesteps, two freqs, three baselines: (0,0) auto, (0,1) cross, (1,1) auto
         let mut flags = Array3::<bool>::from_elem((2, 2, 3), false);
-        // Set autos flagged everywhere
-        for t in 0..2 {
-            for f in 0..2 {
-                flags[[t, f, 0]] = true; // auto 0-0
-                flags[[t, f, 2]] = true; // auto 1-1
-            }
-        }
-        // Cross baseline initially unflagged
-        flags[[0, 0, 1]] = false;
-        flags[[0, 1, 1]] = false;
-        flags[[1, 0, 1]] = true; // flag cross at (t=1,f=0)
-        flags[[1, 1, 1]] = false;
-
-        let timestep_flags = vec![false, false];
-        let chan_flags = vec![false, false];
-        let ant_pairs = vec![(0usize, 0usize), (0usize, 1usize), (1usize, 1usize)];
+        // autos are flagged everywhere
+        flags.slice_mut(s![.., .., 0]).fill(true);
+        flags.slice_mut(s![.., .., 2]).fill(true);
+        // flag cross at (t=1,f=0)
+        flags[[1, 0, 1]] = true;
 
         let occ = AOFlagMetrics::compute_cross_occupancy(
             flags.view(),
-            &timestep_flags,
-            &chan_flags,
-            &ant_pairs,
+            &[false, false],
+            &[false, false],
+            &[(0, 0), (0, 1), (1, 1)],
         );
 
-        // Expected: fraction over crosses only. Only one cross baseline exists.
-        let mut expected = Array2::<f64>::zeros((2, 2));
-        expected[[0, 0]] = 0.0; // cross false
-        expected[[0, 1]] = 0.0; // cross false
-        expected[[1, 0]] = 1.0; // cross true
-        expected[[1, 1]] = 0.0; // cross false
+        // fraction over crosses only. Only one cross baseline exists.
+        assert_eq!(occ.dim(), (2, 2));
+        assert_close(occ.mapv(|x| x as f32).iter(), [0.0, 0.0, 1.0, 0.0], 1e-12);
+    }
 
-        for t in 0..2 {
-            for f in 0..2 {
-                assert!(
-                    (occ[[t, f]] - expected[[t, f]]).abs() < 1e-12,
-                    "mismatch at (t={}, f={}): got {}, expected {}",
-                    t,
-                    f,
-                    occ[[t, f]],
-                    expected[[t, f]]
+    /// The occupancy is NaN if there are no cross-correlations.
+    #[test]
+    fn test_occupancy_without_crosses() {
+        let flags = Array3::<bool>::from_elem((2, 2, 2), true);
+        let occ = AOFlagMetrics::compute_cross_occupancy(
+            flags.view(),
+            &[false, false],
+            &[false, false],
+            &[(0, 0), (1, 1)],
+        );
+        assert!(occ.iter().all(|x| x.is_nan()));
+    }
+
+    #[test]
+    fn test_aoflagmetrics_values_and_fits() {
+        let (num_times, num_freqs) = (4, 5);
+        let ctx = metrics_context(num_times, num_freqs, &[0, 1, 2, 3]);
+        let num_baselines = ctx.antenna_pairs.len();
+        let cross: Vec<usize> = (0..num_baselines)
+            .filter(|&b| ctx.antenna_pairs[b].0 != ctx.antenna_pairs[b].1)
+            .collect();
+        assert_eq!(cross.len(), 6);
+        let mut flags = Array3::from_elem((num_times, num_freqs, num_baselines), false);
+        // half of the crosses at (0, 0), all of them at (2, 3), and an auto
+        // at (1, 1)
+        for &b in &cross[..3] {
+            flags[[0, 0, b]] = true;
+        }
+        flags.slice_mut(s![2, 3, ..]).fill(true);
+        flags[[1, 1, 0]] = true;
+        let mut timestep_flags = vec![false; num_times];
+        timestep_flags[3] = true;
+        let mut chan_flags = vec![false; num_freqs];
+        chan_flags[4] = true;
+
+        let metrics =
+            AOFlagMetrics::new_from_metadata(flags.view(), &ctx, &timestep_flags, &chan_flags);
+
+        for ((t, f), &occupancy) in metrics.occupancy_tf.indexed_iter() {
+            let expected = match (t, f) {
+                (3, _) | (_, 4) => f64::NAN,
+                (0, 0) => 0.5,
+                (2, 3) => 1.0,
+                _ => 0.0,
+            };
+            assert!(
+                (occupancy.is_nan() && expected.is_nan()) || (occupancy - expected).abs() < 1e-12,
+                "t={t} f={f} {occupancy} != {expected}"
+            );
+        }
+
+        let (_tmp_file, mut fptr) = save_and_open(|fptr| metrics.save_to_fits(fptr));
+        assert_eq!(hdu_names(&mut fptr), ["AO_FLAG_METRICS"]);
+        let image = read_image(&mut fptr, "AO_FLAG_METRICS");
+        assert_eq!(image.shape(), [num_times, num_freqs]);
+        assert_close(
+            metrics.occupancy_tf.mapv(|x| x as f32).iter(),
+            image.iter().copied(),
+            1e-6,
+        );
+        assert_str_keys(
+            &mut fptr,
+            "AO_FLAG_METRICS",
+            &[
+                ("CTYPE1", "FREQ"),
+                ("CUNIT1", "Hz"),
+                ("CTYPE2", "TIME"),
+                ("CUNIT2", "s"),
+            ],
+        );
+        assert_f64_keys(
+            &mut fptr,
+            "AO_FLAG_METRICS",
+            &[
+                ("CRVAL1", 150e6),
+                ("CDELT1", 40e3),
+                ("CRPIX1", 1.0),
+                ("CRVAL2", 1e9),
+                ("CDELT2", 2.0),
+                ("CRPIX2", 1.0),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_aoflagmetrics_new_with_selection() {
+        let corr_ctx = get_mwax_context();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let mut flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+        flag_ctx.timestep_flags[0] = true;
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        // baselines are (0, 0), (0, 1), (1, 1)
+        flag_array[[2, 1, 1]] = true;
+
+        let metrics = AOFlagMetrics::new(flag_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
+
+        assert_eq!(metrics.occupancy_tf.dim(), (4, 4));
+        assert!(metrics.occupancy_tf.row(0).iter().all(|x| x.is_nan()));
+        assert!((metrics.occupancy_tf[[2, 1]] - 1.0).abs() < 1e-12);
+        assert!(metrics.occupancy_tf[[1, 1]].abs() < 1e-12);
+        assert_eq!(
+            metrics.start_time_gps_s.to_bits(),
+            (corr_ctx.timesteps[0].gps_time_ms as f64 / 1000.0).to_bits()
+        );
+        let first_chan_idx = vis_sel.coarse_chan_range.start * fine_chans_per_coarse;
+        assert_eq!(
+            metrics.start_freq_hz.to_bits(),
+            corr_ctx.metafits_context.metafits_fine_chan_freqs_hz[first_chan_idx].to_bits()
+        );
+    }
+
+    /// Visibilities whose amplitude has a ripple in frequency with a different
+    /// delay for each polarisation: (none, 400 ns, 800 ns, 1200 ns).
+    fn ripple_vis(num_times: usize, freqs_hz: &[f64], num_baselines: usize) -> Array3<Jones<f32>> {
+        Array3::from_shape_fn((num_times, freqs_hz.len(), num_baselines), |(t, f, b)| {
+            Jones::from([0, 1, 2, 3].map(|p| {
+                let ripple = (TAU * freqs_hz[f] * 400e-9 * p as f64).cos();
+                let amp = (1 + b) as f64 * (2.0 + 0.5 * ripple);
+                // the phase changes with time, so that the coherent average
+                // in time matters
+                Complex::from_polar(amp as f32, 0.2 * t as f32)
+            }))
+        })
+    }
+
+    #[test]
+    fn test_crossmetrics_values_and_fits() {
+        let (num_times, num_freqs) = (4, 256);
+        // tiles 10 m apart: only neighbours are within 15 m.
+        let mut ctx = metrics_context(num_times, num_freqs, &[5, 1, 2, 3]);
+        // tile 5 is 20 m from tile 3, so it has no short baselines.
+        let num_baselines = ctx.antenna_pairs.len();
+        let mut vis = ripple_vis(num_times, &ctx.fine_chan_freqs_hz, num_baselines);
+        // YY of tile 1's only short baseline, (1, 2), is all zero, and
+        // baseline (2, 3) has a NaN
+        let bl_12 = ctx.antenna_pairs.iter().position(|&p| p == (1, 2)).unwrap();
+        let bl_23 = ctx.antenna_pairs.iter().position(|&p| p == (2, 3)).unwrap();
+        for t in 0..num_times {
+            for f in 0..num_freqs {
+                vis[[t, f, bl_12]][3] = Complex::new(0.0, 0.0);
+            }
+        }
+        vis[[1, 7, bl_23]][1] = Complex::new(f32::NAN, 0.0);
+        let mut timestep_flags = vec![false; num_times];
+        timestep_flags[2] = true;
+        let mut chan_flags = vec![false; num_freqs];
+        chan_flags[9] = true;
+
+        let cross =
+            CrossMetrics::new_from_metadata(vis.view(), &ctx, &timestep_flags, &chan_flags, 15.0);
+
+        assert_eq!(
+            cross.antenna_names,
+            ["Tile001", "Tile002", "Tile003", "Tile005"]
+        );
+        assert_eq!(cross.antenna_ids, [1, 2, 3, 5]);
+        assert_eq!(cross.antenna_nums, [1001, 1002, 1003, 1005]);
+        assert_eq!(cross.start_freq_hz.to_bits(), 150e6_f64.to_bits());
+        assert_eq!(cross.channel_width_hz.to_bits(), 40e3_f64.to_bits());
+        assert_eq!(cross.start_time_gps_s.to_bits(), 1e9_f64.to_bits());
+        assert_eq!(cross.integration_time_s.to_bits(), 2.0_f64.to_bits());
+
+        // the delay spectrum of a baseline: the delay transform of the
+        // amplitude of the mean over unflagged timesteps of its visibilities.
+        let freqs_hz = Array1::from(ctx.fine_chan_freqs_hz.clone());
+        let baseline_delay_spectrum = |bl_idx: usize, p: usize| -> Array1<f64> {
+            let spectrum: Array1<f64> = (0..num_freqs)
+                .map(|f| {
+                    if chan_flags[f] {
+                        return 0.0;
+                    }
+                    let finite: Vec<Complex<f64>> = (0..num_times)
+                        .filter(|&t| !timestep_flags[t])
+                        .map(|t| vis[[t, f, bl_idx]][p])
+                        .filter(|v| v.re.is_finite() && v.im.is_finite())
+                        .map(|v| Complex::new(f64::from(v.re), f64::from(v.im)))
+                        .collect();
+                    (finite.iter().sum::<Complex<f64>>() / finite.len() as f64).norm()
+                })
+                .collect();
+            delay_transform(
+                &spectrum.insert_axis(Axis(0)),
+                &freqs_hz,
+                &DELAY_TRANSFORM_CONFIG,
+            )
+            .unwrap()
+            .delay_spectrum
+            .row(0)
+            .to_owned()
+        };
+        let num_delays = cross.short_ant_delay_pol_adp.dim().1;
+        assert_eq!(cross.short_ant_delay_pol_adp.dim(), (4, num_delays, 4));
+        for p in 0..4 {
+            let delay_12 = baseline_delay_spectrum(bl_12, p);
+            let delay_23 = baseline_delay_spectrum(bl_23, p);
+            let expected: [Array1<f64>; 4] = if p == 3 {
+                // baseline (1, 2) has no YY
+                [
+                    Array1::from_elem(num_delays, f64::NAN),
+                    delay_23.clone(),
+                    delay_23,
+                    Array1::from_elem(num_delays, f64::NAN),
+                ]
+            } else {
+                [
+                    delay_12.clone(),
+                    (&delay_12 + &delay_23) / 2.0,
+                    delay_23,
+                    Array1::from_elem(num_delays, f64::NAN),
+                ]
+            };
+            for (a, expected) in expected.iter().enumerate() {
+                assert_close(
+                    cross.short_ant_delay_pol_adp.slice(s![a, .., p]).iter(),
+                    expected.iter().copied(),
+                    1e-5,
                 );
             }
         }
-    }
-}
 
-#[cfg(test)]
-mod autometrics_tests {
-    use super::AutoMetrics;
-    use crate::{
-        marlu::{mwalib::CorrelatorContext, ndarray::Array3, Jones, VisSelection},
-        FlagContext,
-    };
-    use tempfile::tempdir;
-
-    #[test]
-    fn test_autometrics_with_non_sequential_antenna_selection() {
-        // This test specifically verifies the fix for the array indexing bug
-        // where antenna numbers (like 1, 2) were used directly as array indices
-        // instead of their positions in the selected antennas list (0, 1)
-
-        let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths =
-            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
-
-        // Create correlator context
-        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
-
-        // Create visibility selection with non-sequential antenna selection (1, 2)
-        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-        vis_sel.retain_antennas(&corr_ctx.metafits_context, &[1, 2]);
-
-        // Verify that we have the expected antenna pairs
-        let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
-        assert_eq!(ant_pairs, vec![(1, 1), (1, 2), (2, 2)]);
-
-        // Create flag context
-        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-
-        // Create a small jones array for testing (2 timesteps, 1 frequency, 3 baselines)
-        let jones_array = Array3::<Jones<f32>>::zeros((2, 1, 3));
-
-        // This should not panic with the fixed indexing
-        let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
-
-        // Verify that the metrics were created successfully
-        assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 2); // 2 selected antennas
-        assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 2); // 2 selected antennas
-                                                               // auto_coeffs_apo is (ants, pols, coeffs).
-                                                               // 2 ants, 4 pols, 4 coeffs (order 3)
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 2);
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().1, 4);
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 3);
-        assert_eq!(auto_metrics.auto_delay_afp.dim().0, 2); // 2 selected antennas
-
-        // Verify antenna names and IDs are correct
-        assert_eq!(auto_metrics.antenna_names.len(), 2);
-        assert_eq!(auto_metrics.antenna_ids.len(), 2);
-        assert_eq!(auto_metrics.antenna_nums.len(), 2);
-    }
-
-    #[test]
-    fn test_autometrics_with_sequential_antenna_selection() {
-        // Test with sequential antenna selection (0, 1) to ensure
-        // the fix doesn't break the normal case
-
-        let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths =
-            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
-
-        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
-
-        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-        vis_sel.retain_antennas(&corr_ctx.metafits_context, &[0, 1]);
-
-        let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
-        assert_eq!(ant_pairs, vec![(0, 0), (0, 1), (1, 1)]);
-
-        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-        let jones_array = Array3::<Jones<f32>>::zeros((2, 1, 3));
-
-        let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
-
-        assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 2);
-        assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 2);
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 2);
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().1, 4);
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 3);
-        assert_eq!(auto_metrics.auto_delay_afp.dim().0, 2);
-    }
-
-    #[test]
-    fn test_autometrics_with_single_antenna_selection() {
-        // Test with single antenna selection to ensure edge case works
-
-        let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths =
-            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
-
-        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
-
-        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-        vis_sel.retain_antennas(&corr_ctx.metafits_context, &[5]);
-
-        let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
-        assert_eq!(ant_pairs, vec![(5, 5)]);
-
-        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-        let jones_array = Array3::<Jones<f32>>::zeros((2, 1, 1));
-
-        let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
-
-        assert_eq!(auto_metrics.auto_sub_aptf.dim().0, 1);
-        assert_eq!(auto_metrics.auto_spectrum_afp.dim().0, 1);
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().0, 1);
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().1, 4);
-        assert_eq!(auto_metrics.auto_coeffs_apo.dim().2, 3);
-        assert_eq!(auto_metrics.auto_delay_afp.dim().0, 1);
-    }
-
-    #[test]
-    fn test_autometrics_save_to_fits() {
-        // Test that AutoMetrics can be saved to FITS without errors
-
-        let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths =
-            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
-
-        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
-
-        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-        vis_sel.retain_antennas(&corr_ctx.metafits_context, &[1, 2]);
-
-        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-        let jones_array = Array3::<Jones<f32>>::zeros((2, 1, 3));
-
-        let auto_metrics = AutoMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
-
-        // Test saving to FITS
-        let tmp_dir = tempdir().unwrap();
-        let fits_path = tmp_dir.path().join("test_autometrics.fits");
-
-        let mut fptr = crate::marlu::fitsio::FitsFile::create(&fits_path)
-            .open()
-            .unwrap();
-        assert!(auto_metrics.save_to_fits(&mut fptr).is_ok());
-
-        // Verify file was created
-        assert!(fits_path.exists());
-        assert!(fits_path.metadata().unwrap().len() > 0);
-    }
-}
-#[cfg(all(test, feature = "aoflagger"))]
-mod crossmetrics_tests {
-    use super::CrossMetrics;
-    use crate::{
-        marlu::{mwalib::CorrelatorContext, ndarray::Array3, Jones, VisSelection},
-        FlagContext,
-    };
-    #[test]
-    fn test_crossmetrics_new() {
-        let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths =
-            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
-
-        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths).unwrap();
-
-        // Use sequential antenna selection for simplicity (0, 1)
-        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
-        vis_sel.retain_antennas(&corr_ctx.metafits_context, &[0, 1]);
-
-        let ant_pairs = vis_sel.get_ant_pairs(&corr_ctx.metafits_context);
-        // Should have (0,0), (0,1), (1,1) if both are in input
-
-        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
-        // Create dummy jones array (times, freqs, baselines)
-        // 3 baselines: 0-0, 0-1, 1-1. We need to match vis_sel structure.
-        let num_baselines = ant_pairs.len();
-        let (num_timesteps, num_freqs) = (2, 4);
-        let mut jones_array =
-            Array3::<Jones<f32>>::zeros((num_timesteps, num_freqs, num_baselines));
-
-        // Populate cross baseline (index 1) with some value
-        // Assuming 0-1 is at index 1
-        for t in 0..num_timesteps {
-            for f in 0..num_freqs {
-                jones_array[[t, f, 1]] = Jones::identity();
-            }
-        }
-
-        let baseline_cutoff_m = 10000.0; // Large enough to include baselines
-
-        let cross_metrics = CrossMetrics::new(
-            jones_array.view(),
-            &corr_ctx,
-            &vis_sel,
-            &flag_ctx,
-            baseline_cutoff_m,
+        // the ripple of each polarisation peaks at its own delay
+        let peak_delay_ns = |p: usize| {
+            let (idx, _) = cross
+                .short_ant_delay_pol_adp
+                .slice(s![2, .., p])
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| {
+                    let delay_ns = cross.start_delay_ns + i as f64 * cross.delay_res_ns;
+                    (delay_ns - 400.0 * p as f64).abs() < 200.0
+                })
+                .max_by(|a, b| a.1.total_cmp(b.1))
+                .unwrap();
+            cross.start_delay_ns + idx as f64 * cross.delay_res_ns
+        };
+        // XY and YX have ripples of 400 and 800 ns
+        assert!(
+            (peak_delay_ns(1) - 400.0).abs() < 150.0,
+            "{}",
+            peak_delay_ns(1)
+        );
+        assert!(
+            (peak_delay_ns(2) - 800.0).abs() < 150.0,
+            "{}",
+            peak_delay_ns(2)
         );
 
-        assert_eq!(cross_metrics.short_ant_delay_pol_adp.dim().0, 2); // 2 antennas
-                                                                      // Check values are not NaN (at least for valid pols)
-                                                                      // Since we put constant value, delay transform should have peak at 0 delay (DC component).
+        // a longer cutoff includes more baselines
+        ctx.antennas[3].north_m = 40.0;
+        let cross_long =
+            CrossMetrics::new_from_metadata(vis.view(), &ctx, &timestep_flags, &chan_flags, 100.0);
+        assert!(cross_long
+            .short_ant_delay_pol_adp
+            .slice(s![.., .., ..3])
+            .iter()
+            .all(|x| x.is_finite()));
+
+        let (_tmp_file, mut fptr) = save_and_open(|fptr| cross.save_to_fits(fptr));
+        assert_eq!(
+            hdu_names(&mut fptr),
+            [
+                "CROSS_DELAY_POL=XX",
+                "CROSS_DELAY_POL=YY",
+                "CROSS_DELAY_POL=XY",
+                "CROSS_DELAY_POL=YX",
+            ]
+        );
+        // the HDUs are in FITS order, but the array is in Jones order
+        for (pol_name, p) in [("XX", 0), ("YY", 3), ("XY", 1), ("YX", 2)] {
+            let extname = format!("CROSS_DELAY_POL={pol_name}");
+            let image = read_image(&mut fptr, &extname);
+            assert_eq!(image.shape(), [4, num_delays]);
+            assert_close(
+                cross.short_ant_delay_pol_adp.slice(s![.., .., p]).iter(),
+                image.iter().copied(),
+                0.0,
+            );
+            assert_str_keys(
+                &mut fptr,
+                &extname,
+                &[
+                    ("CTYPE1", "DELAY"),
+                    ("CUNIT1", "ns"),
+                    ("CTYPE2", "ANTENNA"),
+                    ("POL", pol_name),
+                    ("TELESCOP", "MWA"),
+                    ("INSTRUME", "CROSS_METRICS"),
+                    ("ORIGIN", "Birli"),
+                ],
+            );
+            assert_f64_keys(
+                &mut fptr,
+                &extname,
+                &[
+                    ("CRVAL1", cross.start_delay_ns),
+                    ("CRPIX1", 1.0),
+                    ("DELAY_RES", cross.delay_res_ns),
+                    ("N_ANTS", 4.0),
+                ],
+            );
+        }
+    }
+
+    #[test]
+    fn test_crossmetrics_new_with_selection() {
+        let corr_ctx = get_mwax_context();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let flag_ctx = FlagContext::from_mwalib(&corr_ctx);
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        crate::io::read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
+
+        // the two tiles are further apart than 1 m, and closer than 10 km
+        let cross = CrossMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx, 1.0);
+        assert_eq!(cross.short_ant_delay_pol_adp.dim().0, 2);
+        assert!(cross.short_ant_delay_pol_adp.iter().all(|x| x.is_nan()));
+
+        let cross = CrossMetrics::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx, 1e4);
+        assert!(cross.short_ant_delay_pol_adp.iter().all(|x| x.is_finite()));
+        // each tile has the same, single baseline
+        assert_eq!(
+            cross.short_ant_delay_pol_adp.slice(s![0, .., ..]),
+            cross.short_ant_delay_pol_adp.slice(s![1, .., ..])
+        );
+        let meta_ants = &corr_ctx.metafits_context.antennas;
+        assert_eq!(
+            cross.antenna_names,
+            [
+                meta_ants[0].tile_name.clone(),
+                meta_ants[1].tile_name.clone()
+            ]
+        );
+        assert_eq!(cross.antenna_ids, [0, 1]);
+        assert_eq!(
+            cross.antenna_nums,
+            [meta_ants[0].tile_id, meta_ants[1].tile_id]
+        );
+    }
+
+    /// `AOFlagger` flags a strong outlier in the z-scores.
+    #[test]
+    fn test_ssins_flag() {
+        let (num_times, num_freqs) = (33, 16);
+        let ctx = metrics_context(num_times, num_freqs, &[0, 1, 2]);
+        let vis = synthetic_vis(&ctx);
+        let flags = Array3::from_elem(vis.dim(), false);
+        let mut ssins = SSINS::new_from_metadata(
+            vis.view(),
+            flags.view(),
+            &ctx,
+            &vec![false; num_times],
+            &vec![false; num_freqs],
+        );
+        // noise-like z-scores, with one very strong outlier
+        ssins.zscore = Array3::from_shape_fn((num_times - 1, num_freqs, 4), |(t, f, p)| {
+            ((t * 13 + f * 7 + p * 3) % 5) as f32 * 0.1 - 0.2
+        });
+        ssins.zscore.slice_mut(s![20, 5, ..]).fill(1e4);
+        assert!(ssins.flag_array.iter().all(|&flag| !flag));
+
+        ssins.flag(None);
+
+        assert_eq!(ssins.flag_array.dim(), (num_times - 1, num_freqs));
+        assert!(ssins.flag_array[[20, 5]]);
+        let num_flagged = ssins.flag_array.iter().filter(|&&flag| flag).count();
+        assert!(num_flagged < ssins.flag_array.len() / 2, "{num_flagged}");
+
+        // a strategy can be given by file name
+        let strategy = unsafe { aoflagger_sys::cxx_aoflagger_new() }
+            .FindStrategyFileGeneric(&String::from("minimal"));
+        let flag_array: Array2<bool> = ssins.flag_array.clone();
+        ssins.flag_array.fill(false);
+        ssins.flag(Some(strategy));
+        assert_eq!(ssins.flag_array, flag_array);
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_range_loop, clippy::cognitive_complexity)]
 mod ssins_tests {
     use super::{MetricsContext, SSINS};
     use crate::marlu::{

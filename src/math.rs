@@ -1,11 +1,36 @@
+//! Small numerical helpers.
+
 use marlu::ndarray::Array2;
 
-/// Fit a polynomial of order `poly_order` to the data `y` at coordinates `x`.
-/// Returns the coefficients in the original basis, such that `y ≈ sum(c_i * x^i)`.
-/// Returns None if the fit is singular or there are not enough valid points.
+/// Least-squares fit of a polynomial of order `poly_order` to the data `y` at
+/// coordinates `x`, ignoring any points where `y` is `NaN`.
 ///
-/// The fit is performed in a normalized domain [-1, 1] for stability,
-/// and then coefficients are transformed back to the original domain.
+/// Returns the `poly_order + 1` coefficients `c` in the basis of `x`, lowest
+/// order first, such that `y ≈ sum(c[i] * x^i)`.
+///
+/// The fit is done in a domain normalised to `[-1, 1]`, so that it is stable
+/// for coordinates like frequencies in Hz, and the coefficients are then
+/// transformed back to the basis of `x`. For this, `x` is assumed to be
+/// sorted: the domain is taken from its first and last elements.
+///
+/// Returns `None` if:
+/// - `x` and `y` are not the same length,
+/// - there are not more valid points than `poly_order`,
+/// - the first and last `x` are the same, or
+/// - the fit is singular.
+///
+/// # Examples
+///
+/// ```rust
+/// use birli::math::fit_polynomial;
+///
+/// // y = 1 + 2x, with a flagged point
+/// let x = [0.0, 1.0, 2.0, 3.0];
+/// let y = [1.0, 3.0, f32::NAN, 7.0];
+/// let coeffs = fit_polynomial(&x, &y, 1).unwrap();
+/// assert!((coeffs[0] - 1.0).abs() < 1e-5);
+/// assert!((coeffs[1] - 2.0).abs() < 1e-5);
+/// ```
 pub fn fit_polynomial(x: &[f64], y: &[f32], poly_order: usize) -> Option<Vec<f32>> {
     if x.len() != y.len() {
         return None;
@@ -24,15 +49,13 @@ pub fn fit_polynomial(x: &[f64], y: &[f32], poly_order: usize) -> Option<Vec<f32
         return None;
     }
 
-    // Normalize frequencies for stability during fit
-    // x_norm = 2 * (f - f_min) / f_width - 1
-    // x_norm = (f - f_mid) / f_half_width
-    // Let x_val = (f - f_mid) / s where s = f_width / 2
+    // Normalise x for stability during the fit: x_norm = (x - f_mid) / s_scale
+    // where s_scale is half the width of the domain.
     let f_min = x[0];
     let f_max = x[x.len() - 1];
     let f_width = f_max - f_min;
 
-    // Avoid division by zero if all x are the same (unlikely for frequencies)
+    // Avoid division by zero if all x are the same
     if f_width.abs() < 1e-12 {
         return None;
     }
@@ -67,7 +90,6 @@ pub fn fit_polynomial(x: &[f64], y: &[f32], poly_order: usize) -> Option<Vec<f32
     }
 
     // Solve xtx * beta = xty
-    // Gaussian elimination
     let n = poly_order + 1;
     let mut aug = Array2::<f64>::zeros((n, n + 1));
     for i in 0..n {
@@ -115,7 +137,7 @@ pub fn fit_polynomial(x: &[f64], y: &[f32], poly_order: usize) -> Option<Vec<f32
         beta_norm[i] = aug[[i, n]];
     }
 
-    // Convert coefficients from normalized basis to raw Hz basis
+    // Convert coefficients from the normalised basis to the basis of x (f)
     // y = sum(beta_norm[j] * ((f - f_mid)/s)^j)
     // y = sum(beta_norm[j] * s^-j * sum(binom(j,k) * f^k * (-f_mid)^(j-k)))
     // coeff of f^k (c_k) is sum over j>=k of beta_norm[j] * s^-j * binom(j,k) * (-f_mid)^(j-k)
@@ -158,9 +180,8 @@ mod tests {
             .iter()
             .map(|&val| (1.0 + 2.0 * val + 3.0 * val * val) as f32)
             .collect();
-        let order = 2;
 
-        let coeffs = fit_polynomial(&x, &y, order).expect("Fit failed");
+        let coeffs = fit_polynomial(&x, &y, 2).expect("Fit failed");
 
         assert_eq!(coeffs.len(), 3);
         assert!((coeffs[0] - 1.0).abs() < 1e-4);
@@ -169,49 +190,88 @@ mod tests {
     }
 
     #[test]
+    fn test_fit_polynomial_order_zero_is_the_mean() {
+        let x = vec![0.0, 1.0, 2.0, 3.0];
+        let y = vec![1.0, 2.0, 3.0, 6.0];
+        let coeffs = fit_polynomial(&x, &y, 0).expect("Fit failed");
+        assert_eq!(coeffs.len(), 1);
+        assert!((coeffs[0] - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn test_fit_polynomial_with_nans() {
         // Fit y = 2x
         let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
         let y = vec![0.0, 2.0, f32::NAN, 6.0, 8.0];
-        let order = 1;
 
-        let coeffs = fit_polynomial(&x, &y, order).expect("Fit failed");
+        let coeffs = fit_polynomial(&x, &y, 1).expect("Fit failed");
 
         assert_eq!(coeffs.len(), 2);
         assert!(coeffs[0].abs() < 1e-4); // intercept 0
         assert!((coeffs[1] - 2.0).abs() < 1e-4); // slope 2
     }
 
+    /// The fit is least-squares when the data aren't an exact polynomial.
     #[test]
-    fn test_fit_polynomial_not_enough_points() {
-        let x = vec![0.0, 1.0];
-        let y = vec![0.0, 1.0];
-        let order = 2; // Need at least 3 points for order 2 (actually need order+1 points? No, order+1 params, so order+1 points)
-                       // fit_polynomial checks `if valid_indices.len() <= poly_order`.
-                       // For order 2 (3 params), if len <= 2 (so 2 points), it returns None.
-
-        let coeffs = fit_polynomial(&x, &y, order);
-        assert!(coeffs.is_none());
+    fn test_fit_polynomial_least_squares() {
+        // the least-squares line through these is y = 0.5 + x
+        let x = vec![0.0, 1.0, 2.0, 3.0];
+        let y = vec![1.0, 1.0, 2.0, 4.0];
+        let coeffs = fit_polynomial(&x, &y, 1).expect("Fit failed");
+        assert!((coeffs[0] - 0.5).abs() < 1e-5, "{coeffs:?}");
+        assert!((coeffs[1] - 1.0).abs() < 1e-5, "{coeffs:?}");
     }
 
     #[test]
+    fn test_fit_polynomial_not_enough_points() {
+        // an order 2 polynomial has 3 coefficients, so it needs 3 points.
+        let x = vec![0.0, 1.0];
+        let y = vec![0.0, 1.0];
+        assert!(fit_polynomial(&x, &y, 2).is_none());
+
+        // NaNs don't count
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![0.0, f32::NAN, 4.0];
+        assert!(fit_polynomial(&x, &y, 2).is_none());
+        assert!(fit_polynomial(&x, &y, 1).is_some());
+
+        // nor does nothing at all
+        assert!(fit_polynomial(&[], &[], 0).is_none());
+    }
+
+    #[test]
+    fn test_fit_polynomial_mismatched_lengths() {
+        assert!(fit_polynomial(&[0.0, 1.0, 2.0], &[0.0, 1.0], 1).is_none());
+    }
+
+    #[test]
+    fn test_fit_polynomial_zero_width_domain() {
+        assert!(fit_polynomial(&[5.0, 5.0, 5.0], &[1.0, 2.0, 3.0], 1).is_none());
+    }
+
+    /// Two distinct x values can't constrain a parabola, however many points
+    /// there are.
+    #[test]
+    fn test_fit_polynomial_singular() {
+        let x = vec![0.0, 0.0, 1.0, 1.0];
+        let y = vec![1.0, 1.0, 2.0, 2.0];
+        assert!(fit_polynomial(&x, &y, 2).is_none());
+        assert!(fit_polynomial(&x, &y, 1).is_some());
+    }
+
+    /// The fit is stable for large x values, like frequencies in Hz.
+    #[test]
     fn test_fit_polynomial_high_values() {
-        // Test with large x values (like frequencies in Hz)
         let f_min = 100e6;
         let f_step = 40e3;
-        let n = 10;
-        let x: Vec<f64> = (0..n).map(|i| f_min + i as f64 * f_step).collect();
-        // y = x^2 (scaled down to fit in f32 range roughly)
-        // Actually fit_polynomial returns f32 coeffs.
-        // If x ~ 1e8, x^2 ~ 1e16. This fits in f64 but fitting x^2 directly might have precision issues if we check f32 coeffs?
-        // Let's try linear y = x
+        let x: Vec<f64> = (0..10).map(|i| f_min + i as f64 * f_step).collect();
+        // y = x
         let y: Vec<f32> = x.iter().map(|&val| val as f32).collect();
-        let order = 1;
 
-        let coeffs = fit_polynomial(&x, &y, order).expect("Fit failed");
+        let coeffs = fit_polynomial(&x, &y, 1).expect("Fit failed");
 
-        // y = 0 + 1*x
-        assert!(coeffs[0].abs() < 1.0); // Allow some error due to large numbers cancellation
+        // Allow some error in the intercept due to cancellation
+        assert!(coeffs[0].abs() < 1.0);
         assert!((coeffs[1] - 1.0).abs() < 1e-6);
     }
 }

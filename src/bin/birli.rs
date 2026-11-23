@@ -300,21 +300,52 @@ mod tests {
         assert_ne!(main_with_args(&args), 0);
     }
 
-    #[test]
-    fn main_successful_with_metrics_output() {
+    /// The names of the tiles which have autocorrelation metrics in a metrics
+    /// file, in order, checking that each has finite values.
+    fn metrics_tile_names(metrics_path: &std::path::Path) -> Vec<String> {
+        use birli::marlu::fitsio::FitsFile;
+
+        let mut fptr = FitsFile::open(metrics_path).unwrap();
+        let num_hdus = fptr.iter().count();
+        let mut tile_names = vec![];
+        for hdu_idx in 1..num_hdus {
+            let hdu = fptr.hdu(hdu_idx).unwrap();
+            let extname: String = hdu.read_key(&mut fptr, "EXTNAME").unwrap();
+            if let Some(tile_name) = extname.strip_prefix("AUTO_SUB_ANT=") {
+                let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
+                assert!(
+                    data.iter().any(|x| x.is_finite()),
+                    "{extname} should contain some finite values"
+                );
+                tile_names.push(tile_name.to_string());
+            }
+        }
+        for extname in ["AUTO_POL=XX", "AUTO_DELAY_POL=XX", "EAVILS_POL=XX"] {
+            let hdu = fptr.hdu(extname).unwrap();
+            let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
+            assert!(
+                data.iter().any(|x| x.is_finite()),
+                "{extname} should contain some finite values"
+            );
+        }
+        tile_names
+    }
+
+    /// Run birli with `--metrics-out` for a selection of antennas, and give
+    /// the names of the tiles in the metrics.
+    fn main_with_metrics_output(sel_ants: &[&str]) -> Vec<String> {
         let tmp_dir = tempdir().unwrap();
         let metrics_path = tmp_dir.path().join("test_metrics.fits");
 
         let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths =
-            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
+        let gpufits_path =
+            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits";
 
         #[rustfmt::skip]
         let mut args = vec![
             "birli",
             "--metrics-out", metrics_path.to_str().unwrap(),
             "-m", metafits_path,
-            "--sel-ants", "5", "4", "20", "19",
             "--provided-chan-ranges",
             "--flag-init", "0",
             "--no-digital-gains",
@@ -322,99 +353,50 @@ mod tests {
             "--pfb-gains", "none",
             "--no-cable-delay",
             "--no-geometric-delay",
+            "--sel-ants",
         ];
-        args.extend_from_slice(&gpufits_paths);
+        args.extend_from_slice(sel_ants);
+        args.extend_from_slice(&["--", gpufits_path]);
 
-        // This should succeed with the fixed array indexing
         assert_eq!(main_with_args(&args), 0);
 
-        // Verify metrics file was created
         assert!(metrics_path.exists());
-        assert!(metrics_path.metadata().unwrap().len() > 0);
+        metrics_tile_names(&metrics_path)
+    }
 
-        // Verify metrics contain valid data (not all NaNs)
-        use birli::marlu::fitsio::FitsFile;
-        let mut fptr = FitsFile::open(&metrics_path).unwrap();
-
-        // Check AUTO_SPECTRUM HDU
-        if fptr.hdu("AUTO_SPECTRUM").is_ok() {
-            let hdu = fptr.hdu("AUTO_SPECTRUM").unwrap();
-            let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
-            let finite_count = data.iter().filter(|x| x.is_finite()).count();
-            assert!(
-                finite_count > 0,
-                "AUTO_SPECTRUM should contain some finite values"
-            );
-        }
-
-        // Check DELAY_SPECTRUM HDU
-        if fptr.hdu("DELAY_SPECTRUM").is_ok() {
-            let hdu = fptr.hdu("DELAY_SPECTRUM").unwrap();
-            let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
-            let finite_count = data.iter().filter(|x| x.is_finite()).count();
-            assert!(
-                finite_count > 0,
-                "DELAY_SPECTRUM should contain some finite values"
-            );
-        }
+    /// Metrics work for a selection of antennas which is not in order, and
+    /// doesn't start from the first antenna.
+    #[test]
+    fn main_successful_with_metrics_output() {
+        let tile_names = main_with_metrics_output(&["5", "4", "20", "19"]);
+        assert_eq!(tile_names, ["Tile015", "Tile016", "Tile034", "Tile035"]);
     }
 
     #[test]
     fn main_successful_with_metrics_output_sequential_ants() {
-        let tmp_dir = tempdir().unwrap();
-        let metrics_path = tmp_dir.path().join("test_metrics_sequential.fits");
+        let tile_names = main_with_metrics_output(&["0", "1", "2"]);
+        assert_eq!(tile_names.len(), 3);
+    }
 
+    /// The metrics file can't be written, so birli fails.
+    #[test]
+    fn main_fails_with_unwritable_metrics_output() {
         let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
-        let gpufits_paths =
-            vec!["tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits"];
+        let gpufits_path =
+            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits";
 
         #[rustfmt::skip]
-        let mut args = vec![
+        let args = vec![
             "birli",
-            "--metrics-out", metrics_path.to_str().unwrap(),
+            "--metrics-out", "/does/not/exist/metrics.fits",
             "-m", metafits_path,
-            "--sel-ants", "5", "4", "20", "19",
             "--provided-chan-ranges",
             "--flag-init", "0",
-            "--no-digital-gains",
             "--no-draw-progress",
-            "--pfb-gains", "none",
-            "--no-cable-delay",
-            "--no-geometric-delay",
+            "--sel-ants", "0", "1",
+            "--", gpufits_path,
         ];
-        args.extend_from_slice(&gpufits_paths);
 
-        // This should also succeed with sequential antenna selection
-        assert_eq!(main_with_args(&args), 0);
-
-        // Verify metrics file was created
-        assert!(metrics_path.exists());
-        assert!(metrics_path.metadata().unwrap().len() > 0);
-
-        // Verify metrics contain valid data (not all NaNs)
-        use birli::marlu::fitsio::FitsFile;
-        let mut fptr = FitsFile::open(&metrics_path).unwrap();
-
-        // Check AUTO_SPECTRUM HDU
-        if fptr.hdu("AUTO_SPECTRUM").is_ok() {
-            let hdu = fptr.hdu("AUTO_SPECTRUM").unwrap();
-            let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
-            let finite_count = data.iter().filter(|x| x.is_finite()).count();
-            assert!(
-                finite_count > 0,
-                "AUTO_SPECTRUM should contain some finite values"
-            );
-        }
-
-        // Check DELAY_SPECTRUM HDU
-        if fptr.hdu("DELAY_SPECTRUM").is_ok() {
-            let hdu = fptr.hdu("DELAY_SPECTRUM").unwrap();
-            let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
-            let finite_count = data.iter().filter(|x| x.is_finite()).count();
-            assert!(
-                finite_count > 0,
-                "DELAY_SPECTRUM should contain some finite values"
-            );
-        }
+        assert_ne!(main_with_args(&args), 0);
     }
 }
