@@ -1706,10 +1706,10 @@ impl<'a> BirliContext<'a> {
                 _ => unreachable!(),
             };
 
-            if let Some(path) = ranged_context.io_ctx.ms_out.as_mut() {
-                *path = path_with_suffix(path, &suffix);
-            }
-            if let Some(path) = ranged_context.io_ctx.uvfits_out.as_mut() {
+            let IOContext {
+                ms_out, uvfits_out, ..
+            } = &mut ranged_context.io_ctx;
+            for path in [ms_out.as_mut(), uvfits_out.as_mut()].into_iter().flatten() {
                 *path = path_with_suffix(path, &suffix);
             }
             ranged_context.run()?;
@@ -2140,9 +2140,9 @@ mod argparse_tests {
                 out_path.to_str().unwrap(),
             ];
             args.extend_from_slice(&gpufits_paths);
-            let Err(err) = BirliContext::from_args(&args) else {
-                panic!("{option} {name} should not be accepted");
-            };
+            let err = BirliContext::from_args(&args)
+                .err()
+                .expect("{option} {name} should not be accepted");
             assert!(matches!(err, BirliError::CLIError(_)), "{err}");
             assert!(format!("{err}").contains("a path ending in"), "{err}");
         }
@@ -2197,9 +2197,9 @@ mod argparse_tests {
             dir_path.to_str().unwrap(),
         ];
         args.extend_from_slice(&gpufits_paths);
-        let Err(err) = BirliContext::from_args(&args) else {
-            panic!("a directory should not be accepted for uvfits output");
-        };
+        let err = BirliContext::from_args(&args)
+            .err()
+            .expect("a directory should not be accepted for uvfits output");
         assert!(
             format!("{err}").contains("not an existing directory"),
             "{err}"
@@ -2215,9 +2215,9 @@ mod argparse_tests {
             file_path.to_str().unwrap(),
         ];
         args.extend_from_slice(&gpufits_paths);
-        let Err(err) = BirliContext::from_args(&args) else {
-            panic!("a file should not be accepted for measurement set output");
-        };
+        let err = BirliContext::from_args(&args)
+            .err()
+            .expect("a file should not be accepted for measurement set output");
         assert!(format!("{err}").contains("not an existing file"), "{err}");
     }
 
@@ -2250,13 +2250,171 @@ mod argparse_tests {
         ];
         let mut args = vec!["birli", "-m", metafits_path];
         args.extend_from_slice(&gpufits_paths);
-        let Err(err) = BirliContext::from_args(&args) else {
-            panic!("files with no common timesteps should not be accepted");
-        };
+        let err = BirliContext::from_args(&args)
+            .err()
+            .expect("files with no common timesteps should not be accepted");
         assert!(matches!(err, BirliError::NoCommonTimesteps { .. }), "{err}");
         let message = format!("{err}");
         assert!(message.contains("gpubox 1: "), "{message}");
         assert!(message.contains("gpubox 2: "), "{message}");
+    }
+
+    /// Selection errors about unusable input files are described, the rest are
+    /// passed through.
+    #[test]
+    fn test_describe_selection_error() {
+        use super::describe_selection_error;
+        use crate::test_common::get_mwa_ord_no_overlap_context;
+        use marlu::SelectionError;
+        let corr_ctx = get_mwa_ord_no_overlap_context();
+        let hdu_info = String::new();
+        assert!(matches!(
+            describe_selection_error(SelectionError::NoProvidedTimesteps { hdu_info }, &corr_ctx),
+            BirliError::NoProvidedTimesteps
+        ));
+        assert!(matches!(
+            describe_selection_error(
+                SelectionError::InsufficientMemory { need_gib: 1 },
+                &corr_ctx
+            ),
+            BirliError::SelectionError(SelectionError::InsufficientMemory { need_gib: 1 })
+        ));
+    }
+
+    /// Write an MWAOCAL binary solutions file of ones, for testing.
+    fn write_aocal(path: &std::path::Path, num_timeblocks: u32, num_tiles: u32, num_chans: u32) {
+        let mut bytes = b"MWAOCAL".to_vec();
+        bytes.extend([0_u8; 9]);
+        for n in [num_timeblocks, num_tiles, num_chans, 4] {
+            bytes.extend(n.to_le_bytes());
+        }
+        // start and end times
+        bytes.extend([0_u8; 16]);
+        let num_floats = (num_timeblocks * num_tiles * num_chans * 8) as usize;
+        bytes.extend(std::iter::repeat_n(1.0_f64.to_le_bytes(), num_floats).flatten());
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    /// Calibration solutions that can't be used are errors, not panics.
+    #[test]
+    fn test_bad_calsols_are_errors() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+        let tmp_dir = tempdir().unwrap();
+        let run_with = |calsol_path: &std::path::Path| {
+            let mut args = vec![
+                "birli",
+                "-m",
+                metafits_path,
+                "--no-draw-progress",
+                "--apply-di-cal",
+                calsol_path.to_str().unwrap(),
+            ];
+            args.extend_from_slice(&gpufits_paths);
+            BirliContext::from_args(&args).unwrap().run()
+        };
+
+        // two timeblocks
+        let path = tmp_dir.path().join("two_timeblocks.bin");
+        write_aocal(&path, 2, 128, 24);
+        let err = run_with(&path)
+            .err()
+            .expect("two timeblocks should be an error");
+        assert!(matches!(err, BirliError::BadArrayShape(_)), "{err}");
+        assert!(format!("{err}").contains("exactly 1 timeblock"), "{err}");
+
+        // a number of channels that does not divide into the coarse channels
+        let path = tmp_dir.path().join("odd_channels.bin");
+        write_aocal(&path, 1, 128, 25);
+        let err = run_with(&path)
+            .err()
+            .expect("25 channels should be an error");
+        assert!(matches!(err, BirliError::BadArrayShape(_)), "{err}");
+
+        // not a solutions file
+        let path = tmp_dir.path().join("not_solutions.bin");
+        std::fs::write(&path, b"not calibration solutions").unwrap();
+        let err = run_with(&path).err().expect("junk should be an error");
+        assert!(matches!(err, BirliError::ReadSolutionsError(_)), "{err}");
+
+        // missing
+        let err = run_with(&tmp_dir.path().join("missing.bin"))
+            .err()
+            .expect("a missing file should be an error");
+        assert!(matches!(err, BirliError::ReadSolutionsError(_)), "{err}");
+    }
+
+    /// Flag files, uvfits and measurement sets are all written without
+    /// aoflagger, and a flag template that can't be used is an error.
+    #[test]
+    fn test_write_all_outputs_and_bad_flag_template() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+        let tmp_dir = tempdir().unwrap();
+        let uvfits_path = tmp_dir.path().join("1297526432.uvfits");
+        let ms_path = tmp_dir.path().join("1297526432.ms");
+        let args_with_template = |template: &str| {
+            let mut args = vec!["birli", "-m", metafits_path, "--no-draw-progress"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>();
+            args.extend(["-f".to_string(), template.to_string()]);
+            args.extend(["-u".to_string(), uvfits_path.to_str().unwrap().to_string()]);
+            args.extend(["-M".to_string(), ms_path.to_str().unwrap().to_string()]);
+            args.extend(gpufits_paths.iter().map(|path| (*path).to_string()));
+            args
+        };
+
+        let template = tmp_dir.path().join("Flagfile%%%.mwaf");
+        let birli_ctx =
+            BirliContext::from_args(args_with_template(template.to_str().unwrap())).unwrap();
+        birli_ctx.run().unwrap();
+        assert!(uvfits_path.is_file());
+        assert!(ms_path.is_dir());
+        assert!(tmp_dir.path().join("Flagfile117.mwaf").is_file());
+        assert!(tmp_dir.path().join("Flagfile118.mwaf").is_file());
+
+        // no percents in the template
+        let template = tmp_dir.path().join("Flagfile.mwaf");
+        let birli_ctx =
+            BirliContext::from_args(args_with_template(template.to_str().unwrap())).unwrap();
+        let err = birli_ctx
+            .run()
+            .err()
+            .expect("a template without %% should be an error");
+        assert!(matches!(err, BirliError::IOError(_)), "{err}");
+    }
+
+    /// Each channel range gets its own uvfits and measurement set.
+    #[test]
+    fn test_run_ranges_names_both_outputs() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+        let tmp_dir = tempdir().unwrap();
+        let uvfits_path = tmp_dir.path().join("1297526432.uvfits");
+        let ms_path = tmp_dir.path().join("1297526432.ms");
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--no-draw-progress",
+            "--sel-chan-ranges",
+            "0,1",
+            "-u",
+            uvfits_path.to_str().unwrap(),
+            "-M",
+            ms_path.to_str().unwrap(),
+        ];
+        args.extend_from_slice(&gpufits_paths);
+        BirliContext::from_args(&args)
+            .unwrap()
+            .run_ranges()
+            .unwrap();
+        for name in [
+            "1297526432_ch109.uvfits",
+            "1297526432_ch110.uvfits",
+            "1297526432_ch109.ms",
+            "1297526432_ch110.ms",
+        ] {
+            assert!(tmp_dir.path().join(name).exists(), "{name}");
+        }
     }
 
     /// The legacy correlator NAXIS mismatch points to the wiki (issue #148)
