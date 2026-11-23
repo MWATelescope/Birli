@@ -2037,22 +2037,13 @@ impl<'a> BirliContext<'a> {
             with_increment_duration!("read", {
                 let (jones_array, flag_array) = (jones_array.view_mut(), flag_array.view_mut());
                 let draw_progress = prep_ctx.draw_progress;
+                let sel = &chunk_vis_sel;
                 if io_ctx.flag_bad_data {
-                    unreadable_hdus.extend(read_mwalib_flag_bad_data(
-                        &chunk_vis_sel,
-                        corr_ctx,
-                        jones_array,
-                        flag_array,
-                        draw_progress,
-                    )?);
+                    let read = read_mwalib_flag_bad_data;
+                    let mut bad = read(sel, corr_ctx, jones_array, flag_array, draw_progress)?;
+                    unreadable_hdus.append(&mut bad);
                 } else {
-                    read_mwalib(
-                        &chunk_vis_sel,
-                        corr_ctx,
-                        jones_array,
-                        flag_array,
-                        draw_progress,
-                    )?;
+                    read_mwalib(sel, corr_ctx, jones_array, flag_array, draw_progress)?;
                 }
             });
 
@@ -2220,7 +2211,7 @@ mod argparse_tests {
         // without the flag, the read fails
         let birli_ctx = BirliContext::from_args(&args).unwrap();
         assert!(!birli_ctx.io_ctx.flag_bad_data);
-        let err = birli_ctx.run().err().expect("the file is cut short");
+        let err = birli_ctx.run().expect_err("the file is cut short");
         assert!(format!("{err}").contains("Fits error"), "{err}");
 
         // with it, the run finishes
