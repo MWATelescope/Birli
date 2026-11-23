@@ -1,5 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Unreleased
+
+- 🙏 quality of life:
+  - `--pointing-centre` is documented as what it is: the metafits `RA` and `DEC`, where the beam points at the middle of the observation. The summary prints how far the pointing centre moves during the observation. Fixes #164
+
 # Version 0.22.0 (2026-11-17)
 
 - ✨ new feature:
