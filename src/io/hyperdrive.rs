@@ -520,6 +520,39 @@ pub(crate) mod tests {
         assert!(sols.start_timestamps.is_empty());
     }
 
+    /// Timeblock start times are read as GPS seconds, and a table of zeros
+    /// means the times are not known.
+    #[test]
+    fn test_read_hyperdrive_fits_timeblocks() {
+        let tmp_dir = tempdir().unwrap();
+        let di_jones = test_jones(2, 2, 3);
+        for (name, starts, expected) in [
+            (
+                "known.fits",
+                [1_254_670_392.0, 1_254_670_400.0],
+                vec![
+                    Epoch::from_gpst_seconds(1_254_670_392.0),
+                    Epoch::from_gpst_seconds(1_254_670_400.0),
+                ],
+            ),
+            ("unknown.fits", [0.0, 0.0], vec![]),
+        ] {
+            let path = tmp_dir.path().join(name);
+            write_hyperdrive_fits(&path, di_jones.view(), None, None, None, None);
+            let mut fptr = FitsFile::edit(&path).unwrap();
+            let cols = [ColumnDescription::new("Start")
+                .with_type(ColumnDataType::Double)
+                .create()
+                .unwrap()];
+            let hdu = fptr.create_table("TIMEBLOCKS", &cols).unwrap();
+            hdu.write_col(&mut fptr, "Start", &starts).unwrap();
+            drop(fptr);
+
+            let sols = HyperdriveSols::read(&path).unwrap();
+            assert_eq!(sols.start_timestamps, expected, "{name}");
+        }
+    }
+
     #[test]
     fn test_read_hyperdrive_fits_minimal() {
         let tmp_dir = tempdir().unwrap();
