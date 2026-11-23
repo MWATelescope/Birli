@@ -2247,9 +2247,7 @@ mod argparse_tests {
             assert_eq!(mwa_row.len(), iau_row.len());
             for (mwa, iau) in mwa_row.chunks_exact(4).zip(iau_row.chunks_exact(4)) {
                 assert_eq!(iau, [mwa[3], mwa[2], mwa[1], mwa[0]]);
-                if mwa[1] != mwa[2] && mwa[0] != mwa[3] {
-                    num_asymmetric += 1;
-                }
+                num_asymmetric += usize::from(mwa[1] != mwa[2] && mwa[0] != mwa[3]);
             }
         }
         assert!(num_asymmetric > 0);
