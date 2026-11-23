@@ -121,6 +121,8 @@ pub fn fmt_build_info(f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             assert!(minor >= 0);
             assert!(sub_minor >= 0);
             writeln!(f, "- aoflagger v{major}.{minor}.{sub_minor}")?;
+        } else {
+            writeln!(f, "- aoflagger not compiled in, no RFI flagging")?;
         }
     }
     writeln!(f)?;
@@ -860,6 +862,15 @@ impl<'a> BirliContext<'a> {
                         .help_heading("AOFLAGGER")
                         .required(false),
                 ]);
+            } else {
+                // Whoever runs Birli is not always whoever compiled it, so
+                // --no-rfi is accepted in every build, and the help says that
+                // this build can't flag RFI.
+                app = app.args(&[
+                    arg!(--"no-rfi" "Has no effect: this build of Birli was compiled without \
+                        the aoflagger feature, so it never flags RFI")
+                        .help_heading("AOFLAGGER (not available in this build)"),
+                ]);
             }
         };
         let matches = app.try_get_matches_from_mut(args)?;
@@ -1476,6 +1487,10 @@ impl<'a> BirliContext<'a> {
                             cxx_aoflagger_new().FindStrategyFileMWA()
                         }), Some)
                 };
+            } else {
+                if matches.get_flag("no-rfi") {
+                    info!("--no-rfi has no effect: this build of Birli was compiled without the aoflagger feature, so it never flags RFI.");
+                }
             }
         }
 
@@ -1985,6 +2000,35 @@ mod argparse_tests {
         BirliContext, BirliError, VisSelection,
     };
     use tempfile::tempdir;
+
+    /// `--no-rfi` is accepted whether or not Birli was compiled with
+    /// aoflagger (issue #185), and the help says when RFI flagging is missing.
+    #[test]
+    fn test_no_rfi_accepted_in_every_build() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+
+        let mut args = vec!["birli", "-m", metafits_path, "--no-rfi"];
+        args.extend_from_slice(&gpufits_paths);
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+        let display = format!("{}", birli_ctx.prep_ctx);
+        assert!(
+            display.contains("Will not flag with aoflagger"),
+            "{display}"
+        );
+
+        let Err(BirliError::ClapError(help)) = BirliContext::from_args(["birli", "--help"]) else {
+            panic!("--help should give a clap error");
+        };
+        let help = format!("{}", help.render());
+        assert!(help.contains("--no-rfi"), "{help}");
+        #[cfg(not(feature = "aoflagger"))]
+        assert!(
+            help.contains("AOFLAGGER (not available in this build)"),
+            "{help}"
+        );
+        #[cfg(feature = "aoflagger")]
+        assert!(help.contains("--aoflagger-strategy"), "{help}");
+    }
 
     /// Middle channel rounded-down is DC flagged when `flag_dc` is set.
     #[test]
