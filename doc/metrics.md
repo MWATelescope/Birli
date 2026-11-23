@@ -24,7 +24,7 @@ for visibilities from any source.
 | SSINS | `SSINS_*` | z-scores of the baseline-averaged amplitude of the visibilities differenced in time |
 | EAVILS | `EAVILS_*` | z-scores of the baseline-averaged amplitude of the visibilities |
 | flag occupancy | `AO_FLAG_METRICS` | fraction of baselines flagged at each time and frequency (`aoflagger` feature only) |
-| short baseline delays | `CROSS_DELAY_*` | delay transform of the cross-correlations on short baselines, for each tile (`aoflagger` feature only) |
+| short baseline delays | `CROSS_DELAY_*` | delay transform of the cross-correlations on short baselines, for each tile |
 
 Things to know about all of them:
 
@@ -33,7 +33,8 @@ Things to know about all of them:
   channel) are left out of every metric, and are `NaN` in the images.
 - Only SSINS and the flag occupancy look at the flags of individual visibilities, like those from
   AOFlagger.
-- Every image is written as 64-bit floats.
+- Images are 32-bit floats, except the flags (`SSINS_FLAGS`, `EAVILS_FLAGS`) which are unsigned
+  bytes, `SSINS_N_BL` which is 32-bit integers, and `AO_FLAG_METRICS` which is 64-bit floats.
 - Image axes are described with `CTYPEn`, `CRVALn`, `CRPIXn`, and where it is constant, `CDELTn`.
   Times are GPS seconds, frequencies are in Hz and delays are in ns. FITS axis 1 is the fastest
   axis, which is the last axis of the array in Python.
@@ -79,10 +80,9 @@ autocorrelations is used, for all four polarisations.
   | `ANT_ID` | antenna index: the order of the tile in the metafits |
   | `ANT_NUM` | tile ID |
   | `RX_NUMBER`, `RX_SLOT`, `RX_TYPE` | the receiver of the tile, its slot in the receiver, and the type of the receiver |
-  | `ANT_TYPE` | the same as `RX_TYPE` |
   | `CABLE_FLAVOUR` | the flavour of the cable, like `RG6_150` |
   | `WHITENING_FILTER` | 1 if the tile has a whitening filter |
-  | `OBSGEO-X`, `OBSGEO-Y`, `OBSGEO-Z` | the position of the tile relative to the centre of the array in metres: north, east and height. These are *not* geocentric coordinates. |
+  | `NORTH`, `EAST`, `HEIGHT` | the position of the tile relative to the centre of the array in metres, as in the metafits |
 
   The receiver and cable are those of the X polarisation.
 - `AUTO_COEFFS` has the columns `COEFFS_XX`, `COEFFS_YY`, `COEFFS_XY` and `COEFFS_YX`, each with
@@ -136,11 +136,12 @@ dimensions (time, baseline, frequency, polarisation):
 
 ```python
 blmean = np.mean(amp, axis=1)
-stdv = np.sqrt(np.mean(np.var(amp, axis=0), axis=0))
+stdv = np.sqrt(np.mean(np.var(amp, axis=0, ddof=1), axis=0))
 zscore = (blmean - np.mean(blmean, axis=0)) / stdv * np.sqrt(Nbls)
 ```
 
-where the means and variances over time only include unflagged timesteps.
+where the means and variances over time only include unflagged timesteps. The variance is the
+sample variance (it divides by `N - 1`), so the z-scores need at least two unflagged timesteps.
 
 | HDU | FITS axes | contents |
 | --- | --- | --- |
@@ -161,8 +162,7 @@ Birli with the `aoflagger` feature.
 visibilities of each cross-correlation baseline no longer than `--cross-metrics-cutoff` metres
 (default 30) are averaged coherently over unflagged timesteps, and the amplitude of that spectrum
 is delay transformed like the autocorrelations. The metric for a tile is the mean of the delay
-spectra of the short baselines it is in, or `NaN` if it has none. They are only written by a Birli
-with the `aoflagger` feature.
+spectra of the short baselines it is in, or `NaN` if it has none.
 
 ## Reading the file
 

@@ -25,12 +25,9 @@ use birli::{
         mwalib::CorrelatorContext,
         LatLngHeight, RADec,
     },
-    metrics::{AutoMetrics, EAVILS, SSINS},
+    metrics::{AutoMetrics, CrossMetrics, EAVILS, SSINS},
     FlagContext, PreprocessContext, VisSelection,
 };
-
-#[cfg(feature = "aoflagger")]
-use birli::metrics::CrossMetrics;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -123,18 +120,15 @@ fn main() {
     let eavils = EAVILS::new(jones_array.view(), &corr_ctx, &vis_sel, &flag_ctx);
     eavils.save_to_fits(&mut fptr).unwrap();
 
-    #[cfg(feature = "aoflagger")]
-    {
-        let baseline_cutoff_m = 100.0;
-        let cross_metrics = CrossMetrics::new(
-            jones_array.view(),
-            &corr_ctx,
-            &vis_sel,
-            &flag_ctx,
-            baseline_cutoff_m,
-        );
-        cross_metrics.save_to_fits(&mut fptr).unwrap();
-    }
+    let baseline_cutoff_m = 100.0;
+    let cross_metrics = CrossMetrics::new(
+        jones_array.view(),
+        &corr_ctx,
+        &vis_sel,
+        &flag_ctx,
+        baseline_cutoff_m,
+    );
+    cross_metrics.save_to_fits(&mut fptr).unwrap();
     println!("Saved metrics to {metrics_path:?}");
 
     write_uvfits(

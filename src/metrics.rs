@@ -11,7 +11,7 @@
 //! | [`SSINS`] | z-scores of the incoherent noise spectrum: the baseline-averaged amplitude of the time-differenced cross-correlations, as in [SSINS](https://ssins.readthedocs.io/en/latest/) ([Wilensky et al. 2019](https://arxiv.org/abs/1906.01093)) | at least 2 timesteps |
 //! | [`EAVILS`] | z-scores of the baseline-averaged amplitude of the visibilities, without time differencing | |
 //! | `AOFlagMetrics` | fraction of cross-correlation baselines flagged at each time and frequency | `aoflagger` feature |
-//! | `CrossMetrics` | per-tile delay transform of the cross-correlations on short baselines | `aoflagger` feature |
+//! | [`CrossMetrics`] | per-tile delay transform of the cross-correlations on short baselines | |
 //!
 //! Every metric has three ways to make it:
 //! - `new` takes the [`mwalib::CorrelatorContext`](CorrelatorContext),
@@ -99,10 +99,8 @@ use std::collections::BTreeSet;
 
 use rayon::prelude::*;
 
-use marlu::XyzGeocentric;
+use marlu::ENH;
 
-#[cfg(feature = "aoflagger")]
-use crate::marlu::num_complex::Complex;
 use crate::{
     delay_transform::{calculate_delay_channels, delay_transform, DelayTransformConfig},
     marlu::{
@@ -117,6 +115,7 @@ use crate::{
             s, Array1, Array2, Array3, Array4, ArrayView2, ArrayView3, ArrayViewMut1,
             ArrayViewMut2, Axis,
         },
+        num_complex::Complex,
         Jones, VisSelection,
     },
     math::fit_polynomial,
@@ -316,13 +315,14 @@ pub fn hyperdrive_to_fits_stokes(pol: usize) -> usize {
 fn write_image_hdu<T: WriteImage + Copy>(
     fptr: &mut FitsFile,
     extname: &str,
+    data_type: ImageType,
     dimensions: &[usize],
     data: impl IntoIterator<Item = T>,
 ) -> FitsResult<FitsHdu> {
     let hdu = fptr.create_image(
         extname,
         &ImageDescription {
-            data_type: ImageType::Double,
+            data_type,
             dimensions,
         },
     )?;
@@ -450,10 +450,8 @@ pub struct AutoMetrics {
     /// Whether each antenna has a whitening filter
     pub whitening_filters: Vec<bool>,
     /// Position of each antenna relative to the centre of the array \[m\].
-    ///
-    /// Despite the type, this is not geocentric: `x` is north, `y` is east and
-    /// `z` is height.
-    pub antenna_positions: Vec<XyzGeocentric>,
+    /// Written to FITS as `EAST`, `NORTH` and `HEIGHT`.
+    pub antenna_positions: Vec<ENH>,
 
     /// Centre frequency of the first channel \[Hz\]
     pub start_freq_hz: f64,
@@ -657,10 +655,10 @@ impl AutoMetricsBuilder {
                 .collect(),
             whitening_filters: sel_ant_meta().map(|ant| ant.has_whitening_filter).collect(),
             antenna_positions: sel_ant_meta()
-                .map(|ant| XyzGeocentric {
-                    x: ant.north_m,
-                    y: ant.east_m,
-                    z: ant.height_m,
+                .map(|ant| ENH {
+                    e: ant.east_m,
+                    n: ant.north_m,
+                    h: ant.height_m,
                 })
                 .collect(),
             start_freq_hz: metadata.fine_chan_freqs_hz[0],
@@ -750,6 +748,7 @@ impl AutoMetrics {
             let hdu = write_image_hdu(
                 fptr,
                 &format!("AUTO_SUB_ANT={}", self.antenna_names[a]),
+                ImageType::Float,
                 &[num_pols, num_times, num_freqs],
                 self.auto_sub_aptf.slice(s![a, .., .., ..]).iter().copied(),
             )?;
@@ -781,7 +780,6 @@ impl AutoMetrics {
             hdu.write_key(fptr, "ANTNAME", self.antenna_names[a].clone())?;
             hdu.write_key(fptr, "ANT_ID", self.antenna_ids[a])?;
             hdu.write_key(fptr, "ANT_NUM", self.antenna_nums[a])?;
-            hdu.write_key(fptr, "ANT_TYPE", self.rx_types[a].clone())?;
             hdu.write_key(fptr, "CABLE_FLAVOUR", self.cable_flavours[a].clone())?;
             hdu.write_key(fptr, "WHITENING_FILTER", whitening_filters[a])?;
             hdu.write_key(fptr, "RX_NUMBER", self.rx_numbers[a])?;
@@ -789,15 +787,16 @@ impl AutoMetrics {
             hdu.write_key(fptr, "RX_TYPE", self.rx_types[a].clone())?;
 
             let position = self.antenna_positions[a];
-            hdu.write_key(fptr, "OBSGEO-X", position.x)?;
-            hdu.write_key(fptr, "OBSGEO-Y", position.y)?;
-            hdu.write_key(fptr, "OBSGEO-Z", position.z)?;
+            hdu.write_key(fptr, "NORTH", position.n)?;
+            hdu.write_key(fptr, "EAST", position.e)?;
+            hdu.write_key(fptr, "HEIGHT", position.h)?;
         }
 
         for (p, pol_name) in FITS_POL_NAMES.into_iter().enumerate() {
             let hdu = write_image_hdu(
                 fptr,
                 &format!("AUTO_POL={pol_name}"),
+                ImageType::Float,
                 &[num_ants, num_freqs],
                 self.auto_spectrum_afp.slice(s![.., .., p]).iter().copied(),
             )?;
@@ -838,15 +837,14 @@ impl AutoMetrics {
             string_col("ANT_NAME")?,
             scalar_col("ANT_ID", ColumnDataType::Int)?,
             scalar_col("ANT_NUM", ColumnDataType::Int)?,
-            string_col("ANT_TYPE")?,
             string_col("CABLE_FLAVOUR")?,
             scalar_col("WHITENING_FILTER", ColumnDataType::Int)?,
             scalar_col("RX_NUMBER", ColumnDataType::Int)?,
             scalar_col("RX_SLOT", ColumnDataType::Int)?,
             string_col("RX_TYPE")?,
-            scalar_col("OBSGEO-X", ColumnDataType::Double)?,
-            scalar_col("OBSGEO-Y", ColumnDataType::Double)?,
-            scalar_col("OBSGEO-Z", ColumnDataType::Double)?,
+            scalar_col("NORTH", ColumnDataType::Double)?,
+            scalar_col("EAST", ColumnDataType::Double)?,
+            scalar_col("HEIGHT", ColumnDataType::Double)?,
         ];
         for pol_name in FITS_POL_NAMES {
             columns.push(coeffs_col(&format!("COEFFS_{pol_name}"))?);
@@ -856,7 +854,6 @@ impl AutoMetrics {
         hdu.write_col(fptr, "ANT_NAME", &self.antenna_names)?;
         hdu.write_col(fptr, "ANT_ID", &self.antenna_ids)?;
         hdu.write_col(fptr, "ANT_NUM", &self.antenna_nums)?;
-        hdu.write_col(fptr, "ANT_TYPE", &self.rx_types)?;
         hdu.write_col(fptr, "CABLE_FLAVOUR", &self.cable_flavours)?;
         hdu.write_col(fptr, "WHITENING_FILTER", &whitening_filters)?;
         hdu.write_col(fptr, "RX_NUMBER", &self.rx_numbers)?;
@@ -865,18 +862,18 @@ impl AutoMetrics {
         let positions = &self.antenna_positions;
         hdu.write_col(
             fptr,
-            "OBSGEO-X",
-            &positions.iter().map(|p| p.x).collect::<Vec<_>>(),
+            "NORTH",
+            &positions.iter().map(|p| p.n).collect::<Vec<_>>(),
         )?;
         hdu.write_col(
             fptr,
-            "OBSGEO-Y",
-            &positions.iter().map(|p| p.y).collect::<Vec<_>>(),
+            "EAST",
+            &positions.iter().map(|p| p.e).collect::<Vec<_>>(),
         )?;
         hdu.write_col(
             fptr,
-            "OBSGEO-Z",
-            &positions.iter().map(|p| p.z).collect::<Vec<_>>(),
+            "HEIGHT",
+            &positions.iter().map(|p| p.h).collect::<Vec<_>>(),
         )?;
         for (p, pol_name) in FITS_POL_NAMES.into_iter().enumerate() {
             // one row of coefficients per antenna
@@ -895,6 +892,7 @@ impl AutoMetrics {
             let hdu = write_image_hdu(
                 fptr,
                 &format!("AUTO_DELAY_POL={pol_name}"),
+                ImageType::Float,
                 &[num_ants, num_delays],
                 self.auto_delay_afp.slice(s![.., .., p]).iter().copied(),
             )?;
@@ -1308,6 +1306,7 @@ impl SSINS {
             let hdu = write_image_hdu(
                 fptr,
                 &format!("SSINS_POL={pol_name}"),
+                ImageType::Float,
                 &[num_times, num_freqs],
                 self.zscore.slice(s![.., .., p]).iter().copied(),
             )?;
@@ -1337,8 +1336,9 @@ impl SSINS {
         let hdu = write_image_hdu(
             fptr,
             "SSINS_FLAGS",
+            ImageType::UnsignedByte,
             &[num_times, num_freqs],
-            self.flag_array.iter().map(|&b| f64::from(u8::from(b))),
+            self.flag_array.iter().map(|&b| u8::from(b)),
         )?;
         axes.write(fptr, &hdu)?;
         hdu.write_key(fptr, "TELESCOP", "MWA")?;
@@ -1350,8 +1350,9 @@ impl SSINS {
         let hdu = write_image_hdu(
             fptr,
             "SSINS_N_BL",
+            ImageType::Long,
             &[num_times, num_freqs],
-            self.num_baselines_tf.iter().map(|&n| f64::from(n)),
+            self.num_baselines_tf.iter().map(|&n| n as i32),
         )?;
         axes.write(fptr, &hdu)?;
         hdu.write_key(fptr, "ORIGIN", "Birli")?;
@@ -1359,6 +1360,7 @@ impl SSINS {
         let hdu = write_image_hdu(
             fptr,
             "SSINS_DIFF_MEAN_AMP_FP",
+            ImageType::Float,
             &[num_freqs, 4],
             self.diff_mean_amp_fp.iter().copied(),
         )?;
@@ -1382,11 +1384,14 @@ impl SSINS {
 ///
 /// ```python
 /// blmean = np.mean(amp, axis=1)
-/// stdv = np.sqrt(np.mean(np.var(amp, axis=0), axis=0))
+/// stdv = np.sqrt(np.mean(np.var(amp, axis=0, ddof=1), axis=0))
 /// zscore = (blmean - np.mean(blmean, axis=0)) / stdv * np.sqrt(Nbls)
 /// ```
 ///
-/// where the means and variances over time only include unflagged timesteps.
+/// where the means and variances over time only include unflagged timesteps,
+/// and the variance is the sample variance (it divides by `N - 1`). With
+/// fewer than two unflagged timesteps there is no variance, and the z-scores
+/// are not finite.
 /// Flagged channels and timesteps are `NaN`. The flags of individual
 /// visibilities are not used.
 ///
@@ -1399,8 +1404,8 @@ pub struct EAVILS {
     /// The mean over time of the baseline-averaged amplitude
     /// `(frequencies, polarisations)`
     pub mean_amp_fp: Array2<f32>,
-    /// The square root of the baseline-averaged variance over time of the
-    /// amplitude `(frequencies, polarisations)`
+    /// The square root of the baseline-averaged sample variance over time of
+    /// the amplitude `(frequencies, polarisations)`
     pub sqrt_mean_var_amp_fp: Array2<f32>,
     /// Flags for the z-scores `(times, frequencies)`. These are all `false`.
     pub flag_array: Array2<bool>,
@@ -1544,8 +1549,9 @@ impl EAVILSBuilder {
         mean_amp_fp /= num_unflagged_timesteps as f32;
 
         // the time-variance of the amplitude for each freq, bl, pol
-        if num_unflagged_timesteps > 0 {
-            var_amp_fbp /= num_unflagged_timesteps as f64;
+        // (the sample variance, like numpy's `ddof=1`)
+        if num_unflagged_timesteps > 1 {
+            var_amp_fbp /= (num_unflagged_timesteps - 1) as f64;
         }
 
         // the square root of the baseline-mean of the variance
@@ -1662,6 +1668,7 @@ impl EAVILS {
             let hdu = write_image_hdu(
                 fptr,
                 &format!("EAVILS_POL={pol_name}"),
+                ImageType::Float,
                 &[num_times, num_freqs],
                 self.zscore.slice(s![.., .., p]).iter().copied(),
             )?;
@@ -1676,8 +1683,9 @@ impl EAVILS {
         let hdu = write_image_hdu(
             fptr,
             "EAVILS_FLAGS",
+            ImageType::UnsignedByte,
             &[num_times, num_freqs],
-            self.flag_array.iter().map(|&b| f64::from(u8::from(b))),
+            self.flag_array.iter().map(|&b| u8::from(b)),
         )?;
         axes.write(fptr, &hdu)?;
         hdu.write_key(fptr, "TELESCOP", "MWA")?;
@@ -1690,7 +1698,13 @@ impl EAVILS {
             ("EAVILS_MEAN_AMP_FP", &self.mean_amp_fp),
             ("EAVILS_SQRT_MEAN_VAR_AMP_FP", &self.sqrt_mean_var_amp_fp),
         ] {
-            let hdu = write_image_hdu(fptr, extname, &[num_freqs, 4], array_fp.iter().copied())?;
+            let hdu = write_image_hdu(
+                fptr,
+                extname,
+                ImageType::Float,
+                &[num_freqs, 4],
+                array_fp.iter().copied(),
+            )?;
             axes.freq().write(fptr, &hdu, 2)?;
         }
 
@@ -1878,6 +1892,7 @@ impl AOFlagMetrics {
         let hdu = write_image_hdu(
             fptr,
             "AO_FLAG_METRICS",
+            ImageType::Double,
             &[num_times, num_freqs],
             self.occupancy_tf.iter().copied(),
         )?;
@@ -1901,7 +1916,6 @@ impl AOFlagMetrics {
 ///
 /// The polarisations are in the order of a [`Jones`] matrix: `XX, XY, YX, YY`.
 /// The antenna axis is in order of increasing antenna index.
-#[cfg(feature = "aoflagger")]
 pub struct CrossMetrics {
     /// Mean delay spectrum of the short baselines of each antenna
     /// `(antenna, delay, polarisation)`. `NaN` for an antenna with no short
@@ -1934,7 +1948,6 @@ pub struct CrossMetrics {
 ///
 /// The result is the same as [`CrossMetrics::new_from_metadata`] on all of the
 /// visibilities, however they are chunked.
-#[cfg(feature = "aoflagger")]
 pub struct CrossMetricsBuilder {
     metadata: MetricsContext,
     timestep_flags: Vec<bool>,
@@ -1950,7 +1963,6 @@ pub struct CrossMetricsBuilder {
     num_timesteps_pushed: usize,
 }
 
-#[cfg(feature = "aoflagger")]
 impl CrossMetricsBuilder {
     /// Start computing [`CrossMetrics`] for all of the timesteps, channels
     /// and baselines in `metadata`, using baselines up to `baseline_cutoff_m`
@@ -2145,7 +2157,6 @@ impl CrossMetricsBuilder {
     }
 }
 
-#[cfg(feature = "aoflagger")]
 impl CrossMetrics {
     /// Create [`CrossMetrics`] for visibilities that were read with the
     /// selection `chunk_vis_sel` of the observation `corr_ctx`, using
@@ -2224,6 +2235,7 @@ impl CrossMetrics {
             let hdu = write_image_hdu(
                 fptr,
                 &format!("CROSS_DELAY_POL={pol_name}"),
+                ImageType::Float,
                 &[num_ants, num_delays],
                 self.short_ant_delay_pol_adp
                     .slice(s![.., .., p])
@@ -2575,7 +2587,7 @@ mod autometrics_tests {
         assert_eq!(auto.cable_flavours, ["RG6_90", "RG6_90", "RG6_150"]);
         assert_eq!(auto.whitening_filters, [true, true, false]);
         for (position, north_m) in auto.antenna_positions.iter().zip([20.0, 40.0, 70.0]) {
-            assert_eq!((position.x, position.y, position.z), (north_m, 0.5, 1.5));
+            assert_eq!((position.n, position.e, position.h), (north_m, 0.5, 1.5));
         }
         assert_eq!(auto.start_freq_hz.to_bits(), 150e6_f64.to_bits());
         assert_eq!(auto.channel_width_hz.to_bits(), 40e3_f64.to_bits());
@@ -2831,7 +2843,6 @@ mod autometrics_tests {
                     ("CUNIT2", "s"),
                     ("CTYPE3", "STOKES"),
                     ("ANTNAME", &auto.antenna_names[a]),
-                    ("ANT_TYPE", "RRI"),
                     ("RX_TYPE", "RRI"),
                     ("CABLE_FLAVOUR", &auto.cable_flavours[a]),
                 ],
@@ -2860,9 +2871,9 @@ mod autometrics_tests {
                     ),
                     ("RX_NUMBER", f64::from(auto.rx_numbers[a])),
                     ("RX_SLOT", f64::from(auto.rx_slots[a])),
-                    ("OBSGEO-X", auto.antenna_positions[a].x),
-                    ("OBSGEO-Y", auto.antenna_positions[a].y),
-                    ("OBSGEO-Z", auto.antenna_positions[a].z),
+                    ("NORTH", auto.antenna_positions[a].n),
+                    ("EAST", auto.antenna_positions[a].e),
+                    ("HEIGHT", auto.antenna_positions[a].h),
                 ],
             );
         }
@@ -2946,15 +2957,13 @@ mod autometrics_tests {
         assert_eq!(rx_numbers, auto.rx_numbers);
         let rx_slots: Vec<u32> = hdu.read_col(&mut fptr, "RX_SLOT").unwrap();
         assert_eq!(rx_slots, auto.rx_slots);
-        for col in ["ANT_TYPE", "RX_TYPE"] {
-            let rx_types: Vec<String> = hdu.read_col(&mut fptr, col).unwrap();
-            assert_eq!(rx_types, auto.rx_types);
-        }
-        let north_m: Vec<f64> = hdu.read_col(&mut fptr, "OBSGEO-X").unwrap();
+        let rx_types: Vec<String> = hdu.read_col(&mut fptr, "RX_TYPE").unwrap();
+        assert_eq!(rx_types, auto.rx_types);
+        let north_m: Vec<f64> = hdu.read_col(&mut fptr, "NORTH").unwrap();
         assert_eq!(north_m, [10.0, 40.0]);
-        let east_m: Vec<f64> = hdu.read_col(&mut fptr, "OBSGEO-Y").unwrap();
+        let east_m: Vec<f64> = hdu.read_col(&mut fptr, "EAST").unwrap();
         assert_eq!(east_m, [0.5, 0.5]);
-        let height_m: Vec<f64> = hdu.read_col(&mut fptr, "OBSGEO-Z").unwrap();
+        let height_m: Vec<f64> = hdu.read_col(&mut fptr, "HEIGHT").unwrap();
         assert_eq!(height_m, [1.5, 1.5]);
         for (p, pol_name) in FITS_POL_NAMES.into_iter().enumerate() {
             // 3 coefficients for each of the 2 antennas
@@ -3265,13 +3274,14 @@ mod eavils_tests {
                     |t: usize| mean(&(0..num_baselines).map(|b| amp(t, b)).collect::<Vec<_>>());
                 // np.mean(blmean, axis=time)
                 let mean_amp = mean(&unflagged_times.map(blmean));
-                // np.sqrt(np.mean(np.var(amp, axis=time), axis=baseline))
+                // np.sqrt(np.mean(np.var(amp, axis=time, ddof=1), axis=baseline))
                 let stdv = mean(
                     &(0..num_baselines)
                         .map(|b| {
                             let amps = unflagged_times.map(|t| amp(t, b));
                             let mean_amp = mean(&amps);
-                            mean(&amps.map(|amp| (amp - mean_amp).powi(2)))
+                            amps.map(|amp| (amp - mean_amp).powi(2)).iter().sum::<f64>()
+                                / (amps.len() - 1) as f64
                         })
                         .collect::<Vec<_>>(),
                 )
@@ -3442,16 +3452,21 @@ mod eavils_tests {
     }
 }
 
-#[cfg(all(test, feature = "aoflagger"))]
+#[cfg(test)]
 #[allow(clippy::needless_range_loop, clippy::cognitive_complexity)]
-mod aoflagger_tests {
+mod flag_and_cross_tests {
+    #[cfg(feature = "aoflagger")]
+    use super::AOFlagMetrics;
+    // some of these are only used by the tests which need the aoflagger feature
+    #[cfg_attr(not(feature = "aoflagger"), allow(unused_imports))]
     use super::{
         test_common::{
             assert_close, assert_f64_keys, assert_str_keys, hdu_names, metrics_context, read_image,
             save_and_open, synthetic_vis,
         },
-        AOFlagMetrics, CrossMetrics, DELAY_TRANSFORM_CONFIG, SSINS,
+        CrossMetrics, DELAY_TRANSFORM_CONFIG, SSINS,
     };
+    #[cfg_attr(not(feature = "aoflagger"), allow(unused_imports))]
     use crate::{
         delay_transform::delay_transform,
         marlu::{
@@ -3477,6 +3492,7 @@ mod aoflagger_tests {
         .unwrap()
     }
 
+    #[cfg(feature = "aoflagger")]
     #[test]
     fn test_crosses_only_occupancy_helper() {
         // Two timesteps, two freqs, three baselines: (0,0) auto, (0,1) cross, (1,1) auto
@@ -3500,6 +3516,7 @@ mod aoflagger_tests {
     }
 
     /// The occupancy is NaN if there are no cross-correlations.
+    #[cfg(feature = "aoflagger")]
     #[test]
     fn test_occupancy_without_crosses() {
         let flags = Array3::<bool>::from_elem((2, 2, 2), true);
@@ -3512,6 +3529,7 @@ mod aoflagger_tests {
         assert!(occ.iter().all(|x| x.is_nan()));
     }
 
+    #[cfg(feature = "aoflagger")]
     #[test]
     fn test_aoflagmetrics_values_and_fits() {
         let (num_times, num_freqs) = (4, 5);
@@ -3583,6 +3601,7 @@ mod aoflagger_tests {
         );
     }
 
+    #[cfg(feature = "aoflagger")]
     #[test]
     fn test_aoflagmetrics_new_with_selection() {
         let corr_ctx = get_mwax_context();
@@ -3848,6 +3867,7 @@ mod aoflagger_tests {
     }
 
     /// `AOFlagger` flags a strong outlier in the z-scores.
+    #[cfg(feature = "aoflagger")]
     #[test]
     fn test_ssins_flag() {
         let (num_times, num_freqs) = (33, 16);
@@ -4013,7 +4033,7 @@ mod builder_tests {
     }
 
     /// The variance that is accumulated a timestep at a time is the
-    /// population variance over time of the amplitude of each baseline.
+    /// sample variance over time of the amplitude of each baseline.
     #[test]
     fn test_eavils_builder_variance() {
         let (num_times, num_freqs) = (5, 3);
@@ -4035,7 +4055,7 @@ mod builder_tests {
                         .collect();
                     let mean = amps.iter().sum::<f64>() / amps.len() as f64;
                     mean_var += amps.iter().map(|amp| (amp - mean).powi(2)).sum::<f64>()
-                        / amps.len() as f64
+                        / (amps.len() - 1) as f64
                         / num_baselines as f64;
                 }
                 let expected = mean_var.sqrt();
@@ -4132,7 +4152,6 @@ mod builder_tests {
         builder.finish();
     }
 
-    #[cfg(feature = "aoflagger")]
     #[test]
     fn test_crossmetrics_builder_chunks() {
         let (ctx, vis, _, timestep_flags, chan_flags) = setup();
@@ -4160,7 +4179,6 @@ mod builder_tests {
         assert_eq!(chunked.antenna_names, whole.antenna_names);
     }
 
-    #[cfg(feature = "aoflagger")]
     #[test]
     #[should_panic(expected = "not all timesteps were pushed")]
     fn test_crossmetrics_builder_too_few_timesteps() {

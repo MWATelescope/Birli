@@ -497,8 +497,7 @@ OUTPUT:
 
 METRICS:
         --cross-metrics-cutoff <METRES>    Longest baseline to include in the cross-correlation
-                                           delay metrics (needs the aoflagger feature) [default:
-                                           30.0]
+                                           delay metrics [default: 30.0]
 
 AOFLAGGER:
         --aoflagger-strategy <PATH>    Strategy to use for RFI Flagging
@@ -742,8 +741,8 @@ corrections and flagging, and before averaging:
 - [SSINS](https://ssins.readthedocs.io/en/latest/) z-scores: the baseline-averaged amplitude of the
   visibilities differenced in time, which is sensitive to faint RFI
 - EAVILS z-scores: the baseline-averaged amplitude of the visibilities
-- with the aoflagger feature: the fraction of baselines flagged at each time and frequency, and
-  the delay transform of the cross-correlations on baselines shorter than `--cross-metrics-cutoff`
+- the delay transform of the cross-correlations on baselines shorter than `--cross-metrics-cutoff`
+- with the aoflagger feature: the fraction of baselines flagged at each time and frequency
 
 See [doc/metrics.md](doc/metrics.md) for what is in the file and how to read it.
 

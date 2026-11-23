@@ -28,8 +28,10 @@ use mwalib::{
 use prettytable::{format as prettyformat, row, table};
 
 #[cfg(feature = "aoflagger")]
-use crate::metrics::{AOFlagMetricsBuilder, CrossMetricsBuilder};
-use crate::metrics::{AutoMetricsBuilder, EAVILSBuilder, MetricsContext, SSINSBuilder};
+use crate::metrics::AOFlagMetricsBuilder;
+use crate::metrics::{
+    AutoMetricsBuilder, CrossMetricsBuilder, EAVILSBuilder, MetricsContext, SSINSBuilder,
+};
 use crate::{
     calibration::{calsols_phase_only, flag_antennas_with_nan_calsols},
     error::{
@@ -83,7 +85,7 @@ pub struct BirliContext<'a> {
     /// channel selections for picket-fencing
     pub channel_range_sel: ChannelRanges,
     /// The longest baseline that is included in the cross-correlation delay
-    /// metrics `crate::metrics::CrossMetrics` \[metres\]
+    /// metrics [`crate::metrics::CrossMetrics`] \[metres\]
     pub cross_metrics_cutoff_m: f32,
 }
 
@@ -91,9 +93,8 @@ pub struct BirliContext<'a> {
 /// visibilities that Birli preprocesses, one chunk of timesteps at a time, and
 /// writes them all to one FITS file at the end.
 ///
-/// With the `aoflagger` feature, this includes the flag occupancy and the
-/// delay spectra of the short baselines, and the SSINS z-scores are flagged
-/// with `AOFlagger`'s minimal strategy.
+/// With the `aoflagger` feature, this includes the flag occupancy, and the
+/// SSINS z-scores are flagged with `AOFlagger`'s minimal strategy.
 struct MetricsWriter {
     path: PathBuf,
     fptr: FitsFile,
@@ -103,7 +104,6 @@ struct MetricsWriter {
     eavils: EAVILSBuilder,
     #[cfg(feature = "aoflagger")]
     aoflag: AOFlagMetricsBuilder,
-    #[cfg(feature = "aoflagger")]
     cross: CrossMetricsBuilder,
 }
 
@@ -122,7 +122,6 @@ impl MetricsWriter {
         corr_ctx: &CorrelatorContext,
         vis_sel: &VisSelection,
         flag_ctx: &FlagContext,
-        #[cfg_attr(not(feature = "aoflagger"), allow(unused_variables))]
         cross_metrics_cutoff_m: f32,
     ) -> Result<Option<Self>, IOError> {
         let timestep_range = &vis_sel.timestep_range;
@@ -159,7 +158,6 @@ impl MetricsWriter {
             eavils: EAVILSBuilder::new(metadata, timestep_flags, chan_flags),
             #[cfg(feature = "aoflagger")]
             aoflag: AOFlagMetricsBuilder::new(metadata, timestep_flags, chan_flags),
-            #[cfg(feature = "aoflagger")]
             cross: CrossMetricsBuilder::new(
                 metadata,
                 timestep_flags,
@@ -178,10 +176,8 @@ impl MetricsWriter {
         }
         self.eavils.push(jones_array);
         #[cfg(feature = "aoflagger")]
-        {
-            self.aoflag.push(flag_array);
-            self.cross.push(jones_array);
-        }
+        self.aoflag.push(flag_array);
+        self.cross.push(jones_array);
     }
 
     /// Compute the metrics of all the chunks, and write them to the file.
@@ -193,10 +189,8 @@ impl MetricsWriter {
         let mut fptr = self.fptr;
         self.auto.finish().save_to_fits(&mut fptr)?;
         #[cfg(feature = "aoflagger")]
-        {
-            self.aoflag.finish().save_to_fits(&mut fptr)?;
-            self.cross.finish().save_to_fits(&mut fptr)?;
-        }
+        self.aoflag.finish().save_to_fits(&mut fptr)?;
+        self.cross.finish().save_to_fits(&mut fptr)?;
         if let Some(ssins) = self.ssins {
             #[cfg_attr(not(feature = "aoflagger"), allow(unused_mut))]
             let mut ssins = ssins.finish();
@@ -1004,7 +998,7 @@ impl<'a> BirliContext<'a> {
                 .help_heading("OUTPUT")
                 .required(false)
                 .value_parser(clap::value_parser!(PathBuf)),
-            arg!(--"cross-metrics-cutoff" <METRES> "Longest baseline to include in the cross-correlation delay metrics (needs the aoflagger feature)")
+            arg!(--"cross-metrics-cutoff" <METRES> "Longest baseline to include in the cross-correlation delay metrics")
                 .help_heading("METRICS")
                 .default_value("30.0")
                 .required(false)
@@ -3737,10 +3731,8 @@ mod metrics_tests {
         expected_hdus.push("AUTO_COEFFS".into());
         expected_hdus.extend(per_pol("AUTO_DELAY_POL", fits_pols));
         #[cfg(feature = "aoflagger")]
-        {
-            expected_hdus.push("AO_FLAG_METRICS".into());
-            expected_hdus.extend(per_pol("CROSS_DELAY_POL", fits_pols));
-        }
+        expected_hdus.push("AO_FLAG_METRICS".into());
+        expected_hdus.extend(per_pol("CROSS_DELAY_POL", fits_pols));
         expected_hdus.extend(per_pol("SSINS_POL", jones_pols));
         expected_hdus
             .extend(["SSINS_FLAGS", "SSINS_N_BL", "SSINS_DIFF_MEAN_AMP_FP"].map(String::from));
@@ -3773,10 +3765,10 @@ mod metrics_tests {
             let (shape, data) = read_image(&metrics_path, "AO_FLAG_METRICS");
             assert_eq!(shape, [4, 4]);
             assert!(data.iter().all(|&occupancy| occupancy.abs() < 1e-12));
-            let (shape, data) = read_image(&metrics_path, "CROSS_DELAY_POL=XY");
-            assert_eq!(shape[0], 2);
-            assert!(data.iter().all(|x| x.is_finite()));
         }
+        let (shape, data) = read_image(&metrics_path, "CROSS_DELAY_POL=XY");
+        assert_eq!(shape[0], 2);
+        assert!(data.iter().all(|x| x.is_finite()));
     }
 
     /// Channels flagged with `--flag-raw-chans` and `--flag-fine-chans` are
