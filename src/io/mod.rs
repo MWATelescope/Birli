@@ -49,6 +49,10 @@ pub struct IOContext {
     pub ms_out: Option<PathBuf>,
     /// Optional .mwaf flag file path template (see `io::mwaf::FlagFileSet`)
     pub flag_template: Option<String>,
+
+    /// Flag raw data that can't be read (corrupt or truncated gpubox files)
+    /// and carry on, instead of stopping.
+    pub flag_bad_data: bool,
 }
 
 impl IOContext {
@@ -150,10 +154,67 @@ pub trait ReadableVis: Sync + Send {
 pub fn read_mwalib(
     vis_sel: &VisSelection,
     corr_ctx: &CorrelatorContext,
+    jones_array: ArrayViewMut3<Jones<f32>>,
+    flag_array: ArrayViewMut3<bool>,
+    draw_progress: bool,
+) -> Result<(), SelectionError> {
+    read_mwalib_inner(
+        vis_sel,
+        corr_ctx,
+        jones_array,
+        flag_array,
+        draw_progress,
+        false,
+    )?;
+    Ok(())
+}
+
+/// Part of the raw data that could not be read, and was flagged instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreadableHdu {
+    /// The index of the timestep in the correlator context
+    pub timestep_idx: usize,
+    /// The index of the coarse channel in the correlator context
+    pub coarse_chan_idx: usize,
+    /// Why it could not be read
+    pub reason: String,
+}
+
+/// Like [`read_mwalib`], but when a timestep of a coarse channel can't be
+/// read (a truncated or corrupt gpubox file, for example), its visibilities
+/// are set to zero and flagged instead of the whole read failing. Returns
+/// what could not be read, in order of coarse channel then timestep.
+///
+/// # Errors
+///
+/// As [`read_mwalib`], except for errors reading a single timestep of a
+/// coarse channel.
+pub fn read_mwalib_flag_bad_data(
+    vis_sel: &VisSelection,
+    corr_ctx: &CorrelatorContext,
+    jones_array: ArrayViewMut3<Jones<f32>>,
+    flag_array: ArrayViewMut3<bool>,
+    draw_progress: bool,
+) -> Result<Vec<UnreadableHdu>, SelectionError> {
+    read_mwalib_inner(
+        vis_sel,
+        corr_ctx,
+        jones_array,
+        flag_array,
+        draw_progress,
+        true,
+    )
+}
+
+fn read_mwalib_inner(
+    vis_sel: &VisSelection,
+    corr_ctx: &CorrelatorContext,
     mut jones_array: ArrayViewMut3<Jones<f32>>,
     mut flag_array: ArrayViewMut3<bool>,
     draw_progress: bool,
-) -> Result<(), SelectionError> {
+    flag_bad_data: bool,
+) -> Result<Vec<UnreadableHdu>, SelectionError> {
+    let unreadable = std::sync::Mutex::new(vec![]);
     let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
     let shape = vis_sel.get_shape(fine_chans_per_coarse);
     let (num_timesteps, _, _) = shape;
@@ -301,6 +362,16 @@ pub fn read_mwalib(
                             );
                             flag_array.fill(true);
                         }
+                        Err(e) if flag_bad_data => {
+                            warn!("Flagging unreadable HDU @ ts={timestep_idx}, cc={coarse_chan_idx}: {e}");
+                            jones_array.fill(Jones::default());
+                            flag_array.fill(true);
+                            unreadable.lock().unwrap().push(UnreadableHdu {
+                                timestep_idx,
+                                coarse_chan_idx,
+                                reason: e.to_string(),
+                            });
+                        }
                         Err(e) => return Err(e),
                     }
 
@@ -315,7 +386,9 @@ pub fn read_mwalib(
     // We're done!
     total_progress.finish();
 
-    Ok(())
+    let mut unreadable = unreadable.into_inner().unwrap();
+    unreadable.sort_by_key(|hdu| (hdu.coarse_chan_idx, hdu.timestep_idx));
+    Ok(unreadable)
 }
 
 /// Write the given ndarrays of flags and [`Jones`] matrix visibilities to a

@@ -458,6 +458,8 @@ FLAGGING:
         --flag-antennas <ANTS>...         Flag antenna indices
         --flag-autos                      Flag auto correlations
         --flag-coarse-chans <CHANS>...    Flag additional coarse chan indices
+        --flag-bad-data                   Flag raw data that can't be read (corrupt or truncated
+                                          gpubox files) and carry on, instead of stopping
         --flag-dc                         Force flagging of DC centre chans
         --flag-edge-chans <COUNT>         Flag <COUNT> fine chans on the ends of each coarse
         --flag-edge-width <KHZ>           Flag bandwidth [kHz] at the ends of each coarse chan

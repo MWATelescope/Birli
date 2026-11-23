@@ -2,6 +2,11 @@
 
 # Unreleased
 
+- ✨ new feature:
+  - `--flag-bad-data`: when a timestep of a coarse channel can't be read from the raw files (a corrupt or truncated gpubox file), flag it, set it to zero and carry on, then list what was flagged at the end of the run. Without the flag Birli stops at the first such error, as before. Fixes #167
+- 📚 API changes:
+  - `IOContext` has a new `flag_bad_data` field (it implements `Default`)
+  - new `io::read_mwalib_flag_bad_data` and `io::UnreadableHdu`
 - 🙏 quality of life:
   - `--uvfits-out` must end in `.uvfits` or `.uvf` and `--ms-out` in `.ms`, and Birli checks this (and that a uvfits path isn't an existing directory, or a measurement set path an existing file) before reading any data. Fixes #41
   - gpubox files with no timesteps in common give an error that lists the timesteps each gpubox channel provides, instead of a panic. Errors while reading calibration solutions or writing uvfits, measurement sets and flag files are also reported instead of panicking. Fixes #139
