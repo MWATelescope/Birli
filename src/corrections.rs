@@ -709,6 +709,36 @@ fn calc_part_uvws(
     part_uvws
 }
 
+/// Swap which dipole is called X in an array of visibilities: XX becomes YY,
+/// XY becomes YX, YX becomes XY and YY becomes XX.
+///
+/// The MWA calls its east-west dipole X and its north-south dipole Y. The
+/// IAU's convention (Hamaker & Bregman 1996, figure 1), and the software
+/// built on casacore, has X north-south and Y east-west. Calling this on
+/// visibilities in one convention gives visibilities in the other; doing it
+/// twice gives back the original.
+///
+/// # Examples
+///
+/// ```rust
+/// use birli::{corrections::relabel_pols, marlu::c32, Array3, Jones};
+///
+/// let vis = Jones::from([
+///     c32::new(1., 0.),
+///     c32::new(2., 3.),
+///     c32::new(4., 5.),
+///     c32::new(6., 0.),
+/// ]);
+/// let mut jones_array = Array3::from_elem((1, 1, 1), vis);
+/// relabel_pols(jones_array.view_mut());
+/// assert_eq!(jones_array[(0, 0, 0)], Jones::from([vis[3], vis[2], vis[1], vis[0]]));
+/// ```
+pub fn relabel_pols(mut jones_array: ArrayViewMut3<Jones<f32>>) {
+    jones_array
+        .iter_mut()
+        .for_each(|jones| *jones = Jones::from([jones[3], jones[2], jones[1], jones[0]]));
+}
+
 #[cfg(test)]
 #[allow(clippy::similar_names)]
 mod tests {
