@@ -34,7 +34,10 @@ use crate::{
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
     },
     flags::FlagContext,
-    io::{aocal::AOCalSols, error::IOError, read_mwalib, IOContext},
+    io::{
+        aocal::AOCalSols, error::IOError, read_mwalib, read_mwalib_flag_bad_data, IOContext,
+        UnreadableHdu,
+    },
     marlu::{
         built_info::PKG_VERSION as MARLU_PKG_VERSION,
         constants::{
@@ -229,6 +232,34 @@ fn describe_selection_error(error: SelectionError, corr_ctx: &CorrelatorContext)
         SelectionError::NoProvidedTimesteps { .. } => BirliError::NoProvidedTimesteps,
         e => BirliError::SelectionError(e),
     }
+}
+
+/// Describe the raw data that `--flag-bad-data` flagged because it could not
+/// be read: one line per coarse channel, with its timesteps and the first
+/// reason. [`None`] if everything was read.
+fn summarise_unreadable_hdus(
+    unreadable: &[UnreadableHdu],
+    corr_ctx: &CorrelatorContext,
+) -> Option<String> {
+    if unreadable.is_empty() {
+        return None;
+    }
+    let mut summary = format!(
+        "{} timestep(s) of raw data could not be read, and were flagged (--flag-bad-data):",
+        unreadable.len()
+    );
+    for (coarse_chan_idx, hdus) in &unreadable.iter().chunk_by(|hdu| hdu.coarse_chan_idx) {
+        let hdus: Vec<_> = hdus.collect();
+        let coarse_chan = &corr_ctx.coarse_chans[coarse_chan_idx];
+        let timesteps = hdus.iter().map(|hdu| hdu.timestep_idx).join(", ");
+        // mwalib's errors start with a line saying where in its source they are from
+        let reason = hdus[0].reason.lines().last().unwrap_or_default();
+        summary.push_str(&format!(
+            "\n- coarse channel index {coarse_chan_idx} (gpubox {:02}, receiver channel {}), timestep indices {timesteps}: {reason}",
+            coarse_chan.gpubox_number, coarse_chan.rec_chan_number
+        ));
+    }
+    Some(summary)
 }
 
 /// Check that an output path has the extension its format needs, and that
@@ -886,6 +917,8 @@ impl<'a> BirliContext<'a> {
                 .num_args(1..)
                 .value_parser(clap::value_parser!(usize))
                 .required(false),
+            arg!(--"flag-bad-data" "Flag raw data that can't be read (corrupt or truncated gpubox files) and carry on, instead of stopping")
+                .help_heading("FLAGGING"),
             arg!(--"flag-dc" "Force flagging of DC centre chans")
                 .help_heading("FLAGGING")
                 .conflicts_with("no-flag-dc"),
@@ -1012,6 +1045,7 @@ impl<'a> BirliContext<'a> {
             uvfits_out: matches.get_one::<PathBuf>("uvfits-out").cloned(),
             ms_out: matches.get_one::<PathBuf>("ms-out").cloned(),
             flag_template: matches.get_one::<String>("flag-template").cloned(),
+            flag_bad_data: matches.get_flag("flag-bad-data"),
         };
         if let Some(path) = io_ctx.uvfits_out.as_ref() {
             validate_output_path("--uvfits-out <PATH>", path, &["uvfits", "uvf"], false)?;
@@ -1951,6 +1985,8 @@ impl<'a> BirliContext<'a> {
                 ..vis_sel.timestep_range.start + chunk_size),
             ..vis_sel.clone()
         };
+        // Raw data that could not be read and was flagged (`--flag-bad-data`)
+        let mut unreadable_hdus = vec![];
         let mut jones_array = chunk_vis_sel.allocate_jones(fine_chans_per_coarse)?;
         let mut flag_array = chunk_vis_sel.allocate_flags(fine_chans_per_coarse)?;
         let mut weight_array = chunk_vis_sel.allocate_weights(fine_chans_per_coarse)?;
@@ -1998,16 +2034,18 @@ impl<'a> BirliContext<'a> {
             )?;
 
             // populate visibilities
-            with_increment_duration!(
-                "read",
-                read_mwalib(
-                    &chunk_vis_sel,
-                    corr_ctx,
-                    jones_array.view_mut(),
-                    flag_array.view_mut(),
-                    prep_ctx.draw_progress
-                )?
-            );
+            with_increment_duration!("read", {
+                let (jones_array, flag_array) = (jones_array.view_mut(), flag_array.view_mut());
+                let draw_progress = prep_ctx.draw_progress;
+                let sel = &chunk_vis_sel;
+                if io_ctx.flag_bad_data {
+                    let read = read_mwalib_flag_bad_data;
+                    let mut bad = read(sel, corr_ctx, jones_array, flag_array, draw_progress)?;
+                    unreadable_hdus.append(&mut bad);
+                } else {
+                    read_mwalib(sel, corr_ctx, jones_array, flag_array, draw_progress)?;
+                }
+            });
 
             // populate weights
             weight_array.fill(vis_ctx.weight_factor() as f32);
@@ -2101,6 +2139,10 @@ impl<'a> BirliContext<'a> {
             flag_file_set.finalise()?;
         }
 
+        if let Some(summary) = summarise_unreadable_hdus(&unreadable_hdus, corr_ctx) {
+            warn!("{summary}");
+        }
+
         Ok(())
     }
 }
@@ -2117,6 +2159,123 @@ mod argparse_tests {
         BirliContext, BirliError, VisSelection,
     };
     use tempfile::tempdir;
+
+    /// Copy the metafits and first two gpubox files of the 1254670392 test
+    /// observation into `dir`, cutting the first gpubox file short so that
+    /// its later timesteps can't be read. Returns (metafits, gpubox files).
+    fn write_truncated_obs(dir: &std::path::Path) -> (String, Vec<String>) {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+        let copy = |path: &str, keep: Option<f64>| {
+            let mut bytes = std::fs::read(path).unwrap();
+            if let Some(keep) = keep {
+                // FITS files are made of 2880 byte blocks
+                let len = (bytes.len() as f64 * keep) as usize / 2880 * 2880;
+                bytes.truncate(len);
+            }
+            let name = std::path::Path::new(path).file_name().unwrap();
+            let out = dir.join(name);
+            std::fs::write(&out, bytes).unwrap();
+            out.to_str().unwrap().to_string()
+        };
+        (
+            copy(metafits_path, None),
+            vec![
+                copy(gpufits_paths[0], Some(0.6)),
+                copy(gpufits_paths[1], None),
+            ],
+        )
+    }
+
+    /// A gpubox file that is cut short stops Birli, unless `--flag-bad-data`
+    /// is given, in which case what can't be read is flagged (issue #167).
+    #[test]
+    fn test_flag_bad_data() {
+        use super::summarise_unreadable_hdus;
+        use crate::io::read_mwalib_flag_bad_data;
+        use crate::{Axis, Jones};
+        use itertools::izip;
+
+        let tmp_dir = tempdir().unwrap();
+        let (metafits_path, gpufits_paths) = write_truncated_obs(tmp_dir.path());
+        let uvfits_path = tmp_dir.path().join("out.uvfits");
+        let mut args = vec![
+            "birli",
+            "-m",
+            &metafits_path,
+            "--no-draw-progress",
+            "-u",
+            uvfits_path.to_str().unwrap(),
+        ];
+        args.extend(gpufits_paths.iter().map(String::as_str));
+
+        // without the flag, the read fails
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+        assert!(!birli_ctx.io_ctx.flag_bad_data);
+        let err = birli_ctx.run().expect_err("the file is cut short");
+        assert!(format!("{err}").contains("Fits error"), "{err}");
+
+        // with it, the run finishes
+        args.push("--flag-bad-data");
+        let birli_ctx = BirliContext::from_args(&args).unwrap();
+        assert!(birli_ctx.io_ctx.flag_bad_data);
+        birli_ctx.run().unwrap();
+        assert!(uvfits_path.is_file());
+
+        // and what could not be read is flagged and zeroed, nothing else
+        let BirliContext {
+            corr_ctx, vis_sel, ..
+        } = BirliContext::from_args(&args).unwrap();
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        // the arrays are reused between chunks, so they can hold old data
+        jones_array.fill(Jones::identity());
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        let unreadable = read_mwalib_flag_bad_data(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
+        assert!(!unreadable.is_empty());
+        assert!(unreadable.len() < vis_sel.timestep_range.len());
+        let bad_chan_idx = unreadable[0].coarse_chan_idx;
+        assert!(unreadable
+            .iter()
+            .all(|hdu| hdu.coarse_chan_idx == bad_chan_idx));
+        for (timestep_idx, jones_array, flag_array) in izip!(
+            vis_sel.timestep_range.clone(),
+            jones_array.outer_iter(),
+            flag_array.outer_iter()
+        ) {
+            for (coarse_chan_idx, jones_array, flag_array) in izip!(
+                vis_sel.coarse_chan_range.clone(),
+                jones_array.axis_chunks_iter(Axis(0), fine_chans_per_coarse),
+                flag_array.axis_chunks_iter(Axis(0), fine_chans_per_coarse)
+            ) {
+                let is_unreadable = unreadable.iter().any(|hdu| {
+                    hdu.timestep_idx == timestep_idx && hdu.coarse_chan_idx == coarse_chan_idx
+                });
+                assert!(flag_array.iter().all(|&flag| flag == is_unreadable));
+                if is_unreadable {
+                    assert!(jones_array.iter().all(|&jones| jones == Jones::default()));
+                }
+            }
+        }
+
+        let summary = summarise_unreadable_hdus(&unreadable, &corr_ctx).unwrap();
+        assert!(
+            summary.starts_with(&format!(
+                "{} timestep(s) of raw data could not be read",
+                unreadable.len()
+            )),
+            "{summary}"
+        );
+        assert!(summary.contains("Fits error"), "{summary}");
+        assert_eq!(summary.lines().count(), 2, "{summary}");
+        assert_eq!(summarise_unreadable_hdus(&[], &corr_ctx), None);
+    }
 
     /// Output paths must have the extension of their format (issue #41)
     #[test]
