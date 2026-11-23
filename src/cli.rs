@@ -39,6 +39,7 @@ use crate::{
         built_info::PKG_VERSION as MARLU_PKG_VERSION,
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
+            DAYSEC, SOLAR2SIDEREAL,
         },
         hifitime::{self, Epoch},
         io::{error::BadArrayShape, ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
@@ -125,6 +126,19 @@ pub fn fmt_build_info(f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     }
     writeln!(f)?;
     Ok(())
+}
+
+/// How far (in degrees on the sky) the centre of the primary beam moves
+/// during an observation of `duration_s` seconds.
+///
+/// An MWA tile's beam is fixed in azimuth and elevation for the whole of an
+/// observation, so it follows the sky's rotation. The metafits `RA` and `DEC`
+/// (which `--pointing-centre` phases to) are where the beam points at the
+/// middle of the observation: at the start and end it is half this distance
+/// away.
+fn pointing_drift_deg(duration_s: f64, dec_rad: f64) -> f64 {
+    let rotation_deg = 360. * SOLAR2SIDEREAL * duration_s / DAYSEC;
+    rotation_deg * dec_rad.cos()
 }
 
 fn time_details(
@@ -265,6 +279,9 @@ impl Display for BirliContext<'_> {
         if pointing_centre != self.prep_ctx.phase_centre {
             writeln!(f, "Pointing centre:      {}", pointing_centre)?;
         }
+        let sched_duration_s = self.corr_ctx.metafits_context.sched_duration_ms as f64 / 1e3;
+        let drift_deg = pointing_drift_deg(sched_duration_s, pointing_centre.dec);
+        writeln!(f, "                      at the middle of the observation, moves {drift_deg:.2}° during it")?;
 
         let coarse_chan_flag_idxs: Vec<usize> = self
             .flag_ctx
@@ -662,7 +679,7 @@ impl<'a> BirliContext<'a> {
                 .value_parser(clap::value_parser!(f64))
                 .allow_hyphen_values(true)
                 .required(false),
-            arg!(--"pointing-centre" "Use pointing instead phase centre")
+            arg!(--"pointing-centre" "Phase to the pointing centre (where the beam points at the middle of the observation) instead of the phase centre")
                 .conflicts_with("phase-centre"),
             arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's. Also, Birli will not flag NaNs when applying calibration solutions."),
             arg!(--"dry-run" "Just print the summary and exit"),
@@ -1985,6 +2002,34 @@ mod argparse_tests {
         BirliContext, BirliError, VisSelection,
     };
     use tempfile::tempdir;
+
+    /// The beam is fixed in azimuth and elevation, so it follows the sky
+    /// (issue #164).
+    #[test]
+    fn test_pointing_drift() {
+        use super::pointing_drift_deg;
+        // a sidereal day at the equator is a full turn
+        assert_abs_diff_eq!(pointing_drift_deg(86164.0905, 0.), 360., epsilon = 1e-4);
+        // two minutes at the MWA's latitude
+        let drift = pointing_drift_deg(120., (-26.7_f64).to_radians());
+        assert_abs_diff_eq!(drift, 0.4479, epsilon = 1e-4);
+        // nothing moves at the pole
+        assert_abs_diff_eq!(pointing_drift_deg(120., std::f64::consts::FRAC_PI_2), 0.);
+    }
+
+    /// The summary says what the pointing centre is and how far it moves.
+    #[test]
+    fn test_summary_describes_pointing_centre() {
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+        let args = ["birli", "-m", metafits_path, "--pointing-centre"];
+        let args = args.iter().chain(gpufits_paths.iter());
+        let birli_ctx = BirliContext::from_args(args).unwrap();
+        let summary = format!("{birli_ctx}");
+        assert!(
+            summary.contains("at the middle of the observation, moves 0.01° during it"),
+            "{summary}"
+        );
+    }
 
     /// Middle channel rounded-down is DC flagged when `flag_dc` is set.
     #[test]
@@ -3716,10 +3761,12 @@ mod tests_aoflagger {
     /// exec(open('tests/data/casa_dump_ms.py').read())
     /// ```
     #[test]
-    #[ignore] // https://github.com/MWATelescope/Birli/issues/164
-              // the --pointing-centre functionality only provides the correct RA/Dec at
-              // the start of the observation, but the actual pointing center is fixed in
-              // Azimuth/Elevation coordinates, not RA/Dec.
+    #[ignore] // Not because of the pointing centre (issue #164): cotter's `-usepcentre` also
+              // takes the metafits RA and DEC, and the UVWs here match cotter's. The
+              // visibilities differ by a phase that is constant in frequency (96 degrees on
+              // the first baseline), exactly as in `compare_cotter_ms_corrected`, which is
+              // ignored too. Whatever that is, it is in the measurement set comparison data
+              // or the corrections, not in the choice of phase centre.
     fn compare_cotter_ms_geom_cable_rfi_phase_pointing() {
         let tmp_dir = tempdir().unwrap();
         let ms_path = tmp_dir.path().join("1254670392.ms");

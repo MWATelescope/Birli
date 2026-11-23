@@ -431,7 +431,8 @@ OPTIONS:
     -h, --help                       Print help information
         --no-draw-progress           do not show progress bars
         --phase-centre <RA> <DEC>    Override Phase centre from metafits (degrees)
-        --pointing-centre            Use pointing instead phase centre
+        --pointing-centre            Phase to the pointing centre (where the beam points at the
+                                     middle of the observation) instead of the phase centre
     -V, --version                    Print version information
 
 CALIBRATION:
@@ -661,6 +662,8 @@ Geometric correction involves adjusting visibility phases to correct for the dif
 Legacy MWA correlator observations are not typically phase tracked, however MWAX observations can have phase tracking applied. The [`GEODEL`](https://wiki.mwatelescope.org/display/MP/MWAX+Metafits+Changes) card in the metafits describes what geometric delays have been applied.
 
 By default, Birli will apply geometric corrections at the phase center if they have not already been applied. It determines the observations phase center from the [`RAPHASE` and `DECPHASE`](https://wiki.mwatelescope.org/display/MP/Metafits+files) cards in the metafits. If these are not available, the pointing center cards ([`RA` and `DEC`](https://wiki.mwatelescope.org/display/MP/Metafits+files)) from the metafits are used. You can use `--no-geometric-delay` to disable geometric corrections, as well as the `--phase-centre` and `--pointing-centre` options to override the phase center.
+
+`--pointing-centre` phases to the metafits `RA` and `DEC`. An MWA tile's beam is fixed in azimuth and elevation for a whole observation, so the centre of the beam follows the sky's rotation (about half a degree in two minutes at the MWA's latitude). `RA` and `DEC` are where it points at the middle of the scheduled observation, not at the start. That is true whichever timesteps Birli is given or selects, so observations of the same field at different times, or parts of one observation, get slightly different phase centres from this option; use `--phase-centre` when they need to share one. Birli's summary prints the pointing centre and how far it moves during the observation.
 
 A baseline's geometric length is determined by the w component of it's UVW fourier-space vector, after applying precession and nutation to it's tiles' positions and the phase center to the J2000 epoch, accounting for stellar aberration. Complex visibilities are phase-shifted by an angle determined by the w-component, and the channel's frequency.
 
