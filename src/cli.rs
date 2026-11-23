@@ -6,7 +6,7 @@ use std::{
     convert::Into,
     ffi::OsString,
     fmt::{Debug, Display},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -20,10 +20,10 @@ use clap::{
 use indicatif::{ProgressDrawTarget, ProgressStyle};
 use itertools::{izip, Itertools};
 use log::{debug, info, trace, warn};
-use marlu::mwalib::MetafitsContext;
+use marlu::{mwalib::MetafitsContext, SelectionError};
 use mwalib::{
     built_info::PKG_VERSION as MWALIB_PKG_VERSION, CableDelaysApplied, CorrelatorContext,
-    GeometricDelaysApplied, MWAVersion,
+    GeometricDelaysApplied, GpuboxError, MWAVersion, MwalibError,
 };
 use prettytable::{format as prettyformat, row, table};
 
@@ -34,7 +34,7 @@ use crate::{
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
     },
     flags::FlagContext,
-    io::{aocal::AOCalSols, read_mwalib, IOContext},
+    io::{aocal::AOCalSols, error::IOError, read_mwalib, IOContext},
     marlu::{
         built_info::PKG_VERSION as MARLU_PKG_VERSION,
         constants::{
@@ -154,6 +154,131 @@ fn time_details(
         epoch.to_mjd_utc_seconds(),
         precession_info,
     )
+}
+
+/// Where to read about known problems with legacy correlator files.
+const LEGACY_CORRELATOR_ISSUES_URL: &str =
+    "https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24969295/Legacy+Correlator+Issues";
+
+/// Add advice to the mwalib errors that we know how to help with.
+fn hint_mwalib_error(error: MwalibError) -> BirliError {
+    let hint = match &error {
+        MwalibError::Gpubox(
+            GpuboxError::LegacyNaxis1Mismatch { .. } | GpuboxError::LegacyNaxis2Mismatch { .. },
+        ) => Some(format!(
+            "The shape of the visibilities in the gpubox files does not match what the metafits \
+            file describes. This is a known problem with some legacy correlator observations, see \
+            {LEGACY_CORRELATOR_ISSUES_URL}#LegacyCorrelatorIssues-NAXIS2Mismatch"
+        )),
+        _ => None,
+    };
+    match hint {
+        Some(hint) => BirliError::MwalibErrorWithHint {
+            error: Box::new(error),
+            hint,
+        },
+        None => BirliError::MwalibError(error),
+    }
+}
+
+/// Describe which timesteps each gpubox channel provides, one line for each
+/// group of channels that provide the same timesteps.
+fn summarise_gpubox_times(corr_ctx: &CorrelatorContext) -> String {
+    use std::collections::BTreeMap;
+    // gpubox channel number -> (number of timesteps, first, last) [unix ms]
+    let mut chan_times: BTreeMap<usize, (usize, u64, u64)> = BTreeMap::new();
+    for (&unix_time_ms, chans) in &corr_ctx.gpubox_time_map {
+        for &chan in chans.keys() {
+            chan_times
+                .entry(chan)
+                .and_modify(|(count, first, last)| {
+                    *count += 1;
+                    *first = unix_time_ms.min(*first);
+                    *last = unix_time_ms.max(*last);
+                })
+                .or_insert((1, unix_time_ms, unix_time_ms));
+        }
+    }
+    // group the channels which provide the same times
+    let mut groups: BTreeMap<(u64, u64, usize), Vec<usize>> = BTreeMap::new();
+    for (chan, (count, first, last)) in chan_times {
+        groups.entry((first, last, count)).or_default().push(chan);
+    }
+    let mut lines =
+        vec!["Timesteps provided by each gpubox channel (start times, unix seconds):".to_string()];
+    for ((first, last, count), chans) in groups {
+        lines.push(format!(
+            "  gpubox {}: {count} timesteps, {:.3} to {:.3}",
+            chans.iter().join(","),
+            first as f64 / 1e3,
+            last as f64 / 1e3,
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Convert the selection errors that come from unusable input files into
+/// messages that say which files are the problem.
+fn describe_selection_error(error: SelectionError, corr_ctx: &CorrelatorContext) -> BirliError {
+    match error {
+        SelectionError::NoCommonTimesteps { .. } => BirliError::NoCommonTimesteps {
+            summary: summarise_gpubox_times(corr_ctx),
+        },
+        SelectionError::NoProvidedTimesteps { .. } => BirliError::NoProvidedTimesteps,
+        e => BirliError::SelectionError(e),
+    }
+}
+
+/// Check that an output path has the extension its format needs, and that
+/// nothing of the wrong kind is already there.
+///
+/// uvfits is written to a file, a measurement set is written to a directory.
+fn validate_output_path(
+    option: &str,
+    path: &Path,
+    extension: &str,
+    is_directory: bool,
+) -> Result<(), BirliError> {
+    let received_ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if !received_ext.eq_ignore_ascii_case(extension) {
+        let other = match received_ext.to_ascii_lowercase().as_str() {
+            "ms" => " (use --ms-out to write a measurement set)",
+            "uvfits" => " (use --uvfits-out to write uvfits)",
+            _ => "",
+        };
+        return Err(BirliError::CLIError(InvalidCommandLineArgument {
+            option: option.into(),
+            expected: format!("a path ending in .{extension}"),
+            received: format!("{}{other}", path.display()),
+        }));
+    }
+    if is_directory && path.is_file() {
+        return Err(BirliError::CLIError(InvalidCommandLineArgument {
+            option: option.into(),
+            expected: "a path that is not an existing file, a measurement set is a directory"
+                .into(),
+            received: path.display().to_string(),
+        }));
+    }
+    if !is_directory && path.is_dir() {
+        return Err(BirliError::CLIError(InvalidCommandLineArgument {
+            option: option.into(),
+            expected: format!("a path that is not an existing directory, {extension} is a file"),
+            received: path.display().to_string(),
+        }));
+    }
+    Ok(())
+}
+
+/// Add `suffix` to the file stem of `path`, keeping its extension.
+fn path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.file_stem().unwrap_or_default().to_os_string();
+    name.push(suffix);
+    if let Some(ext) = path.extension() {
+        name.push(".");
+        name.push(ext);
+    }
+    path.with_file_name(name)
 }
 
 /// Structure representing a series of channel ranges
@@ -866,8 +991,8 @@ impl<'a> BirliContext<'a> {
         Ok(matches)
     }
 
-    fn parse_io_matches(matches: &clap::ArgMatches) -> IOContext {
-        IOContext {
+    fn parse_io_matches(matches: &clap::ArgMatches) -> Result<IOContext, BirliError> {
+        let io_ctx = IOContext {
             metafits_in: matches
                 .get_one::<PathBuf>("metafits")
                 .cloned()
@@ -880,7 +1005,14 @@ impl<'a> BirliContext<'a> {
             uvfits_out: matches.get_one::<PathBuf>("uvfits-out").cloned(),
             ms_out: matches.get_one::<PathBuf>("ms-out").cloned(),
             flag_template: matches.get_one::<String>("flag-template").cloned(),
+        };
+        if let Some(path) = io_ctx.uvfits_out.as_ref() {
+            validate_output_path("--uvfits-out <PATH>", path, "uvfits", false)?;
         }
+        if let Some(path) = io_ctx.ms_out.as_ref() {
+            validate_output_path("--ms-out <PATH>", path, "ms", true)?;
+        }
+        Ok(io_ctx)
     }
 
     fn parse_vis_sel_matches(
@@ -888,7 +1020,8 @@ impl<'a> BirliContext<'a> {
         flag_ctx: &FlagContext,
         matches: &clap::ArgMatches,
     ) -> Result<VisSelection, BirliError> {
-        let mut vis_sel = VisSelection::from_mwalib(corr_ctx).unwrap();
+        let mut vis_sel = VisSelection::from_mwalib(corr_ctx)
+            .map_err(|e| describe_selection_error(e, corr_ctx))?;
         let CorrelatorContext {
             metafits_context: meta_ctx,
             num_timesteps,
@@ -1500,8 +1633,8 @@ impl<'a> BirliContext<'a> {
         let matches = Self::get_matches(args)?;
         trace!("arg matches:\n{:?}", matches);
 
-        let io_ctx = Self::parse_io_matches(&matches);
-        let corr_ctx = io_ctx.get_corr_ctx()?;
+        let io_ctx = Self::parse_io_matches(&matches)?;
+        let corr_ctx = io_ctx.get_corr_ctx().map_err(hint_mwalib_error)?;
         debug!("mwalib correlator context:\n{}", corr_ctx);
         let flag_ctx = Self::parse_flag_matches(&corr_ctx, &matches)?;
         let vis_sel = Self::parse_vis_sel_matches(&corr_ctx, &flag_ctx, &matches)?;
@@ -1567,20 +1700,10 @@ impl<'a> BirliContext<'a> {
             };
 
             if let Some(path) = ranged_context.io_ctx.ms_out.as_mut() {
-                path.set_file_name(format!(
-                    "{}{}.{}",
-                    path.file_stem().unwrap().to_str().unwrap(),
-                    suffix,
-                    path.extension().unwrap().to_str().unwrap()
-                ));
+                *path = path_with_suffix(path, &suffix);
             }
             if let Some(path) = ranged_context.io_ctx.uvfits_out.as_mut() {
-                path.set_file_name(format!(
-                    "{}{}.{}",
-                    path.file_stem().unwrap().to_str().unwrap(),
-                    suffix,
-                    path.extension().unwrap().to_str().unwrap()
-                ));
+                *path = path_with_suffix(path, &suffix);
             }
             ranged_context.run()?;
         }
@@ -1649,14 +1772,19 @@ impl<'a> BirliContext<'a> {
         let mwa_ctx = MwaObsContext::from_mwalib(&corr_ctx.metafits_context);
 
         prep_ctx.calsols = if let Some(ref calsol_file) = io_ctx.aocalsols_in {
-            let calsols = AOCalSols::read_andre_binary(calsol_file).unwrap();
-            assert!(
-                calsols.di_jones.dim().0 == 1,
-                "only 1 timeblock must be supplied for calsols. \
-                Instead found {} timeblocks. dimensions {:?}",
-                calsols.di_jones.dim().1,
-                calsols.di_jones.dim()
-            );
+            let calsols = AOCalSols::read_andre_binary(calsol_file)?;
+            if calsols.di_jones.dim().0 != 1 {
+                return Err(BirliError::BadArrayShape(BadArrayShape {
+                    argument: "input AO calibration solutions",
+                    function: "BirliContext::run",
+                    expected: "exactly 1 timeblock".into(),
+                    received: format!(
+                        "{} timeblocks, dimensions {:?}",
+                        calsols.di_jones.dim().0,
+                        calsols.di_jones.dim()
+                    ),
+                }));
+            }
             let calsol_chans = calsols.di_jones.dim().2;
             if calsol_chans % corr_ctx.num_coarse_chans != 0 {
                 return Err(BirliError::BadArrayShape(BadArrayShape {
@@ -1691,7 +1819,7 @@ impl<'a> BirliContext<'a> {
         }
 
         let args_strings = std::env::args().collect_vec();
-        let cmd_line = shlex::try_join(args_strings.iter().map(String::as_str)).unwrap();
+        let cmd_line = shlex::try_join(args_strings.iter().map(String::as_str))?;
         let application = format!("{PKG_NAME} {PKG_VERSION}");
         let message = prep_ctx.as_comment();
         let history = History {
@@ -1711,8 +1839,10 @@ impl<'a> BirliContext<'a> {
             })
             .unzip();
         let dut1 = hifitime::Duration::from_seconds(corr_ctx.metafits_context.dut1.unwrap_or(0.0));
-        let mut uvfits_writer = io_ctx.uvfits_out.as_ref().map(|uvfits_out| {
-            with_increment_duration!("init", {
+        // Errors from Marlu's writers are wrapped twice on their way to a BirliError.
+        let marlu_io_err = |e: marlu::io::error::IOError| BirliError::from(IOError::from(e));
+        let mut uvfits_writer = match io_ctx.uvfits_out.as_ref() {
+            Some(uvfits_out) => Some(with_increment_duration!("init", {
                 UvfitsWriter::from_marlu(
                     uvfits_out,
                     &vis_ctx,
@@ -1725,12 +1855,12 @@ impl<'a> BirliContext<'a> {
                     true,
                     Some(&history),
                 )
-                .expect("unable to initialize uvfits writer")
-                .with_conventions(PolConvention::MWA, prep_ctx.uvw_frame())
-                .expect("unable to write uvfits conventions")
-            })
-        });
-        let mut ms_writer = io_ctx.ms_out.as_ref().map(|ms_out| {
+                .and_then(|w| w.with_conventions(PolConvention::MWA, prep_ctx.uvw_frame()))
+                .map_err(|e| marlu_io_err(e.into()))?
+            })),
+            None => None,
+        };
+        let mut ms_writer = if let Some(ms_out) = io_ctx.ms_out.as_ref() {
             let writer = MeasurementSetWriter::new(
                 ms_out,
                 obs_ctx.phase_centre,
@@ -1754,10 +1884,12 @@ impl<'a> BirliContext<'a> {
                         Some(&history),
                         &vis_sel.coarse_chan_range,
                     )
-                    .expect("unable to initialize ms writer");
+                    .map_err(|e| marlu_io_err(e.into()))?;
             });
-            writer
-        });
+            Some(writer)
+        } else {
+            None
+        };
 
         #[cfg(feature = "aoflagger")]
         let (aoflagger_version, aoflagger_strategy) = {
@@ -1779,16 +1911,19 @@ impl<'a> BirliContext<'a> {
         #[cfg(not(feature = "aoflagger"))]
         let (aoflagger_version, aoflagger_strategy) = (None, None);
 
-        let mut flag_file_set = io_ctx.flag_template.as_ref().map(|flag_template| {
-            FlagFileSet::new(
-                flag_template,
-                corr_ctx,
-                vis_sel,
-                aoflagger_version,
-                aoflagger_strategy,
-            )
-            .expect("cannot create flag file writer")
-        });
+        let mut flag_file_set = io_ctx
+            .flag_template
+            .as_ref()
+            .map(|flag_template| {
+                FlagFileSet::new(
+                    flag_template,
+                    corr_ctx,
+                    vis_sel,
+                    aoflagger_version,
+                    aoflagger_strategy,
+                )
+            })
+            .transpose()?;
 
         // //////// //
         // Chunking //
@@ -1883,9 +2018,7 @@ impl<'a> BirliContext<'a> {
             if let Some(flag_file_set) = flag_file_set.as_mut() {
                 with_increment_duration!(
                     "write",
-                    flag_file_set
-                        .write_flag_array(flag_array.view(), prep_ctx.draw_progress)
-                        .expect("unable to write flags")
+                    flag_file_set.write_flag_array(flag_array.view(), prep_ctx.draw_progress)?
                 );
             }
 
@@ -1899,12 +2032,11 @@ impl<'a> BirliContext<'a> {
             }
 
             let sel_timestep_chunks = chunk_vis_sel.timestep_range.clone().chunks(*avg_time);
-            izip!(
+            for (mut out_times, jones_array, weight_array) in izip!(
                 &sel_timestep_chunks,
                 jones_array.axis_chunks_iter(Axis(0), *avg_time),
                 weight_array.axis_chunks_iter(Axis(0), *avg_time),
-            )
-            .for_each(|(mut out_times, jones_array, weight_array)| {
+            ) {
                 let first_avg_timestep = out_times.next().expect("zero-sized chunk");
                 let last_avg_timestep = out_times.last().unwrap_or(first_avg_timestep) + 1;
                 let avg_timestep_range = first_avg_timestep..last_avg_timestep;
@@ -1928,7 +2060,7 @@ impl<'a> BirliContext<'a> {
                         "write",
                         uvfits_writer
                             .write_vis(jones_array.view(), weight_array.view(), &avg_vis_ctx)
-                            .expect("unable to write uvfits")
+                            .map_err(marlu_io_err)?
                     );
                 }
 
@@ -1938,35 +2070,28 @@ impl<'a> BirliContext<'a> {
                         "write",
                         ms_writer
                             .write_vis(jones_array.view(), weight_array.view(), &avg_vis_ctx)
-                            .expect("unable to write ms")
+                            .map_err(marlu_io_err)?
                     );
                 }
 
                 write_progress.inc(1);
-            });
+            }
         }
         // Finalise the uvfits writer.
         if let Some(uvfits_writer) = uvfits_writer.as_mut() {
-            with_increment_duration!(
-                "write",
-                uvfits_writer
-                    .finalise()
-                    .expect("couldn't write antenna table to uvfits")
-            );
+            with_increment_duration!("write", uvfits_writer.finalise().map_err(marlu_io_err)?);
         };
 
         // Finalise the MS writer.
         if let Some(ms_writer) = ms_writer.as_mut() {
-            with_increment_duration!("write", ms_writer.finalise().expect("couldn't finalise MS"));
+            with_increment_duration!("write", ms_writer.finalise().map_err(marlu_io_err)?);
         };
 
         write_progress.finish();
 
         // Finalise the mwaf files.
         if let Some(flag_file_set) = flag_file_set {
-            flag_file_set
-                .finalise()
-                .expect("couldn't finalise mwaf files");
+            flag_file_set.finalise()?;
         }
 
         Ok(())
@@ -1985,6 +2110,152 @@ mod argparse_tests {
         BirliContext, BirliError, VisSelection,
     };
     use tempfile::tempdir;
+
+    /// Output paths must have the extension of their format (issue #41)
+    #[test]
+    fn test_output_extension_mismatch() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+        let tmp_dir = tempdir().unwrap();
+
+        for (option, name) in [
+            ("-u", "1254670392.ms"),
+            ("-u", "1254670392"),
+            ("-M", "1254670392.uvfits"),
+            ("-M", "1254670392.fits"),
+        ] {
+            let out_path = tmp_dir.path().join(name);
+            let mut args = vec![
+                "birli",
+                "-m",
+                metafits_path,
+                option,
+                out_path.to_str().unwrap(),
+            ];
+            args.extend_from_slice(&gpufits_paths);
+            let Err(err) = BirliContext::from_args(&args) else {
+                panic!("{option} {name} should not be accepted");
+            };
+            assert!(matches!(err, BirliError::CLIError(_)), "{err}");
+            assert!(format!("{err}").contains("a path ending in"), "{err}");
+        }
+
+        // the extension is not case sensitive
+        let out_path = tmp_dir.path().join("1254670392.UVFITS");
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "--dry-run",
+            "-u",
+            out_path.to_str().unwrap(),
+        ];
+        args.extend_from_slice(&gpufits_paths);
+        assert!(matches!(
+            BirliContext::from_args(&args),
+            Err(BirliError::DryRun {})
+        ));
+    }
+
+    /// A uvfits can't be written over a directory, and a measurement set can't
+    /// be written over a file (issue #41)
+    #[test]
+    fn test_output_wrong_kind_exists() {
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+        let tmp_dir = tempdir().unwrap();
+
+        let dir_path = tmp_dir.path().join("is_a_directory.uvfits");
+        std::fs::create_dir(&dir_path).unwrap();
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-u",
+            dir_path.to_str().unwrap(),
+        ];
+        args.extend_from_slice(&gpufits_paths);
+        let Err(err) = BirliContext::from_args(&args) else {
+            panic!("a directory should not be accepted for uvfits output");
+        };
+        assert!(
+            format!("{err}").contains("not an existing directory"),
+            "{err}"
+        );
+
+        let file_path = tmp_dir.path().join("is_a_file.ms");
+        std::fs::write(&file_path, b"").unwrap();
+        let mut args = vec![
+            "birli",
+            "-m",
+            metafits_path,
+            "-M",
+            file_path.to_str().unwrap(),
+        ];
+        args.extend_from_slice(&gpufits_paths);
+        let Err(err) = BirliContext::from_args(&args) else {
+            panic!("a file should not be accepted for measurement set output");
+        };
+        assert!(format!("{err}").contains("not an existing file"), "{err}");
+    }
+
+    #[test]
+    fn test_path_with_suffix() {
+        use super::path_with_suffix;
+        use std::path::Path;
+        assert_eq!(
+            path_with_suffix(Path::new("/tmp/obs.uvfits"), "_ch137"),
+            Path::new("/tmp/obs_ch137.uvfits")
+        );
+        assert_eq!(
+            path_with_suffix(Path::new("obs.none.ms"), "_ch137-138"),
+            Path::new("obs.none_ch137-138.ms")
+        );
+        assert_eq!(
+            path_with_suffix(Path::new("obs"), "_ch1"),
+            Path::new("obs_ch1")
+        );
+    }
+
+    /// Gpubox files with no timesteps in common give an error that says which
+    /// channels provide which times, instead of a panic (issue #139)
+    #[test]
+    fn test_no_common_timesteps_is_an_error() {
+        let metafits_path = "tests/data/1196175296_mwa_ord/1196175296.metafits";
+        let gpufits_paths = [
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox01_00.fits",
+            "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
+        ];
+        let mut args = vec!["birli", "-m", metafits_path];
+        args.extend_from_slice(&gpufits_paths);
+        let Err(err) = BirliContext::from_args(&args) else {
+            panic!("files with no common timesteps should not be accepted");
+        };
+        assert!(matches!(err, BirliError::NoCommonTimesteps { .. }), "{err}");
+        let message = format!("{err}");
+        assert!(message.contains("gpubox 1: "), "{message}");
+        assert!(message.contains("gpubox 2: "), "{message}");
+    }
+
+    /// The legacy correlator NAXIS mismatch points to the wiki (issue #148)
+    #[test]
+    fn test_legacy_naxis_mismatch_hint() {
+        use super::hint_mwalib_error;
+        use crate::mwalib::{GpuboxError, MwalibError};
+        let err = hint_mwalib_error(MwalibError::Gpubox(GpuboxError::LegacyNaxis2Mismatch {
+            naxis2: 32,
+            calculated_naxis2: 128,
+            metafits_fine_chans_per_coarse: 128,
+        }));
+        let message = format!("{err}");
+        assert!(
+            message.contains("NAXIS2 in first gpubox image HDU 32"),
+            "{message}"
+        );
+        assert!(message.contains("Legacy+Correlator+Issues"), "{message}");
+
+        // other errors are passed through unchanged
+        let err = hint_mwalib_error(MwalibError::Gpubox(GpuboxError::EmptyBTreeMap));
+        assert!(matches!(err, BirliError::MwalibError(_)));
+    }
 
     /// Middle channel rounded-down is DC flagged when `flag_dc` is set.
     #[test]
