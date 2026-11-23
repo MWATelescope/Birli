@@ -117,6 +117,23 @@ pub enum ReadSolutionsError {
     #[allow(missing_docs)]
     Fits(#[from] FitsError),
 
+    #[error(transparent)]
+    #[allow(missing_docs)]
+    Fitsio(#[from] fitsio::errors::Error),
+
+    #[error("Can't apply the calibration solutions: {reason}")]
+    #[allow(missing_docs)]
+    BadSelection { reason: String },
+
+    #[error("In file {file}, expected {thing} to be {expected}, but got {received}")]
+    #[allow(missing_docs)]
+    BadShape {
+        file: String,
+        thing: &'static str,
+        expected: usize,
+        received: usize,
+    },
+
     #[error("IO error: {0}")]
     #[allow(missing_docs)]
     IO(#[from] std::io::Error),

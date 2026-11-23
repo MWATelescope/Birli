@@ -34,7 +34,7 @@ use crate::{
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
     },
     flags::FlagContext,
-    io::{aocal::AOCalSols, error::IOError, read_mwalib, IOContext},
+    io::{aocal::AOCalSols, error::IOError, hyperdrive::HyperdriveSols, read_mwalib, IOContext},
     marlu::{
         built_info::PKG_VERSION as MARLU_PKG_VERSION,
         constants::{
@@ -48,6 +48,7 @@ use crate::{
         History, Jones, LatLngHeight, MwaObsContext, ObsContext, PolConvention, RADec, VisContext,
         ENH,
     },
+    ndarray::Array2,
     passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
     with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection,
 };
@@ -286,6 +287,77 @@ fn path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
         name.push(ext);
     }
     path.with_file_name(name)
+}
+
+/// hyperdrive's name for the passband gains that Birli will correct, see
+/// `PfbFlavour` in hyperdrive.
+fn hyperdrive_pfb_flavour(passband_gains: Option<&[f64]>) -> &'static str {
+    match passband_gains {
+        None => "none",
+        Some(g) if g == PFB_JAKE_2022_200HZ => "jake",
+        Some(g) if g == OSPFB_JAKE_2025_200HZ => "jake_oversampled",
+        Some(g) if g == PFB_COTTER_2014_10KHZ => "cotter2014",
+        Some(_) => "unknown",
+    }
+}
+
+/// Warn if the corrections hyperdrive applied before it derived `sols` are
+/// not the corrections the data will have when Birli applies them.
+///
+/// Returns the number of differences.
+fn check_calsol_corrections(
+    sols: &HyperdriveSols,
+    prep_ctx: &PreprocessContext,
+    corr_ctx: &CorrelatorContext,
+) -> usize {
+    let meta_ctx = &corr_ctx.metafits_context;
+    if let Some(obsid) = sols.obsid {
+        if obsid != meta_ctx.obs_id {
+            info!(
+                "calibration solutions are from observation {obsid}, applying them to {}",
+                meta_ctx.obs_id
+            );
+        }
+    }
+    let Some(sol) = sols.raw_data_corrections.as_ref() else {
+        info!("calibration solutions do not say which corrections were applied before calibration, so Birli can't check that they match.");
+        return 0;
+    };
+    // Corrections the data will have, whether Birli or the correlator did them.
+    let on_off = |b: bool| if b { "on" } else { "off" };
+    let pfb = hyperdrive_pfb_flavour(prep_ctx.passband_gains);
+    let digital_gains = prep_ctx.correct_digital_gains || meta_ctx.digital_gains_applied;
+    let cable_length = prep_ctx.correct_cable_lengths
+        || meta_ctx.cable_delays_applied != CableDelaysApplied::NoCableDelaysApplied;
+    let geometric = prep_ctx.correct_geometry
+        || meta_ctx.geometric_delays_applied != GeometricDelaysApplied::No;
+    let mut differences = vec![];
+    if sol.pfb_flavour != pfb {
+        differences.push(format!(
+            "passband gains: {} then, {pfb} now",
+            sol.pfb_flavour
+        ));
+    }
+    for (name, then, now) in [
+        ("digital gains", sol.digital_gains, digital_gains),
+        ("cable lengths", sol.cable_length, cable_length),
+        ("geometric delays", sol.geometric, geometric),
+    ] {
+        if then != now {
+            differences.push(format!(
+                "{name}: {} then, {} now",
+                on_off(then),
+                on_off(now)
+            ));
+        }
+    }
+    if !differences.is_empty() {
+        warn!(
+            "The calibration solutions were derived from data with different corrections to the ones this data will have, so they may not be valid: {}",
+            differences.join("; ")
+        );
+    }
+    differences.len()
 }
 
 /// Structure representing a series of channel ranges
@@ -938,7 +1010,8 @@ impl<'a> BirliContext<'a> {
                 .help_heading("CORRECTION"),
 
             // calibration
-            arg!(--"apply-di-cal" <PATH> "Apply DI calibration solutions before averaging")
+            arg!(--"apply-di-cal" <PATH> "Apply DI calibration solutions before averaging. \
+                    Hyperdrive solutions if <PATH> ends in .fits, otherwise MWAOCAL binary")
                 .required(false)
                 .value_hint(FilePath)
                 .value_parser(clap::value_parser!(PathBuf))
@@ -1717,6 +1790,92 @@ impl<'a> BirliContext<'a> {
         Ok(())
     }
 
+    /// Read the calibration solutions to apply, if any, as an array with
+    /// dimensions `[tile][channel]` for the selected coarse channels.
+    ///
+    /// # Errors
+    ///
+    /// Can raise:
+    /// - `ReadSolutionsError` if the solutions can't be read or don't match
+    ///   the observation
+    /// - `BadArrayShape` if the shape of MWAOCAL solutions is incompatible
+    ///   with the observation.
+    pub fn read_di_calsols(&self) -> Result<Option<Array2<Jones<f64>>>, BirliError> {
+        let Self {
+            corr_ctx,
+            vis_sel,
+            prep_ctx,
+            ..
+        } = self;
+        let Some(calsol_file) = self.io_ctx.aocalsols_in.as_ref() else {
+            return Ok(None);
+        };
+        {
+            let is_fits = calsol_file
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("fits"));
+            let mut di_calsols = if is_fits {
+                // hyperdrive fits solutions
+                let sols = HyperdriveSols::read(calsol_file)?;
+                check_calsol_corrections(&sols, prep_ctx, corr_ctx);
+                let tile_names: Vec<String> = corr_ctx
+                    .metafits_context
+                    .antennas
+                    .iter()
+                    .map(|a| a.tile_name.clone())
+                    .collect();
+                let sel_coarse_chan_idxs = vis_sel.coarse_chan_range.clone().collect_vec();
+                let data_freqs_hz = corr_ctx
+                    .get_fine_chan_freqs_hz_array(&sel_coarse_chan_idxs)
+                    .map_err(MwalibError::from)?;
+                sols.select(&tile_names, &data_freqs_hz)?
+            } else {
+                // MWAOCAL binary solutions, which don't say what frequencies
+                // they are for, so they must span the whole observation.
+                let calsols = AOCalSols::read_andre_binary(calsol_file)?;
+                if calsols.di_jones.dim().0 != 1 {
+                    return Err(BirliError::BadArrayShape(BadArrayShape {
+                        argument: "input AO calibration solutions",
+                        function: "BirliContext::run",
+                        expected: "exactly 1 timeblock".into(),
+                        received: format!(
+                            "{} timeblocks, dimensions {:?}",
+                            calsols.di_jones.dim().0,
+                            calsols.di_jones.dim()
+                        ),
+                    }));
+                }
+                let calsol_chans = calsols.di_jones.dim().2;
+                if calsol_chans % corr_ctx.num_coarse_chans != 0 {
+                    return Err(BirliError::BadArrayShape(BadArrayShape {
+                        argument: "input AO calibration solutions",
+                        function: "BirliContext::run",
+                        expected: format!(
+                            "a multiple of metafits_num_coarse_chans={}",
+                            corr_ctx.metafits_context.num_metafits_coarse_chans
+                        ),
+                        received: format!("{calsol_chans}"),
+                    }));
+                }
+                let num_calsol_fine_chans_per_coarse = calsol_chans / corr_ctx.num_coarse_chans;
+                calsols
+                    .di_jones
+                    .index_axis(Axis(0), 0)
+                    .slice(s![
+                        ..,
+                        (vis_sel.coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
+                            ..(vis_sel.coarse_chan_range.end * num_calsol_fine_chans_per_coarse)
+                    ])
+                    .to_owned()
+            };
+            if prep_ctx.no_apply_amps {
+                di_calsols = calsols_phase_only(di_calsols.view());
+            }
+            Ok(Some(di_calsols))
+        }
+    }
+
     /// Read, Preprocess and write corrected visibilities chunks.
     ///
     /// # Errors
@@ -1778,49 +1937,7 @@ impl<'a> BirliContext<'a> {
 
         let mwa_ctx = MwaObsContext::from_mwalib(&corr_ctx.metafits_context);
 
-        prep_ctx.calsols = if let Some(ref calsol_file) = io_ctx.aocalsols_in {
-            let calsols = AOCalSols::read_andre_binary(calsol_file)?;
-            if calsols.di_jones.dim().0 != 1 {
-                return Err(BirliError::BadArrayShape(BadArrayShape {
-                    argument: "input AO calibration solutions",
-                    function: "BirliContext::run",
-                    expected: "exactly 1 timeblock".into(),
-                    received: format!(
-                        "{} timeblocks, dimensions {:?}",
-                        calsols.di_jones.dim().0,
-                        calsols.di_jones.dim()
-                    ),
-                }));
-            }
-            let calsol_chans = calsols.di_jones.dim().2;
-            if calsol_chans % corr_ctx.num_coarse_chans != 0 {
-                return Err(BirliError::BadArrayShape(BadArrayShape {
-                    argument: "input AO calibration solutions",
-                    function: "BirliContext::run",
-                    expected: format!(
-                        "a multiple of metafits_num_coarse_chans={}",
-                        corr_ctx.metafits_context.num_metafits_coarse_chans
-                    ),
-                    received: format!("{calsol_chans}"),
-                }));
-            }
-            let num_calsol_fine_chans_per_coarse = calsol_chans / corr_ctx.num_coarse_chans;
-            let mut di_calsols = calsols
-                .di_jones
-                .index_axis(Axis(0), 0)
-                .slice(s![
-                    ..,
-                    (vis_sel.coarse_chan_range.start * num_calsol_fine_chans_per_coarse)
-                        ..(vis_sel.coarse_chan_range.end * num_calsol_fine_chans_per_coarse)
-                ])
-                .to_owned();
-            if prep_ctx.no_apply_amps {
-                di_calsols = calsols_phase_only(di_calsols.view());
-            }
-            Some(di_calsols)
-        } else {
-            None
-        };
+        prep_ctx.calsols = self.read_di_calsols()?;
         if let Some(ref calsols) = prep_ctx.calsols {
             flag_antennas_with_nan_calsols(&mut flag_ctx.antenna_flags, calsols.view());
         }
@@ -2460,6 +2577,177 @@ mod argparse_tests {
         // other errors are passed through unchanged
         let err = hint_mwalib_error(MwalibError::Gpubox(GpuboxError::EmptyBTreeMap));
         assert!(matches!(err, BirliError::MwalibError(_)));
+    }
+
+    /// hyperdrive fits solutions (issue #155) give the same Jones matrices as
+    /// the same solutions in MWAOCAL binary format.
+    #[test]
+    fn test_hyperdrive_fits_calsols_match_aocal() {
+        use crate::io::{
+            aocal::AOCalSols,
+            hyperdrive::{tests::write_hyperdrive_fits, RawDataCorrections},
+        };
+        let (metafits_path, gpufits_paths) = get_1254670392_avg_paths();
+        let bin_path = "tests/data/1254670392_avg/1254690096.bin";
+        let tmp_dir = tempdir().unwrap();
+        let fits_path = tmp_dir.path().join("1254690096.fits");
+
+        let args_for = |calsol_path: &str, extra: &[&str]| {
+            let mut args = vec!["birli".to_string(), "-m".into(), metafits_path.into()];
+            args.extend(["--no-draw-progress", "--apply-di-cal", calsol_path].map(String::from));
+            args.extend(extra.iter().map(|s| (*s).to_string()));
+            args.extend(gpufits_paths.iter().map(|s| (*s).to_string()));
+            args
+        };
+
+        let bin_ctx = BirliContext::from_args(args_for(bin_path, &[])).unwrap();
+        let bin_calsols = bin_ctx.read_di_calsols().unwrap().unwrap();
+
+        // write the same solutions as hyperdrive fits, with the tiles reversed
+        // to show that they are matched by name.
+        let corr_ctx = &bin_ctx.corr_ctx;
+        let ao_sols = AOCalSols::read_andre_binary(bin_path).unwrap();
+        let (_, num_tiles, num_chanblocks) = ao_sols.di_jones.dim();
+        let all_coarse_chans: Vec<usize> = (0..corr_ctx.num_coarse_chans).collect();
+        let fine_freqs_hz = corr_ctx
+            .get_fine_chan_freqs_hz_array(&all_coarse_chans)
+            .unwrap();
+        let ratio = fine_freqs_hz.len() / num_chanblocks;
+        let chanblock_freqs_hz: Vec<f64> = fine_freqs_hz
+            .chunks(ratio)
+            .map(|c| c.iter().sum::<f64>() / c.len() as f64)
+            .collect();
+        let mut reversed_jones = ao_sols.di_jones.clone();
+        reversed_jones.invert_axis(crate::Axis(1));
+        let tile_names: Vec<String> = corr_ctx
+            .metafits_context
+            .antennas
+            .iter()
+            .rev()
+            .map(|a| a.tile_name.clone())
+            .collect();
+        assert_eq!(tile_names.len(), num_tiles);
+        let corrections = RawDataCorrections {
+            pfb_flavour: "cotter2014".into(),
+            digital_gains: true,
+            cable_length: true,
+            geometric: true,
+        };
+        write_hyperdrive_fits(
+            &fits_path,
+            reversed_jones.view(),
+            Some(&chanblock_freqs_hz),
+            Some(&tile_names),
+            Some(&corrections),
+            Some(1_254_690_096),
+        );
+
+        let fits_ctx = BirliContext::from_args(args_for(fits_path.to_str().unwrap(), &[])).unwrap();
+        let fits_calsols = fits_ctx.read_di_calsols().unwrap().unwrap();
+        assert_eq!(fits_calsols.dim(), bin_calsols.dim());
+        for (fits_sol, bin_sol) in fits_calsols.iter().zip(bin_calsols.iter()) {
+            // NaN != NaN
+            assert!(fits_sol == bin_sol || (fits_sol.any_nan() && bin_sol.any_nan()));
+        }
+        assert!(fits_calsols.iter().any(|j| !j.any_nan()));
+
+        // the corrections match the defaults for this observation ...
+        let sols = crate::io::hyperdrive::HyperdriveSols::read(&fits_path).unwrap();
+        assert_eq!(
+            super::check_calsol_corrections(&sols, &fits_ctx.prep_ctx, &fits_ctx.corr_ctx),
+            0
+        );
+        // ... but not when they are turned off
+        let off_ctx = BirliContext::from_args(args_for(
+            fits_path.to_str().unwrap(),
+            &[
+                "--passband-gains",
+                "none",
+                "--no-digital-gains",
+                "--no-cable-delay",
+            ],
+        ))
+        .unwrap();
+        assert_eq!(
+            super::check_calsol_corrections(&sols, &off_ctx.prep_ctx, &off_ctx.corr_ctx),
+            3
+        );
+
+        let all_off_ctx = BirliContext::from_args(args_for(
+            fits_path.to_str().unwrap(),
+            &[
+                "--passband-gains",
+                "none",
+                "--no-digital-gains",
+                "--no-cable-delay",
+                "--no-geometric-delay",
+            ],
+        ))
+        .unwrap();
+        assert_eq!(
+            super::check_calsol_corrections(&sols, &all_off_ctx.prep_ctx, &all_off_ctx.corr_ctx),
+            4
+        );
+        // solutions from this observation that don't record their corrections
+        // can't be checked.
+        let unknown_sols = crate::io::hyperdrive::HyperdriveSols {
+            obsid: Some(fits_ctx.corr_ctx.metafits_context.obs_id),
+            raw_data_corrections: None,
+            ..sols.clone()
+        };
+        assert_eq!(
+            super::check_calsol_corrections(&unknown_sols, &fits_ctx.prep_ctx, &fits_ctx.corr_ctx),
+            0
+        );
+
+        let no_obsid_sols = crate::io::hyperdrive::HyperdriveSols {
+            obsid: None,
+            ..sols.clone()
+        };
+        assert_eq!(
+            super::check_calsol_corrections(&no_obsid_sols, &fits_ctx.prep_ctx, &fits_ctx.corr_ctx),
+            0
+        );
+
+        // hyperdrive's names for the passband gains
+        use super::hyperdrive_pfb_flavour;
+        assert_eq!(hyperdrive_pfb_flavour(None), "none");
+        assert_eq!(hyperdrive_pfb_flavour(Some(PFB_JAKE_2022_200HZ)), "jake");
+        assert_eq!(
+            hyperdrive_pfb_flavour(Some(OSPFB_JAKE_2025_200HZ)),
+            "jake_oversampled"
+        );
+        assert_eq!(
+            hyperdrive_pfb_flavour(Some(PFB_COTTER_2014_10KHZ)),
+            "cotter2014"
+        );
+        assert_eq!(hyperdrive_pfb_flavour(Some(&[1.0, 2.0])), "unknown");
+
+        // phases only
+        let phase_ctx =
+            BirliContext::from_args(args_for(fits_path.to_str().unwrap(), &["--no-apply-amps"]))
+                .unwrap();
+        let phase_calsols = phase_ctx.read_di_calsols().unwrap().unwrap();
+        assert!(phase_calsols
+            .iter()
+            .filter(|j| !j.any_nan())
+            .all(|j| (j[0].norm() - 1.0).abs() < 1e-9));
+
+        // no solutions asked for
+        let mut none_args = vec!["birli", "-m", metafits_path];
+        none_args.extend_from_slice(&gpufits_paths);
+        let none_ctx = BirliContext::from_args(&none_args).unwrap();
+        assert!(none_ctx.read_di_calsols().unwrap().is_none());
+
+        // and the whole thing runs
+        let uvfits_path = tmp_dir.path().join("1254670392.uvfits");
+        let run_ctx = BirliContext::from_args(args_for(
+            fits_path.to_str().unwrap(),
+            &["--sel-time", "0", "0", "-u", uvfits_path.to_str().unwrap()],
+        ))
+        .unwrap();
+        run_ctx.run().unwrap();
+        assert!(uvfits_path.exists());
     }
 
     /// Middle channel rounded-down is DC flagged when `flag_dc` is set.

@@ -670,7 +670,10 @@ let angle = -2.0 * PI * uvw.w * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
 
 ### Calibration
 
-Birli can apply direction independent calibration solutions using the `--apply-di-cal` flag. Solutions are applied before averaging. The number of channels in the un-averaged visibilities must be an integer multiple of the number of channels in the calibration solutions file. Unlike Cotter, Birli will handle calibration solutions where a `NaN` value is present by flagging any visibilities where a NaN is present.
+Birli can apply direction independent calibration solutions using the `--apply-di-cal` flag. Solutions are applied before averaging. Unlike Cotter, Birli will handle calibration solutions where a `NaN` value is present by flagging any visibilities where a NaN is present. Solutions must have a single timeblock. Two formats are read:
+
+- [hyperdrive fits](https://mwatelescope.github.io/mwa_hyperdrive/defs/cal_sols_hyp.html), when the path ends in `.fits`. Tiles are matched by name (the `TILES` table) and channels by frequency (the `CHANBLOCKS` table), so the solutions don't need to span the whole observation or have the resolution of the raw data. Tiles and channels that have no solutions are flagged. When hyperdrive derived the solutions from raw files, it records the passband, digital gain, cable length and geometric corrections it applied, and Birli warns if these differ from the corrections it is about to apply.
+- MWAOCAL binary (`.bin`), for any other path. This format doesn't record frequencies, so the solutions must span every coarse channel in the metafits, and the number of channels in the un-averaged visibilities must be an integer multiple of the number of channels in the calibration solutions file.
 
 Use `--no-apply-amps` with `--apply-di-cal` to apply **phases only**: each Jones element is rewritten to unit amplitude (`z/|z|`) before apply, so visibility amplitudes are not scaled by the solution gains. Off-diagonal zeros stay zero; diagonal elements with zero amplitude become identity (`1+0j`).
 
