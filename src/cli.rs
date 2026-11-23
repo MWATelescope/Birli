@@ -2016,10 +2016,16 @@ mod argparse_tests {
             "{display}"
         );
 
-        let Err(BirliError::ClapError(help)) = BirliContext::from_args(["birli", "--help"]) else {
-            panic!("--help should give a clap error");
-        };
-        let help = format!("{}", help.render());
+        // the build info says whether aoflagger is there
+        let display = format!("{birli_ctx}");
+        assert!(display.contains("- aoflagger "), "{display}");
+        #[cfg(not(feature = "aoflagger"))]
+        assert!(display.contains("- aoflagger not compiled in"), "{display}");
+
+        let help = BirliContext::from_args(["birli", "--help"])
+            .err()
+            .expect("--help should give a clap error")
+            .to_string();
         assert!(help.contains("--no-rfi"), "{help}");
         #[cfg(not(feature = "aoflagger"))]
         assert!(
