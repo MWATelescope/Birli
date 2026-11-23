@@ -294,9 +294,9 @@ fn path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
 fn hyperdrive_pfb_flavour(passband_gains: Option<&[f64]>) -> &'static str {
     match passband_gains {
         None => "none",
-        Some(g) if std::ptr::eq(g, PFB_JAKE_2022_200HZ) => "jake",
-        Some(g) if std::ptr::eq(g, OSPFB_JAKE_2025_200HZ) => "jake_oversampled",
-        Some(g) if std::ptr::eq(g, PFB_COTTER_2014_10KHZ) => "cotter2014",
+        Some(g) if g == PFB_JAKE_2022_200HZ => "jake",
+        Some(g) if g == OSPFB_JAKE_2025_200HZ => "jake_oversampled",
+        Some(g) if g == PFB_COTTER_2014_10KHZ => "cotter2014",
         Some(_) => "unknown",
     }
 }
@@ -328,15 +328,9 @@ fn check_calsol_corrections(
     let pfb = hyperdrive_pfb_flavour(prep_ctx.passband_gains);
     let digital_gains = prep_ctx.correct_digital_gains || meta_ctx.digital_gains_applied;
     let cable_length = prep_ctx.correct_cable_lengths
-        || !matches!(
-            meta_ctx.cable_delays_applied,
-            CableDelaysApplied::NoCableDelaysApplied
-        );
+        || meta_ctx.cable_delays_applied != CableDelaysApplied::NoCableDelaysApplied;
     let geometric = prep_ctx.correct_geometry
-        || !matches!(
-            meta_ctx.geometric_delays_applied,
-            GeometricDelaysApplied::No
-        );
+        || meta_ctx.geometric_delays_applied != GeometricDelaysApplied::No;
     let mut differences = vec![];
     if sol.pfb_flavour != pfb {
         differences.push(format!(
@@ -2650,6 +2644,72 @@ mod argparse_tests {
             super::check_calsol_corrections(&sols, &off_ctx.prep_ctx, &off_ctx.corr_ctx),
             3
         );
+
+        let all_off_ctx = BirliContext::from_args(args_for(
+            fits_path.to_str().unwrap(),
+            &[
+                "--passband-gains",
+                "none",
+                "--no-digital-gains",
+                "--no-cable-delay",
+                "--no-geometric-delay",
+            ],
+        ))
+        .unwrap();
+        assert_eq!(
+            super::check_calsol_corrections(&sols, &all_off_ctx.prep_ctx, &all_off_ctx.corr_ctx),
+            4
+        );
+        // solutions from this observation that don't record their corrections
+        // can't be checked.
+        let unknown_sols = crate::io::hyperdrive::HyperdriveSols {
+            obsid: Some(fits_ctx.corr_ctx.metafits_context.obs_id),
+            raw_data_corrections: None,
+            ..sols.clone()
+        };
+        assert_eq!(
+            super::check_calsol_corrections(&unknown_sols, &fits_ctx.prep_ctx, &fits_ctx.corr_ctx),
+            0
+        );
+
+        let no_obsid_sols = crate::io::hyperdrive::HyperdriveSols {
+            obsid: None,
+            ..sols.clone()
+        };
+        assert_eq!(
+            super::check_calsol_corrections(&no_obsid_sols, &fits_ctx.prep_ctx, &fits_ctx.corr_ctx),
+            0
+        );
+
+        // hyperdrive's names for the passband gains
+        use super::hyperdrive_pfb_flavour;
+        assert_eq!(hyperdrive_pfb_flavour(None), "none");
+        assert_eq!(hyperdrive_pfb_flavour(Some(PFB_JAKE_2022_200HZ)), "jake");
+        assert_eq!(
+            hyperdrive_pfb_flavour(Some(OSPFB_JAKE_2025_200HZ)),
+            "jake_oversampled"
+        );
+        assert_eq!(
+            hyperdrive_pfb_flavour(Some(PFB_COTTER_2014_10KHZ)),
+            "cotter2014"
+        );
+        assert_eq!(hyperdrive_pfb_flavour(Some(&[1.0, 2.0])), "unknown");
+
+        // phases only
+        let phase_ctx =
+            BirliContext::from_args(args_for(fits_path.to_str().unwrap(), &["--no-apply-amps"]))
+                .unwrap();
+        let phase_calsols = phase_ctx.read_di_calsols().unwrap().unwrap();
+        assert!(phase_calsols
+            .iter()
+            .filter(|j| !j.any_nan())
+            .all(|j| (j[0].norm() - 1.0).abs() < 1e-9));
+
+        // no solutions asked for
+        let mut none_args = vec!["birli", "-m", metafits_path];
+        none_args.extend_from_slice(&gpufits_paths);
+        let none_ctx = BirliContext::from_args(&none_args).unwrap();
+        assert!(none_ctx.read_di_calsols().unwrap().is_none());
 
         // and the whole thing runs
         let uvfits_path = tmp_dir.path().join("1254670392.uvfits");

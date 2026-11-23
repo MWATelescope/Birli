@@ -142,20 +142,11 @@ impl HyperdriveSols {
             });
         }
         let di_jones_vec: Vec<f64> = hdu.read_image(&mut fptr)?;
-        let expected_len = num_timeblocks * num_tiles * num_chanblocks * num_floats;
-        if di_jones_vec.len() != expected_len {
-            return Err(ReadSolutionsError::BadShape {
-                file: file_str,
-                thing: "the number of values in SOLUTIONS",
-                expected: expected_len,
-                received: di_jones_vec.len(),
-            });
-        }
         let di_jones = Array4::from_shape_vec(
             (num_timeblocks, num_tiles, num_chanblocks, num_floats),
             di_jones_vec,
         )
-        .expect("length was checked above")
+        .expect("cfitsio reads the whole image")
         .map_axis(Axis(3), |view| {
             Jones::from([
                 Complex::new(view[0], view[1]),
@@ -634,6 +625,62 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_missing_or_broken() {
+        use marlu::fitsio::errors::FitsError;
+        let fits = |status| {
+            FitsioError::Fits(FitsError {
+                status,
+                message: String::new(),
+            })
+        };
+        assert!(is_missing(&fits(202)));
+        assert!(is_missing(&fits(301)));
+        assert!(!is_missing(&fits(104)));
+        assert!(is_missing(&FitsioError::Message(
+            "Cannot find column \"Freq\"".into()
+        )));
+        assert!(!is_missing(&FitsioError::Message("something else".into())));
+        assert!(!is_missing(&FitsioError::UnlockError));
+
+        assert_eq!(optional(Ok(1)).unwrap(), Some(1));
+        assert_eq!(optional::<i32>(Err(fits(202))).unwrap(), None);
+        assert!(optional::<i32>(Err(fits(104))).is_err());
+    }
+
+    #[test]
+    fn test_read_hyperdrive_fits_bad_shapes() {
+        let tmp_dir = tempdir().unwrap();
+        // more tile names than tiles
+        let path = tmp_dir.path().join("tiles.fits");
+        let names: Vec<String> = (0..3).map(|i| format!("Tile{i:03}")).collect();
+        write_hyperdrive_fits(
+            &path,
+            test_jones(1, 2, 3).view(),
+            None,
+            Some(&names),
+            None,
+            None,
+        );
+        assert!(matches!(
+            HyperdriveSols::read(&path),
+            Err(ReadSolutionsError::BadShape { .. })
+        ));
+
+        // not 8 floats for each Jones matrix
+        let path = tmp_dir.path().join("floats.fits");
+        let mut fptr = FitsFile::create(&path).overwrite().open().unwrap();
+        let image_description = ImageDescription {
+            data_type: ImageType::Double,
+            dimensions: &[1, 2, 3, 4],
+        };
+        let hdu = fptr.create_image("SOLUTIONS", &image_description).unwrap();
+        hdu.write_image(&mut fptr, &[0.0_f64; 24]).unwrap();
+        drop(fptr);
+        let err = HyperdriveSols::read(&path).unwrap_err();
+        assert!(format!("{err}").contains("NAXIS1 of SOLUTIONS"), "{err}");
+    }
+
+    #[test]
     fn test_match_chanblocks() {
         // 40 kHz chanblocks, 10 kHz data that starts before and ends after them
         let chanblocks = [100.0e3, 140.0e3, 180.0e3];
@@ -661,6 +708,8 @@ pub(crate) mod tests {
             regular_chanblock_ratio(&[Some(0), Some(1), Some(1), Some(2)]),
             None
         );
+        // a run that the channels don't divide into
+        assert_eq!(regular_chanblock_ratio(&[Some(0), Some(0), Some(1)]), None);
         // runs outside the solutions are fine
         assert_eq!(
             regular_chanblock_ratio(&[None, None, None, None, Some(0), Some(0)]),
