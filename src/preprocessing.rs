@@ -135,11 +135,8 @@ impl Display for PreprocessContext<'_> {
             }
         )?;
         if self.relabels_pols() {
-            writeln!(
-                f,
-                "Will write X as the north-south dipole ({}).",
-                self.pol_convention.describe()
-            )?;
+            let mapping = self.pol_convention.describe();
+            writeln!(f, "Will write X as the north-south dipole ({mapping}).")?;
         }
         if self.calsols.is_some() {
             if self.no_apply_amps {
