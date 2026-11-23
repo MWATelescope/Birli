@@ -2,6 +2,12 @@
 
 # Unreleased
 
+- ✨ new feature:
+  - `--pol-convention iau` writes visibilities with X as the north-south dipole (the IAU's convention, which casacore-based software expects) instead of the MWA's east-west. XX and YY are swapped, as are XY and YX, and the feed angles in the measurement set `FEED` table and the uvfits `AIPS AN` table say which convention the file is in. The default is unchanged. Fixes #107
+- 📚 API changes:
+  - `PreprocessContext` has a new `pol_convention` field. Code that builds one with every field named needs to add it, or end the struct with `..PreprocessContext::default()` as `examples/preprocess.rs` now does
+  - new `corrections::relabel_pols`
+
 - 🙏 quality of life:
   - `--uvfits-out` must end in `.uvfits` or `.uvf` and `--ms-out` in `.ms`, and Birli checks this (and that a uvfits path isn't an existing directory, or a measurement set path an existing file) before reading any data. Fixes #41
   - gpubox files with no timesteps in common give an error that lists the timesteps each gpubox channel provides, instead of a panic. Errors while reading calibration solutions or writing uvfits, measurement sets and flag files are also reported instead of panicking. Fixes #139

@@ -171,7 +171,7 @@ pub mod io;
 pub use io::mwaf::FlagFileSet;
 pub mod corrections;
 pub use corrections::{
-    correct_cable_lengths, correct_geometry, correct_geometry_in_frame, ScrunchType,
+    correct_cable_lengths, correct_geometry, correct_geometry_in_frame, relabel_pols, ScrunchType,
 };
 pub mod calibration;
 pub mod flags;

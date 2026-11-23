@@ -81,6 +81,8 @@ fn main() {
         #[cfg(feature = "aoflagger")]
         aoflagger_strategy: None,
         emulate_cotter: args.contains(&"--emulate-cotter".to_string()),
+        // Fields added to the context later take their defaults.
+        ..PreprocessContext::default()
     };
 
     prep_ctx

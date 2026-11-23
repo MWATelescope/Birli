@@ -29,6 +29,7 @@ use prettytable::{format as prettyformat, row, table};
 
 use crate::{
     calibration::{calsols_phase_only, flag_antennas_with_nan_calsols},
+    corrections::relabel_pols,
     error::{
         BirliError::{self, BadMWAVersion, DryRun},
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
@@ -45,8 +46,8 @@ use crate::{
         mwalib,
         ndarray::s,
         precession::{precess_time, PrecessionInfo},
-        History, Jones, LatLngHeight, MwaObsContext, ObsContext, PolConvention, RADec, VisContext,
-        ENH,
+        History, Jones, LatLngHeight, MwaObsContext, ObsContext, PolConvention, RADec,
+        StokesConvention, VisContext, ENH,
     },
     passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
     with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection,
@@ -229,6 +230,18 @@ fn describe_selection_error(error: SelectionError, corr_ctx: &CorrelatorContext)
         SelectionError::NoProvidedTimesteps { .. } => BirliError::NoProvidedTimesteps,
         e => BirliError::SelectionError(e),
     }
+}
+
+/// Parse `--pol-convention`. Birli only changes which dipole is called X, so
+/// a convention that also rescales the visibilities (I = XX + YY) is refused.
+fn parse_pol_convention(value: &str) -> Result<PolConvention, String> {
+    let convention: PolConvention = value.parse().map_err(|e| format!("{e}"))?;
+    if convention.stokes != StokesConvention::Avg {
+        return Err(format!(
+            "'{value}' has Stokes I = XX + YY, which would rescale the visibilities; expected mwa (or east), or iau (or north)"
+        ));
+    }
+    Ok(convention)
 }
 
 /// Check that an output path has the extension its format needs, and that
@@ -796,6 +809,10 @@ impl<'a> BirliContext<'a> {
                 .required(false),
             arg!(--"pointing-centre" "Use pointing instead phase centre")
                 .conflicts_with("phase-centre"),
+            arg!(--"pol-convention" <CONVENTION> "Which dipole the output calls X: `mwa` (east-west, the default) or `iau` (north-south, as casacore-based software expects)")
+                .help_heading("OUTPUT")
+                .value_parser(parse_pol_convention)
+                .required(false),
             arg!(--"emulate-cotter" "Use Cotter's array position, not MWAlib's. Also, Birli will not flag NaNs when applying calibration solutions."),
             arg!(--"dry-run" "Just print the summary and exit"),
             arg!(--"no-draw-progress" "do not show progress bars"),
@@ -1474,6 +1491,10 @@ impl<'a> BirliContext<'a> {
             draw_progress: !matches.get_flag("no-draw-progress"),
             emulate_cotter: matches.get_flag("emulate-cotter"),
             no_apply_amps: matches.get_flag("no-apply-amps"),
+            pol_convention: matches
+                .get_one::<PolConvention>("pol-convention")
+                .copied()
+                .unwrap_or_default(),
             ..PreprocessContext::default()
         };
         let CorrelatorContext {
@@ -1862,7 +1883,7 @@ impl<'a> BirliContext<'a> {
                     true,
                     Some(&history),
                 )
-                .and_then(|w| w.with_conventions(PolConvention::MWA, prep_ctx.uvw_frame()))
+                .and_then(|w| w.with_conventions(prep_ctx.pol_convention, prep_ctx.uvw_frame()))
                 .map_err(|e| marlu_io_err(e.into()))?
             })),
             None => None,
@@ -1876,7 +1897,7 @@ impl<'a> BirliContext<'a> {
                 dut1,
                 true,
             )
-            .with_conventions(PolConvention::MWA, prep_ctx.uvw_frame());
+            .with_conventions(prep_ctx.pol_convention, prep_ctx.uvw_frame());
             println!(
                 "Writing to MS: {} with {} chans selected",
                 ms_out.display(),
@@ -2038,6 +2059,12 @@ impl<'a> BirliContext<'a> {
                 };
             }
 
+            // Everything up to here, including the calibration solutions and
+            // the flag files, is in the correlator's convention.
+            if prep_ctx.relabels_pols() {
+                relabel_pols(jones_array.view_mut());
+            }
+
             let sel_timestep_chunks = chunk_vis_sel.timestep_range.clone().chunks(*avg_time);
             for (mut out_times, jones_array, weight_array) in izip!(
                 &sel_timestep_chunks,
@@ -2117,6 +2144,114 @@ mod argparse_tests {
         BirliContext, BirliError, VisSelection,
     };
     use tempfile::tempdir;
+
+    /// `--pol-convention` only takes conventions that relabel the dipoles
+    /// (issue #107).
+    #[test]
+    fn test_parse_pol_convention() {
+        use super::parse_pol_convention;
+        use marlu::PolConvention;
+
+        assert_eq!(parse_pol_convention("mwa"), Ok(PolConvention::MWA));
+        assert_eq!(parse_pol_convention("east"), Ok(PolConvention::MWA));
+        assert_eq!(parse_pol_convention("IAU"), Ok(PolConvention::IAU));
+        assert_eq!(parse_pol_convention("north"), Ok(PolConvention::IAU));
+        let err = parse_pol_convention("askap").expect_err("askap rescales the visibilities");
+        assert!(err.contains("I = XX + YY"), "{err}");
+        let err = parse_pol_convention("upside-down").expect_err("not a convention");
+        assert!(err.contains("upside-down"), "{err}");
+
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+        let args = ["birli", "-m", metafits_path, "--pol-convention", "askap"];
+        let args = args.iter().chain(gpufits_paths.iter());
+        assert!(matches!(
+            BirliContext::from_args(args),
+            Err(BirliError::ClapError(_))
+        ));
+    }
+
+    /// With `--pol-convention iau` the visibilities written have X and Y
+    /// swapped, and both formats record that X is north-south (issue #107).
+    #[test]
+    fn test_pol_convention_iau_relabels_output() {
+        use marlu::{
+            fitsio::FitsFile,
+            rubbl_casatables::{Table, TableOpenMode},
+            Complex, PolConvention,
+        };
+
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+        let tmp_dir = tempdir().unwrap();
+
+        // (visibilities of every row, feed angles of the first antenna in
+        // the measurement set, and in the uvfits file)
+        let mut outputs = vec![];
+        for convention in [None, Some("iau")] {
+            let name = convention.unwrap_or("default");
+            let ms_path = tmp_dir.path().join(format!("{name}.ms"));
+            let uvfits_path = tmp_dir.path().join(format!("{name}.uvfits"));
+            let mut args = vec![
+                "birli",
+                "-m",
+                metafits_path,
+                "--no-draw-progress",
+                "-M",
+                ms_path.to_str().unwrap(),
+                "-u",
+                uvfits_path.to_str().unwrap(),
+            ];
+            if let Some(convention) = convention {
+                args.extend(["--pol-convention", convention]);
+            }
+            args.extend(gpufits_paths);
+            let birli_ctx = BirliContext::from_args(&args).unwrap();
+            assert_eq!(birli_ctx.prep_ctx.relabels_pols(), convention.is_some());
+            let summary = format!("{}", birli_ctx.prep_ctx);
+            assert_eq!(
+                summary.contains("Will write X as the north-south dipole"),
+                convention.is_some(),
+                "{summary}"
+            );
+            birli_ctx.run().unwrap();
+
+            let mut main_table = Table::open(&ms_path, TableOpenMode::Read).unwrap();
+            let vis: Vec<Vec<Complex<f32>>> = (0..main_table.n_rows())
+                .map(|row| main_table.get_cell_as_vec("DATA", row).unwrap())
+                .collect();
+            let mut feed_table = Table::open(ms_path.join("FEED"), TableOpenMode::Read).unwrap();
+            let ms_angles: Vec<f64> = feed_table.get_cell_as_vec("RECEPTOR_ANGLE", 0).unwrap();
+
+            let mut fptr = FitsFile::open(&uvfits_path).unwrap();
+            let hdu = fptr.hdu("AIPS AN").unwrap();
+            let pol_a: Vec<f32> = hdu.read_col(&mut fptr, "POLAA").unwrap();
+            let pol_b: Vec<f32> = hdu.read_col(&mut fptr, "POLAB").unwrap();
+
+            outputs.push((vis, ms_angles, [pol_a[0], pol_b[0]]));
+        }
+        let (iau_vis, iau_ms_angles, iau_uvfits_angles) = outputs.pop().unwrap();
+        let (mwa_vis, mwa_ms_angles, mwa_uvfits_angles) = outputs.pop().unwrap();
+
+        // The feed angles are the position angles of X and Y, north through
+        // east.
+        assert_abs_diff_eq!(mwa_ms_angles[..], PolConvention::MWA.feed_angles_rad()[..]);
+        assert_abs_diff_eq!(iau_ms_angles[..], PolConvention::IAU.feed_angles_rad()[..]);
+        assert_abs_diff_eq!(mwa_uvfits_angles[..], [90., 0.][..]);
+        assert_abs_diff_eq!(iau_uvfits_angles[..], [0., 90.][..]);
+
+        // Each row is [chan][XX, XY, YX, YY]; the cross-correlations of the
+        // two dipoles are not symmetric, so this would notice the wrong swap.
+        assert!(!mwa_vis.is_empty());
+        assert_eq!(mwa_vis.len(), iau_vis.len());
+        let mut num_asymmetric = 0;
+        for (mwa_row, iau_row) in mwa_vis.iter().zip(iau_vis.iter()) {
+            assert_eq!(mwa_row.len(), iau_row.len());
+            for (mwa, iau) in mwa_row.chunks_exact(4).zip(iau_row.chunks_exact(4)) {
+                assert_eq!(iau, [mwa[3], mwa[2], mwa[1], mwa[0]]);
+                num_asymmetric += usize::from(mwa[1] != mwa[2] && mwa[0] != mwa[3]);
+            }
+        }
+        assert!(num_asymmetric > 0);
+    }
 
     /// Output paths must have the extension of their format (issue #41)
     #[test]

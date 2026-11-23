@@ -4,7 +4,10 @@ use crate::{
     correct_cable_lengths, correct_geometry_in_frame,
     corrections::{correct_coarse_passband_gains, correct_digital_gains, ScrunchType},
     flags::get_unflagged_timestep_ranges,
-    marlu::{mwalib::CorrelatorContext, ndarray::prelude::*, Jones, LatLngHeight, RADec, UvwFrame},
+    marlu::{
+        mwalib::CorrelatorContext, ndarray::prelude::*, Jones, LatLngHeight, PolConvention, RADec,
+        UvwFrame, XOrientation,
+    },
     van_vleck::{correct_van_vleck, get_vv_sample_scale},
     with_increment_duration, BirliError, VisSelection,
 };
@@ -67,6 +70,12 @@ pub struct PreprocessContext<'a> {
     /// Should we emulate cotter OR flag NaNs when applying cal solutions
     #[builder(default = "false")]
     pub emulate_cotter: bool,
+
+    /// Which dipole the visibilities written out call X. The MWA's own
+    /// convention (the default) calls the east-west dipole X, the IAU's calls
+    /// the north-south dipole X. See [`relabel_pols`].
+    #[builder(default)]
+    pub pol_convention: PolConvention,
 }
 
 impl Display for PreprocessContext<'_> {
@@ -125,6 +134,10 @@ impl Display for PreprocessContext<'_> {
                 "Will not"
             }
         )?;
+        if self.relabels_pols() {
+            let mapping = self.pol_convention.describe();
+            writeln!(f, "Will write X as the north-south dipole ({mapping}).")?;
+        }
         if self.calsols.is_some() {
             if self.no_apply_amps {
                 writeln!(f, "Will apply DI calibration phases only (no amps).")?;
@@ -137,6 +150,13 @@ impl Display for PreprocessContext<'_> {
 }
 
 impl PreprocessContext<'_> {
+    /// Are the visibilities written out in a different polarisation
+    /// convention to the one the correlator (and everything in Birli up to
+    /// the writers) uses, where X is the east-west dipole?
+    pub fn relabels_pols(&self) -> bool {
+        self.pol_convention.x_orientation != XOrientation::East
+    }
+
     /// The frame `UVWs` are computed in: `cotter`'s when emulating `cotter`,
     /// otherwise Marlu's default.
     pub fn uvw_frame(&self) -> UvwFrame {
