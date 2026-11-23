@@ -168,7 +168,9 @@ fn hint_mwalib_error(error: MwalibError) -> BirliError {
             GpuboxError::LegacyNaxis1Mismatch { .. } | GpuboxError::LegacyNaxis2Mismatch { .. },
         ) => Some(format!(
             "The shape of the visibilities in the gpubox files does not match what the metafits \
-            file describes. This is a known problem with some legacy correlator observations, see \
+            file describes. The legacy correlator was probably still in an earlier mode when \
+            this observation was taken, so trust the gpubox files: set FINECHAN in the metafits \
+            to 1280 / NAXIS2 kHz. See \
             {LEGACY_CORRELATOR_ISSUES_URL}#LegacyCorrelatorIssues-NAXIS2Mismatch"
         )),
         _ => None,
@@ -2396,6 +2398,7 @@ mod argparse_tests {
             "{message}"
         );
         assert!(message.contains("Legacy+Correlator+Issues"), "{message}");
+        assert!(message.contains("FINECHAN"), "{message}");
 
         // other errors are passed through unchanged
         let err = hint_mwalib_error(MwalibError::Gpubox(GpuboxError::EmptyBTreeMap));
