@@ -49,6 +49,9 @@ pub struct IOContext {
     pub ms_out: Option<PathBuf>,
     /// Optional .mwaf flag file path template (see `io::mwaf::FlagFileSet`)
     pub flag_template: Option<String>,
+    /// Optional path for a FITS file of quality-assurance metrics (see
+    /// [`crate::metrics`])
+    pub metrics_out: Option<PathBuf>,
 }
 
 impl IOContext {
@@ -295,10 +298,7 @@ pub fn read_mwalib(
                             }
                         }
                         Err(mwalib::GpuboxError::NoDataForTimeStepCoarseChannel { .. }) => {
-                            warn!(
-                                "Flagging missing HDU @ ts={}, cc={}",
-                                timestep_idx, coarse_chan_idx
-                            );
+                            warn!("Flagging missing HDU @ ts={timestep_idx}, cc={coarse_chan_idx}");
                             flag_array.fill(true);
                         }
                         Err(e) => return Err(e),
@@ -618,6 +618,44 @@ mod tests {
             false,
         )
         .is_err());
+    }
+
+    /// A timestep and coarse channel with no HDU is flagged.
+    #[test]
+    fn test_read_missing_hdu() {
+        use marlu::mwalib::CorrelatorContext;
+
+        use crate::test_common::get_mwax_data_paths;
+
+        // leave out the second batch of the second coarse channel
+        let (metafits_path, gpufits_paths) = get_mwax_data_paths();
+        let corr_ctx = CorrelatorContext::new(metafits_path, &gpufits_paths[..3]).unwrap();
+
+        let mut vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let provided_timesteps = &corr_ctx.provided_timestep_indices;
+        vis_sel.timestep_range =
+            provided_timesteps[0]..provided_timesteps[provided_timesteps.len() - 1] + 1;
+        let provided_chans = &corr_ctx.provided_coarse_chan_indices;
+        vis_sel.coarse_chan_range = provided_chans[0]..provided_chans[provided_chans.len() - 1] + 1;
+
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let mut flag_array = vis_sel.allocate_flags(fine_chans_per_coarse).unwrap();
+        assert_eq!(flag_array.shape(), &[4, 4, 3]);
+        let mut jones_array = vis_sel.allocate_jones(fine_chans_per_coarse).unwrap();
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
+
+        for ((t, f, _), &flag) in flag_array.indexed_iter() {
+            // timesteps 2 and 3 of the second coarse channel (fine channels 2
+            // and 3) are missing
+            assert_eq!(flag, t >= 2 && f >= 2, "t={t} f={f}");
+        }
     }
 
     // test read_mwalib with custom vis_sel.baseline_idxs
@@ -990,11 +1028,7 @@ mod tests_aoflagger {
             for (vis_idx, (obs_val, exp_val)) in izip!(&obs_vis, exp_vis).enumerate() {
                 assert!(
                     approx_eq!(f32, *obs_val, *exp_val as f32, F32Margin::default()),
-                    "cells don't match in row {}, vis index {}. observed: {:?} != expected: {:?}",
-                    row_idx,
-                    vis_idx,
-                    obs_vis,
-                    exp_vis
+                    "cells don't match in row {row_idx}, vis index {vis_idx}. observed: {obs_vis:?} != expected: {exp_vis:?}"
                 );
             }
         }

@@ -126,6 +126,8 @@
 // #![allow(clippy::missing_panics_doc)]
 // #![allow(clippy::must_use_candidate)]
 
+// `p` for a polarisation index, and `ρ` for a correlation in van_vleck.
+#![allow(confusable_idents)]
 // won't fix:
 // #![allow(clippy::module_name_repetitions)]
 // #![allow(clippy::cast_precision_loss)]
@@ -199,6 +201,14 @@ pub use preprocessing::PreprocessContext;
 
 pub mod van_vleck;
 pub use van_vleck::{correct_van_vleck, get_vv_sample_scale};
+
+pub mod delay_transform;
+pub use delay_transform::{delay_transform, DelayTransformConfig, DelayTransformResult};
+
+pub mod math;
+
+pub mod metrics;
+pub use metrics::{AntennaMetadata, MetricsContext};
 
 cfg_if! {
     if #[cfg(feature = "cli")] {

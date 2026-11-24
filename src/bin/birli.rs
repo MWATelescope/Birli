@@ -69,19 +69,21 @@ where
     };
     match result {
         Ok(_) => {
-            info!(
-                "total duration: {:?}",
-                get_durations().into_iter().fold(
-                    Duration::ZERO,
-                    |duration_sum, (name, duration)| {
-                        info!("{} duration: {:?}", name, duration);
-                        duration_sum + duration
-                    }
-                )
-            );
-            let read_time = get_durations().get("read").unwrap().as_secs_f32();
+            let durations = get_durations();
+            for (name, duration) in &durations {
+                info!("{name} duration: {duration:?}");
+            }
+            let total_duration: Duration = durations.values().sum();
+            info!("total duration: {total_duration:?}");
+            let read_time = get_durations()
+                .get("read")
+                .expect("no data was read")
+                .as_secs_f32();
             let read_rate_mibs = (mem_selected_bytes / 1024_usize.pow(2)) as f32 / read_time;
-            let write_time = get_durations().get("write").unwrap().as_secs_f32();
+            let write_time = get_durations()
+                .get("write")
+                .expect("no data was written")
+                .as_secs_f32();
             let write_rate_mibs = (avg_mem_per_timestep_bytes * num_avg_timesteps
                 / 1024_usize.pow(2)) as f32
                 / write_time;
@@ -290,6 +292,106 @@ mod tests {
             "--apply-di-cal", "tests/data/1254670392_avg/1254690096.munted.bin"
         ];
         args.extend_from_slice(&gpufits_paths);
+
+        assert_ne!(main_with_args(&args), 0);
+    }
+
+    /// The names of the tiles which have autocorrelation metrics in a metrics
+    /// file, in order, checking that each has finite values.
+    fn metrics_tile_names(metrics_path: &std::path::Path) -> Vec<String> {
+        use birli::marlu::fitsio::FitsFile;
+
+        let mut fptr = FitsFile::open(metrics_path).unwrap();
+        let num_hdus = fptr.iter().count();
+        let mut tile_names = vec![];
+        for hdu_idx in 1..num_hdus {
+            let hdu = fptr.hdu(hdu_idx).unwrap();
+            let extname: String = hdu.read_key(&mut fptr, "EXTNAME").unwrap();
+            if let Some(tile_name) = extname.strip_prefix("AUTO_SUB_ANT=") {
+                let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
+                assert!(
+                    data.iter().any(|x| x.is_finite()),
+                    "{extname} should contain some finite values"
+                );
+                tile_names.push(tile_name.to_string());
+            }
+        }
+        for extname in ["AUTO_POL=XX", "AUTO_DELAY_POL=XX", "EAVILS_POL=XX"] {
+            let hdu = fptr.hdu(extname).unwrap();
+            let data: Vec<f32> = hdu.read_image(&mut fptr).unwrap();
+            assert!(
+                data.iter().any(|x| x.is_finite()),
+                "{extname} should contain some finite values"
+            );
+        }
+        tile_names
+    }
+
+    /// Run birli with `--metrics-out` for a selection of antennas, and give
+    /// the names of the tiles in the metrics.
+    fn main_with_metrics_output(sel_ants: &[&str]) -> Vec<String> {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("test_metrics.fits");
+
+        let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
+        let gpufits_path =
+            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits";
+
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "--metrics-out", metrics_path.to_str().unwrap(),
+            "-m", metafits_path,
+            "--provided-chan-ranges",
+            "--flag-init", "0",
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains", "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--sel-ants",
+        ];
+        args.extend_from_slice(sel_ants);
+        args.extend_from_slice(&["--", gpufits_path]);
+
+        assert_eq!(main_with_args(&args), 0);
+
+        assert!(metrics_path.exists());
+        metrics_tile_names(&metrics_path)
+    }
+
+    /// Metrics work for a selection of antennas which is not in order, and
+    /// doesn't start from the first antenna.
+    #[test]
+    fn main_successful_with_metrics_output() {
+        let tile_names = main_with_metrics_output(&["5", "4", "20", "19"]);
+        assert_eq!(tile_names, ["Tile015", "Tile016", "Tile034", "Tile035"]);
+    }
+
+    #[test]
+    fn main_successful_with_metrics_output_sequential_ants() {
+        let tile_names = main_with_metrics_output(&["0", "1", "2"]);
+        assert_eq!(tile_names.len(), 3);
+    }
+
+    /// The metrics file can't be written, so birli fails.
+    #[test]
+    fn main_fails_with_unwritable_metrics_output() {
+        let metafits_path = "tests/data/1119683928_picket/1119683928.metafits";
+        let gpufits_path =
+            "tests/data/1119683928_picket/1119683928_20150630071834_gpubox01_00.fits";
+
+        #[rustfmt::skip]
+        let args = vec![
+            "birli",
+            "--metrics-out", "/does/not/exist/metrics.fits",
+            "-m", metafits_path,
+            "--provided-chan-ranges",
+            "--flag-init", "0",
+            "--no-draw-progress",
+            "--sel-ants", "0", "1",
+            "--", gpufits_path,
+        ];
 
         assert_ne!(main_with_args(&args), 0);
     }
