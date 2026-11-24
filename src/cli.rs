@@ -3478,7 +3478,7 @@ mod metrics_tests {
     use super::{path_with_suffix, BirliContext};
     use crate::{
         error::BirliError,
-        marlu::fitsio::{hdu::HduInfo, FitsFile},
+        marlu::fitsio::FitsFile,
         test_common::{get_1119683928_picket_paths, get_mwax_data_paths},
     };
 
@@ -3498,10 +3498,64 @@ mod metrics_tests {
     fn read_image(path: &Path, extname: &str) -> (Vec<usize>, Vec<f64>) {
         let mut fptr = FitsFile::open(path).unwrap();
         let hdu = fptr.hdu(extname).unwrap();
-        let HduInfo::ImageInfo { shape, .. } = &hdu.info else {
-            panic!("{extname} is not an image");
+        // the shape is in the order of the array: the reverse of the FITS axes
+        let num_axes: i64 = hdu.read_key(&mut fptr, "NAXIS").unwrap();
+        let shape = (1..=num_axes)
+            .rev()
+            .map(|axis| {
+                hdu.read_key::<i64>(&mut fptr, &format!("NAXIS{axis}"))
+                    .unwrap() as usize
+            })
+            .collect();
+        (shape, hdu.read_image(&mut fptr).unwrap())
+    }
+
+    /// The context can be displayed, including a phase centre which is not
+    /// the pointing centre, and the range each coarse channel is in.
+    #[test]
+    fn test_display() {
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("metrics.fits");
+        let birli_ctx = BirliContext::from_args(mwax_metrics_args(
+            &metrics_path,
+            &["--phase-centre", "10.5", "-20.25", "--provided-chan-ranges"],
+        ))
+        .unwrap();
+
+        let display = format!("{birli_ctx}");
+
+        assert!(display.contains("Phase centre:"), "{display}");
+        assert!(display.contains("Pointing centre:"), "{display}");
+        // only the two provided coarse channels are in a range
+        let range_rows = display
+            .lines()
+            .filter(|line| line.contains("0 (8-9)"))
+            .count();
+        assert_eq!(range_rows, 2, "{display}");
+    }
+
+    /// Each of the named passband gains can be selected.
+    #[test]
+    fn test_parse_passband_gains() {
+        use crate::passband_gains::{
+            OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ,
         };
-        (shape.clone(), hdu.read_image(&mut fptr).unwrap())
+
+        let tmp_dir = tempdir().unwrap();
+        let metrics_path = tmp_dir.path().join("metrics.fits");
+        for (name, expected) in [
+            ("jake", Some(PFB_JAKE_2022_200HZ)),
+            ("jake_oversampled", Some(OSPFB_JAKE_2025_200HZ)),
+            ("cotter", Some(PFB_COTTER_2014_10KHZ)),
+            ("none", None),
+        ] {
+            let birli_ctx = BirliContext::from_args(mwax_metrics_args(
+                &metrics_path,
+                &["--passband-gains", name],
+            ))
+            .unwrap();
+            assert_eq!(birli_ctx.prep_ctx.passband_gains, expected, "{name}");
+        }
     }
 
     /// Arguments to write only metrics for the 1297526432 mwax dataset, which

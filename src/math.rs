@@ -249,6 +249,22 @@ mod tests {
         assert!(fit_polynomial(&[5.0, 5.0, 5.0], &[1.0, 2.0, 3.0], 1).is_none());
     }
 
+    /// When `x` is not sorted, the normalised coordinates are outside
+    /// `[-1, 1]`, and the fit needs to pivot, but it is still right.
+    #[test]
+    fn test_fit_polynomial_unsorted() {
+        // y = 1 + 2x - 0.5x^2
+        let x = vec![0.0, 10.0, 3.0, 7.0, 1.0];
+        let y: Vec<f32> = x
+            .iter()
+            .map(|&val: &f64| (1.0 + 2.0 * val - 0.5 * val * val) as f32)
+            .collect();
+        let coeffs = fit_polynomial(&x, &y, 2).expect("Fit failed");
+        assert!((coeffs[0] - 1.0).abs() < 1e-3, "{coeffs:?}");
+        assert!((coeffs[1] - 2.0).abs() < 1e-3, "{coeffs:?}");
+        assert!((coeffs[2] + 0.5).abs() < 1e-3, "{coeffs:?}");
+    }
+
     /// Two distinct x values can't constrain a parabola, however many points
     /// there are.
     #[test]

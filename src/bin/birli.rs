@@ -69,16 +69,12 @@ where
     };
     match result {
         Ok(_) => {
-            info!(
-                "total duration: {:?}",
-                get_durations().into_iter().fold(
-                    Duration::ZERO,
-                    |duration_sum, (name, duration)| {
-                        info!("{name} duration: {duration:?}");
-                        duration_sum + duration
-                    }
-                )
-            );
+            let durations = get_durations();
+            for (name, duration) in &durations {
+                info!("{name} duration: {duration:?}");
+            }
+            let total_duration: Duration = durations.values().sum();
+            info!("total duration: {total_duration:?}");
             let read_time = get_durations()
                 .get("read")
                 .expect("no data was read")

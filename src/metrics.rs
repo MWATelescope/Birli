@@ -2271,7 +2271,7 @@ impl CrossMetrics {
 mod test_common {
     use super::{AntennaMetadata, MetricsContext};
     use crate::marlu::{
-        fitsio::{hdu::HduInfo, FitsFile},
+        fitsio::FitsFile,
         ndarray::{Array3, ArrayD, IxDyn},
         num_complex::Complex,
         Jones,
@@ -2368,10 +2368,12 @@ mod test_common {
     /// Read an image HDU into an array with the dimensions it was written with.
     pub(super) fn read_image(fptr: &mut FitsFile, extname: &str) -> ArrayD<f64> {
         let hdu = fptr.hdu(extname).unwrap();
-        let HduInfo::ImageInfo { shape, .. } = &hdu.info else {
-            panic!("{extname} is not an image");
-        };
-        let shape = shape.clone();
+        // the shape is in the order of the array: the reverse of the FITS axes
+        let num_axes: i64 = hdu.read_key(fptr, "NAXIS").unwrap();
+        let shape: Vec<usize> = (1..=num_axes)
+            .rev()
+            .map(|axis| hdu.read_key::<i64>(fptr, &format!("NAXIS{axis}")).unwrap() as usize)
+            .collect();
         let data: Vec<f64> = hdu.read_image(fptr).unwrap();
         ArrayD::from_shape_vec(IxDyn(&shape), data).unwrap()
     }
@@ -3760,16 +3762,9 @@ mod flag_and_cross_tests {
             cross.start_delay_ns + idx as f64 * cross.delay_res_ns
         };
         // XY and YX have ripples of 400 and 800 ns
-        assert!(
-            (peak_delay_ns(1) - 400.0).abs() < 150.0,
-            "{}",
-            peak_delay_ns(1)
-        );
-        assert!(
-            (peak_delay_ns(2) - 800.0).abs() < 150.0,
-            "{}",
-            peak_delay_ns(2)
-        );
+        let (peak_xy_ns, peak_yx_ns) = (peak_delay_ns(1), peak_delay_ns(2));
+        assert!((peak_xy_ns - 400.0).abs() < 150.0, "{peak_xy_ns}");
+        assert!((peak_yx_ns - 800.0).abs() < 150.0, "{peak_yx_ns}");
 
         // a longer cutoff includes more baselines
         ctx.antennas[3].north_m = 40.0;
