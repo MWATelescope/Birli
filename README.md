@@ -9,23 +9,23 @@
 <a href="https://crates.io/crates/birli">
   <img alt="Crates.io" src="https://img.shields.io/crates/d/birli?label=crates.io%20%E2%AC%87%EF%B8%8F"></a>
 <a href="https://docs.rs/crate/birli/">
-  <img src="https://docs.rs/birli/badge.svg" alt="codecov"></a>
+  <img src="https://docs.rs/birli/badge.svg" alt="docs.rs"></a>
 <a href="https://codecov.io/gh/MWATelescope/Birli">
   <img src="https://codecov.io/gh/MWATelescope/Birli/branch/main/graph/badge.svg?token=PK2KYEZOW9" alt="codecov"></a>
 <a href="https://rust-reportcard.xuri.me/report/github.com/mwatelescope/birli">
   <img src="https://rust-reportcard.xuri.me/badge/github.com/mwatelescope/birli" alt="rust-reportcard"></a>
 <a href="https://github.com/MWATelescope/Birli/blob/main/LICENSE">
-  <img alt="Crates.io" src="https://img.shields.io/crates/l/birli"></a>
+  <img alt="License" src="https://img.shields.io/crates/l/birli"></a>
 
 </div>
 
-A Rust library for common preprocessing tasks performed in the data pipeline of the Murchison
-Widefield Array (MWA), located on the land of the Wajarri Yamatji people in Murchison Shire, Western
-Australia.
+A Rust library and command-line tool for common preprocessing tasks performed in the data pipeline
+of the Murchison Widefield Array (MWA), located on the land of the Wajarri Yamatji people in
+Murchison Shire, Western Australia.
 
 Birli reads MWA correlator visibilities in the gpufits file format using
-[mwalib](https://github.com/MWATelescope/mwalib), which supports the existing "legacy" MWA
-correlator, as well as the in-development "MWAX" correlator.
+[mwalib](https://github.com/MWATelescope/mwalib), which supports both the legacy MWA correlator
+and its replacement, the MWAX correlator.
 
 **Birli** is the Wajarri word for lightning, a common cause of outages at the MWA, and a great
 descriptor for the speed which this library intends to deliver.
@@ -35,12 +35,13 @@ descriptor for the speed which this library intends to deliver.
 ### Prerequisites
 
 - A Rust compiler with a version >= 1.88.0 - <https://www.rust-lang.org/tools/install>
-- [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0
-  (Ubuntu > 21.04: apt install aoflagger-dev)
 - [CFitsIO](https://heasarc.gsfc.nasa.gov/fitsio/) >= 3.49
   (Ubuntu > 20.10: apt install libcfitsio-dev) Must be compiled with `--enable-reentrant` (or `-DUSE_PTHREADS=1 -D_REENTRANT=1`).
+- Optional, only for RFI flagging (the `aoflagger` cargo feature):
+  [AOFlagger](https://gitlab.com/aroffringa/aoflagger) >= 3.0
+  (Ubuntu > 21.04: apt install aoflagger-dev)
 
-for OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) CI Script; the [Makefile.toml](https://github.com/MWATelescope/Birli/blob/main/Makefile.toml); and the [Dockerfile](https://github.com/MWATelescope/Birli/blob/main/Dockerfile) as these are tested regularly. The instructions below may be updated less frequently, but are better documented.
+For OS-specific instructions, check out the [linux](https://github.com/MWATelescope/Birli/blob/main/.github/workflows/linux_test.yml) CI Script; the [Makefile.toml](https://github.com/MWATelescope/Birli/blob/main/Makefile.toml); and the [Dockerfile](https://github.com/MWATelescope/Birli/blob/main/Dockerfile) as these are tested regularly. The instructions below may be updated less frequently, but are better documented.
 
 ### (Debian/Ubuntu) Linux Setup
 
@@ -62,7 +63,7 @@ export LD_LIBRARY_PATH="/usr/local/lib/"
 
 ### macOS
 
-macOS support has been rough due stability issues with casacore and aoflagger,
+macOS support has been rough due to stability issues with casacore and aoflagger,
 but if the stars align, this should just work.
 
 ```bash
@@ -90,194 +91,20 @@ birli
 
 If you see any segfault, it's most likely this issue.
 
-The current version of cfitsio in homebrew is not reentrant, so birli and all its dependencies that use cfitsio need to be patched out to enable a threadsafe cfitsio. so the current `brew deps --tree --installed birli` is
+The cfitsio in Homebrew is not reentrant, so Birli and every dependency of it that uses cfitsio
+(aoflagger, casacore, wcslib) is built in the `mwatelescope/tap` tap against a thread-safe
+`cfitsio_reentrant` instead. `brew deps --tree --installed birli` should show
+`mwatelescope/tap/cfitsio_reentrant` everywhere, and plain `cfitsio` nowhere:
 
 ```txt
 mwatelescope/tap/birli
 ├── aoflagger
-│   ├── boost
-│   │   ├── icu4c@76
-│   │   ├── xz
-│   │   └── zstd
-│   │       ├── lz4
-│   │       └── xz
-│   ├── fftw
-│   │   ├── open-mpi
-│   │   │   ├── gcc
-│   │   │   │   ├── gmp
-│   │   │   │   ├── isl
-│   │   │   │   │   └── gmp
-│   │   │   │   ├── libmpc
-│   │   │   │   │   ├── gmp
-│   │   │   │   │   └── mpfr
-│   │   │   │   │       └── gmp
-│   │   │   │   ├── mpfr
-│   │   │   │   │   └── gmp
-│   │   │   │   └── zstd
-│   │   │   │       ├── lz4
-│   │   │   │       └── xz
-│   │   │   ├── hwloc
-│   │   │   ├── libevent
-│   │   │   │   └── openssl@3
-│   │   │   │       └── ca-certificates
-│   │   │   └── pmix
-│   │   │       ├── hwloc
-│   │   │       └── libevent
-│   │   │           └── openssl@3
-│   │   │               └── ca-certificates
-│   │   └── gcc
-│   │       ├── gmp
-│   │       ├── isl
-│   │       │   └── gmp
-│   │       ├── libmpc
-│   │       │   ├── gmp
-│   │       │   └── mpfr
-│   │       │       └── gmp
-│   │       ├── mpfr
-│   │       │   └── gmp
-│   │       └── zstd
-│   │           ├── lz4
-│   │           └── xz
-│   ├── lapack
-│   │   └── gcc
-│   │       ├── gmp
-│   │       ├── isl
-│   │       │   └── gmp
-│   │       ├── libmpc
-│   │       │   ├── gmp
-│   │       │   └── mpfr
-│   │       │       └── gmp
-│   │       ├── mpfr
-│   │       │   └── gmp
-│   │       └── zstd
-│   │           ├── lz4
-│   │           └── xz
-│   ├── libpng
-│   ├── lua@5.4
+│   ├── ...
 │   ├── mwatelescope/tap/casacore
-│   │   ├── fftw
-│   │   │   ├── open-mpi
-│   │   │   │   ├── gcc
-│   │   │   │   │   ├── gmp
-│   │   │   │   │   ├── isl
-│   │   │   │   │   │   └── gmp
-│   │   │   │   │   ├── libmpc
-│   │   │   │   │   │   ├── gmp
-│   │   │   │   │   │   └── mpfr
-│   │   │   │   │   │       └── gmp
-│   │   │   │   │   ├── mpfr
-│   │   │   │   │   │   └── gmp
-│   │   │   │   │   └── zstd
-│   │   │   │   │       ├── lz4
-│   │   │   │   │       └── xz
-│   │   │   │   ├── hwloc
-│   │   │   │   ├── libevent
-│   │   │   │   │   └── openssl@3
-│   │   │   │   │       └── ca-certificates
-│   │   │   │   └── pmix
-│   │   │   │       ├── hwloc
-│   │   │   │       └── libevent
-│   │   │   │           └── openssl@3
-│   │   │   │               └── ca-certificates
-│   │   │   └── gcc
-│   │   │       ├── gmp
-│   │   │       ├── isl
-│   │   │       │   └── gmp
-│   │   │       ├── libmpc
-│   │   │       │   ├── gmp
-│   │   │       │   └── mpfr
-│   │   │       │       └── gmp
-│   │   │       ├── mpfr
-│   │   │       │   └── gmp
-│   │   │       └── zstd
-│   │   │           ├── lz4
-│   │   │           └── xz
-│   │   ├── gcc
-│   │   │   ├── gmp
-│   │   │   ├── isl
-│   │   │   │   └── gmp
-│   │   │   ├── libmpc
-│   │   │   │   ├── gmp
-│   │   │   │   └── mpfr
-│   │   │   │       └── gmp
-│   │   │   ├── mpfr
-│   │   │   │   └── gmp
-│   │   │   └── zstd
-│   │   │       ├── lz4
-│   │   │       └── xz
-│   │   ├── gsl
-│   │   ├── hdf5
-│   │   │   ├── gcc
-│   │   │   │   ├── gmp
-│   │   │   │   ├── isl
-│   │   │   │   │   └── gmp
-│   │   │   │   ├── libmpc
-│   │   │   │   │   ├── gmp
-│   │   │   │   │   └── mpfr
-│   │   │   │   │       └── gmp
-│   │   │   │   ├── mpfr
-│   │   │   │   │   └── gmp
-│   │   │   │   └── zstd
-│   │   │   │       ├── lz4
-│   │   │   │       └── xz
-│   │   │   ├── libaec
-│   │   │   └── pkgconf
-│   │   ├── mwatelescope/tap/casacore-data
+│   │   ├── ...
 │   │   ├── mwatelescope/tap/cfitsio_reentrant
-│   │   ├── mwatelescope/tap/wcslib
-│   │   │   └── mwatelescope/tap/cfitsio_reentrant
-│   │   ├── ncurses
-│   │   ├── openblas
-│   │   │   └── gcc
-│   │   │       ├── gmp
-│   │   │       ├── isl
-│   │   │       │   └── gmp
-│   │   │       ├── libmpc
-│   │   │       │   ├── gmp
-│   │   │       │   └── mpfr
-│   │   │       │       └── gmp
-│   │   │       ├── mpfr
-│   │   │       │   └── gmp
-│   │   │       └── zstd
-│   │   │           ├── lz4
-│   │   │           └── xz
-│   │   ├── readline
-│   │   ├── python@3.13
-│   │   │   ├── mpdecimal
-│   │   │   ├── openssl@3
-│   │   │   │   └── ca-certificates
-│   │   │   ├── sqlite
-│   │   │   │   └── readline
-│   │   │   └── xz
-│   │   ├── numpy
-│   │   │   └── openblas
-│   │   │       └── gcc
-│   │   │           ├── gmp
-│   │   │           ├── isl
-│   │   │           │   └── gmp
-│   │   │           ├── libmpc
-│   │   │           │   ├── gmp
-│   │   │           │   └── mpfr
-│   │   │           │       └── gmp
-│   │   │           ├── mpfr
-│   │   │           │   └── gmp
-│   │   │           └── zstd
-│   │   │               ├── lz4
-│   │   │               └── xz
-│   │   └── boost-python3
-│   │       ├── boost
-│   │       │   ├── icu4c@76
-│   │       │   ├── xz
-│   │       │   └── zstd
-│   │       │       ├── lz4
-│   │       │       └── xz
-│   │       └── python@3.13
-│   │           ├── mpdecimal
-│   │           ├── openssl@3
-│   │           │   └── ca-certificates
-│   │           ├── sqlite
-│   │           │   └── readline
-│   │           └── xz
+│   │   └── mwatelescope/tap/wcslib
+│   │       └── mwatelescope/tap/cfitsio_reentrant
 │   └── mwatelescope/tap/cfitsio_reentrant
 └── mwatelescope/tap/cfitsio_reentrant
 ```
@@ -291,7 +118,7 @@ So if you don't set `DYLD_FALLBACK_LIBRARY_PATH` you will see an error like
 libc++abi: terminating due to uncaught exception of type std::runtime_error: cannot open : No such file or directory
 ```
 
-in some cases, macOS will deliberately unset this.
+In some cases, macOS will deliberately unset this.
 
 ```bash
 export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib/
@@ -303,24 +130,31 @@ bash -c 'echo ${DYLD_FALLBACK_LIBRARY_PATH:-unset}' # but not here
 
 ### Other Operating Systems
 
-Unfortunately most of the prerequisites aren't available on Windows. However, WSL is great, and there is a docker image! You could use VSCode remote for WSL or Docker. Your best best is Ubuntu LTS
+Unfortunately most of the prerequisites aren't available on Windows. However, WSL is great, and there is a docker image! You could use VSCode remote for WSL or Docker. Your best bet is Ubuntu LTS.
 
 ### Installing the binary
 
 ```bash
+# without RFI flagging
 cargo install --path . --locked
+# with RFI flagging (needs AOFlagger)
+cargo install --path . --locked --features aoflagger
 ```
 
-This creates a `birli` binary in `$HOME/.cargo/bin`
+This creates a `birli` binary in `$HOME/.cargo/bin`. The `aoflagger` feature is off by default:
+without it, Birli does no RFI flagging and has no `--no-rfi` or `--aoflagger-strategy` options. The
+Docker image is built with it.
 
 ## Troubleshooting
 
 ### Test suite
 
-Having issues with Birli? run the test suite to narrow down your issue.
+Having issues with Birli? Run the test suite to narrow down your issue.
 
 ```bash
 cargo test
+# the comparisons with Cotter need RFI flagging
+cargo test --features aoflagger
 ```
 
 ### Dependencies
@@ -344,14 +178,14 @@ this, you must export `LD_LIBRARY_PATH=/usr/local/lib/` in the shell so that Bir
 You can enable additional logging on individual Rust modules by setting the `RUST_LOG` environment variable. For example:
 
 ```bash
-RUST_LOG=trace birli ... # set log level to trace for all module (including dependencies)
+RUST_LOG=trace birli ... # set log level to trace for all modules (including dependencies)
 RUST_LOG=birli=debug birli ... # set log level to debug for birli only
-RUST_LOG=birli::io=error birli ... # only show warnings for birli's io module
+RUST_LOG=birli::io=error birli ... # only show errors from birli's io module
 ```
 
 For more examples, see the [env_logger docs](https://docs.rs/env_logger/latest/env_logger/)
 
-The default log level in `info`
+The default log level is `info`.
 
 ### Docker
 
@@ -371,8 +205,8 @@ docker run -it --entrypoint /bin/bash --volume $PWD:/app mwatelescope/birli:late
 ```
 
 Note: This mounts the current directory to `/app` in the Docker image, meaning both of these systems share the same
-`target` folder. so if your host system is a different
-architecture than Docker, you may need to `cargo clean` each time you switch between these environments. You may also want to temporarily disable conflicting linters or language servers
+`target` folder. So if your host system is a different
+architecture than Docker, you may need to `cargo clean` each time you switch between these environments. You may also want to temporarily disable conflicting linters or language servers.
 
 </details>
 
@@ -385,118 +219,108 @@ module load singularity
 # - create a .sif file from the latest mwatelescope/birli docker image
 singularity pull --dir . docker://mwatelescope/birli:latest
 # - run birli within the singularity image
-singularity exec  /pawsey/mwa/singularity/birli/birli_latest.sif /app/target/release/birli ${YOUR_BIRLI_ARGS}
+singularity exec /pawsey/mwa/singularity/birli/birli_latest.sif birli ${YOUR_BIRLI_ARGS}
 ```
 
-see this gist for an example of [a Garrawarla SLURM job using Birli](https://gist.github.com/d3v-null/9ce233114ebb16dc18072303845257e5)
+The `birli` binary in the image is `/opt/cargo/bin/birli`, which is on the `PATH`.
 
-### Singularity on HPC (debug mode)
+See this gist for an example of [a Garrawarla SLURM job using Birli](https://gist.github.com/d3v-null/9ce233114ebb16dc18072303845257e5)
 
-This will give you much more information about any problem you're having with Birli, however the
-debug build is not optimised, and is much slower.
+### Singularity on HPC (more logging)
+
+The image only contains an optimised build, so to find out more about a problem, turn up the logging:
 
 ```bash
 # - request an interactive HPC session
 salloc --partition workq --time 1:00:00 --nodes 1 -c 38 --mem=350G
 # - load the singularity module
 module load singularity
-# - cd into your preferred sif file location, e.g. /pawsey/mwa/singularity/birli
-# - create a .sif file from the latest mwatelescope/birli docker image
-singularity pull --dir . docker://mwatelescope/birli:debug
-# - run birli within the singularity image
-singularity exec  /pawsey/mwa/singularity/birli/birli_debug.sif /bin/bash
+# - run birli within the singularity image, with lots of logs
+RUST_LOG=trace singularity exec /pawsey/mwa/singularity/birli/birli_latest.sif birli ${YOUR_BIRLI_ARGS}
 ```
 
-then within this shell
-
-```bash
-# - enable lots of logs
-export RUST_LOG=trace
-# - run birli in debug mode with GDB
-gdb --args /app/target/debug/birli ${YOUR_BIRLI_ARGS}
-# > run
-```
+For a debug build to run under `gdb`, open a shell in the image as described under
+[Docker](#docker) and use `cargo build` (without `--release`).
 
 ## Usage
 
-`birli -h`
+`birli -h` (`birli --help` also describes each `--passband-gains` value)
 
 ```txt
-USAGE:
-    birli [OPTIONS] --metafits <PATH> <PATHS>...
+Preprocess Murchison Widefield Array MetaFITS and GPUFITS data into usable astronomy formats.
 
-OPTIONS:
-        --dry-run                    Just print the summary and exit
-        --emulate-cotter             Use Cotter's array position, not MWAlib's. Also, Birli will not flag NaNs when applying calibration solutions.
-    -h, --help                       Print help information
-        --no-draw-progress           do not show progress bars
-        --phase-centre <RA> <DEC>    Override Phase centre from metafits (degrees)
-        --pointing-centre            Use pointing instead phase centre
-    -V, --version                    Print version information
+Usage: birli [OPTIONS] --metafits <PATH> <PATHS>...
 
-CALIBRATION:
-        --apply-di-cal <PATH>        Apply DI calibration solutions before averaging
-        --no-apply-amps              Apply DI cal phases only (unit amplitude Jones)
+Options:
+      --phase-centre <RA> <DEC>  Override Phase centre from metafits (degrees)
+      --pointing-centre          Use pointing instead phase centre
+      --emulate-cotter           Use Cotter's array position, not MWAlib's. Also, Birli will not flag NaNs when applying calibration solutions.
+      --dry-run                  Just print the summary and exit
+      --no-draw-progress         do not show progress bars
+  -h, --help                     Print help (see more with '--help')
+  -V, --version                  Print version
 
 INPUT:
-    -m, --metafits <PATH>    Metadata file for the observation
-    <PATHS>...           GPUBox files to process
+  -m, --metafits <PATH>  Metadata file for the observation
+  <PATHS>...             GPUBox files to process
 
 SELECTION:
-        --no-sel-autos                Deselect autocorrelations
-        --no-sel-flagged-ants         Deselect flagged antennas
-        --provided-chan-ranges        Only consider provided channels
-        --sel-ants <ANTS>...          Antenna indices to select
-        --sel-chan-ranges <RANGES>    Select separate channel ranges
-        --sel-time <MIN> <MAX>        Timestep index range (inclusive) to select
+      --sel-time <MIN> <MAX>      Timestep index range (inclusive) to select
+      --sel-ants <ANTS>...        Antenna indices to select
+      --no-sel-flagged-ants       Deselect flagged antennas
+      --no-sel-autos              Deselect autocorrelations
+      --sel-chan-ranges <RANGES>  Select separate channel ranges
+      --provided-chan-ranges      Only consider provided channels
 
 RESOURCE LIMITS:
-        --max-memory <GIBIBYTES>    Estimate --time-chunk with <GIBIBYTES> GiB each chunk.
-        --time-chunk <STEPS>        Process observation in chunks of <STEPS> timesteps.
+      --time-chunk <STEPS>      Process observation in chunks of <STEPS> timesteps.
+      --max-memory <GIBIBYTES>  Estimate --time-chunk with <GIBIBYTES> GiB each chunk.
 
 FLAGGING:
-        --flag-antennas <ANTS>...         Flag antenna indices
-        --flag-autos                      Flag auto correlations
-        --flag-coarse-chans <CHANS>...    Flag additional coarse chan indices
-        --flag-dc                         Force flagging of DC centre chans
-        --flag-edge-chans <COUNT>         Flag <COUNT> fine chans on the ends of each coarse
-        --flag-edge-width <KHZ>           Flag bandwidth [kHz] at the ends of each coarse chan
-        --flag-end <SECONDS>              Flag seconds before the last provided time
-        --flag-end-steps <COUNT>          Flag <COUNT> steps before the last provided
-        --flag-fine-chans <CHANS>...      Flag fine chan indices in each coarse chan
-        --flag-init <SECONDS>             Flag <SECONDS> after first common time (quack time)
-        --flag-init-steps <COUNT>         Flag <COUNT> steps after first common time
-        --flag-times <STEPS>...           Flag additional time steps
-        --no-flag-dc                      Do not flag DC centre chans
-        --no-flag-metafits                Ignore antenna flags in metafits
+      --flag-init <SECONDS>           Flag <SECONDS> after first common time (quack time)
+      --flag-init-steps <COUNT>       Flag <COUNT> steps after first common time
+      --flag-end <SECONDS>            Flag seconds before the last provided time
+      --flag-end-steps <COUNT>        Flag <COUNT> steps before the last provided
+      --flag-times <STEPS>...         Flag additional time steps
+      --flag-coarse-chans <CHANS>...  Flag additional coarse chan indices
+      --flag-edge-width <KHZ>         Flag bandwidth [kHz] at the ends of each coarse chan
+      --flag-edge-chans <COUNT>       Flag <COUNT> fine chans on the ends of each coarse
+      --flag-fine-chans <CHANS>...    Flag fine chan indices in each coarse chan
+      --flag-dc                       Force flagging of DC centre chans
+      --no-flag-dc                    Do not flag DC centre chans
+      --no-flag-metafits              Ignore antenna flags in metafits
+      --flag-antennas <ANTS>...       Flag antenna indices
+      --flag-autos                    Flag auto correlations
 
 CORRECTION:
-        --no-cable-delay           Do not perform cable length corrections
-        --no-digital-gains         Do not perform digital gains corrections
-        --no-geometric-delay       Do not perform geometric corrections
-        --passband-gains <TYPE>    Type of PFB passband filter gains correction to apply [default:
-                                   auto] [possible values: none, cotter, jake, auto]
-        --van-vleck                Apply Van Vleck corrections
+      --van-vleck              Apply Van Vleck corrections
+      --no-cable-delay         Do not perform cable length corrections
+      --no-geometric-delay     Do not perform geometric corrections
+      --no-digital-gains       Do not perform digital gains corrections
+      --passband-gains <TYPE>  Type of PFB passband filter gains correction to apply [default: auto] [possible values: none, cotter, jake, jake_oversampled, auto]
+
+CALIBRATION:
+      --apply-di-cal <PATH>  Apply DI calibration solutions before averaging
+      --no-apply-amps        Apply DI cal phases only (unit amplitude Jones)
 
 AVERAGING:
-        --avg-freq-factor <FACTOR>    Average <FACTOR> channels per averaged channel
-        --avg-freq-res <KHZ>          Frequency resolution of averaged data
-        --avg-time-factor <FACTOR>    Average <FACTOR> timesteps per averaged timestep
-        --avg-time-res <SECONDS>      Time resolution of averaged data
+      --avg-time-res <SECONDS>    Time resolution of averaged data
+      --avg-time-factor <FACTOR>  Average <FACTOR> timesteps per averaged timestep
+      --avg-freq-res <KHZ>        Frequency resolution of averaged data
+      --avg-freq-factor <FACTOR>  Average <FACTOR> channels per averaged channel
 
 OUTPUT:
-    -f, --flag-template <TEMPLATE>    The template used to name flag files. Percents are substituted
-                                      for the zero-prefixed GPUBox ID, which can be up to 3
-                                      characters long. Example: FlagFile%%%.mwaf
-    -M, --ms-out <PATH>               Path for measurement set output
-    -u, --uvfits-out <PATH>           Path for uvfits output
+  -f, --flag-template <TEMPLATE>  The template used to name flag files. Percents are substituted for the zero-prefixed GPUBox ID, which can be up to 3 characters long. Example: FlagFile%%%.mwaf
+  -u, --uvfits-out <PATH>         Path for uvfits output
+  -M, --ms-out <PATH>             Path for measurement set output
 
 AOFLAGGER:
-        --aoflagger-strategy <PATH>    Strategy to use for RFI Flagging
-        --no-rfi                       Do not perform RFI Flagging with aoflagger
+      --no-rfi                     Do not perform RFI Flagging with aoflagger
+      --aoflagger-strategy <PATH>  Strategy to use for RFI Flagging
 ```
 
-Note: the aoflagger options are only available when the aoflagger feature is enabled.
+Note: the `AOFLAGGER` options only exist when Birli is built with the `aoflagger` feature (see
+[Installing the binary](#installing-the-binary)).
 
 ## Correction Details
 
@@ -526,7 +350,7 @@ digGains[["Digital Gains (unless
 <code>--no-digital-gains</code>)"]]; class digGains proc;
 PFB[["PFB Passband
 (<code>--passband-gains</code>)"]]; class PFB proc;
-AOFlag[["AOFlagger (see
+AOFlag[["AOFlagger (<code>aoflagger</code> feature, see
 <code>--aoflagger-strategy</code>
 and <code>--no-rfi</code>)"]]; class AOFlag proc;
 applyCal[[ Apply Solutions ]]; class applyCal proc;
@@ -547,14 +371,15 @@ avg -->|"--ms-out (-M)"| prepMS
 ### Data Selection
 
 Birli can select a subset of tiles (`--sel-ants`), coarse channels (`--sel-chan-ranges`), and
-timesteps (`--sel-time`) to process.
+timesteps (`--sel-time`) to process. `--dry-run` prints a summary of what would be selected, flagged,
+corrected and written, without reading any visibilities.
 
 Birli uses mwalib to read raw files, and so selections along these axes are specified as zero-based
 indices determined by mwalib.
 
 - `--sel-ants` uses [mwalib antenna indices](https://docs.rs/mwalib/latest/mwalib/struct.Antenna.html#structfield.ant) based on the order in which the antennas appear in the metafits file, not to be confused with the tile ID.
-- `--sel-chan-ranges` uses [mwalib coarse channel indices](https://docs.rs/mwalib/latest/mwalib/struct.CoarseChannel.html#structfield.corr_chan_number), ordered ascendingly by frequency, not to be confused with the gpubox number or sky channel number
-- `--sel-time` uses [mwalib timestep indices](https://github.com/MWATelescope/mwalib/blob/223a0b64e57f2098627d66aed267a344ed0201f3/src/timestep/mod.rs#L163), ordered ascendingly by time, not to be confused with the unix timestamp.
+- `--sel-chan-ranges` uses [mwalib coarse channel indices](https://docs.rs/mwalib/latest/mwalib/struct.CoarseChannel.html#structfield.corr_chan_number), ordered ascendingly by frequency, not to be confused with the gpubox number or sky channel number. It takes a comma-separated list of indices or inclusive ranges, e.g. `--sel-chan-ranges 0-11,14,16-23`, and each range is written to its own output file (see [Output](#output)). `--provided-chan-ranges` selects every range of coarse channels for which files were provided, instead of every coarse channel in the metafits.
+- `--sel-time` uses [mwalib timestep indices](https://github.com/MWATelescope/mwalib/blob/223a0b64e57f2098627d66aed267a344ed0201f3/src/timestep/mod.rs#L163), ordered ascendingly by time, not to be confused with the unix timestamp. Both ends of the range are included.
 
 The MWA monitor and control system can sometimes flag antennas in the metafits file which should be
 considered unreliable. To ignore these antennas, use `--no-flag-metafits`.
@@ -576,17 +401,19 @@ Birli's implementation borrows heavily from Pyxie Star's pyuvdata implementation
 
 The current implementation only accounts for the 4+4 bit quantization of the legacy correlator, and does not account for the 5+5 bit quantization of the RRI receiver.
 
-Birli solves the full integral with maximum precision, and does not use the Chebychev approximation described in the memo.
+Birli solves the full integral with maximum precision, and does not use the Chebyshev approximation described in the memo.
+
+Van Vleck corrections are off by default. Use `--van-vleck` to apply them.
 
 ### Cable Delay Corrections
 
-Cable delay correction involves adjusting visibility phases to correct for the differences in electrical length of the cable between each tile and it's receiver.
+Cable delay correction involves adjusting visibility phases to correct for the differences in electrical length of the cable between each tile and its receiver.
 
-Legacy MWA correlator observations do not typically have cable delays applied, however MWAX observations can. The [`CABLEDEL`](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24969941/MWAX+Metafits+Changes) key in the metafits describes what geometric delays have been applied.
+Legacy MWA correlator observations do not typically have cable delays applied, however MWAX observations can. The [`CABLEDEL`](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24969941/MWAX+Metafits+Changes) key in the metafits describes what cable delays have been applied.
 
-By default, Birli will apply cable length corrections. You can use `--no-cable-delay` to disable this.
+By default, Birli will apply cable length corrections if the metafits says they have not already been applied. You can use `--no-cable-delay` to disable this.
 
-A baseline's cable lengths are determined by the difference between a baseline's rfInput electrical lengths, as specified the the `TILEDATA` HDU of the metafits. Complex visibilities are phase-shifted by an angle determined by the electrical length, and the channel's frequency.
+A baseline's cable lengths are determined by the difference between a baseline's rfInput electrical lengths, as specified in the `TILEDATA` HDU of the metafits. Complex visibilities are phase-shifted by an angle determined by the electrical length, and the channel's frequency.
 
 ```rust
 let angle = -2.0 * PI * electrical_length_m * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
@@ -594,21 +421,23 @@ let angle = -2.0 * PI * electrical_length_m * freq_hz / SPEED_OF_LIGHT_IN_VACUUM
 
 ### Digital Gain Corrections
 
-Each input in the raw data is scaled by a factor for each coarse channel. This is defined in the metafits primary hdu in the Gains column. Birli corrects these digital gains by default, you can disable this with `--no-digital-gains`
+Each input in the raw data is scaled by a factor for each coarse channel. This is defined in the `Gains` column of the `TILEDATA` HDU of the metafits. Birli corrects these digital gains by default, unless the metafits says the correlator has already done so. You can disable this with `--no-digital-gains`.
 
 ### Coarse PFB Passband Corrections
 
-There are four options for correcting for the coarse channel polyphase filter bank (PFB) passband filter gains. `cotter` is best for legacy correlator observations, and `jake` is best for MWAX correlator observations. `auto` picks the most appropriate option based on information from the metafits, and `none` disables this correction.
+There are five options for correcting for the coarse channel polyphase filter bank (PFB) passband filter gains (`--passband-gains`). `cotter` is best for legacy correlator observations, `jake` is best for critically sampled MWAX correlator observations, and `jake_oversampled` is for oversampled MWAX correlator observations. `auto` (the default) picks the most appropriate of these based on information from the metafits, and `none` disables this correction.
+
+No passband correction is applied when the metafits says the correlator has already removed the passband ripple (`DERIPPLE`), whatever `--passband-gains` says.
 
 Although the PFB passband filter shape is a function of the filter coefficients used in the receiver, it is also influenced by the fine channelization technique used, which is slightly different between the two correlators.
 
 The MWAX channeliser is just an FFT with a rectangular window for its windowing function, of which, the ultra fine channels are then aggregated to your frequency resolution; while the legacy correlator had a 2nd stage fine-PFB with minimum bin width of 10kHz. The two different methods have a different amount of leakage between fine channels, which can effect the band shape across a coarse channel. More leakage leads to the band shape being smoothed out in frequency.
 
-The `cotter` gains were source from Cotter's `_sb128ChannelSubbandValue2014FromMemo` in `subbandpassband.cpp`. These sometimes referred to as Levine Gains. Since these gains were computed at the base legacy correlator resolution of 10KHz, they will not work on resolutions that are not a multiple of 10kHz.
+The `cotter` gains were sourced from Cotter's `_sb128ChannelSubbandValue2014FromMemo` in `subbandpassband.cpp`. These are sometimes referred to as Levine Gains. Since these gains were computed at the base legacy correlator resolution of 10 kHz, they will not work on resolutions that are not a multiple of 10 kHz.
 
-The `jake` gains (credit to Jake Jones) are described in [this wiki article](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24972979/RRI+Receiver+PFB+Filter)
+The `jake` and `jake_oversampled` gains (credit to Jake Jones) are at 200 Hz resolution, and are described in [this wiki article](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24972979/RRI+Receiver+PFB+Filter)
 
-When applying pfb gains to an observation that is not at the same resolution as the gains, the gains need to be averaged to fit the data, and the exact details of this averaging depends on the correlator type. For more dtails, see the mwa wiki on [averaging fine channels](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24972939/MWA+Fine+Channel+Centre+Frequencies)
+When applying pfb gains to an observation that is not at the same resolution as the gains, the gains need to be averaged to fit the data, and the exact details of this averaging depends on the correlator type. For more details, see the MWA wiki on [averaging fine channels](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24972939/MWA+Fine+Channel+Centre+Frequencies)
 
 ### Channel Flagging
 
@@ -623,7 +452,7 @@ Oversampled observations (`OVERSAMP = 1` in the metafits, e.g. MWA Phase III) ha
 right to the coarse channel edges and should not have their edge channels flagged; Birli warns if
 `--flag-edge-width` or `--flag-edge-chans` is used on one.
 
-The fourier transform of each coarse channel signal results in a DC bin at the center of the
+The Fourier transform of each coarse channel signal results in a DC bin at the center of the
 coarse channel. For legacy correlator observations, where this is done at 10kHz, the
 DC bin is noticeable in waterfall plots, and should be ignored. The MWAX correlator
 does this at 200Hz, and so flagging the DC bin is not necessary.
@@ -634,35 +463,41 @@ Birli will only flag the DC bin for legacy correlator observations. You can over
 You can provide a set of fine channel indices within each coarse channel to flag using `--flag-fine-chans`,
 or a set of coarse channel indices to flag using `--flag-coarse-chans`.
 
-### Timestp Flagging
+### Timestep Flagging
 
 The first couple of seconds of data are often unusable due to the time it takes for changes to take
 effect. This is known as quack time, and is usually around 2 seconds. Birli will automatically flag
 these timesteps. You can optionally provide `--flag-init` to override the quack time, or `--flag-init-steps`
 to specify this in terms of the number of timesteps.
 
-Sometimes, last few seconds of data are unusable, and so `--flag-end` or `--flag-end-steps` are used.
+Sometimes, the last few seconds of data are unusable, and so `--flag-end` or `--flag-end-steps` are used.
+
+Individual timesteps can be flagged by mwalib timestep index with `--flag-times`.
 
 ### Antenna flagging
 
 Birli can flag antennas by mwalib antenna index using the `--flag-antennas` option.
 This is useful for removing antennas that are known to be faulty.
 
+Autocorrelations are not flagged unless you use `--flag-autos`.
+
 ### RFI Flagging
 
-By default, Birli will flag the data using the default MWA strategy in AOFlagger. You can use the
-`--no-rfi` option to disable this, or the `--aoflagger-strategy` option to proived your own strategy
-file.
+When built with the `aoflagger` feature (as the Docker image is), Birli will by default flag the
+data using the default MWA strategy in AOFlagger. You can use the `--no-rfi` option to disable this,
+or the `--aoflagger-strategy` option to provide your own strategy file.
+
+Without the `aoflagger` feature, Birli does no RFI flagging, and these two options don't exist.
 
 ### Geometric Delay Corrections (AKA Phase Tracking)
 
 Geometric correction involves adjusting visibility phases to correct for the differences in distance that light from the phase center has to travel to reach each tile.
 
-Legacy MWA correlator observations are not typically phase tracked, however MWAX observations can have phase tracking applied. The [`GEODEL`](https://wiki.mwatelescope.org/display/MP/MWAX+Metafits+Changes) card in the metafits describes what geometric delays have been applied.
+Legacy MWA correlator observations are not typically phase tracked, however MWAX observations can have phase tracking applied. The [`GEODEL`](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24969941/MWAX+Metafits+Changes) card in the metafits describes what geometric delays have been applied.
 
-By default, Birli will apply geometric corrections at the phase center if they have not already been applied. It determines the observations phase center from the [`RAPHASE` and `DECPHASE`](https://wiki.mwatelescope.org/display/MP/Metafits+files) cards in the metafits. If these are not available, the pointing center cards ([`RA` and `DEC`](https://wiki.mwatelescope.org/display/MP/Metafits+files)) from the metafits are used. You can use `--no-geometric-delay` to disable geometric corrections, as well as the `--phase-centre` and `--pointing-centre` options to override the phase center.
+By default, Birli will apply geometric corrections at the phase center if they have not already been applied. It determines the observation's phase center from the [`RAPHASE` and `DECPHASE`](https://wiki.mwatelescope.org/display/MP/Metafits+files) cards in the metafits. If these are not available, the pointing center cards ([`RA` and `DEC`](https://wiki.mwatelescope.org/display/MP/Metafits+files)) from the metafits are used. You can use `--no-geometric-delay` to disable geometric corrections, as well as the `--phase-centre` and `--pointing-centre` options to override the phase center.
 
-A baseline's geometric length is determined by the w component of it's UVW fourier-space vector, after applying precession and nutation to it's tiles' positions and the phase center to the J2000 epoch, accounting for stellar aberration. Complex visibilities are phase-shifted by an angle determined by the w-component, and the channel's frequency.
+A baseline's geometric length is determined by the w component of its UVW Fourier-space vector, after applying precession and nutation to its tiles' positions and the phase center to the J2000 epoch, accounting for stellar aberration. Complex visibilities are phase-shifted by an angle determined by the w-component, and the channel's frequency.
 
 ```rust
 let angle = -2.0 * PI * uvw.w * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
@@ -670,7 +505,7 @@ let angle = -2.0 * PI * uvw.w * freq_hz / SPEED_OF_LIGHT_IN_VACUUM_M_PER_S;
 
 ### Calibration
 
-Birli can apply direction independent calibration solutions using the `--apply-di-cal` flag. Solutions are applied before averaging. The number of channels in the un-averaged visibilities must be an integer multiple of the number of channels in the calibration solutions file. Unlike Cotter, Birli will handle calibration solutions where a `NaN` value is present by flagging any visibilities where a NaN is present.
+Birli can apply direction independent calibration solutions using the `--apply-di-cal` flag. Solutions are applied before averaging. The solutions file must cover every coarse channel in the metafits, with the same whole number of solution channels for each coarse channel; each solution channel is applied to the fine channels it spans. Unlike Cotter, Birli will handle calibration solutions where a `NaN` value is present by flagging any visibilities where a NaN is present.
 
 Use `--no-apply-amps` with `--apply-di-cal` to apply **phases only**: each Jones element is rewritten to unit amplitude (`z/|z|`) before apply, so visibility amplitudes are not scaled by the solution gains. Off-diagonal zeros stay zero; diagonal elements with zero amplitude become identity (`1+0j`).
 
@@ -680,17 +515,30 @@ Currently, only the MWA aocal format (.bin), historically generated by the `cali
 
 The `--emulate-cotter` flag ensures that outputs match Cotter as much as possible. You should only use this flag if you need to perform a direct comparison with Cotter.
 
-By default, Birli will use the MWA array position from MWALib in order to calculate UVWs and geometric corrections. This is more accurate than the one that Cotter uses, and is the main source of error when doing direct comparisons.
+With this flag, Birli:
 
-This flag is used as part of the tests in `src/main.rs` to validate that Birli's output matches that of Cotter to within an acceptable margin.
+- uses Cotter's MWA array position instead of the more accurate one from mwalib;
+- calculates UVWs, and so the geometric corrections, the way Cotter does (mean sidereal time, projected onto the aberrated phase centre). Without it, `w` differs from Cotter's by up to about 8 cm per km of baseline;
+- does not flag visibilities whose calibration solutions are NaN.
+
+Tile positions in the output are relative to the array centre either way; Cotter's files have them about 378 m too high.
+
+This flag is used as part of the tests in `src/cli.rs` to validate that Birli's output matches that of Cotter to within an acceptable margin. Those tests need the `aoflagger` feature.
 
 ### Averaging
 
 To average the data in time or frequency by a given whole number factor, you can provide the `--avg-time-factor`
 or `--avg-freq-factor` options. This can also be achieved with the `--avg-time-res` and
-`--avg-freq-res` options which take a duration \[seconds\] or ammount of bandwidth \[kHz\]
+`--avg-freq-res` options which take a duration \[seconds\] or amount of bandwidth \[kHz\]
 respectively. This second group of options will choose the closest whole number averaging factor
 based on the resolution of the input data.
+
+### Memory
+
+By default, Birli reads the whole selection into memory at once. To limit this, use
+`--time-chunk <STEPS>` to process that many timesteps at a time (a multiple of the time averaging
+factor), or `--max-memory <GIBIBYTES>` to have Birli choose the largest chunk that fits. The chunks
+are written to the same output files.
 
 ### Output
 
@@ -730,7 +578,7 @@ The following table shows how Birli options map onto Cotter options:
 | `--no-rfi`                          | `-norfi`                | Disable RFI detection.
 | `--aoflagger-strategy <PATH>`       | `-flag-strategy <file>` | Use the specified aoflagger strategy.
 | `--no-cable-delay`                  | `-nocablelength`        | Do not perform cable length corrections.
-| `--no-geom`                         | `-nogeom`               | Disable geometric corrections.
+| `--no-geometric-delay`              | `-nogeom`               | Disable geometric corrections.
 | `--phase-centre <RA> <DEC>`         | `-centre <ra> <dec>`    | Set alternative phase centre, e.g. -centre 00h00m00.0s 00d00m00.0s.
 | `--pointing-centre`                 | `-usepcentre`           | Centre on pointing centre.
 | `--avg-time-res <SECONDS>`          | `-timeres <s>`          | Average nr of sec of timesteps together before writing to measurement set.
@@ -738,21 +586,22 @@ The following table shows how Birli options map onto Cotter options:
 | `--apply-di-cal <PATH>`             | `-full-apply <file>`    | Apply a solution file before averaging.
 | `--no-apply-amps`                   |                         | With `--apply-di-cal`, apply phases only (unit amplitude).
 | `--no-digital-gains`                | `-nosbgains`            | Do not correct for the digital gains.
-| `--max-memory` (WIP)                | `-absmem <gb>`          | Use at most the given amount of memory, specified in gigabytes.
+| `--max-memory <GIBIBYTES>`          | `-absmem <gb>`          | Use at most the given amount of memory, specified in gigabytes.
 | `--flag-edge-width <kHz>`           | `-edgewidth <kHz>`      | Flag the given width of edge channels of each sub-band. Cotter's default is 80 kHz; Birli flags no edge channels unless asked, and oversampled observations shouldn't have their edges flagged.
 | `--flag-init <sec>`                 | `-initflag <sec>`       | Specify number of seconds to flag at beginning of observation (default: QUACK)
 | `--flag-end <sec>`                  | `-endflag <sec>`        | Specify number of seconds to flag extra at end of observation (default: 0s).
 | `--flag-dc`                         | `-flagdcchannels`       | Flag the centre channel of each sub-band (the default for legacy correlator observations only).
 | `--no-flag-dc`                      | `-noflagdcchannels`     | Do not flag the centre channel of each sub-band.
-| `--flag-antennas <ANTS>...` (WIP)   | `-flagantenna <lst>`    | Mark the comma-separated list of zero-indexed antennas as flagged antennas.
-| `--flag-coarse-chans <CHANS>` (WIP) | `-flagsubband <lst>`    | Flag the comma-separated list of zero-indexed sub-bands.
-| `--no-sel-autos` (WIP)              | `-noautos`              | Do not output auto-correlations.
+| `--flag-antennas <ANTS>...`         | `-flagantenna <lst>`    | Mark the comma-separated list of zero-indexed antennas as flagged antennas.
+| `--flag-coarse-chans <CHANS>...`    | `-flagsubband <lst>`    | Flag the comma-separated list of zero-indexed sub-bands.
+| `--no-sel-autos`                    | `-noautos`              | Do not output auto-correlations.
+| `--sel-chan-ranges <RANGES>`        | `-sbstart`, `-sbcount`  | Process only some of the sub-bands.
 | (not `--flag-autos`)                | `-noflagautos`          | Do not flag auto-correlations (default for uvfits file output).
 | (default)                           | `-nostats`              | Disable collecting statistics (default for uvfits file output).
-| (not `--no-sel-flagged-ants`, WIP)  | `-noantennapruning`     | Do not remove the flagged antennas.
+| (not `--no-sel-flagged-ants`)       | `-noantennapruning`     | Do not remove the flagged antennas.
 | (default)                           | `-allowmissing`         | Do not abort when not all GPU box files are available (default is to abort).
 
-Birli performs all the same default preprocessing steps as Cotter when no flags are provided. The exceptions are that we have not yet implemented flagging of auto-correlations, pruning of flagged antennas. This means that `birli <in/out args>` is equivalent to:
+Birli (built with the `aoflagger` feature) performs the same default preprocessing steps as Cotter when no flags are provided, with these exceptions: it does not flag auto-correlations (use `--flag-autos`), does not remove flagged antennas (use `--no-sel-flagged-ants`), and does not flag coarse channel edges (use `--flag-edge-width 80`). This means that `birli <in/out args>` is equivalent to:
 
 ```bash
  cotter \
@@ -760,13 +609,13 @@ Birli performs all the same default preprocessing steps as Cotter when no flags 
   -noantennapruning \
   -noflagautos \
   -nostats \
-  -flag-strategy <mwa default aoflagger strategy>
+  -edgewidth 0 \
+  -flag-strategy <mwa default aoflagger strategy> \
   <in/out args>
 ```
 
-There is no intention of replicating the following options Birli at this point, so please open an issue if these are important to you:
+There is no intention of replicating the following options in Birli at this point, so please open an issue if these are important to you:
 
-- Coarse channel selection (`-sbcount`, `-sbstart`): This can be done by simply changing which coarse channel files are given in the CLI arguments)
 - Dysco compression (`-use-dysco`, `-dysco-config`)
 - Manual metadata specification (`-a`, `-h`, `-i`): This information is readily available from metafits.
 - `-offline-gpubox-format`
@@ -774,19 +623,19 @@ There is no intention of replicating the following options Birli at this point, 
 - `-noflagmissings`: If an HDU is missing, it should always be flagged.
 - `-apply`: only `-full-apply` is supported.
 - `-noalign`: gpuboxes are always aligned.
-- CPU limit (`-j`): Birli uses crossbeam for concurrency which intelligency uses the compute resources available. Strict resource limits can be achieved with cgroups.
+- CPU limit (`-j`): Birli uses rayon for concurrency, which uses all the cores available. The number of threads can be limited with the `RAYON_NUM_THREADS` environment variable, and strict resource limits can be achieved with cgroups.
 - Memory percentage limit (`-mem`): Only `-absmem` is supported. Determining memory limits on HPC systems is unreliable, so we recommend manually specifying a memory limit instead.
 - `-sbpassband <file>`
 - `-flagfiles <name>` apply existing flags
 
 ### Example: RFI Flagging, corrections, averaging, output
 
-In this example, we use the aoflagger subcommand to:
+In this example, we use a Birli built with the `aoflagger` feature to:
 
 - Perform RFI flagging using the MWA-default flagging strategy
 - Perform geometric and cable length corrections
-- average the data to 4 seconds, 160khz
-- Output visibilities to .uvfits (`-u`)
+- Average the data to 4 seconds, 160 kHz
+- Output flags to .mwaf (`-f`) and visibilities to .uvfits (`-u`)
 
 ```bash
 birli \
@@ -797,8 +646,7 @@ birli \
   tests/data/1254670392_avg/1254670392_*gpubox*.fits
 ```
 
-The equivalent Cotter
-commands would be:
+The equivalent Cotter command would be:
 
 ```bash
 # output uvfits
@@ -809,6 +657,7 @@ cotter \
   -noantennapruning \
   -noflagautos \
   -nostats \
+  -edgewidth 0 \
   -timeres 4 \
   -freqres 160 \
   -flag-strategy /usr/local/share/aoflagger/strategies/mwa-default.lua \
@@ -820,7 +669,7 @@ cotter \
 Pull requests are welcome! Please do your best to ensure that the high standards
 of test coverage are maintained.
 
-Before each commit, use `cargo make ci` to ensure your code is formatted correctly.
+Before each commit, use `cargo make pre_commit` (needs [cargo-make](https://github.com/sagiegurari/cargo-make)) to format the code and run the checks and tests that CI runs. The pull request checks also run clippy with warnings as errors, and Codecov reports any changed line that the tests don't cover.
 
 ## Acknowledgement
 
@@ -829,7 +678,7 @@ acknowledge the Wajarri Yamatji people as the traditional owners of the Observat
 
 ## Coverage
 
-<a href="https://codecov.io/gh/MWATelescope/Birli"><img src="https://codecov.io/gh/MWATelescope/Birli/branch/main/graphs/sunburst.svg" height="200px" alt="Birli logo"></a>
+<a href="https://codecov.io/gh/MWATelescope/Birli"><img src="https://codecov.io/gh/MWATelescope/Birli/branch/main/graphs/sunburst.svg" height="200px" alt="Codecov coverage sunburst"></a>
 
 This repo is approved by...
 

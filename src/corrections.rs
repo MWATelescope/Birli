@@ -604,7 +604,7 @@ impl ScrunchType {
 /// 3 (o->o)|     0*    |     1     |     2     |     3     |     4     |
 /// 5 (o->o)|           0       |         1         |         2         |
 ///
-/// For more details see: <https://wiki.mwatelescope.org/display/MP/MWA+Fine+Channel+Centre+Frequencies>
+/// For more details see: <https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24972939/MWA+Fine+Channel+Centre+Frequencies>
 pub fn scrunch_gains(
     ultrafine_gains: &[f64],
     fscrunch: usize,

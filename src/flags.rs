@@ -455,13 +455,13 @@ pub fn flag_jones_array(
     flag_array
 }
 
-/// Write flags to disk, given an observation's [`marlu::mwalib::CorrelatorContext`], a vector of
-/// [`CxxFlagMask`]s for each baseline in the observation, a filename template and a vector of
-/// gpubox IDs.
+/// Write flags to disk as `.mwaf` files, one per coarse channel, given an observation's
+/// [`marlu::mwalib::CorrelatorContext`], a filename template, the selection the flags are for and
+/// the flag array (`[timestep][channel][baseline]`).
 ///
-/// The filename template should contain two or 3 percentage (`%`) characters which will be replaced
-/// by the gpubox id or channel number (depending on correlator type) provided in `gpubox_ids`. See
-/// [`crate::io::mwaf::FlagFileSet`] for more details.
+/// The filename template should contain two or three percentage (`%`) characters, which are
+/// replaced by the gpubox number (legacy correlator) or receiver channel number (MWAX correlator)
+/// of each selected coarse channel. See [`crate::io::mwaf::FlagFileSet`] for more details.
 ///
 /// # Examples
 ///

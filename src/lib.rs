@@ -85,9 +85,13 @@
 //!
 //! # Details
 //!
-//! Birli reads visibilities with [`MWALib`] and uses CXX to bind to the [`AOFlagger`] C++ library.
-//! For more details its interface, check out the [`aoflagger::AOFlagger`]
-//! documentation
+//! Birli reads visibilities with [`MWALib`]. With the `aoflagger` cargo feature, it uses CXX to
+//! bind to the [`AOFlagger`] C++ library for RFI flagging. For more details of its interface, check
+//! out the [`aoflagger::AOFlagger`] documentation.
+//!
+//! The `cli` feature (on by default) provides `BirliContext`, which is what the `birli` binary
+//! runs. The command line options are described in the
+//! [README](https://github.com/MWATelescope/Birli#readme).
 //!
 //! [`MWALib`]: https://github.com/MWATelescope/mwalib
 //! [`AOFlagger`]: https://gitlab.com/aroffringa/aoflagger
