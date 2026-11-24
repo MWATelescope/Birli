@@ -27,11 +27,6 @@ use mwalib::{
 };
 use prettytable::{format as prettyformat, row, table};
 
-#[cfg(feature = "aoflagger")]
-use crate::metrics::AOFlagMetricsBuilder;
-use crate::metrics::{
-    AutoMetricsBuilder, CrossMetricsBuilder, EAVILSBuilder, MetricsContext, SSINSBuilder,
-};
 use crate::{
     calibration::{calsols_phase_only, flag_antennas_with_nan_calsols},
     error::{
@@ -39,21 +34,21 @@ use crate::{
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
     },
     flags::FlagContext,
-    io::{aocal::AOCalSols, error::IOError, read_mwalib, IOContext},
+    io::{aocal::AOCalSols, read_mwalib, IOContext},
     marlu::{
         built_info::PKG_VERSION as MARLU_PKG_VERSION,
         constants::{
             COTTER_MWA_HEIGHT_METRES, COTTER_MWA_LATITUDE_RADIANS, COTTER_MWA_LONGITUDE_RADIANS,
         },
-        fitsio::FitsFile,
         hifitime::{self, Epoch},
         io::{error::BadArrayShape, ms::MeasurementSetWriter, uvfits::UvfitsWriter, VisWrite},
         mwalib,
-        ndarray::{s, ArrayView3},
+        ndarray::s,
         precession::{precess_time, PrecessionInfo},
         History, Jones, LatLngHeight, MwaObsContext, ObsContext, PolConvention, RADec, VisContext,
         ENH,
     },
+    metrics::MetricsWriter,
     passband_gains::{OSPFB_JAKE_2025_200HZ, PFB_COTTER_2014_10KHZ, PFB_JAKE_2022_200HZ},
     with_increment_duration, Axis, Complex, FlagFileSet, PreprocessContext, VisSelection,
 };
@@ -87,121 +82,6 @@ pub struct BirliContext<'a> {
     /// The longest baseline that is included in the cross-correlation delay
     /// metrics [`crate::metrics::CrossMetrics`] \[metres\]
     pub cross_metrics_cutoff_m: f32,
-}
-
-/// Computes the quality-assurance metrics (see [`crate::metrics`]) of the
-/// visibilities that Birli preprocesses, one chunk of timesteps at a time, and
-/// writes them all to one FITS file at the end.
-///
-/// With the `aoflagger` feature, this includes the flag occupancy, and the
-/// SSINS z-scores are flagged with `AOFlagger`'s minimal strategy.
-struct MetricsWriter {
-    path: PathBuf,
-    fptr: FitsFile,
-    auto: AutoMetricsBuilder,
-    /// SSINS is the difference between timesteps, so it needs two of them.
-    ssins: Option<SSINSBuilder>,
-    eavils: EAVILSBuilder,
-    #[cfg(feature = "aoflagger")]
-    aoflag: AOFlagMetricsBuilder,
-    cross: CrossMetricsBuilder,
-}
-
-impl MetricsWriter {
-    /// Create a new FITS file at `path`, replacing it if it exists, for the
-    /// metrics of the selection `vis_sel` of the observation `corr_ctx`.
-    ///
-    /// Returns `None`, and does not create the file, if all the timesteps or
-    /// all the channels of the selection are flagged.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file can't be replaced or created.
-    fn new(
-        path: &Path,
-        corr_ctx: &CorrelatorContext,
-        vis_sel: &VisSelection,
-        flag_ctx: &FlagContext,
-        cross_metrics_cutoff_m: f32,
-    ) -> Result<Option<Self>, IOError> {
-        let timestep_range = &vis_sel.timestep_range;
-        let timestep_flags = &flag_ctx.timestep_flags[timestep_range.clone()];
-        let chan_flags = &flag_ctx.get_raw_chan_flags(&vis_sel.coarse_chan_range);
-        for (what, flags) in [("timesteps", timestep_flags), ("channels", chan_flags)] {
-            if flags.iter().all(|&flag| flag) {
-                warn!(
-                    "Not writing metrics to {}: all {what} are flagged",
-                    path.display()
-                );
-                return Ok(None);
-            }
-        }
-        if timestep_range.len() < 2 {
-            warn!(
-                "Not writing SSINS metrics to {}: timesteps {timestep_range:?} are fewer than 2",
-                path.display(),
-            );
-        }
-
-        if path.exists() {
-            std::fs::remove_file(path)?;
-        }
-        let fptr = FitsFile::create(path).open()?;
-
-        let metadata = &MetricsContext::from_mwalib(corr_ctx, vis_sel);
-        Ok(Some(Self {
-            path: path.to_path_buf(),
-            fptr,
-            auto: AutoMetricsBuilder::new(metadata, timestep_flags, chan_flags),
-            ssins: (timestep_range.len() >= 2)
-                .then(|| SSINSBuilder::new(metadata, timestep_flags, chan_flags)),
-            eavils: EAVILSBuilder::new(metadata, timestep_flags, chan_flags),
-            #[cfg(feature = "aoflagger")]
-            aoflag: AOFlagMetricsBuilder::new(metadata, timestep_flags, chan_flags),
-            cross: CrossMetricsBuilder::new(
-                metadata,
-                timestep_flags,
-                chan_flags,
-                cross_metrics_cutoff_m,
-            ),
-        }))
-    }
-
-    /// Add the preprocessed visibilities and flags
-    /// `[timestep][channel][baseline]` of the next chunk of timesteps.
-    fn push(&mut self, jones_array: ArrayView3<Jones<f32>>, flag_array: ArrayView3<bool>) {
-        self.auto.push(jones_array);
-        if let Some(ssins) = self.ssins.as_mut() {
-            ssins.push(jones_array, flag_array);
-        }
-        self.eavils.push(jones_array);
-        #[cfg(feature = "aoflagger")]
-        self.aoflag.push(flag_array);
-        self.cross.push(jones_array);
-    }
-
-    /// Compute the metrics of all the chunks, and write them to the file.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file can't be written.
-    fn finish(self) -> Result<(), IOError> {
-        let mut fptr = self.fptr;
-        self.auto.finish().save_to_fits(&mut fptr)?;
-        #[cfg(feature = "aoflagger")]
-        self.aoflag.finish().save_to_fits(&mut fptr)?;
-        self.cross.finish().save_to_fits(&mut fptr)?;
-        if let Some(ssins) = self.ssins {
-            #[cfg_attr(not(feature = "aoflagger"), allow(unused_mut))]
-            let mut ssins = ssins.finish();
-            #[cfg(feature = "aoflagger")]
-            ssins.flag(None);
-            ssins.save_to_fits(&mut fptr)?;
-        }
-        self.eavils.finish().save_to_fits(&mut fptr)?;
-        info!("Saved metrics to {}", self.path.display());
-        Ok(())
-    }
 }
 
 /// Add `suffix` to the end of the stem of the file name in `path`, before its

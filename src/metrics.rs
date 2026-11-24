@@ -21,11 +21,13 @@
 //!   computed for visibilities from any source.
 //! - a builder (like [`AutoMetricsBuilder`]) takes the visibilities in chunks
 //!   of timesteps, for observations that don't fit in memory. The metrics
-//!   are the same however the timesteps are chunked. This is what `birli
-//!   --metrics-out` uses.
+//!   are the same however the timesteps are chunked.
 //!
-//! and a `save_to_fits` method, which appends the metric's HDUs to an open
-//! FITS file. The layout of these HDUs is described in
+//! [`MetricsWriter`] drives all of the builders, and writes every metric to
+//! one file. This is what `birli --metrics-out` uses.
+//!
+//! Every metric also has a `save_to_fits` method, which appends the metric's
+//! HDUs to an open FITS file. The layout of these HDUs is described in
 //! [`doc/metrics.md`](https://github.com/MWATelescope/Birli/blob/main/doc/metrics.md).
 //!
 //! # Conventions
@@ -94,6 +96,9 @@
 //! ssins.save_to_fits(&mut fptr).unwrap();
 //! eavils.save_to_fits(&mut fptr).unwrap();
 //! ```
+
+mod writer;
+pub use writer::MetricsWriter;
 
 use std::collections::BTreeSet;
 
