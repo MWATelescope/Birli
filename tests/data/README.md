@@ -6,7 +6,7 @@ The test data files in this directory are generated with `generate_test_data.py`
 
 ## 1297526432 - MWAX HydA files
 
-This is a synthetic observation based off the MWAX [HydA Gold Observation](https://wiki.mwatelescope.org/display/MP/HydA+Gold+Observation), limited to two coarse channels, two batches, two scans per batch, two antennas and two fine channels per coarse to allow for the smallest possible set of files which could be representative of an mwax observation for testing purposes:
+This is a synthetic observation based off the MWAX [HydA Gold Observation](https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24969602/HydA+Gold+Observation), limited to two coarse channels, two batches, two scans per batch, two antennas and two fine channels per coarse to allow for the smallest possible set of files which could be representative of an mwax observation for testing purposes:
 
 - Coarse channels:
   - `(117) 149.760 Mhz`

@@ -9,7 +9,7 @@
 - [ ] update `package.version` in `Cargo.toml`
 - [ ] `cargo make pre_commit`
 - [ ] commit (include Cargo.toml)
-- [ ] you're absolute sure everything has been merged into main
+- [ ] you're absolutely sure everything has been merged into main
 - [ ] `git tag -a $tag -m $tag`
 - [ ] `git push`
 - [ ] `git push --tags`

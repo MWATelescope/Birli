@@ -258,7 +258,7 @@ mod tests {
         let result_center_freq_2: f64 =
             get_required_fits_key!(&mut uvfits_fptr_2, &uvfits_2_hdu_0, "CRVAL4").unwrap();
 
-        // see: https://wiki.mwatelescope.org/display/MP/MWA+Fine+Channel+Centre+Frequencies
+        // see: https://mwatelescope.atlassian.net/wiki/spaces/MP/pages/24972939/MWA+Fine+Channel+Centre+Frequencies
         let offset_40khz = 15_000.;
         let expected_center_freq_1 = cc1.chan_centre_hz as f64 + offset_40khz;
         let expected_center_freq_2 =
