@@ -215,16 +215,16 @@ architecture than Docker, you may need to `cargo clean` each time you switch bet
 ```bash
 # - load the singularity module
 module load singularity
-# - cd into your preferred sif file location, e.g. /pawsey/mwa/singularity/birli
+# - cd into your preferred sif file location
 # - create a .sif file from the latest mwatelescope/birli docker image
 singularity pull --dir . docker://mwatelescope/birli:latest
 # - run birli within the singularity image
-singularity exec /pawsey/mwa/singularity/birli/birli_latest.sif birli ${YOUR_BIRLI_ARGS}
+singularity exec birli_latest.sif birli ${YOUR_BIRLI_ARGS}
 ```
 
 The `birli` binary in the image is `/opt/cargo/bin/birli`, which is on the `PATH`.
 
-See this gist for an example of [a Garrawarla SLURM job using Birli](https://gist.github.com/d3v-null/9ce233114ebb16dc18072303845257e5)
+See this gist for an example of [using Birli on Setonix](https://gist.github.com/d3v-null/4f586fe762be9a83cb1bda4369bbbbee).
 
 ### Singularity on HPC (more logging)
 
@@ -236,7 +236,7 @@ salloc --partition workq --time 1:00:00 --nodes 1 -c 38 --mem=350G
 # - load the singularity module
 module load singularity
 # - run birli within the singularity image, with lots of logs
-RUST_LOG=trace singularity exec /pawsey/mwa/singularity/birli/birli_latest.sif birli ${YOUR_BIRLI_ARGS}
+RUST_LOG=trace singularity exec birli_latest.sif birli ${YOUR_BIRLI_ARGS}
 ```
 
 For a debug build to run under `gdb`, open a shell in the image as described under
