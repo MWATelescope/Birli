@@ -489,6 +489,12 @@ or the `--aoflagger-strategy` option to provide your own strategy file.
 
 Without the `aoflagger` feature, Birli does no RFI flagging, and these two options don't exist.
 
+### Crosstalk QA
+
+Some baselines carry a faint fixed-delay line just beyond the foreground horizon that
+AOFlagger does not catch. [doc/crosstalk.md](doc/crosstalk.md) describes the effect and the
+prototype detector in `tools/crosstalk-qa`, which runs on Birli's output.
+
 ### Geometric Delay Corrections (AKA Phase Tracking)
 
 Geometric correction involves adjusting visibility phases to correct for the differences in distance that light from the phase center has to travel to reach each tile.
