@@ -87,6 +87,57 @@ pub trait ReadableVis: Sync + Send {
     ) -> Result<(), IOError>;
 }
 
+/// Does the correlator context have no data for this timestep and coarse
+/// channel (both indices into the context's own lists)? This happens when a
+/// gpubox file is missing, starts late or ends early.
+pub fn is_hdu_missing(
+    corr_ctx: &CorrelatorContext,
+    timestep_idx: usize,
+    coarse_chan_idx: usize,
+) -> bool {
+    let unix_time_ms = corr_ctx.timesteps[timestep_idx].unix_time_ms;
+    let gpubox_number = corr_ctx.coarse_chans[coarse_chan_idx].gpubox_number;
+    corr_ctx
+        .gpubox_time_map
+        .get(&unix_time_ms)
+        .is_none_or(|gpuboxes| !gpuboxes.contains_key(&gpubox_number))
+}
+
+/// Give zero weight to the visibilities [`read_mwalib`] could not read
+/// because the data is missing (see [`is_hdu_missing`]). Returns how many
+/// (timestep, coarse channel) pairs were missing.
+///
+/// [`read_mwalib`] flags these visibilities and leaves them as zeros. A flag
+/// alone says "this is bad data of the usual weight"; zero weight says there
+/// is no data, so that when a writer averages flagged visibilities together
+/// the zeros are left out (issue #162).
+///
+/// `weight_array` is [timestep][channel][baseline], for the timesteps and
+/// coarse channels of `vis_sel`.
+pub fn zero_weight_missing_hdus(
+    vis_sel: &VisSelection,
+    corr_ctx: &CorrelatorContext,
+    mut weight_array: ArrayViewMut3<f32>,
+) -> usize {
+    let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+    let mut num_missing = 0;
+    for (timestep_idx, mut weight_array) in izip!(
+        vis_sel.timestep_range.clone(),
+        weight_array.outer_iter_mut()
+    ) {
+        for (coarse_chan_idx, mut weight_array) in izip!(
+            vis_sel.coarse_chan_range.clone(),
+            weight_array.axis_chunks_iter_mut(Axis(0), fine_chans_per_coarse)
+        ) {
+            if is_hdu_missing(corr_ctx, timestep_idx, coarse_chan_idx) {
+                weight_array.fill(0.);
+                num_missing += 1;
+            }
+        }
+    }
+    num_missing
+}
+
 /// Read the visibilities for this selection into the jones array using mwalib,
 /// flag visiblities if they are not provided.
 ///
@@ -597,7 +648,53 @@ mod tests {
 
     use crate::{compare_jones, test_common::get_mwax_context, VisSelection};
 
-    use super::read_mwalib;
+    use super::{is_hdu_missing, read_mwalib, zero_weight_missing_hdus};
+    use crate::{test_common::get_mwa_ord_dodgy_context, Array3};
+
+    /// Data that is missing from the raw files gets zero weight (issue #162).
+    #[test]
+    fn test_zero_weight_missing_hdus() {
+        let corr_ctx = get_mwa_ord_dodgy_context();
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        // every timestep and coarse channel the files cover
+        let vis_sel = VisSelection {
+            timestep_range: 0..corr_ctx.num_timesteps,
+            coarse_chan_range: 0..corr_ctx.num_coarse_chans,
+            baseline_idxs: vec![0, 1],
+        };
+        let shape = vis_sel.get_shape(fine_chans_per_coarse);
+
+        // what read_mwalib flags as missing
+        let mut jones_array = Array3::from_elem(shape, Jones::<f32>::default());
+        let mut flag_array = Array3::from_elem(shape, false);
+        read_mwalib(
+            &vis_sel,
+            &corr_ctx,
+            jones_array.view_mut(),
+            flag_array.view_mut(),
+            false,
+        )
+        .unwrap();
+        assert!(flag_array.iter().any(|&flag| flag));
+        assert!(flag_array.iter().any(|&flag| !flag));
+
+        let mut weight_array = Array3::from_elem(shape, 8_f32);
+        let num_missing = zero_weight_missing_hdus(&vis_sel, &corr_ctx, weight_array.view_mut());
+
+        // exactly the missing visibilities have zero weight
+        for (&weight, &flag) in weight_array.iter().zip(flag_array.iter()) {
+            assert_abs_diff_eq!(weight, if flag { 0. } else { 8. });
+        }
+        let num_flagged_hdus = flag_array.iter().filter(|&&flag| flag).count()
+            / (fine_chans_per_coarse * vis_sel.baseline_idxs.len());
+        assert!(num_missing > 0);
+        assert_eq!(num_missing, num_flagged_hdus);
+        let num_missing_by_idx = (0..corr_ctx.num_timesteps)
+            .flat_map(|ts| (0..corr_ctx.num_coarse_chans).map(move |cc| (ts, cc)))
+            .filter(|&(ts, cc)| is_hdu_missing(&corr_ctx, ts, cc))
+            .count();
+        assert_eq!(num_missing, num_missing_by_idx);
+    }
 
     // test read_mwalib with bad vis_sel.baseline_idxs
     #[test]

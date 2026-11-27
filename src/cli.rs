@@ -34,7 +34,7 @@ use crate::{
         CLIError::{InvalidCommandLineArgument, InvalidRangeSpecifier},
     },
     flags::FlagContext,
-    io::{aocal::AOCalSols, read_mwalib, IOContext},
+    io::{aocal::AOCalSols, read_mwalib, zero_weight_missing_hdus, IOContext},
     marlu::{
         built_info::PKG_VERSION as MARLU_PKG_VERSION,
         constants::{
@@ -1869,6 +1869,8 @@ impl<'a> BirliContext<'a> {
 
             // populate weights
             weight_array.fill(vis_ctx.weight_factor() as f32);
+            // missing data is flagged, and has no weight at all
+            zero_weight_missing_hdus(&chunk_vis_sel, corr_ctx, weight_array.view_mut());
 
             prep_ctx.preprocess(
                 corr_ctx,

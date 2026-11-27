@@ -1,5 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Unreleased
+
+- 🐛 bug fixes:
+  - visibilities that are missing from the raw files (a gpubox file that starts late or ends early) now have zero weight as well as being flagged. With the matching Marlu change (MWATelescope/Marlu#64), a flagged output sample averaged from a missing timestep and a present one keeps the amplitude of the present one instead of being halved. For #162
+
 # Version 0.22.0 (2026-11-17)
 
 - ✨ new feature:
