@@ -643,6 +643,14 @@ to specify this in terms of the number of timesteps.
 
 Sometimes, last few seconds of data are unusable, and so `--flag-end` or `--flag-end-steps` are used.
 
+### Missing data
+
+A gpubox file can be missing, or start late or end early, so that some timesteps of a coarse channel
+have no data. Birli reads the missing visibilities as zeros and flags them. It also gives them **zero
+weight**, because a flag alone says only "this data is bad", where zero weight says "there is no data".
+A visibility with zero weight is left out when flagged visibilities are averaged together, so that the
+zeros don't pull down the amplitude of the real data they are averaged with (see [weights](#weights-and-flags)).
+
 ### Antenna flagging
 
 Birli can flag antennas by mwalib antenna index using the `--flag-antennas` option.
@@ -691,6 +699,40 @@ or `--avg-freq-factor` options. This can also be achieved with the `--avg-time-r
 `--avg-freq-res` options which take a duration \[seconds\] or ammount of bandwidth \[kHz\]
 respectively. This second group of options will choose the closest whole number averaging factor
 based on the resolution of the input data.
+
+### Weights and flags
+
+Birli gives every visibility a weight, which starts as the weight factor Cotter used (the frequency
+resolution relative to 10kHz times the time resolution relative to 1s). The sign of the weight is the
+flag, and the output files use these rules, which come from [Marlu](https://github.com/MWATelescope/Marlu):
+
+- A positive weight is an unflagged visibility.
+- A negative weight is a flagged visibility, with the magnitude of the weight it would have had if it
+  were not flagged. Flagging by tile, by channel, by timestep or by AOFlagger doesn't change the
+  magnitude.
+- A weight of zero (either sign) is no data at all, and is flagged. This is what
+  [missing data](#missing-data) gets.
+
+When averaging, visibilities are averaged by their weights, and the weights add up:
+
+- If any of the visibilities averaged into a sample is unflagged, the result is the average of the
+  unflagged ones, which is unflagged, with the sum of their weights. Flagged visibilities, and those
+  with no data, are ignored.
+- Otherwise the result is flagged. It is the average of the flagged visibilities by their weights, with
+  minus the sum of those weights, and visibilities with no data are ignored. (If none has any weight, it
+  is the plain average.)
+
+The files record the flag as follows. The same weights and flags are recorded with or without averaging.
+
+- uvfits: the weight is written as it is, so a negative weight is flagged. A flagged visibility with no
+  weight is written as `-0`.
+- measurement set: `WEIGHT_SPECTRUM` (and `WEIGHT`, its sum over the channels) is the magnitude of the
+  weight, and the flag is in the `FLAG` column. A flagged average has the weights of the flagged data
+  that went into it, where Cotter wrote zero.
+
+Birli versions that use a Marlu release without [MWATelescope/Marlu#64](https://github.com/MWATelescope/Marlu/pull/64) averaged a sample made only of flagged
+visibilities as the plain average of them, so a sample that averaged missing data with flagged data
+came out at half the amplitude of the flagged data ([#162](https://github.com/MWATelescope/Birli/issues/162)).
 
 ### Output
 

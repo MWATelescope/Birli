@@ -771,3 +771,54 @@ fn parse_csv_headers(headers: &StringRecord, keys: &[&str]) -> BTreeMap<String, 
 
     indices
 }
+
+/// Read every weight written to a uvfits file by Birli (one per group,
+/// channel and polarisation, in file order). The sign is the flag.
+pub fn read_uvfits_weights(uvfits_path: &Path) -> Vec<f32> {
+    let mut fptr = fits_open!(&uvfits_path).unwrap();
+    let vis_hdu = fits_open_hdu!(&mut fptr, 0).unwrap();
+    let num_groups: usize = get_required_fits_key!(&mut fptr, &vis_hdu, "GCOUNT").unwrap();
+    let floats_per_pol: usize = get_required_fits_key!(&mut fptr, &vis_hdu, "NAXIS2").unwrap();
+    let num_pols: usize = get_required_fits_key!(&mut fptr, &vis_hdu, "NAXIS3").unwrap();
+    let num_chans: usize = get_required_fits_key!(&mut fptr, &vis_hdu, "NAXIS4").unwrap();
+    assert_eq!(floats_per_pol, 3);
+
+    let mut weights = vec![];
+    let mut data = vec![0_f32; num_chans * num_pols * floats_per_pol];
+    for group in 0..num_groups {
+        let mut status = 0;
+        let mut any_null = 0;
+        unsafe {
+            fitsio_sys::ffgpve(
+                fptr.as_raw(),
+                1 + group as i64,
+                1,
+                data.len() as i64,
+                0.0,
+                data.as_mut_ptr(),
+                &mut any_null,
+                &mut status,
+            );
+        }
+        fits_check_status(status).unwrap();
+        weights.extend(data.chunks_exact(floats_per_pol).map(|vis| vis[2]));
+    }
+    weights
+}
+
+/// Read every `WEIGHT_SPECTRUM` and `FLAG` value written to a measurement set
+/// by Birli (one per row, channel and polarisation, in table order).
+pub fn read_ms_weights_and_flags(ms_path: &Path) -> (Vec<f32>, Vec<bool>) {
+    let mut main_table = Table::open(ms_path, TableOpenMode::Read).unwrap();
+    let mut weights = vec![];
+    let mut flags = vec![];
+    for row_idx in 0..main_table.n_rows() {
+        weights.extend(
+            main_table
+                .get_cell_as_vec::<f32>("WEIGHT_SPECTRUM", row_idx)
+                .unwrap(),
+        );
+        flags.extend(main_table.get_cell_as_vec::<bool>("FLAG", row_idx).unwrap());
+    }
+    (weights, flags)
+}

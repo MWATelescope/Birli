@@ -3372,6 +3372,140 @@ mod channel_range_tests {
 
 /// These are basically integration tests, but if I put them in a separate
 /// module, then I don't get the coverage. :(
+/// Data that is missing from the raw files (a gpubox file that starts late or
+/// ends early) is flagged and has zero weight in the output, so that when it
+/// is averaged with flagged data, the writers can leave it out (issue #162).
+/// Everything else keeps its weight. This is the output with no averaging;
+/// averaging is done by Marlu, which has the tests of that.
+#[cfg(test)]
+mod tests_missing_data {
+    use crate::{
+        io::is_hdu_missing,
+        test_common::{get_mwa_ord_dodgy_context, read_ms_weights_and_flags, read_uvfits_weights},
+        BirliContext, VisSelection,
+    };
+    use itertools::{iproduct, izip};
+    use tempfile::tempdir;
+
+    const DODGY_PATHS: [&str; 4] = [
+        "tests/data/1196175296_mwa_ord/adjusted_-1/1196175296_20171201145440_gpubox01_00.fits",
+        "tests/data/1196175296_mwa_ord/limited_1/1196175296_20171201145540_gpubox01_01.fits",
+        "tests/data/1196175296_mwa_ord/1196175296_20171201145440_gpubox02_00.fits",
+        "tests/data/1196175296_mwa_ord/1196175296_20171201145540_gpubox02_01.fits",
+    ];
+
+    /// How many of the (timestep, coarse channel) pairs Birli selects are
+    /// missing, and how many pairs there are.
+    fn count_missing_hdus() -> (usize, usize) {
+        let corr_ctx = get_mwa_ord_dodgy_context();
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let num_pairs = vis_sel.timestep_range.len() * vis_sel.coarse_chan_range.len();
+        let num_missing = iproduct!(vis_sel.timestep_range, vis_sel.coarse_chan_range)
+            .filter(|&(ts, cc)| is_hdu_missing(&corr_ctx, ts, cc))
+            .count();
+        (num_missing, num_pairs)
+    }
+
+    /// Run Birli on the dodgy observation, with nothing flagged except what
+    /// is missing, and no averaging.
+    fn run_birli(output_flag: &str, output_path: &str) {
+        #[rustfmt::skip]
+        let mut args = vec![
+            "birli",
+            "-m", "tests/data/1196175296_mwa_ord/1196175296.metafits",
+            output_flag, output_path,
+            "--no-digital-gains",
+            "--no-draw-progress",
+            "--pfb-gains", "none",
+            "--no-cable-delay",
+            "--no-geometric-delay",
+            "--no-flag-dc",
+            "--flag-edge-width", "0",
+            "--flag-init", "0",
+        ];
+        #[cfg(feature = "aoflagger")]
+        args.push("--no-rfi");
+        args.extend(DODGY_PATHS);
+        BirliContext::from_args(&args).unwrap().run().unwrap();
+    }
+
+    /// The weights (in the order of the file) of an output that has the same
+    /// number of visibilities in each (timestep, coarse channel) pair.
+    /// Missing data is -0.0: flagged, with no weight. Other flagged data is
+    /// negative and keeps the weight it would have. All the rest have the same positive weight.
+    #[test]
+    fn test_missing_data_has_zero_weight_uvfits() {
+        let tmp_dir = tempdir().unwrap();
+        let uvfits_path = tmp_dir.path().join("birli_dodgy.uvfits");
+        run_birli("-u", uvfits_path.to_str().unwrap());
+        let weights = read_uvfits_weights(&uvfits_path);
+
+        let (num_missing, num_pairs) = count_missing_hdus();
+        assert!(num_missing > 0 && num_missing < num_pairs);
+        assert_eq!(weights.len() % num_pairs, 0);
+        let per_pair = weights.len() / num_pairs;
+
+        let minus_zero = (-0_f32).to_bits();
+        let num_zero = weights.iter().filter(|w| w.to_bits() == minus_zero).count();
+        assert_eq!(num_zero, num_missing * per_pair);
+        // no zero that isn't missing data, or isn't flagged
+        assert_eq!(weights.iter().filter(|w| **w == 0.).count(), num_zero);
+
+        let weight_factor = weights.iter().map(|w| w.abs()).fold(0., f32::max);
+        assert!(weight_factor > 0.);
+        let (mut num_flagged, mut num_unflagged) = (0, 0);
+        for &weight in weights.iter().filter(|w| **w != 0.) {
+            assert_eq!(weight.abs().to_bits(), weight_factor.to_bits());
+            if weight < 0. {
+                num_flagged += 1;
+            } else {
+                num_unflagged += 1;
+            }
+        }
+        assert!(num_unflagged > 0);
+        // other flagged data keeps its weight
+        assert!(num_flagged > 0);
+    }
+
+    /// As above, for a measurement set, where the weight is never negative
+    /// and the flag column has the flag.
+    #[test]
+    fn test_missing_data_has_zero_weight_ms() {
+        let tmp_dir = tempdir().unwrap();
+        let ms_path = tmp_dir.path().join("birli_dodgy.ms");
+        run_birli("-M", ms_path.to_str().unwrap());
+        let (weights, flags) = read_ms_weights_and_flags(&ms_path);
+
+        let (num_missing, num_pairs) = count_missing_hdus();
+        assert!(num_missing > 0 && num_missing < num_pairs);
+        assert_eq!(weights.len() % num_pairs, 0);
+        let per_pair = weights.len() / num_pairs;
+
+        assert!(weights.iter().all(|w| w.is_sign_positive()));
+        // exactly the missing data has no weight, and it is flagged
+        let num_zero = weights.iter().filter(|w| **w == 0.).count();
+        assert_eq!(num_zero, num_missing * per_pair);
+        assert!(weights
+            .iter()
+            .zip(flags.iter())
+            .all(|(w, f)| *w != 0. || *f));
+
+        let weight_factor = weights.iter().copied().fold(0., f32::max);
+        assert!(weight_factor > 0.);
+        let (mut num_flagged, mut num_unflagged) = (0, 0);
+        for (&weight, &flag) in izip!(weights.iter(), flags.iter()).filter(|(w, _)| **w != 0.) {
+            assert_eq!(weight.to_bits(), weight_factor.to_bits());
+            if flag {
+                num_flagged += 1;
+            } else {
+                num_unflagged += 1;
+            }
+        }
+        assert!(num_unflagged > 0);
+        assert!(num_flagged > 0);
+    }
+}
+
 /// All these tests require aoflagger because they either require flagging or
 /// use the --no-rfi option.
 /// TODO: get unit test coverage to the point where this can be moved to a unit

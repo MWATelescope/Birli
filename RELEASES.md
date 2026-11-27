@@ -3,7 +3,9 @@
 # Unreleased
 
 - 🐛 bug fixes:
-  - visibilities that are missing from the raw files (a gpubox file that starts late or ends early) now have zero weight as well as being flagged. With the matching Marlu change (MWATelescope/Marlu#64), a flagged output sample averaged from a missing timestep and a present one keeps the amplitude of the present one instead of being halved. For #162
+  - visibilities that are missing from the raw files (a gpubox file that starts late or ends early) now have zero weight as well as being flagged, where they had the usual weight. Before, a flagged output sample averaged from a missing timestep and a present one came out at half the amplitude of the present one. With the matching Marlu change (MWATelescope/Marlu#64), which averages flagged visibilities by their weights, the zeros are left out and the amplitude is kept. In unaveraged output, missing visibilities have weight `-0` (uvfits) or weight 0 and the flag set (measurement set) instead of the normal weight. For #162
+- 📚 documentation:
+  - the README describes how missing data, weights and flags are written, with and without averaging
 
 # Version 0.22.0 (2026-11-17)
 

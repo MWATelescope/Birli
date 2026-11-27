@@ -650,6 +650,7 @@ mod tests {
 
     use super::{is_hdu_missing, read_mwalib, zero_weight_missing_hdus};
     use crate::{test_common::get_mwa_ord_dodgy_context, Array3};
+    use ndarray::s;
 
     /// Data that is missing from the raw files gets zero weight (issue #162).
     #[test]
@@ -694,6 +695,63 @@ mod tests {
             .filter(|&(ts, cc)| is_hdu_missing(&corr_ctx, ts, cc))
             .count();
         assert_eq!(num_missing, num_missing_by_idx);
+    }
+
+    /// Only the selection's own visibilities are looked at and changed: the
+    /// weights of a selection that is part of the observation are what the
+    /// same part of the weights of the whole observation are.
+    #[test]
+    fn test_zero_weight_missing_hdus_selection() {
+        let corr_ctx = get_mwa_ord_dodgy_context();
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let baseline_idxs = vec![0, 1];
+        let all_sel = VisSelection {
+            timestep_range: 0..corr_ctx.num_timesteps,
+            coarse_chan_range: 0..corr_ctx.num_coarse_chans,
+            baseline_idxs: baseline_idxs.clone(),
+        };
+        let mut all_weights = Array3::from_elem(all_sel.get_shape(fine_chans_per_coarse), 8_f32);
+        zero_weight_missing_hdus(&all_sel, &corr_ctx, all_weights.view_mut());
+
+        for (timestep_range, coarse_chan_range) in [(1..4, 0..3), (0..1, 0..24), (2..3, 1..2)] {
+            let vis_sel = VisSelection {
+                timestep_range: timestep_range.clone(),
+                coarse_chan_range: coarse_chan_range.clone(),
+                baseline_idxs: baseline_idxs.clone(),
+            };
+            let mut weights = Array3::from_elem(vis_sel.get_shape(fine_chans_per_coarse), 8_f32);
+            let num_missing = zero_weight_missing_hdus(&vis_sel, &corr_ctx, weights.view_mut());
+
+            let expected = all_weights.slice(s![
+                timestep_range.clone(),
+                coarse_chan_range.start * fine_chans_per_coarse
+                    ..coarse_chan_range.end * fine_chans_per_coarse,
+                ..
+            ]);
+            assert_eq!(weights, expected);
+            let expected_num_missing = timestep_range
+                .flat_map(|ts| coarse_chan_range.clone().map(move |cc| (ts, cc)))
+                .filter(|&(ts, cc)| is_hdu_missing(&corr_ctx, ts, cc))
+                .count();
+            assert_eq!(num_missing, expected_num_missing);
+        }
+    }
+
+    /// Nothing is changed if nothing is missing.
+    #[test]
+    fn test_zero_weight_missing_hdus_none_missing() {
+        let corr_ctx = get_mwax_context();
+        let fine_chans_per_coarse = corr_ctx.metafits_context.num_corr_fine_chans_per_coarse;
+        let vis_sel = VisSelection::from_mwalib(&corr_ctx).unwrap();
+        let mut weights = Array3::from_elem(vis_sel.get_shape(fine_chans_per_coarse), 8_f32);
+        let num_missing = zero_weight_missing_hdus(&vis_sel, &corr_ctx, weights.view_mut());
+        assert_eq!(num_missing, 0);
+        assert!(weights.iter().all(|w| w.to_bits() == 8_f32.to_bits()));
+        for ts in vis_sel.timestep_range.clone() {
+            for cc in vis_sel.coarse_chan_range.clone() {
+                assert!(!is_hdu_missing(&corr_ctx, ts, cc));
+            }
+        }
     }
 
     // test read_mwalib with bad vis_sel.baseline_idxs
