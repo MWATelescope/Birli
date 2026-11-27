@@ -95,6 +95,31 @@ pub enum BirliError {
         need_gib: usize,
     },
 
+    #[error(transparent)]
+    /// Error derived from [`crate::io::error::ReadSolutionsError`]
+    ReadSolutionsError(#[from] crate::io::error::ReadSolutionsError),
+
+    #[error("{error}\n{hint}")]
+    /// An mwalib error that Birli can offer some advice about.
+    MwalibErrorWithHint {
+        /// The error from mwalib
+        error: Box<mwalib::MwalibError>,
+        /// What the user can do about it
+        hint: String,
+    },
+
+    #[error("No timesteps are common to all of the provided coarse channels, so there is nothing to preprocess.\n{summary}\nCheck for missing or truncated gpubox files, or leave out the coarse channels that don't overlap with the rest.")]
+    /// When the provided gpubox files have no timesteps (or coarse channels)
+    /// in common.
+    NoCommonTimesteps {
+        /// Which timesteps each gpubox channel provides
+        summary: String,
+    },
+
+    #[error("No timesteps were found in the provided gpubox files.")]
+    /// When the provided gpubox files have no timesteps at all.
+    NoProvidedTimesteps,
+
     #[error("Invalid MWA Version ({version}): {message}")]
     /// When a bad MWA Version is provided
     BadMWAVersion {
