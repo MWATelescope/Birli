@@ -1,5 +1,10 @@
 <!-- markdownlint-disable=MD025 -->
 
+# Unreleased
+
+- 🙏 quality of life:
+  - `--no-rfi` is accepted by builds without the `aoflagger` feature (it has no effect there) instead of being an unknown argument, so the same command works with any build. `--help`, the build info and the preprocessing summary now say when Birli was compiled without AOFlagger. Fixes #185
+
 # Version 0.22.0 (2026-11-17)
 
 - ✨ new feature:

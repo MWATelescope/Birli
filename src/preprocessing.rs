@@ -114,6 +114,8 @@ impl Display for PreprocessContext<'_> {
                 } else {
                     writeln!(f, "Will not flag with aoflagger")?;
                 }
+            } else {
+                writeln!(f, "Will not flag with aoflagger (not compiled in)")?;
             }
         }
         writeln!(
